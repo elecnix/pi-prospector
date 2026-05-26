@@ -19,3 +19,28 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - run: npm install --legacy-peer-deps
       - run: npm test
+
+  integration-test:
+    needs: test
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+      - name: Install Pi
+        run: |
+          npm install -g @earendil-works/pi-coding-agent
+          pi --version
+      - name: Run integration tests
+        run: bash test/integration/run-integration.sh
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-failure-logs
+          path: test/integration/logs/
+          retention-days: 7

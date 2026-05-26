@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "./pi-stubs.js";
 import { registerSyncCommand } from "./commands/sync.js";
 import { registerStatsCommand } from "./commands/stats.js";
 import { registerProposalsCommand } from "./commands/proposals.js";

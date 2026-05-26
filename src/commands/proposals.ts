@@ -1,13 +1,18 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { listProposals, acceptProposal, rejectProposal } from "../db/queries.js";
 import { getDbPath } from "../config.js";
 
+function output(ctx: any, text: string, level: "info" | "warning" | "error" = "info"): void {
+	ctx.ui.notify(text, level);
+	console.log(text);
+}
+
 export function registerProposalsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-proposals", {
 		description: "List proposals (optionally filter by status: new, accepted, rejected)",
-		handler: async (args, ctx) => {
+		handler: async (args: string, ctx: any) => {
 			const db = new Database(getDbPath());
 			migrate(db);
 			try {
@@ -15,7 +20,7 @@ export function registerProposalsCommand(pi: ExtensionAPI): void {
 				const proposals = listProposals(db, status);
 
 				if (proposals.length === 0) {
-					ctx.ui.notify("No proposals found.", "info");
+					output(ctx, "No proposals found.");
 					return;
 				}
 
@@ -23,7 +28,7 @@ export function registerProposalsCommand(pi: ExtensionAPI): void {
 					const short = p.id.slice(0, 8);
 					return `[${p.status}] ${short} | ${p.severity} | ${p.target}\n  ${p.summary}`;
 				});
-				ctx.ui.notify(`Proposals (${proposals.length}):\n${lines.join("\n")}`, "info");
+				output(ctx, `Proposals (${proposals.length}):\n${lines.join("\n")}`);
 			} finally {
 				db.close();
 			}
@@ -32,14 +37,14 @@ export function registerProposalsCommand(pi: ExtensionAPI): void {
 
 	pi.registerCommand("prospect-accept", {
 		description: "Accept a proposal by ID",
-		handler: async (args, ctx) => {
+		handler: async (args: string, ctx: any) => {
 			const id = args?.trim();
-			if (!id) { ctx.ui.notify("Usage: /prospect-accept <id>", "warning"); return; }
+			if (!id) { output(ctx, "Usage: /prospect-accept <id>", "warning"); return; }
 			const db = new Database(getDbPath());
 			migrate(db);
 			try {
 				const ok = acceptProposal(db, id);
-				ctx.ui.notify(ok ? `Proposal ${id} accepted.` : `Proposal ${id} not found or not in 'new' status.`, ok ? "info" : "warning");
+				output(ctx, ok ? `Proposal ${id} accepted.` : `Proposal ${id} not found or not in 'new' status.`, ok ? "info" : "warning");
 			} finally {
 				db.close();
 			}
@@ -48,14 +53,14 @@ export function registerProposalsCommand(pi: ExtensionAPI): void {
 
 	pi.registerCommand("prospect-reject", {
 		description: "Reject a proposal by ID",
-		handler: async (args, ctx) => {
+		handler: async (args: string, ctx: any) => {
 			const id = args?.trim();
-			if (!id) { ctx.ui.notify("Usage: /prospect-reject <id>", "warning"); return; }
+			if (!id) { output(ctx, "Usage: /prospect-reject <id>", "warning"); return; }
 			const db = new Database(getDbPath());
 			migrate(db);
 			try {
 				const ok = rejectProposal(db, id);
-				ctx.ui.notify(ok ? `Proposal ${id} rejected.` : `Proposal ${id} not found or not in 'new' status.`, ok ? "info" : "warning");
+				output(ctx, ok ? `Proposal ${id} rejected.` : `Proposal ${id} not found or not in 'new' status.`, ok ? "info" : "warning");
 			} finally {
 				db.close();
 			}

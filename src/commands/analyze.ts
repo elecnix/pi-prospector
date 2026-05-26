@@ -1,22 +1,21 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
-import { getUnanalyzedSessions, getSessionMessages, markAnalyzed, insertProposal, computeDedupHash } from "../db/queries.js";
+import { getUnanalyzedSessions, getSessionMessages, markAnalyzed } from "../db/queries.js";
 import { getDbPath, loadConfig } from "../config.js";
-import { buildAnalysisPrompt, ANALYSIS_TOOL_SCHEMA } from "../analyze/prompt.js";
-import { parseAnalysisResponse } from "../analyze/parser.js";
-import { randomUUID } from "node:crypto";
 
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description: "Run LLM analysis over unanalyzed sessions to generate proposals",
-		handler: async (args, ctx) => {
+		handler: async (args: string, ctx: { ui: { notify: (msg: string, level: string) => void } }) => {
 			const config = loadConfig();
 			const parsedArgs = parseArgs(args ?? "");
 			const modelSpec = parsedArgs.model ?? config.model;
 
 			if (!modelSpec) {
-				ctx.ui.notify("No model configured. Use --model provider/model or set in ~/.pi/agent/prospector.json", "error");
+				const msg = "No model configured. Use --model provider/model or set in ~/.pi/agent/prospector.json";
+				ctx.ui.notify(msg, "error");
+				console.log(msg);
 				return;
 			}
 
@@ -26,11 +25,15 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 			try {
 				const unanalyzed = getUnanalyzedSessions(db, parsedArgs.limit);
 				if (unanalyzed.length === 0) {
-					ctx.ui.notify("No unanalyzed sessions. Run /prospect-sync first.", "info");
+					const msg = "No unanalyzed sessions. Run /prospect-sync first.";
+					ctx.ui.notify(msg, "info");
+					console.log(msg);
 					return;
 				}
 
-				ctx.ui.notify(`Analyzing ${unanalyzed.length} session(s) with ${modelSpec}...`, "info");
+				const startMsg = `Analyzing ${unanalyzed.length} session(s) with ${modelSpec}...`;
+				ctx.ui.notify(startMsg, "info");
+				console.log(startMsg);
 
 				let totalProposals = 0;
 				let errors = 0;
@@ -43,34 +46,19 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 							continue;
 						}
 
-						// Build transcript
-						const transcript = messages.map((m) => {
-							if (m.role === "user") return `USER: ${m.content_text ?? ""}`;
-							if (m.role === "assistant") {
-								const parts: string[] = [];
-								if (m.content_thinking) parts.push(`THINKING: ${m.content_thinking.slice(0, 1000)}`);
-								if (m.content_text) parts.push(`AGENT: ${m.content_text.slice(0, 2000)}`);
-								if (m.tool_calls) parts.push(`TOOLS: ${m.tool_calls.slice(0, 500)}`);
-								return parts.join("\n");
-							}
-							return `[${m.role}]: ${(m.content_text ?? "").slice(0, 200)}`;
-						}).join("\n\n");
-
-						if (transcript.length < 100) {
-							markAnalyzed(db, session.id);
-							continue;
-						}
-
 						// TODO: Call LLM via @earendil-works/pi-ai
-						// For now this is a stub — marks as analyzed without generating proposals
 						markAnalyzed(db, session.id);
 					} catch (err) {
 						errors++;
-						ctx.ui.notify(`Error on session ${session.id}: ${err}`, "warning");
+						const errMsg = `Error on session ${session.id}: ${err}`;
+						ctx.ui.notify(errMsg, "warning");
+						console.error(errMsg);
 					}
 				}
 
-				ctx.ui.notify(`Done. ${unanalyzed.length - errors} analyzed, ${totalProposals} proposals, ${errors} errors.`, "info");
+				const doneMsg = `Done. ${unanalyzed.length - errors} analyzed, ${totalProposals} proposals, ${errors} errors.`;
+				ctx.ui.notify(doneMsg, "info");
+				console.log(doneMsg);
 			} finally {
 				db.close();
 			}

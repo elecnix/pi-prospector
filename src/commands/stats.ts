@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { getStats } from "../db/queries.js";
@@ -7,7 +7,7 @@ import { getDbPath } from "../config.js";
 export function registerStatsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-stats", {
 		description: "Show prospector database statistics",
-		handler: async (_args, ctx) => {
+		handler: async (_args: string, ctx: { ui: { notify: (msg: string, level: string) => void } }) => {
 			const db = new Database(getDbPath());
 			migrate(db);
 			try {
@@ -27,7 +27,9 @@ export function registerStatsCommand(pi: ExtensionAPI): void {
 					`    accepted: ${s.proposalsByStatus.accepted}`,
 					`    rejected: ${s.proposalsByStatus.rejected}`,
 				];
-				ctx.ui.notify(lines.join("\n"), "info");
+				const text = lines.join("\n");
+				ctx.ui.notify(text, "info");
+				console.log(text);
 			} finally {
 				db.close();
 			}
