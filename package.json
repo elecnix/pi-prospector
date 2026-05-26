@@ -27,6 +27,14 @@
     "@earendil-works/pi-coding-agent": ">=0.74.0",
     "@earendil-works/pi-ai": ">=0.74.0"
   },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "typebox": "^1.1.38",
     "better-sqlite3": "^12.9.0"
