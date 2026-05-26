@@ -1,5 +1,11 @@
 # pi-prospector
 
+## Session data safety
+
+`~/.pi/agent/sessions/` is read-only. Never write, delete, or move session files. Before running sync for the first time, back up your sessions manually (e.g. `tar czf ~/prospector-backup/sessions-$(date +%Y%m%d).tgz ~/.pi/agent/sessions/`). pi-prospector does not create this backup for you.
+
+No personal session content in source code, tests, git history, or CI artifacts. Test fixtures must be hand-written synthetic JSONL with no real user data.
+
 ## Type safety
 
 TypeBox for all data shapes. No bare `interface` or `type` declarations. Every shape is a `Type.Object({...})` schema, types derived via `Static<typeof Schema>`. This includes session entries, database rows, CLI params, LLM responses, and config.
@@ -10,7 +16,7 @@ TypeBox for all data shapes. No bare `interface` or `type` declarations. Every s
 - Component tests: real SQLite (temp file), fixture JSONL files, mocked LLM calls. Test full sync→analyze→proposal flows end-to-end.
 - No evals in v1. LLM quality is subjective; tests verify structure, not proposal quality.
 - Runner: `node:test` + `node:assert`. No test frameworks.
-- Fixtures in `tests/fixtures/`. Hand-written, deterministic, version-controlled.
+- Fixtures in `tests/fixtures/`. Hand-written, deterministic, version-controlled. No real session data — synthetic only.
 
 ## Integration tests (tmux + real Pi)
 
