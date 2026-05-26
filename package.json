@@ -1,0 +1,40 @@
+{
+  "name": "pi-prospector",
+  "version": "0.1.0",
+  "description": "Incremental session indexing and proposal generation for the Pi coding agent",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test tests/unit/*.test.ts tests/component/*.test.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "prospector",
+    "session-indexing",
+    "proposals"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.74.0",
+    "@earendil-works/pi-ai": ">=0.74.0"
+  },
+  "dependencies": {
+    "typebox": "^1.1.38",
+    "better-sqlite3": "^12.9.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

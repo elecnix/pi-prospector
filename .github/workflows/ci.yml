@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm install
+      - run: npm test
+
+  integration-test:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Install tmux and Pi
+        run: |
+          sudo apt-get update && sudo apt-get install -y tmux
+          npm install -g @earendil-works/pi-coding-agent
+      - name: Run integration screenshots
+        run: bash test/integration/run-screenshots.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: integration-screenshots
+          path: test/integration/screenshots/
+          retention-days: 30
