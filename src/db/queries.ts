@@ -84,11 +84,12 @@ export function getSessionMessages(db: Database.Database, sessionId: string): Ar
 
 // ── Proposals ──
 
-export function insertProposal(db: Database.Database, p: Proposal): void {
+export function insertProposal(db: Database.Database, p: Proposal): string {
 	db.prepare(`
 		INSERT OR IGNORE INTO proposals (id, created_at, session_id, target, severity, summary, detail, evidence, status, dedup_hash)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(p.id, p.created_at, p.session_id, p.target, p.severity, p.summary, p.detail, p.evidence, p.status, p.dedup_hash);
+	return p.id;
 }
 
 export function listProposals(db: Database.Database, status?: string): Proposal[] {
