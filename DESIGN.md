@@ -49,12 +49,22 @@ roughly the order concepts build on one another.
 - **Session** — one recorded conversation between a user and a coding agent,
   from start to end. Sessions are the raw material. They are treated as
   **read-only**: the system observes them and never alters them.
-- **Message** — a single entry within a session: something the user said, the
-  agent's reply, the agent's private reasoning, or the result of a tool the
+- **Message** — a single entry within a session: something the user said, one of
+  the agent's replies, the agent's private reasoning, or the result of a tool the
   agent ran. Messages carry metadata (timing, model, token usage, error flags).
-- **Pair** — the natural unit of one exchange: a user message together with the
-  agent's response and any tool activity that happened in between, up to the
-  next user message. A pair is where most friction is visible.
+- **Turn** — the natural unit of one round of work, and where most friction is
+  visible. A turn begins at a user message (the turn boundary) and spans
+  *everything* the agent does in response — every assistant reply, its private
+  reasoning, and every tool call and result — up to the next user message. A
+  turn is therefore usually **many messages, not two**: a single request
+  normally drives a loop of repeated assistant generations and tool calls before
+  the next user message arrives. (The host platform also treats a few non-user
+  entries — a bash execution, a branch or custom summary — as turn boundaries.)
+  The per-turn analyzers are named `turn-pair-*` and the codebase calls this
+  unit a "turn pair"; it is one turn, not a pair of turns.
+- **Step** — one assistant generation within a turn: a single model response,
+  possibly carrying tool calls. A turn is a sequence of one or more steps plus
+  the tool results they trigger.
 - **Compaction boundary** — a point where the conversation history was
   summarised and truncated to fit the model's context. The system is aware of
   these so it does not mistake a summary for an ordinary message.
@@ -65,12 +75,12 @@ roughly the order concepts build on one another.
   the conversation. It is a graph, not a tree, and it is **append-only**: once
   written, an analysis result is never edited or deleted.
 - **Analysis node** (or just **node**) — one self-contained piece of derived
-  analysis: a set of metrics for a pair, a classification of a pair, a
+  analysis: a set of metrics for a turn, a classification of a turn, a
   session-level summary, or a recorded error. Every node states what it is
   about, what it was built from, and exactly which recipe produced it.
 - **Node kind** — the category of a node's content. The kinds in use are
-  **metric** (deterministic measurements of a pair), **classification** (a
-  language-model judgement about a pair), **summary** (a session-level synthesis
+  **metric** (deterministic measurements of a turn), **classification** (a
+  language-model judgement about a turn), **summary** (a session-level synthesis
   that carries proposals), and **error** (a record that an analysis attempt
   failed, kept so failures are visible rather than silent).
 - **Edge** — a typed, directed relationship in the analysis graph. Edges are the
@@ -89,7 +99,7 @@ roughly the order concepts build on one another.
   - **revises** — “this node is a newer-version alternative of that node,
     covering the same subject.” This is the backbone of lineage (below).
 - **Anchor** — the conversation entity a node is about, reached via an *anchors*
-  edge. A pair-level node anchors to its user message; a session-level node
+  edge. A turn-level node anchors to its user message; a session-level node
   anchors to the session.
 
 ### Recipe, identity, and idempotency
@@ -124,7 +134,7 @@ roughly the order concepts build on one another.
 ### Running analysis
 
 - **Plan** — an analyzer's enumeration of the discrete pieces of work it *could*
-  do for a session (for example, “one piece of work per pair”). Planning does
+  do for a session (for example, “one piece of work per turn”). Planning does
   not perform analysis; it only describes the candidate units and their source
   sets.
 - **Unit** — one planned piece of work: a source set plus where its result would
@@ -260,9 +270,9 @@ can develop a hidden reliance on another's internals.
 
 ### Deterministic first, language model second
 
-Analysis is layered. A deterministic layer measures every pair with no model
+Analysis is layered. A deterministic layer measures every turn with no model
 calls at all — lengths, tool failures, wasted output, signs of correction, a
-friction score. Only the pairs that look high-signal are escalated to a
+friction score. Only the turns that look high-signal are escalated to a
 language-model layer for a nuanced judgement, and only then does a session-level
 layer synthesise everything into proposals. The reason is cost and reliability:
 the cheap, repeatable layer does the bulk of the triage and always works, the
