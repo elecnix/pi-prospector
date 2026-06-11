@@ -168,20 +168,24 @@ The following environment variables override paths and are mainly for testing: `
 
 ## Running headlessly
 
-The commands are normally invoked as slash commands inside an interactive Pi session, but Pi can also dispatch a single command non-interactively via its own CLI flags (`-e` to load the extension from source, `-p` to run one command and exit). This is convenient while developing the analyzers — the extension is reloaded fresh on every run, so code changes take effect without restarting an interactive session:
+The commands are normally invoked as slash commands inside an interactive Pi session, but the extension also registers a `--prospect` CLI flag so a single command runs **non-interactively and exits** — no `-p` needed. This is the convenient way to drive prospector from scripts or while iterating on the analyzers (the extension is reloaded fresh from source on every run, so code changes take effect without restarting an interactive session):
 
 ```bash
-pi -e ./src/index.ts -ne --no-session -p "/prospect-sync"
-pi -e ./src/index.ts -ne --no-session -p "/prospect-analyze --limit 3 --model openrouter/anthropic/claude-3.5-haiku"
-pi -e ./src/index.ts -ne --no-session -p "/prospect-proposals"
+pi -e ./src/index.ts --prospect sync
+pi -e ./src/index.ts --prospect stats
+pi -e ./src/index.ts --prospect "analyze --limit 3 --model openrouter/anthropic/claude-3.5-haiku"
+pi -e ./src/index.ts --prospect proposals
+pi -e ./src/index.ts --prospect "accept <id>"
 ```
 
-`-ne` skips discovery of other extensions; `--no-session` keeps the run ephemeral. To iterate on a small **private** subset rather than your whole history, copy a few session folders somewhere outside any repo and point the env overrides at them — the sessions directory is only ever read:
+The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status]`, `accept <id>`, `reject <id>`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
+
+To iterate on a small **private** subset rather than your whole history, copy a few session folders somewhere outside any repo and point the env overrides at them — the sessions directory is only ever read:
 
 ```bash
 export PROSPECTOR_SESSIONS_DIR="$HOME/.prospector-local/sessions"
 export PROSPECTOR_DB_PATH="$HOME/.prospector-local/prospector.db"
-pi -e ./src/index.ts -ne --no-session -p "/prospect-stats"
+pi -e ./src/index.ts --prospect stats
 ```
 
 For structured-output calls, prefer a non-reasoning model/tier: reasoning models spend the token budget on thinking and can truncate the JSON answer (the LLM caller now fails fast with a clear message when a response is cut off at the output limit).

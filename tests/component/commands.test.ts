@@ -27,11 +27,19 @@ const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 
 const commands = new Map<string, Handler>();
 let toolExec: ToolExec;
+const flags = new Map<string, string | boolean | undefined>();
 
 const fakePi: ExtensionAPI = {
 	registerCommand: (name, opts) => commands.set(name, opts.handler),
 	registerTool: (tool) => {
 		if (tool.name === "prospect") toolExec = tool.execute as ToolExec;
+	},
+	registerFlag: (name, opts) => {
+		if (opts.default !== undefined) flags.set(name, opts.default);
+	},
+	getFlag: (name) => flags.get(name),
+	on: () => {
+		/* no session_start dispatch needed for these command tests */
 	},
 };
 

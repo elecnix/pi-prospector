@@ -4,6 +4,7 @@ import { registerStatsCommand } from "./commands/stats.js";
 import { registerProposalsCommand } from "./commands/proposals.js";
 import { registerAnalyzeCommand } from "./commands/analyze.js";
 import { registerProspectTool } from "./commands/tool.js";
+import { registerHeadlessFlag } from "./commands/headless.js";
 
 export default function (pi: ExtensionAPI) {
 	registerSyncCommand(pi);
@@ -11,4 +12,5 @@ export default function (pi: ExtensionAPI) {
 	registerProposalsCommand(pi);
 	registerAnalyzeCommand(pi);
 	registerProspectTool(pi);
+	registerHeadlessFlag(pi);
 }

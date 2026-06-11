@@ -40,10 +40,23 @@ export interface ExtensionContext {
 	signal?: AbortSignal;
 	cwd?: string;
 	hasUI?: boolean;
+	/** Request a graceful shutdown of pi. No-op in print mode. */
+	shutdown?: () => void | Promise<void>;
 }
 
 export interface ExtensionCommandContext extends ExtensionContext {
 	ui: ExtensionUIContext;
+}
+
+export interface FlagOptions {
+	description: string;
+	type: "string" | "boolean";
+	default?: string | boolean;
+}
+
+export interface SessionStartEvent {
+	reason: "startup" | "reload" | "new" | "resume" | "fork";
+	previousSessionFile?: string;
 }
 
 export interface ToolResultContent {
@@ -77,6 +90,15 @@ export interface ExtensionAPI {
 			ctx: ExtensionCommandContext,
 		) => Promise<ToolResult> | ToolResult;
 	}): void;
+	/** Register a CLI flag (e.g. `--prospect <value>`). */
+	registerFlag(name: string, options: FlagOptions): void;
+	/** Read a previously-registered flag's value. */
+	getFlag(name: string): string | boolean | undefined;
+	/** Subscribe to a lifecycle event. Only the events this extension uses are typed. */
+	on(
+		event: "session_start",
+		handler: (event: SessionStartEvent, ctx: ExtensionCommandContext) => void | Promise<void>,
+	): void;
 }
 
 // ───────────────────────── pi-ai (minimal) ─────────────────────────
