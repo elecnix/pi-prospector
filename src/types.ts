@@ -8,8 +8,14 @@
 // ─── Config ───
 
 export interface ProspectorConfig {
-	model?: string; // provider/model format, e.g. "openrouter/deepseek-v4-flash"
+	model?: string; // provider/model format, e.g. "anthropic/claude-sonnet-4-5"
 	dbPath?: string; // defaults to ~/.pi/agent/prospector.db
+	/** Model tiers used by analyzers (cheap/mid/expensive → provider/model). */
+	modelTiers?: {
+		cheap: string;
+		mid: string;
+		expensive: string;
+	};
 }
 
 // ─── Session ───
@@ -92,29 +98,25 @@ export interface SyncResult {
 // ─── Proposals ───
 
 export type ProposalSeverity = "friction" | "correction" | "waste" | "suggestion";
-export type ProposalStatus = "new" | "accepted" | "rejected";
-
-export interface NewProposal {
-	sessionId: string;
-	target: string;
-	severity: ProposalSeverity;
-	summary: string;
-	detail: string;
-	evidence: string;
-	dedupHash: string;
-}
+export type ProposalStatus = "open" | "applied" | "rejected" | "duplicate";
 
 export interface Proposal {
 	id: string;
 	created_at: string;
+	updated_at: string;
 	session_id: string;
-	target: string;
-	severity: ProposalSeverity;
+	source_node_id: string | null;
+	analyzer_id: string | null;
+	target_type: string;
+	target_path: string | null;
+	title: string;
+	severity: string;
 	summary: string;
-	detail: string;
-	evidence: string;
+	detail: string | null;
+	evidence: string | null;
+	confidence: number | null;
 	status: ProposalStatus;
-	dedup_hash: string;
+	dedup_key: string;
 }
 
 // ─── Stats ───
@@ -123,8 +125,14 @@ export interface Stats {
 	totalSessions: number;
 	totalMessages: number;
 	totalToolResults: number;
-	messagesProcessed: number;
+	sessionsAnalyzed: number;
 	proposalsByStatus: Record<ProposalStatus, number>;
+	analysis: {
+		nodes: number;
+		edges: number;
+		runs: number;
+		nodesByKind: Record<string, number>;
+	};
 }
 
 // ─── Analyze ───

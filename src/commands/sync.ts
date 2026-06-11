@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "../pi-stubs.js";
+import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
@@ -7,7 +7,7 @@ import { getDbPath, getSessionsDir } from "../config.js";
 export function registerSyncCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-sync", {
 		description: "Index session files into the prospector database (no LLM)",
-		handler: async (_args: string, ctx: { ui: { notify: (msg: string, level?: string) => void } }) => {
+		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const dbPath = getDbPath();
 			const db = new Database(dbPath);
 			migrate(db);

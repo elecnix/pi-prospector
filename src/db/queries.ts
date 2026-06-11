@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
-import { createHash } from "node:crypto";
-import type { Proposal, Stats } from "../types.js";
+import type { Proposal, ProposalStatus, Stats } from "../types.js";
+import { getAnalysisStats } from "./analysis-queries.js";
 
 // ── Sessions ──
 
@@ -53,6 +53,13 @@ export function getUnanalyzedSessions(db: Database.Database, limit?: number): Ar
 	return (limit ? db.prepare(sql).all(limit) : db.prepare(sql).all()) as Array<{ id: string; file_path: string; started_at: string }>;
 }
 
+export function getAllSessions(db: Database.Database, limit?: number): Array<{ id: string; file_path: string; started_at: string }> {
+	const sql = limit
+		? "SELECT id, file_path, started_at FROM sessions ORDER BY started_at ASC LIMIT ?"
+		: "SELECT id, file_path, started_at FROM sessions ORDER BY started_at ASC";
+	return (limit ? db.prepare(sql).all(limit) : db.prepare(sql).all()) as Array<{ id: string; file_path: string; started_at: string }>;
+}
+
 // ── Messages ──
 
 export interface MessageInsert {
@@ -82,31 +89,27 @@ export function getSessionMessages(db: Database.Database, sessionId: string): Ar
 	return db.prepare("SELECT role, content_text, content_thinking, tool_calls, timestamp FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(sessionId) as any[];
 }
 
-// ── Proposals ──
-
-export function insertProposal(db: Database.Database, p: Proposal): string {
-	db.prepare(`
-		INSERT OR IGNORE INTO proposals (id, created_at, session_id, target, severity, summary, detail, evidence, status, dedup_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(p.id, p.created_at, p.session_id, p.target, p.severity, p.summary, p.detail, p.evidence, p.status, p.dedup_hash);
-	return p.id;
-}
+// ── Proposals (v2) ──
 
 export function listProposals(db: Database.Database, status?: string): Proposal[] {
 	if (status) return db.prepare("SELECT * FROM proposals WHERE status = ? ORDER BY created_at DESC").all(status) as Proposal[];
 	return db.prepare("SELECT * FROM proposals ORDER BY created_at DESC").all() as Proposal[];
 }
 
+export function getProposal(db: Database.Database, id: string): Proposal | undefined {
+	return db.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as Proposal | undefined;
+}
+
 export function acceptProposal(db: Database.Database, id: string): boolean {
-	return db.prepare("UPDATE proposals SET status = 'accepted' WHERE id = ? AND status = 'new'").run(id).changes > 0;
+	return db
+		.prepare("UPDATE proposals SET status = 'applied', updated_at = ? WHERE id = ? AND status = 'open'")
+		.run(new Date().toISOString(), id).changes > 0;
 }
 
 export function rejectProposal(db: Database.Database, id: string): boolean {
-	return db.prepare("UPDATE proposals SET status = 'rejected' WHERE id = ? AND status = 'new'").run(id).changes > 0;
-}
-
-export function computeDedupHash(target: string, severity: string, summary: string): string {
-	return createHash("sha256").update(`${target}|${severity}|${summary}`).digest("hex").slice(0, 16);
+	return db
+		.prepare("UPDATE proposals SET status = 'rejected', updated_at = ? WHERE id = ? AND status = 'open'")
+		.run(new Date().toISOString(), id).changes > 0;
 }
 
 // ── Stats ──
@@ -115,9 +118,22 @@ export function getStats(db: Database.Database): Stats {
 	const totalSessions = (db.prepare("SELECT COUNT(*) as c FROM sessions").get() as { c: number }).c;
 	const totalMessages = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant')").get() as { c: number }).c;
 	const totalToolResults = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE role = 'toolResult'").get() as { c: number }).c;
-	const messagesProcessed = (db.prepare("SELECT SUM(message_count) as c FROM sessions WHERE analyzed_at IS NOT NULL").get() as { c: number | null }).c ?? 0;
-	const pNew = (db.prepare("SELECT COUNT(*) as c FROM proposals WHERE status = 'new'").get() as { c: number }).c;
-	const pAccepted = (db.prepare("SELECT COUNT(*) as c FROM proposals WHERE status = 'accepted'").get() as { c: number }).c;
-	const pRejected = (db.prepare("SELECT COUNT(*) as c FROM proposals WHERE status = 'rejected'").get() as { c: number }).c;
-	return { totalSessions, totalMessages, totalToolResults, messagesProcessed, proposalsByStatus: { new: pNew, accepted: pAccepted, rejected: pRejected } };
+	const sessionsAnalyzed = (db.prepare("SELECT COUNT(*) as c FROM sessions WHERE analyzed_at IS NOT NULL").get() as { c: number }).c;
+
+	const statusRows = db.prepare("SELECT status, COUNT(*) as c FROM proposals GROUP BY status").all() as Array<{ status: string; c: number }>;
+	const proposalsByStatus: Record<ProposalStatus, number> = { open: 0, applied: 0, rejected: 0, duplicate: 0 };
+	for (const r of statusRows) {
+		if (r.status === "open" || r.status === "applied" || r.status === "rejected" || r.status === "duplicate") {
+			proposalsByStatus[r.status] = r.c;
+		}
+	}
+
+	return {
+		totalSessions,
+		totalMessages,
+		totalToolResults,
+		sessionsAnalyzed,
+		proposalsByStatus,
+		analysis: getAnalysisStats(db),
+	};
 }

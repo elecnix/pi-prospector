@@ -1,7 +1,29 @@
 import Database from "better-sqlite3";
 
+/**
+ * Schema for pi-prospector.
+ *
+ * A single, clean migration creates everything in its final form — there is no
+ * incremental ALTER/backfill machinery, because the database is disposable and
+ * always rebuilt from session transcripts (`/prospect-sync`).
+ *
+ * Tables:
+ *   sessions, messages, messages_fts   — the read-only session index
+ *   proposals                          — materialised, user-reviewable proposals
+ *   analyzer_defs / _versions          — analyzer identity and code releases
+ *   prompt_registry                    — content-addressed prompt store
+ *   analyzer_configs                   — content-addressed config store
+ *   analysis_runs                      — execution provenance (informational)
+ *   analysis_nodes                     — append-only analysis artifacts
+ *   analysis_edges                     — the typed relationship graph
+ */
 export function migrate(db: Database.Database): void {
+	db.pragma("journal_mode = WAL");
+	db.pragma("foreign_keys = ON");
+
 	db.exec(`
+		-- ───────────────────────── session index ─────────────────────────
+
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
 			file_path TEXT NOT NULL,
@@ -30,26 +52,137 @@ export function migrate(db: Database.Database): void {
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
+		-- ───────────────────────── proposals (v2) ─────────────────────────
+
 		CREATE TABLE IF NOT EXISTS proposals (
 			id TEXT PRIMARY KEY,
 			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
 			session_id TEXT NOT NULL,
-			target TEXT NOT NULL,
+			source_node_id TEXT,
+			analyzer_id TEXT,
+			target_type TEXT NOT NULL,
+			target_path TEXT,
+			title TEXT NOT NULL,
 			severity TEXT NOT NULL,
 			summary TEXT NOT NULL,
 			detail TEXT,
 			evidence TEXT,
-			status TEXT NOT NULL DEFAULT 'new',
-			dedup_hash TEXT,
+			confidence REAL,
+			status TEXT NOT NULL DEFAULT 'open',
+			dedup_key TEXT NOT NULL,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
+		-- ──────────────────── analyzer identity & recipe ────────────────────
+
+		CREATE TABLE IF NOT EXISTS analyzer_defs (
+			id TEXT PRIMARY KEY,
+			label TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			anchor_span TEXT NOT NULL,
+			dependencies TEXT NOT NULL DEFAULT '[]',
+			created_at TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS analyzer_versions (
+			analyzer_id TEXT NOT NULL,
+			version_id TEXT NOT NULL,
+			implementation_kind TEXT NOT NULL,
+			code_ref TEXT,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (analyzer_id, version_id),
+			FOREIGN KEY (analyzer_id) REFERENCES analyzer_defs(id)
+		);
+
+		CREATE TABLE IF NOT EXISTS prompt_registry (
+			hash TEXT PRIMARY KEY,
+			content TEXT NOT NULL,
+			role TEXT,
+			created_at TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS analyzer_configs (
+			id TEXT PRIMARY KEY,
+			analyzer_id TEXT NOT NULL,
+			config_hash TEXT NOT NULL UNIQUE,
+			config_json TEXT NOT NULL,
+			label TEXT,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY (analyzer_id) REFERENCES analyzer_defs(id)
+		);
+
+		-- ──────────────────── analysis graph (append-only) ────────────────────
+
+		CREATE TABLE IF NOT EXISTS analysis_runs (
+			id TEXT PRIMARY KEY,
+			analyzer_id TEXT NOT NULL,
+			analyzer_version_id TEXT NOT NULL,
+			config_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			mode TEXT NOT NULL DEFAULT 'shallow',
+			status TEXT NOT NULL DEFAULT 'ok',
+			prompt_bundle_hash TEXT NOT NULL DEFAULT '',
+			model_spec TEXT,
+			started_at TEXT NOT NULL,
+			finished_at TEXT,
+			nodes_produced INTEGER NOT NULL DEFAULT 0,
+			nodes_skipped INTEGER NOT NULL DEFAULT 0,
+			cost_usd REAL NOT NULL DEFAULT 0,
+			tokens_used INTEGER NOT NULL DEFAULT 0,
+			error_message TEXT
+		);
+
+		CREATE TABLE IF NOT EXISTS analysis_nodes (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			analyzer_id TEXT NOT NULL,
+			analyzer_version_id TEXT NOT NULL,
+			config_id TEXT NOT NULL,
+			run_id TEXT,
+			node_kind TEXT NOT NULL,
+			content_json TEXT NOT NULL,
+			source_set_hash TEXT NOT NULL,
+			input_hash TEXT NOT NULL UNIQUE,
+			model_used TEXT,
+			cost_usd REAL,
+			tokens_used INTEGER,
+			duration_ms INTEGER,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+
+		CREATE TABLE IF NOT EXISTS analysis_edges (
+			id TEXT PRIMARY KEY,
+			from_node_id TEXT NOT NULL,
+			to_ref_kind TEXT NOT NULL,
+			to_ref_id TEXT NOT NULL,
+			edge_kind TEXT NOT NULL,
+			ordinal INTEGER NOT NULL DEFAULT 0,
+			FOREIGN KEY (from_node_id) REFERENCES analysis_nodes(id)
+		);
+
+		-- ───────────────────────────── indexes ─────────────────────────────
+
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+		CREATE INDEX IF NOT EXISTS idx_sessions_file ON sessions(file_path);
+
 		CREATE INDEX IF NOT EXISTS idx_proposals_session ON proposals(session_id);
 		CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
-		CREATE INDEX IF NOT EXISTS idx_proposals_dedup ON proposals(dedup_hash);
-		CREATE INDEX IF NOT EXISTS idx_sessions_file ON sessions(file_path);
+		CREATE INDEX IF NOT EXISTS idx_proposals_dedup ON proposals(dedup_key);
+
+		-- Group nodes into logical units (analyzer + source set) for the
+		-- version-alternative timeline, and look up by recipe identity.
+		CREATE INDEX IF NOT EXISTS idx_nodes_unit ON analysis_nodes(analyzer_id, source_set_hash);
+		CREATE INDEX IF NOT EXISTS idx_nodes_session ON analysis_nodes(session_id);
+		CREATE INDEX IF NOT EXISTS idx_nodes_analyzer ON analysis_nodes(analyzer_id);
+
+		CREATE INDEX IF NOT EXISTS idx_edges_from ON analysis_edges(from_node_id);
+		CREATE INDEX IF NOT EXISTS idx_edges_to ON analysis_edges(to_ref_id, edge_kind);
+		CREATE INDEX IF NOT EXISTS idx_edges_kind ON analysis_edges(edge_kind);
+
+		-- ──────────────────────────── full text ────────────────────────────
 
 		DROP TABLE IF EXISTS messages_fts;
 		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
