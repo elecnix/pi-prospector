@@ -109,21 +109,29 @@ roughly the order concepts build on one another.
   default configuration it uses, how to enumerate the work it could do, and how
   to perform one piece of that work. Analyzers are the only things that create
   nodes.
-- **Analyzer version** — a specific release of an analyzer's logic. Improving an
-  analyzer means giving it a new version, which changes its recipe (below) and
-  therefore produces new nodes rather than overwriting old ones.
-- **Config** — a content-addressed bundle of parameters for an analyzer (for
-  example, a friction threshold or which model tier to use). Changing parameters
-  yields a distinct config identity.
-- **Prompt** — a content-addressed piece of prompt text. Identical prompts share
-  one identity even across analyzers; changing a prompt's wording yields a new
-  identity.
+- **Analyzer version** — an analyzer's declared release, a `major.minor` pair
+  owned by its author (third-party, out-of-tree analyzers declare it when they
+  register). The version represents everything the author *ships*: the analysis
+  logic, the default prompt, and the default model tier. Improving an analyzer
+  means bumping the version — **major** for a change the author judges
+  significant, **minor** for a small one. Prompt or default changes are folded
+  into that one number; shipped defaults have no separate identity axis. A new
+  version produces new nodes rather than overwriting old ones.
+- **Config** — everything the *user* sets for an analyzer: thresholds and
+  parameters, a prompt override, the tier→model mapping, and any model pin. The
+  resolved model lives here. Config is content-addressed, so changing any of it
+  yields a distinct config identity — but config changes are **never graded**
+  major/minor; a different prompt or a different model "is just different."
+- **Prompt** — a content-addressed piece of prompt text, recorded for provenance
+  (which prompt produced a node). A prompt the analyzer *ships* is represented by
+  its version, not by a separate identity axis; only a prompt the *user* overrides
+  contributes to identity, as part of config.
 - **Source set** — the exact collection of inputs a single piece of analysis
   draws on, reduced to a stable fingerprint. Two analyses over the same inputs
   share a source-set fingerprint; adding or changing inputs changes it.
 - **Recipe** — the full description of *how a node came to be*: which analyzer,
-  which version, which config, which prompts, and which source set. The recipe
-  is condensed into a single fingerprint called the **input hash**.
+  which version, which config, and which source set. The recipe is condensed
+  into a single fingerprint called the **input hash**.
 - **Input hash** — the fingerprint of a recipe. It is the system's notion of
   identity for derived analysis: if a node with a given input hash already
   exists, the work it represents is already done.
@@ -146,40 +154,52 @@ roughly the order concepts build on one another.
   any notion of progress cursors or crash bookkeeping.
 - **Unit status** — the result of classifying a unit during a scan:
   - **missing** — no node exists for this unit's recipe; it has never been done.
-  - **stale** — a node exists for an *older version* of the analyzer over the
-    same subject, but not for the current version; the unit is a candidate for
-    re-analysis.
+  - **stale** — a node exists for this subject but under a different recipe than
+    the current one. Staleness carries its *reasons*: **major** or **minor** (the
+    analyzer's version moved — graded by the author) and/or **config** (the
+    user's setup changed — ungraded). A unit can be stale for several reasons at
+    once.
   - **current** — a node already exists for the current recipe; nothing to do.
 - **Run** — one execution of an analyzer over a session. A run records its own
   provenance (status, cost, tokens, how many nodes it produced, skipped, or
   revised) so that execution history is itself auditable.
-- **Run mode** — how a run treats stale units:
-  - **shallow** — do only the *missing* work; never re-analyse something that
-    has any acceptable version already. This is the default, frugal mode.
-  - **deep** — additionally re-analyse *stale* units with the current analyzer
-    version, recording each result as a new version linked by a *revises* edge.
+- **Revise reasons** — what a run is allowed to recompute, beyond always filling
+  *missing* work. A run with no reasons is frugal: it fills missing analysis and
+  touches nothing that already has a node. The reasons widen that reach to
+  recompute stale nodes too: **major** (the analyzer had a major version bump),
+  **minor** (major *and* minor bumps), and **config** (the user's setup changed).
+  Reasons are a *set*, not a ladder — `config` is orthogonal to the author's
+  major/minor grade, so you choose any combination (major-plus-config, or
+  everything). Recomputing records each result as a new version linked by a
+  *revises* edge.
+- **Selection versus recompute** — the reasons decide *which* out-of-date units a
+  run touches; they never decide *what to recompute toward*. A selected unit is
+  always recomputed to the **current recipe in full** — latest version, latest
+  config, latest resolved model. The grade is a trigger, not a target: there is
+  no recomputing to an intermediate state, so a unit revised for one reason
+  absorbs every pending change for that same unit at once and you never get a
+  half-updated node.
 - **Lineage** — the chain of versioned alternatives for one subject, connected by
-  *revises* edges. Because analysis is append-only, a deep re-analysis does not
-  replace the old conclusion; it adds a newer one beside it, and both remain
-  navigable “at the same level.” This is what lets you compare how analysis
-  changed as the logic improved.
+  *revises* edges. Because analysis is append-only, recomputing does not replace
+  the old conclusion; it adds a newer one beside it, and both remain navigable
+  “at the same level.” This is what lets you compare how analysis changed as the
+  logic improved.
 
 ### Language-model access
 
 - **Model tier** — an abstract quality/cost band (**cheap**, **mid**,
-  **expensive**) rather than a concrete model name. Analyzers ask for a tier; the
-  mapping from tier to an actual model lives in configuration. This keeps
-  analyzers stable when models come and go. The tier is only *shorthand*: before
-  a node's identity is computed it resolves to a concrete model, and that
-  resolved model is part of the identity (see “Identity is the recipe”). So
-  changing what a tier maps to invalidates the affected analysis exactly the way
-  a config change would.
+  **expensive**) rather than a concrete model name. An analyzer's *default* tier
+  is part of what its version ships; the **tier→model mapping** is the user's
+  config. Before a node's identity is computed the tier resolves to a concrete
+  model, and that resolved model is part of **config** — so changing which model
+  a tier maps to is an ungraded config change, picked up by a run that includes
+  the `config` reason.
 - **Model pin (per run)** — a single run may pin *every* tier to one specific
-  model, overriding the configured mapping for that invocation only. Because the
-  resolved model is part of identity, a pinned run produces its own nodes;
-  re-running under the normal mapping marks them stale rather than silently
-  reusing them. The pinned model is what is both used and recorded — the two can
-  never disagree, because identity and execution read the same resolved mapping.
+  model, overriding the configured mapping for that invocation. That is a config
+  change for the run: the pinned model is part of identity, so a pinned run
+  produces its own nodes, and the model used and the model recorded can never
+  disagree. Existing nodes become stale for the `config` reason rather than
+  being silently reused.
 - **LLM caller** — the single seam through which any analyzer reaches a language
   model. In normal operation it routes through the host agent platform's own
   model provider system, so credentials and model availability are managed in one
@@ -236,17 +256,18 @@ provenance unreliable.
 ### Identity is the recipe (idempotency by input hash)
 
 A node's identity is the fingerprint of everything that determines its content:
-the analyzer, its version, its config, its prompts, and its inputs. This is what
-makes re-running safe and cheap. It also makes invalidation *automatic and
-honest*: change the logic, the parameters, the prompt wording, or the inputs, and
-the fingerprint changes, so new analysis is naturally required. Leave them all
-the same and nothing is recomputed. The model counts too: a tier
-(cheap/mid/expensive) is only shorthand, and identity uses the *concrete model*
-it resolves to. So changing which model a tier maps to makes the affected nodes
-*stale* — a deep run re-analyses them into a new version, while an ordinary
-shallow run leaves them untouched, so a model swap never forces surprise
-recomputation. Deterministic analyzers use no model, so their identity never
-depends on model settings at all.
+the analyzer, its **version**, its **config**, and its **inputs**. This is what
+makes re-running safe and cheap, and it separates two kinds of change. A change
+the analyzer's *author* ships — new logic, a reworked default prompt, a different
+default tier — is a **version** bump, and the author grades it major or minor. A
+change the *user* makes — a threshold, a prompt override, the tier→model mapping,
+a model pin — is **config**, and it is never graded; a different prompt or model
+"is just different." The resolved model is part of config, so changing which
+model a tier maps to makes the affected nodes stale for the `config` reason —
+picked up only by a run that asks for it, so a model swap never forces surprise
+recomputation. Deterministic analyzers use no model, so nothing about model
+settings touches their identity. Leave version, config, and inputs all the same
+and nothing is recomputed.
 
 ### Incrementality by scanning, not by cursors or crash recovery
 
@@ -261,15 +282,19 @@ truth about what has been done, so an interrupted run simply leaves some units
 missing, and the next scan picks them up. This is a deliberate departure from
 earlier designs that tracked per-session cursors and recovery status.
 
-### Versioned lineage with shallow and deep modes
+### Versioned lineage and the reach of a run
 
 Because analysis logic will keep improving, the system treats a better analyzer
-as a *new version* rather than an edit. Shallow runs are frugal: they only fill
-in genuinely missing work and never touch subjects that already have an
-acceptable result. Deep runs are for when you have improved an analyzer and want
-the new judgement: they re-analyse stale subjects and record each new result as a
-fresh version linked back to its predecessor by a *revises* edge. The old and new
-conclusions coexist as navigable alternatives. This gives you both economy (don't
+as a *new version* rather than an edit. By default a run is frugal: it fills only
+genuinely missing work and never touches subjects that already have a node. When
+you have improved an analyzer, or changed your own config, you widen the run's
+reach with **revise reasons** — `major` and `minor` for the author's version
+bumps, `config` for your own setup changes, in any combination. A run then
+re-analyses the matching stale subjects and records each new result as a fresh
+version linked back to its predecessor by a *revises* edge. Crucially, the
+reasons only *select* what to touch; whatever is touched is recomputed to the
+current recipe in full, so you never produce a half-updated node. The old and new
+conclusions coexist as navigable alternatives, giving you both economy (don't
 redo good work) and the ability to audit how conclusions evolved — without ever
 losing the earlier ones.
 
@@ -323,13 +348,14 @@ wrong.
 - A node, once written, is never modified or deleted.
 - Every relationship is an edge with a valid kind and a valid target type; no
   relationships are stored anywhere else.
-- A node's identity equals its recipe fingerprint; two nodes with the same recipe
-  never both exist.
-- A node's identity includes the concrete model it used: a tier is shorthand
-  that resolves to a model, and that resolved model is part of the recipe. An
-  analyzer that uses no model has no model in its identity.
-- Re-running analysis without changing logic, config, prompts, or inputs produces
-  no new nodes.
+- A node's identity equals its recipe fingerprint — analyzer, version, config,
+  and inputs; two nodes with the same recipe never both exist.
+- The analyzer's shipped logic, default prompt, and default tier are represented
+  by its version; everything the user sets, including the resolved model, is
+  config. The version is graded major/minor by the author; config is never
+  graded. An analyzer that uses no model has no model in its identity.
+- Re-running analysis without changing the version, config, or inputs produces no
+  new nodes.
 - Improving an analyzer means a new version and new nodes; existing nodes for the
   old version remain and stay reachable through lineage.
 - An analyzer reads only the conversation, its own nodes, and the nodes of its
