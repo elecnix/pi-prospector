@@ -74,4 +74,44 @@ describe("buildTurnPairs", () => {
 	it("returns empty for no messages", () => {
 		assert.deepEqual(buildTurnPairs([]), []);
 	});
+
+	it("starts a new turn at a bashExecution entry", () => {
+		const pairs = buildTurnPairs([
+			msg({ id: "u1", role: "user", content_text: "do it" }),
+			msg({ id: "a1", role: "assistant", content_text: "ok" }),
+			msg({ id: "b1", role: "bashExecution", content_text: "npm test" }),
+			msg({ id: "a2", role: "assistant", content_text: "green" }),
+		]);
+		assert.equal(pairs.length, 2);
+		assert.deepEqual(pairs[0]!.messageIds, ["u1", "a1"]);
+		assert.equal(pairs[1]!.userMessageId, "b1");
+		assert.deepEqual(pairs[1]!.messageIds, ["b1", "a2"]);
+	});
+
+	it("starts new turns at branch_summary and custom_message entries", () => {
+		const pairs = buildTurnPairs([
+			msg({ id: "br", role: "branch_summary", content_text: "branched" }),
+			msg({ id: "a0", role: "assistant", content_text: "resuming" }),
+			msg({ id: "u1", role: "user", content_text: "continue" }),
+			msg({ id: "a1", role: "assistant", content_text: "sure" }),
+			msg({ id: "cm", role: "custom_message", content_text: "injected note" }),
+			msg({ id: "a2", role: "assistant", content_text: "ack" }),
+		]);
+		assert.equal(pairs.length, 3);
+		assert.deepEqual(pairs.map((p) => p.userMessageId), ["br", "u1", "cm"]);
+		assert.deepEqual(pairs[0]!.messageIds, ["br", "a0"]);
+		assert.deepEqual(pairs[2]!.messageIds, ["cm", "a2"]);
+	});
+
+	it("does not start a turn at a compaction summary", () => {
+		const pairs = buildTurnPairs([
+			msg({ id: "u1", role: "user", content_text: "q" }),
+			msg({ id: "a1", role: "assistant", content_text: "a" }),
+			msg({ id: "c1", role: "compactionSummary", content_text: "summary" }),
+			msg({ id: "a2", role: "assistant", content_text: "more" }),
+		]);
+		// Single turn; the compaction summary is neither a turn start nor captured.
+		assert.equal(pairs.length, 1);
+		assert.deepEqual(pairs[0]!.messageIds, ["u1", "a1", "a2"]);
+	});
 });

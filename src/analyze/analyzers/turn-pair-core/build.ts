@@ -1,13 +1,27 @@
 /**
- * Turn-pair construction from a session's message stream.
+ * Turn construction from a session's message stream.
  *
- * A *turn pair* is a single user message together with everything the agent did
- * in response, up to (but excluding) the next user message: assistant text,
- * thinking, tool calls, and tool results. Session-level entries (compaction or
- * branch summaries) are not part of any pair.
+ * A *turn* begins at a turn-starting entry and spans everything the agent does
+ * in response — assistant text, thinking, tool calls, and tool results — up to
+ * (but excluding) the next turn-starting entry. Following the host platform's
+ * own turn boundaries, a turn starts at a user message, a bash execution
+ * (`bashExecution`), or a branch/custom summary (`branch_summary` /
+ * `custom_message`). Context-management entries (compaction summaries) are not
+ * turn starts and are not part of any turn.
+ *
+ * The fields named `userMessageId` / `userText` hold the turn-starting message
+ * and its text; for ordinary turns that is the user's message, and for the
+ * non-user turn starts above it is that entry.
  */
 
 import type { MessageRow } from "../../types.js";
+
+/**
+ * Roles/entry-kinds that begin a new turn. Mirrors the host platform's turn
+ * boundary definition (`user` and `bashExecution` messages, plus `branch_summary`
+ * and `custom_message` entries). Compaction summaries are deliberately excluded.
+ */
+const TURN_START_ROLES = new Set<string>(["user", "bashExecution", "branch_summary", "custom_message"]);
 
 export interface PairToolCall {
 	name: string;
@@ -77,7 +91,7 @@ export function buildTurnPairs(messages: MessageRow[]): TurnPair[] {
 	};
 
 	for (const m of messages) {
-		if (m.role === "user") {
+		if (TURN_START_ROLES.has(m.role)) {
 			flush();
 			current = {
 				index: pairs.length,
@@ -94,7 +108,7 @@ export function buildTurnPairs(messages: MessageRow[]): TurnPair[] {
 			continue;
 		}
 
-		if (!current) continue; // pre-first-user noise (e.g. summaries)
+		if (!current) continue; // pre-first-turn noise (e.g. a leading summary)
 
 		if (m.role === "assistant") {
 			current.messageIds.push(m.id);
