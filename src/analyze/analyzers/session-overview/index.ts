@@ -20,6 +20,7 @@ import type {
 	SourceRef,
 } from "../../types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
+import { resolveModelSpec } from "../../model-tiers.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { extractJsonObject } from "../turn-pair-llm/prompt.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
@@ -65,6 +66,11 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		configHash: computeConfigHash(DEFAULT_SESSION_OVERVIEW_CONFIG),
 		configJson: DEFAULT_SESSION_OVERVIEW_CONFIG as unknown as Record<string, unknown>,
 		label: "default",
+	},
+
+	modelsForIdentity(config, modelTiers): string[] {
+		const cfg = (config as unknown as SessionOverviewConfig) ?? DEFAULT_SESSION_OVERVIEW_CONFIG;
+		return [resolveModelSpec(cfg.mapTier, modelTiers), resolveModelSpec(cfg.reduceTier, modelTiers)];
 	},
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {

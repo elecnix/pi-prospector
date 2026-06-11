@@ -5,13 +5,14 @@
  *   - `source_set_hash` identifies the exact set of inputs a node was built
  *     from. Two analyses over the same sources share a source_set_hash.
  *   - `input_hash` additionally folds in the analyzer identity, version,
- *     config, and prompt bundle. A node is uniquely identified by its
- *     input_hash; recomputing the same recipe over the same sources is a no-op.
+ *     config, prompt bundle, and the concrete models it will use (tiers
+ *     resolved). A node is uniquely identified by its input_hash; recomputing
+ *     the same recipe over the same sources is a no-op.
  *
  * The version dimension (same source_set_hash, different analyzer_version /
- * config / prompt bundle) yields a *different* input_hash but the *same*
- * source_set_hash — that is how alternative versions of the same logical unit
- * are detected and linked via `revises` edges.
+ * config / prompt bundle / resolved model) yields a *different* input_hash but
+ * the *same* source_set_hash — that is how alternative versions of the same
+ * logical unit are detected and linked via `revises` edges.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -26,6 +27,8 @@ export interface InputHashParts {
 	analyzerVersionId: string;
 	configId: string;
 	promptBundleHash: string;
+	/** Hash of the concrete models the analyzer will use (tiers already resolved). */
+	modelBundleHash: string;
 	sourceSetHash: string;
 }
 
@@ -65,6 +68,21 @@ export function computePromptBundleHash(promptHashes: readonly string[]): string
 }
 
 /**
+ * Deterministic hash over the concrete models an analyzer will use, with tier
+ * shorthands (cheap/mid/expensive) already resolved to `provider/model`.
+ * Order-independent. An analyzer that uses no model (a deterministic one) has a
+ * stable empty-bundle hash, so its identity never depends on model settings.
+ *
+ * Because this folds into `input_hash`, changing which model a tier resolves to
+ * makes existing nodes `stale`: a deep run re-analyses them into a new version,
+ * while a shallow run leaves them untouched.
+ */
+export function computeModelBundleHash(models: readonly string[]): string {
+	const canonical = [...models].sort().join("|");
+	return shortHash(`models(${canonical})`);
+}
+
+/**
  * Canonical JSON hash of an analyzer config object. Object keys are sorted
  * recursively so semantically equal configs hash identically.
  */
@@ -83,6 +101,7 @@ export function computeInputHash(parts: InputHashParts): string {
 		parts.analyzerVersionId,
 		parts.configId,
 		parts.promptBundleHash,
+		parts.modelBundleHash,
 		parts.sourceSetHash,
 	].join("|");
 	return shortHash(`input(${canonical})`);

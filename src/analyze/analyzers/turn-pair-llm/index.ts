@@ -18,6 +18,7 @@ import type {
 	SourceRef,
 } from "../../types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
+import { resolveModelSpec } from "../../model-tiers.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { buildTurnPairs } from "../turn-pair-core/build.js";
 import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
@@ -66,6 +67,11 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		configHash: computeConfigHash(DEFAULT_TURN_PAIR_LLM_CONFIG),
 		configJson: DEFAULT_TURN_PAIR_LLM_CONFIG as unknown as Record<string, unknown>,
 		label: "default",
+	},
+
+	modelsForIdentity(config, modelTiers): string[] {
+		const cfg = (config as unknown as TurnPairLLMConfig) ?? DEFAULT_TURN_PAIR_LLM_CONFIG;
+		return [resolveModelSpec(cfg.tier, modelTiers)];
 	},
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {

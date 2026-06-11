@@ -47,6 +47,7 @@ import type {
 } from "./types.js";
 import {
 	computeInputHash,
+	computeModelBundleHash,
 	computePromptBundleHash,
 	uuidv7,
 } from "./input-hash.js";
@@ -80,6 +81,7 @@ interface ResolvedAnalyzer {
 	analyzer: Analyzer;
 	config: AnalyzerConfig;
 	promptBundleHash: string;
+	modelBundleHash: string;
 }
 
 export class AnalyzerFramework {
@@ -236,12 +238,13 @@ export class AnalyzerFramework {
 	// ───────────────────────── classification ─────────────────────────
 
 	private classify(resolved: ResolvedAnalyzer, unit: AnalysisUnit): ClassifiedUnit {
-		const { analyzer, config, promptBundleHash } = resolved;
+		const { analyzer, config, promptBundleHash, modelBundleHash } = resolved;
 		const inputHash = computeInputHash({
 			analyzerId: analyzer.def.id,
 			analyzerVersionId: analyzer.version.versionId,
 			configId: config.id,
 			promptBundleHash,
+			modelBundleHash,
 			sourceSetHash: unit.sourceSetHash,
 		});
 
@@ -421,7 +424,10 @@ export class AnalyzerFramework {
 			label: analyzer.defaultConfig.label,
 		});
 		const promptBundleHash = computePromptBundleHash(Object.values(analyzer.prompts).map((p) => p.hash));
-		return { analyzer, config, promptBundleHash };
+		// Resolve tier shorthands to concrete models so the model is part of identity.
+		const models = analyzer.modelsForIdentity?.(config.configJson, this.deps.modelTiers) ?? [];
+		const modelBundleHash = computeModelBundleHash(models);
+		return { analyzer, config, promptBundleHash, modelBundleHash };
 	}
 
 	/** Dependency-respecting order of registered analyzers (Kahn-style DFS). */

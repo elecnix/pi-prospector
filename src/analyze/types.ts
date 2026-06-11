@@ -277,6 +277,15 @@ export interface Analyzer {
 	defaultConfig: AnalyzerConfig;
 	plan: (ctx: AnalyzerPlanContext) => AnalysisUnit[] | Promise<AnalysisUnit[]>;
 	analyze: (unit: AnalysisUnit, ctx: AnalyzerRunContext) => AnalysisResult | Promise<AnalysisResult>;
+	/**
+	 * The concrete models this analyzer will use under the given config, with
+	 * tier shorthands (cheap/mid/expensive) already resolved to `provider/model`.
+	 * These become part of node identity, so changing which model a tier resolves
+	 * to marks existing nodes `stale` (a deep run produces a new version; a
+	 * shallow run leaves them alone). Deterministic analyzers omit this: with no
+	 * model, their identity never depends on model settings.
+	 */
+	modelsForIdentity?: (config: Record<string, unknown>, modelTiers: ModelTierConfig) => string[];
 }
 
 // ─────────────────────────── framework results ───────────────────────────

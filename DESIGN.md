@@ -169,7 +169,11 @@ roughly the order concepts build on one another.
 - **Model tier** — an abstract quality/cost band (**cheap**, **mid**,
   **expensive**) rather than a concrete model name. Analyzers ask for a tier; the
   mapping from tier to an actual model lives in configuration. This keeps
-  analyzers stable when models come and go.
+  analyzers stable when models come and go. The tier is only *shorthand*: before
+  a node's identity is computed it resolves to a concrete model, and that
+  resolved model is part of the identity (see “Identity is the recipe”). So
+  changing what a tier maps to invalidates the affected analysis exactly the way
+  a config change would.
 - **LLM caller** — the single seam through which any analyzer reaches a language
   model. In normal operation it routes through the host agent platform's own
   model provider system, so credentials and model availability are managed in one
@@ -230,9 +234,13 @@ the analyzer, its version, its config, its prompts, and its inputs. This is what
 makes re-running safe and cheap. It also makes invalidation *automatic and
 honest*: change the logic, the parameters, the prompt wording, or the inputs, and
 the fingerprint changes, so new analysis is naturally required. Leave them all
-the same and nothing is recomputed. Notably, the *model used* is recorded as
-metadata but is **not** part of identity — swapping models does not silently
-invalidate existing analysis.
+the same and nothing is recomputed. The model counts too: a tier
+(cheap/mid/expensive) is only shorthand, and identity uses the *concrete model*
+it resolves to. So changing which model a tier maps to makes the affected nodes
+*stale* — a deep run re-analyses them into a new version, while an ordinary
+shallow run leaves them untouched, so a model swap never forces surprise
+recomputation. Deterministic analyzers use no model, so their identity never
+depends on model settings at all.
 
 ### Incrementality by scanning, not by cursors or crash recovery
 
@@ -311,7 +319,9 @@ wrong.
   relationships are stored anywhere else.
 - A node's identity equals its recipe fingerprint; two nodes with the same recipe
   never both exist.
-- The model used to produce a node is metadata, never part of its identity.
+- A node's identity includes the concrete model it used: a tier is shorthand
+  that resolves to a model, and that resolved model is part of the recipe. An
+  analyzer that uses no model has no model in its identity.
 - Re-running analysis without changing logic, config, prompts, or inputs produces
   no new nodes.
 - Improving an analyzer means a new version and new nodes; existing nodes for the
