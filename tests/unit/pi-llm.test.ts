@@ -62,6 +62,15 @@ describe("toLLMResponse", () => {
 		const msg = assistantMessage({ stopReason: "error", errorMessage: "boom" });
 		assert.throws(() => toLLMResponse(msg, "m", 0), /boom/);
 	});
+
+	it("throws an actionable error when the response is truncated at the output limit", () => {
+		const msg = assistantMessage({
+			content: [{ type: "text", text: '{"sentiment":"frus' }],
+			stopReason: "length",
+			usage: { input: 100, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 600, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		});
+		assert.throws(() => toLLMResponse(msg, "google/gemini-2.5-flash", 0), /truncated at the output limit \(500 output tokens\)/);
+	});
 });
 
 describe("makePiLLMCaller", () => {

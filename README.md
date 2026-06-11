@@ -166,6 +166,26 @@ Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one p
 
 The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CONFIG`.
 
+## Running headlessly
+
+The commands are normally invoked as slash commands inside an interactive Pi session, but Pi can also dispatch a single command non-interactively via its own CLI flags (`-e` to load the extension from source, `-p` to run one command and exit). This is convenient while developing the analyzers — the extension is reloaded fresh on every run, so code changes take effect without restarting an interactive session:
+
+```bash
+pi -e ./src/index.ts -ne --no-session -p "/prospect-sync"
+pi -e ./src/index.ts -ne --no-session -p "/prospect-analyze --limit 3 --model openrouter/anthropic/claude-3.5-haiku"
+pi -e ./src/index.ts -ne --no-session -p "/prospect-proposals"
+```
+
+`-ne` skips discovery of other extensions; `--no-session` keeps the run ephemeral. To iterate on a small **private** subset rather than your whole history, copy a few session folders somewhere outside any repo and point the env overrides at them — the sessions directory is only ever read:
+
+```bash
+export PROSPECTOR_SESSIONS_DIR="$HOME/.prospector-local/sessions"
+export PROSPECTOR_DB_PATH="$HOME/.prospector-local/prospector.db"
+pi -e ./src/index.ts -ne --no-session -p "/prospect-stats"
+```
+
+For structured-output calls, prefer a non-reasoning model/tier: reasoning models spend the token budget on thinking and can truncate the JSON answer (the LLM caller now fails fast with a clear message when a response is cut off at the output limit).
+
 ## Design
 
 [`DESIGN.md`](./DESIGN.md) is the canonical description of the system: the ubiquitous language, the append-only graph, recipe-based identity and idempotency, versioned lineage, the reach of a run, and the deterministic-first layering. Read it before changing analysis behaviour.

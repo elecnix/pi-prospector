@@ -72,6 +72,9 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			headers: auth.headers,
 			temperature: request.temperature,
 			maxTokens: request.maxTokens,
+			// Let pi-ai ride out transient rate limits (e.g. provider 429s) instead
+			// of failing a whole analysis run on the first throttled call.
+			maxRetries: 4,
 			signal: ctx.signal,
 		});
 
@@ -90,6 +93,19 @@ export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, du
 
 	if (message.stopReason === "error") {
 		throw new Error(`LLM error from ${modelSpec}: ${message.errorMessage ?? "unknown error"}`);
+	}
+
+	// Every call this caller makes expects a complete structured (JSON) answer, so
+	// a response cut off at the output limit is never usable. Fail fast with an
+	// actionable message instead of letting the truncated body surface later as a
+	// cryptic "Unterminated JSON object" parse error. Reasoning models are the
+	// usual cause: their thinking tokens consume the maxTokens budget.
+	if (message.stopReason === "length") {
+		const outputTokens = message.usage?.output ?? 0;
+		throw new Error(
+			`LLM response from ${modelSpec} was truncated at the output limit (${outputTokens} output tokens) ` +
+				`before the answer was complete. Raise maxTokens, or use a non-reasoning model/tier for structured output.`,
+		);
 	}
 
 	return {

@@ -132,6 +132,8 @@ export interface PiCompleteOptions {
 	headers?: Record<string, string>;
 	temperature?: number;
 	maxTokens?: number;
+	/** Max client-side retries for transient failures (e.g. provider 429s). */
+	maxRetries?: number;
 	signal?: AbortSignal;
 }
 
