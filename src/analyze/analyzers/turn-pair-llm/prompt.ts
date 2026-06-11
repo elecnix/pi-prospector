@@ -42,7 +42,8 @@ export function buildClassifyPrompt(input: ClassifyInput): string {
 	].join("\n");
 }
 
-export interface TurnPairLLMProperties {
+/** The fields the model returns for a single turn. */
+export interface ClassifyResult {
 	sentiment: string;
 	friction_type: string;
 	is_genuine_correction: boolean;
@@ -50,12 +51,22 @@ export interface TurnPairLLMProperties {
 	rationale: string;
 }
 
+/**
+ * The stored classification node content: the model's result plus the id of the
+ * user message whose turn it classifies. The anchor id comes from the planned
+ * unit, not the model, so the session-overview digest can merge LLM enrichment
+ * back onto the matching deterministic pair by `user_message_id`.
+ */
+export interface TurnPairLLMProperties extends ClassifyResult {
+	user_message_id: string;
+}
+
 const VALID_SENTIMENT = new Set(["positive", "neutral", "frustrated"]);
 const VALID_FRICTION = new Set(["none", "wrong_approach", "missed_instruction", "tool_misuse", "repetition", "other"]);
 const VALID_SEVERITY = new Set(["low", "medium", "high"]);
 
 /** Parse the model's JSON, tolerating markdown fences and extra prose. */
-export function parseClassifyResponse(text: string): TurnPairLLMProperties {
+export function parseClassifyResponse(text: string): ClassifyResult {
 	const obj = extractJsonObject(text);
 	const sentiment = pickString(obj["sentiment"], VALID_SENTIMENT, "neutral");
 	const frictionType = pickString(obj["friction_type"], VALID_FRICTION, "none");

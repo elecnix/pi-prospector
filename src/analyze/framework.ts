@@ -129,7 +129,7 @@ export class AnalyzerFramework {
 		const out: ClassifiedUnit[] = [];
 		for (const analyzerId of order) {
 			const resolved = this.resolve(analyzerId);
-			const planCtx = this.buildPlanContext(resolved.analyzer, sessionId);
+			const planCtx = this.buildPlanContext(resolved.analyzer, resolved.config, sessionId);
 			const units = await resolved.analyzer.plan(planCtx);
 			for (const unit of units) {
 				out.push(this.classify(resolved, unit));
@@ -182,7 +182,7 @@ export class AnalyzerFramework {
 		const resolved = this.resolve(analyzerId);
 		const { analyzer, config, promptBundleHash } = resolved;
 
-		const planCtx = this.buildPlanContext(analyzer, sessionId);
+		const planCtx = this.buildPlanContext(analyzer, config, sessionId);
 		const units = await analyzer.plan(planCtx);
 
 		const classified = units.map((unit) => this.classify(resolved, unit));
@@ -405,7 +405,7 @@ export class AnalyzerFramework {
 
 	// ───────────────────────── contexts ─────────────────────────
 
-	private buildPlanContext(analyzer: Analyzer, sessionId: string): AnalyzerPlanContext {
+	private buildPlanContext(analyzer: Analyzer, config: AnalyzerConfig, sessionId: string): AnalyzerPlanContext {
 		const messages = this.loadMessages(sessionId);
 		const allNodes = getSessionNodes(this.deps.db, sessionId);
 		const ownNodes = allNodes.filter((n) => n.analyzer_id === analyzer.def.id);
@@ -413,7 +413,7 @@ export class AnalyzerFramework {
 		for (const depId of analyzer.def.dependencies) {
 			dependencyNodes[depId] = allNodes.filter((n) => n.analyzer_id === depId);
 		}
-		return { sessionId, messages, allNodes, ownNodes, dependencyNodes, db: this.deps.db };
+		return { sessionId, messages, allNodes, ownNodes, dependencyNodes, config: config.configJson, db: this.deps.db };
 	}
 
 	private buildRunContext(analyzer: Analyzer, config: AnalyzerConfig, sessionId: string): AnalyzerRunContext {

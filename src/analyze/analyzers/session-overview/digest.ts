@@ -49,16 +49,16 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		.filter((p): p is TurnPairCoreProperties => p !== null)
 		.sort((a, b) => a.pair_index - b.pair_index);
 
-	// Map user_message_id → llm classification, when present.
+	// Map user_message_id → llm classification. turn-pair-llm records the anchor
+	// user-message id in its content, so we merge enrichment by id (not by order).
 	const llmByUser = new Map<string, TurnPairLLMProperties>();
 	for (const node of input.llmNodes) {
 		const props = safeParse<TurnPairLLMProperties>(node.content_json);
-		const anchor = anchorUserId(node);
-		if (props && anchor) llmByUser.set(anchor, props);
+		if (props && props.user_message_id) llmByUser.set(props.user_message_id, props);
 	}
 
 	const compactions = input.messages
-		.filter((m) => m.role === "compactionSummary" || m.role === "branchSummary")
+		.filter((m) => m.role === "compactionSummary" || m.role === "branch_summary")
 		.map((m) => (m.content_text ?? "").trim())
 		.filter((t) => t.length > 0);
 
@@ -102,14 +102,6 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		correctionCount,
 		toolFailureCount,
 	};
-}
-
-/** Anchor user-message id for an llm node, from its content if available. */
-function anchorUserId(_node: AnalysisNodeRow): string | null {
-	// turn-pair-llm content does not store the user id; anchoring is via edges.
-	// For digest purposes we merge by order instead, so return null here and let
-	// callers fall back. Kept as a hook for future edge-aware merging.
-	return null;
 }
 
 /**

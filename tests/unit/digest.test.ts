@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildDigest, splitDigest } from "../../src/analyze/analyzers/session-overview/digest.js";
 import type { AnalysisNodeRow, MessageRow } from "../../src/analyze/types.js";
 import type { TurnPairCoreProperties } from "../../src/analyze/analyzers/turn-pair-core/index.js";
+import type { TurnPairLLMProperties } from "../../src/analyze/analyzers/turn-pair-llm/prompt.js";
 
 function coreNode(id: string, props: Partial<TurnPairCoreProperties>): AnalysisNodeRow {
 	const full: TurnPairCoreProperties = {
@@ -41,6 +42,15 @@ function coreNode(id: string, props: Partial<TurnPairCoreProperties>): AnalysisN
 }
 
 const NO_MESSAGES: MessageRow[] = [];
+
+function llmNode(id: string, props: TurnPairLLMProperties): AnalysisNodeRow {
+	return {
+		...coreNode(id, {}),
+		analyzer_id: "turn-pair-llm",
+		node_kind: "classification",
+		content_json: JSON.stringify(props),
+	};
+}
 
 describe("buildDigest", () => {
 	it("aggregates counts and renders per-pair lines", () => {
@@ -88,6 +98,51 @@ describe("buildDigest", () => {
 		const digest = buildDigest({ sessionId: "s1", messages, coreNodes: [coreNode("n1", {})], llmNodes: [] });
 		assert.equal(digest.compactionCount, 1);
 		assert.ok(digest.text.includes("refactored auth"));
+	});
+
+	it("merges turn-pair-llm enrichment onto the matching pair by user_message_id", () => {
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: [
+				coreNode("n1", { pair_index: 0, user_message_id: "u-hot", friction_score: 0.8, high_signal: true }),
+				coreNode("n2", { pair_index: 1, user_message_id: "u-cold", friction_score: 0.1 }),
+			],
+			llmNodes: [
+				llmNode("l1", {
+					user_message_id: "u-hot",
+					sentiment: "frustrated",
+					friction_type: "wrong_approach",
+					is_genuine_correction: true,
+					severity: "high",
+					rationale: "x",
+				}),
+			],
+		});
+		const hotLine = digest.perPairLines.find((l) => l.startsWith("#0"))!;
+		const coldLine = digest.perPairLines.find((l) => l.startsWith("#1"))!;
+		assert.ok(hotLine.includes("sentiment=frustrated"), "enriched pair shows LLM sentiment");
+		assert.ok(hotLine.includes("type=wrong_approach") && hotLine.includes("sev=high"));
+		assert.ok(!coldLine.includes("sentiment="), "un-enriched pair has no LLM fields");
+	});
+
+	it("includes branch summaries verbatim (Pi's snake_case branch_summary role)", () => {
+		const messages: MessageRow[] = [
+			{
+				id: "b1",
+				session_id: "s1",
+				parent_id: null,
+				timestamp: null,
+				role: "branch_summary",
+				content_text: "BRANCH CONTEXT: split off to try OAuth",
+				content_thinking: null,
+				tool_calls: null,
+				tool_results: null,
+			},
+		];
+		const digest = buildDigest({ sessionId: "s1", messages, coreNodes: [coreNode("n1", {})], llmNodes: [] });
+		assert.equal(digest.compactionCount, 1);
+		assert.ok(digest.text.includes("split off to try OAuth"));
 	});
 
 	it("tolerates malformed node content", () => {

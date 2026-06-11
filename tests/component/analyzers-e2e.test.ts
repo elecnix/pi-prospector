@@ -86,6 +86,46 @@ describe("analyzers end-to-end", () => {
 		}
 	});
 
+	it("enforces maxPairsPerSession as a cost guard, enriching highest-friction turns first", async () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s3");
+			const msgs = [];
+			for (let i = 0; i < 6; i++) {
+				msgs.push({ role: "user", text: `no, that's wrong, do approach number ${i} instead please` });
+				msgs.push({ role: "assistant", text: `ok approach ${i}`, toolCalls: [{ name: "read" }] });
+				msgs.push({ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] });
+			}
+			insertMessages(db, "s3", msgs);
+
+			const mock = createMockLLM({ responder: respond, tokensPerCall: 10, costPerCall: 0.0001 });
+			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
+			fw.register(turnPairCoreAnalyzer);
+			// turn-pair-llm variant whose cost guard allows only two enrichments.
+			const cappedLLM = {
+				...turnPairLLMAnalyzer,
+				defaultConfig: {
+					...turnPairLLMAnalyzer.defaultConfig,
+					configJson: { ...turnPairLLMAnalyzer.defaultConfig.configJson, maxPairsPerSession: 2 },
+				},
+			};
+			fw.register(cappedLLM);
+
+			await fw.run("s3", {});
+
+			const coreRows = db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='turn-pair-core'").all() as Array<{ content_json: string }>;
+			const highSignal = coreRows.filter((r) => (JSON.parse(r.content_json) as { high_signal: boolean }).high_signal).length;
+			assert.ok(highSignal > 2, `expected more than the cap of high-signal pairs, got ${highSignal}`);
+
+			const classifications = (db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id='turn-pair-llm'").get() as { c: number }).c;
+			assert.equal(classifications, 2, "llm enrichment is capped at maxPairsPerSession");
+			const classifyCalls = mock.calls.filter((c) => (c.system ?? "").includes("classify a single turn"));
+			assert.equal(classifyCalls.length, 2, "the model is called only for the capped set");
+		} finally {
+			close();
+		}
+	});
+
 	it("exercises the map-reduce path when the digest is large", async () => {
 		const { db, close } = tempDb();
 		try {

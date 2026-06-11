@@ -79,12 +79,12 @@ describe("parseLine", () => {
 		}
 	});
 
-	it("parses a branchSummary entry", () => {
-		const line = JSON.stringify({ type: "branchSummary", id: "b1", parentId: "c1", timestamp: "2026-01-15T10:41:00Z", summary: "Branch context..." });
+	it("parses a branch_summary entry (Pi's snake_case entry type)", () => {
+		const line = JSON.stringify({ type: "branch_summary", id: "b1", parentId: "c1", timestamp: "2026-01-15T10:41:00Z", summary: "Branch context..." });
 		const result = parseLine(line);
 		assert.ok(result);
 		if (result.kind === "message") {
-			assert.equal(result.entry.role, "branchSummary");
+			assert.equal(result.entry.role, "branch_summary");
 		}
 	});
 

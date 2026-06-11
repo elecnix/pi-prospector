@@ -79,8 +79,10 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		const coreNodes = ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? [];
 		const pairs = buildTurnPairs(ctx.messages);
 		const pairByUserId = new Map(pairs.map((p) => [p.userMessageId, p]));
+		const config = (ctx.config as unknown as TurnPairLLMConfig) ?? DEFAULT_TURN_PAIR_LLM_CONFIG;
 
-		const units: AnalysisUnit[] = [];
+		// Collect every high-signal pair that still maps to a turn in the transcript.
+		const candidates: { node: typeof coreNodes[number]; props: TurnPairCoreProperties }[] = [];
 		for (const node of coreNodes) {
 			let props: TurnPairCoreProperties;
 			try {
@@ -89,10 +91,19 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				continue;
 			}
 			if (!props.high_signal) continue;
+			if (!pairByUserId.has(props.user_message_id)) continue;
+			candidates.push({ node, props });
+		}
 
-			const pair = pairByUserId.get(props.user_message_id);
-			if (!pair) continue;
+		// Cost guard: enrich at most `maxPairsPerSession`, highest friction first
+		// (ties broken by pair order so selection is deterministic across runs).
+		candidates.sort((a, b) => b.props.friction_score - a.props.friction_score || a.props.pair_index - b.props.pair_index);
+		const cap = config.maxPairsPerSession;
+		const selected = Number.isFinite(cap) && cap >= 0 ? candidates.slice(0, cap) : candidates;
 
+		const units: AnalysisUnit[] = [];
+		for (const { node, props } of selected) {
+			const pair = pairByUserId.get(props.user_message_id)!;
 			const sources: SourceRef[] = [{ kind: "analysis_node", id: node.id }];
 			const meta: EnrichMeta = {
 				userText: pair.userText,
@@ -127,7 +138,10 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			maxTokens: 500,
 		});
 
-		const properties: TurnPairLLMProperties = parseClassifyResponse(response.text);
+		const properties: TurnPairLLMProperties = {
+			...parseClassifyResponse(response.text),
+			user_message_id: unit.anchorRef,
+		};
 
 		return {
 			nodeKind: "classification",

@@ -35,8 +35,8 @@ export type MessageRole =
 	| "assistant"
 	| "toolResult"
 	| "bashExecution"
-	| "custom"
-	| "branchSummary"
+	| "custom_message"
+	| "branch_summary"
 	| "compactionSummary";
 
 export interface ToolCallInfo {

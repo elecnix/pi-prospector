@@ -255,6 +255,8 @@ export interface AnalyzerPlanContext {
 	ownNodes: AnalysisNodeRow[];
 	/** Dependency nodes keyed by analyzer id (only declared dependencies). */
 	dependencyNodes: Record<string, AnalysisNodeRow[]>;
+	/** The resolved config JSON for this analyzer, so plan() can honour cost guards. */
+	config: Record<string, unknown>;
 	db: Database.Database;
 }
 
