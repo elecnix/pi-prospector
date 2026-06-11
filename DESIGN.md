@@ -82,7 +82,11 @@ roughly the order concepts build on one another.
   **metric** (deterministic measurements of a turn), **classification** (a
   language-model judgement about a turn), **summary** (a session-level synthesis
   that carries proposals), and **error** (a record that an analysis attempt
-  failed, kept so failures are visible rather than silent).
+  failed). An error node's identity is its recipe plus the failure's message and
+  timestamp, so every failure is a distinct, append-only record that never
+  occupies the recipe identity reserved for a successful result. Failures stay
+  visible and auditable, yet never mark a unit as done: the unit stays *missing*
+  and is recomputed on the next scan that reaches it.
 - **Edge** — a typed, directed relationship in the analysis graph. Edges are the
   **single source of truth** for relationships: there are no parent links or
   embedded references hidden inside nodes. Every connection between a node and
@@ -153,7 +157,10 @@ roughly the order concepts build on one another.
   and is how the system decides what, if anything, needs doing. This replaces
   any notion of progress cursors or crash bookkeeping.
 - **Unit status** — the result of classifying a unit during a scan:
-  - **missing** — no node exists for this unit's recipe; it has never been done.
+  - **missing** — no *successful* node exists for this unit's recipe. Either it
+    has never been attempted, or prior attempts only produced error nodes (which
+    carry a decoupled identity and never satisfy a recipe). Missing work is always
+    done, even by a frugal run.
   - **stale** — a node exists for this subject but under a different recipe than
     the current one. Staleness carries its *reasons*: **major** or **minor** (the
     analyzer's version moved — graded by the author) and/or **config** (the
@@ -278,9 +285,16 @@ using cheap fingerprint lookups. Whatever is missing gets done; whatever is
 current is skipped. The reason is robustness through simplicity: there is no
 bookkeeping to get out of sync, nothing to repair after an interruption, and no
 way for a stored cursor to disagree with reality. The graph *is* the source of
-truth about what has been done, so an interrupted run simply leaves some units
-missing, and the next scan picks them up. This is a deliberate departure from
-earlier designs that tracked per-session cursors and recovery status.
+truth about what has been done, so an interrupted or *failed* run simply leaves
+some units missing, and the next scan picks them up. A unit that fails records an
+error node for visibility, but because that node carries a decoupled identity
+(recipe + message + timestamp) it never claims the recipe's slot — so the unit
+stays missing and **self-heals on the next plain fill**, with no special retry
+mode. To make that automatic, a session is only retired from the unanalysed queue
+once it completes with no errors; a session that had any failure stays queued, so
+the next fill re-scans it, recomputes only the still-missing units, and leaves its
+prior error nodes intact. This is a deliberate departure from earlier designs that
+tracked per-session cursors and recovery status.
 
 ### Versioned lineage and the reach of a run
 

@@ -66,7 +66,13 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 				proposals += summary.proposalsCreated;
 				cost += summary.costUsd;
 				errors.push(...summary.errors);
-				markAnalyzed(db, session.id);
+				// Bare-fill self-healing: only retire the session from the unanalysed
+				// queue when it completed cleanly. If any unit failed, leave
+				// `analyzed_at` NULL so the next plain fill re-scans it and recomputes
+				// the still-missing units (the failures left no result behind).
+				if (summary.errors.length === 0) {
+					markAnalyzed(db, session.id);
+				}
 			} catch (err) {
 				errors.push(`${session.id}: ${err instanceof Error ? err.message : String(err)}`);
 			}

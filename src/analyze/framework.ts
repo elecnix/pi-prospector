@@ -54,6 +54,7 @@ import {
 	computeConfigFingerprint,
 	computeInputHash,
 	computePromptBundleHash,
+	shortHash,
 	uuidv7,
 } from "./input-hash.js";
 import {
@@ -261,6 +262,10 @@ export class AnalyzerFramework {
 			sourceSetHash: unit.sourceSetHash,
 		});
 
+		// Error nodes carry a decoupled identity, so `findNodeByInputHash` matches
+		// only a successful result at this exact recipe, and `findLatestNodeBySourceSet`
+		// skips errors. A unit whose only history is failures therefore classifies as
+		// `missing` and is recomputed on the next scan that reaches it.
 		if (findNodeByInputHash(this.deps.db, inputHash)) {
 			return { analyzerId: analyzer.def.id, unit, status: "current", inputHash, reasons: [] };
 		}
@@ -382,24 +387,31 @@ export class AnalyzerFramework {
 		message: string,
 	): void {
 		const { analyzer, config } = resolved;
+		const nodeId = uuidv7();
+		const now = new Date().toISOString();
+		// An error node's identity is the recipe plus the failure's message and
+		// timestamp (with the node id as a uniqueness nonce), so it never occupies
+		// the recipe identity reserved for a successful result. The unit therefore
+		// stays `missing` and is recomputed on the next scan that reaches it — error
+		// nodes are an append-only record of failures, not a completion marker.
+		const errorInputHash = shortHash(`error(${item.inputHash}|${message}|${now}|${nodeId})`);
 		try {
 			insertNode(this.deps.db, {
-				id: uuidv7(),
+				id: nodeId,
 				sessionId,
 				analyzerId: analyzer.def.id,
 				analyzerVersionId: versionIdOf(analyzer.version),
 				configId: config.id,
 				runId,
 				nodeKind: "error",
-				contentJson: JSON.stringify({ error: message, anchor: item.unit.anchorRef }),
+				contentJson: JSON.stringify({ error: message, anchor: item.unit.anchorRef, timestamp: now }),
 				sourceSetHash: item.unit.sourceSetHash,
-				inputHash: item.inputHash,
+				inputHash: errorInputHash,
 				configFingerprint: resolved.configFingerprint,
-				createdAt: new Date().toISOString(),
+				createdAt: now,
 			});
 		} catch {
-			// A unique-constraint clash means another node already claimed this
-			// recipe; nothing to recover.
+			// Defensive: never let error-node persistence abort the run.
 		}
 	}
 

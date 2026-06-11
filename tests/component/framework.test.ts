@@ -147,9 +147,67 @@ describe("framework: dependency visibility & ordering", () => {
 			assert.equal(summary.errors.length, 1);
 			assert.match(summary.errors[0]!, /without declaring it/);
 
-			// An error node is recorded so the unit isn't silently retried as missing.
-			const errNode = db.prepare("SELECT * FROM analysis_nodes WHERE node_kind = 'error'").get();
+			// The failure is recorded as an append-only error node (visibility + history),
+			// carrying the message.
+			const errNode = db
+				.prepare("SELECT * FROM analysis_nodes WHERE node_kind = 'error'")
+				.get() as { content_json: string; input_hash: string } | undefined;
 			assert.ok(errNode);
+			assert.match(JSON.parse(errNode!.content_json).error, /without declaring it/);
+
+			// But the error node uses a decoupled identity and does NOT occupy the recipe
+			// identity, so the unit stays `missing` (not `current`) and will be recomputed.
+			const after = (await fw.scan("s1")).filter((c) => c.analyzerId === "sneaky");
+			assert.ok(after.length >= 1);
+			assert.ok(after.every((c) => c.status === "missing"));
+			assert.notEqual(errNode!.input_hash, after[0]!.inputHash);
+		} finally {
+			close();
+		}
+	});
+
+	it("self-heals: a failed unit stays missing and is recomputed on the next run, keeping the error node", async () => {
+		const { db, close } = tempDb();
+		try {
+			seedSession(db);
+			let attempts = 0;
+			const flaky: Analyzer = {
+				def: { id: "flaky", label: "Flaky", description: "", anchorSpan: "full_session", dependencies: [] },
+				version: { analyzerId: "flaky", major: 1, minor: 0, implementationKind: "deterministic" },
+				prompts: {},
+				defaultConfig: { id: "", analyzerId: "flaky", configHash: "h", configJson: {}, label: "default" },
+				plan: (_ctx: AnalyzerPlanContext) => [
+					{ sources: [{ kind: "session" as const, id: "s1" }], sourceSetHash: "flaky-ssh", anchorKind: "session" as const, anchorRef: "s1" },
+				],
+				analyze: (_unit, _ctx: AnalyzerRunContext): AnalysisResult => {
+					attempts++;
+					if (attempts === 1) throw new Error("transient boom");
+					return { nodeKind: "metric", contentJson: { ok: true }, anchorKind: "session", anchorRef: "s1", edges: [] };
+				},
+			};
+			const fw = frameworkFor(db);
+			fw.register(flaky);
+
+			const countErr = () => (db.prepare("SELECT COUNT(*) c FROM analysis_nodes WHERE node_kind='error'").get() as { c: number }).c;
+			const countOk = () => (db.prepare("SELECT COUNT(*) c FROM analysis_nodes WHERE analyzer_id='flaky' AND node_kind='metric'").get() as { c: number }).c;
+
+			// First run fails: error node recorded, no result, unit still missing.
+			const run1 = await fw.run("s1", {});
+			assert.equal(run1.errors.length, 1);
+			assert.equal(run1.nodesProduced, 0);
+			assert.equal(countErr(), 1);
+			assert.equal(countOk(), 0);
+			const scan1 = (await fw.scan("s1")).filter((c) => c.analyzerId === "flaky");
+			assert.ok(scan1.every((c) => c.status === "missing"));
+
+			// Second plain run heals it: result produced, error node retained (append-only).
+			const run2 = await fw.run("s1", {});
+			assert.equal(run2.errors.length, 0);
+			assert.equal(run2.nodesProduced, 1);
+			assert.equal(countErr(), 1);
+			assert.equal(countOk(), 1);
+			const scan2 = (await fw.scan("s1")).filter((c) => c.analyzerId === "flaky");
+			assert.ok(scan2.every((c) => c.status === "current"));
 		} finally {
 			close();
 		}

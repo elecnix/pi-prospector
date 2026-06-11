@@ -239,7 +239,7 @@ export function findLatestNodeBySourceSet(
 ): AnalysisNodeRow | undefined {
 	return db
 		.prepare(
-			"SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+			"SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND node_kind != 'error' ORDER BY created_at DESC, rowid DESC LIMIT 1",
 		)
 		.get(analyzerId, sourceSetHash) as AnalysisNodeRow | undefined;
 }
