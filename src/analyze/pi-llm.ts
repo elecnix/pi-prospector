@@ -37,19 +37,18 @@ function loadPiAi(): Promise<PiAiModule> {
 
 export interface PiLLMCallerOptions {
 	modelTiers: ModelTierConfig;
-	/** Default tier/spec to use when a request does not name a model. */
-	defaultModel?: string;
 }
 
 /**
  * Build an `LLMCaller` bound to a Pi extension context. The returned function
  * resolves models against the live model registry and runs completions through
- * pi-ai.
+ * pi-ai. Analyzers pass an already-resolved `provider/model` spec; a bare tier
+ * name is still tolerated and mapped through `modelTiers` as a safety net.
  */
 export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions): LLMCaller {
 	return async (request: LLMRequest): Promise<LLMResponse> => {
 		const start = Date.now();
-		const spec = resolveModelSpec(request.model || opts.defaultModel || "mid", opts.modelTiers);
+		const spec = resolveModelSpec(request.model || "mid", opts.modelTiers);
 		const { provider, modelId } = splitModelSpec(spec);
 
 		const model = ctx.modelRegistry.find(provider, modelId);

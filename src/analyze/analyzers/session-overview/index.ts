@@ -123,7 +123,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			const summaries: MapSummary[] = [];
 			for (const seg of segments) {
 				const res = await ctx.llm({
-					model: config.mapTier,
+					model: resolveModelSpec(config.mapTier, ctx.modelTiers),
 					system: ctx.prompts["map"] ?? MAP_PROMPT,
 					user: buildMapPrompt(seg.text),
 					temperature: config.temperature,
@@ -145,7 +145,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		}
 
 		const reduceRes = await ctx.llm({
-			model: config.reduceTier,
+			model: resolveModelSpec(config.reduceTier, ctx.modelTiers),
 			system: ctx.prompts["reduce"] ?? REDUCE_PROMPT,
 			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText }),
 			temperature: config.temperature,

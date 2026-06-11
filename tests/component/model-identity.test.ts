@@ -5,7 +5,7 @@ import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
 import { turnPairLLMAnalyzer } from "../../src/analyze/analyzers/turn-pair-llm/index.js";
-import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+import { DEFAULT_MODEL_TIERS, applyModelOverride } from "../../src/analyze/model-tiers.js";
 import { getNodeVersions, getRevisedNode } from "../../src/db/analysis-queries.js";
 import type { LLMRequest, ModelTierConfig } from "../../src/analyze/types.js";
 
@@ -116,6 +116,34 @@ describe("model is part of node identity (tier resolved to a concrete model)", (
 			const deep = await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", { mode: "deep" });
 			assert.equal(deep.nodesRevised, 0, "unchanged model means nothing is stale");
 			assert.equal(classificationNodes(db).length, 1);
+		} finally {
+			close();
+		}
+	});
+});
+
+describe("--model override is live (the pinned model is actually used)", () => {
+	it("passes the pinned concrete model to the LLM and records it on the node", async () => {
+		const { db, close } = tempDb();
+		try {
+			seedSession(db);
+			const pinned = "openai/gpt-5-override";
+			const effectiveTiers = applyModelOverride(DEFAULT_MODEL_TIERS, pinned);
+
+			const mock = createMockLLM({ responder: respond, tokensPerCall: 50, costPerCall: 0.001 });
+			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: effectiveTiers });
+			fw.register(turnPairCoreAnalyzer);
+			fw.register(turnPairLLMAnalyzer);
+			await fw.run("s1", { mode: "shallow", modelSpec: pinned });
+
+			assert.ok(mock.calls.length >= 1, "the LLM analyzer ran");
+			assert.ok(
+				mock.calls.every((c) => c.model === pinned),
+				`every LLM call used the pinned model, got: ${mock.calls.map((c) => c.model).join(", ")}`,
+			);
+
+			const node = classificationNodes(db)[0] as unknown as { model_used: string | null };
+			assert.equal(node.model_used, pinned, "the node records the model actually used");
 		} finally {
 			close();
 		}

@@ -6,6 +6,7 @@ import { getDbPath, getModelTiers, loadConfig } from "../config.js";
 import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerDefaults } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
+import { applyModelOverride } from "../analyze/model-tiers.js";
 import type { RunMode } from "../analyze/types.js";
 
 interface AnalyzeArgs {
@@ -19,12 +20,15 @@ interface AnalyzeArgs {
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --deep (re-analyse stale nodes into new versions), --limit N, --session ID, --analyzer ID, --model provider/model",
+			"Run analyzer framework over sessions (incremental). Flags: --deep (re-analyse stale nodes into new versions), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity)",
 		handler: async (rawArgs: string, ctx: ExtensionCommandContext) => {
 			const args = parseArgs(rawArgs ?? "");
 			const mode: RunMode = args.deep ? "deep" : "shallow";
 			const config = loadConfig();
-			const modelTiers = getModelTiers(config);
+			// A --model override pins every tier to that one model for this run. The
+			// same effective tiers feed both the LLM caller and the framework, so the
+			// model actually used always matches the model folded into node identity.
+			const modelTiers = applyModelOverride(getModelTiers(config), args.model);
 
 			const db = new Database(getDbPath(config));
 			migrate(db);
@@ -43,10 +47,7 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 					return;
 				}
 
-				const llm = makePiLLMCaller(ctx, {
-					modelTiers,
-					defaultModel: args.model,
-				});
+				const llm = makePiLLMCaller(ctx, { modelTiers });
 				const framework = new AnalyzerFramework({ db, llm, modelTiers });
 				registerDefaults(framework);
 				const analyzerIds = args.analyzer ? [args.analyzer] : undefined;

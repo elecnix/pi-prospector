@@ -42,3 +42,20 @@ export function splitModelSpec(spec: string): { provider: string; modelId: strin
 	}
 	return { provider: spec.slice(0, idx), modelId: spec.slice(idx + 1) };
 }
+
+/**
+ * Apply a one-off model override to a tier mapping. When `override` is set,
+ * every tier (cheap/mid/expensive) is pinned to that single model, so an entire
+ * analysis run uses exactly one model regardless of the tier each analyzer asks
+ * for. The override may itself be a tier name (resolved through `tiers`) or a
+ * concrete `provider/model` spec. When `override` is empty the tiers are
+ * returned unchanged.
+ *
+ * Because the resolved model is part of node identity, pinning the model this
+ * way produces its own nodes: re-running without the override marks them stale.
+ */
+export function applyModelOverride(tiers: ModelTierConfig, override?: string): ModelTierConfig {
+	if (!override) return tiers;
+	const model = resolveModelSpec(override, tiers);
+	return { cheap: model, mid: model, expensive: model };
+}

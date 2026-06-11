@@ -115,7 +115,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		const meta = unit.meta as unknown as EnrichMeta;
 
 		const response = await ctx.llm({
-			model: config.tier,
+			model: resolveModelSpec(config.tier, ctx.modelTiers),
 			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
 			user: buildClassifyPrompt({
 				userText: meta.userText,

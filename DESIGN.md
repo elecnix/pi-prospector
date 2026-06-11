@@ -174,6 +174,12 @@ roughly the order concepts build on one another.
   resolved model is part of the identity (see “Identity is the recipe”). So
   changing what a tier maps to invalidates the affected analysis exactly the way
   a config change would.
+- **Model pin (per run)** — a single run may pin *every* tier to one specific
+  model, overriding the configured mapping for that invocation only. Because the
+  resolved model is part of identity, a pinned run produces its own nodes;
+  re-running under the normal mapping marks them stale rather than silently
+  reusing them. The pinned model is what is both used and recorded — the two can
+  never disagree, because identity and execution read the same resolved mapping.
 - **LLM caller** — the single seam through which any analyzer reaches a language
   model. In normal operation it routes through the host agent platform's own
   model provider system, so credentials and model availability are managed in one
