@@ -34,7 +34,8 @@ export const TURN_PAIR_CORE_DEF: AnalyzerDef = {
 
 export const TURN_PAIR_CORE_VERSION: AnalyzerVersion = {
 	analyzerId: TURN_PAIR_CORE_DEF.id,
-	versionId: "1.0.0",
+	major: 1,
+	minor: 0,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-pair-core/index.ts",
 };

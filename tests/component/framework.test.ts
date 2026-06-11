@@ -23,7 +23,7 @@ function seedSession(db: import("better-sqlite3").Database, id = "s1"): void {
 	]);
 }
 
-describe("framework: incremental scan + shallow run", () => {
+describe("framework: incremental scan + fill run", () => {
 	it("classifies all units as missing, then current after a run", async () => {
 		const { db, close } = tempDb();
 		try {
@@ -35,7 +35,7 @@ describe("framework: incremental scan + shallow run", () => {
 			assert.ok(before.length >= 2);
 			assert.ok(before.every((c) => c.status === "missing"));
 
-			const summary = await fw.run("s1", { mode: "shallow" });
+			const summary = await fw.run("s1", {});
 			assert.equal(summary.nodesProduced, before.length);
 			assert.equal(summary.nodesRevised, 0);
 
@@ -46,14 +46,14 @@ describe("framework: incremental scan + shallow run", () => {
 		}
 	});
 
-	it("is idempotent: re-running shallow produces nothing new", async () => {
+	it("is idempotent: re-running a fill produces nothing new", async () => {
 		const { db, close } = tempDb();
 		try {
 			seedSession(db);
 			const fw = frameworkFor(db);
 			fw.register(turnPairCoreAnalyzer);
-			await fw.run("s1", { mode: "shallow" });
-			const second = await fw.run("s1", { mode: "shallow" });
+			await fw.run("s1", {});
+			const second = await fw.run("s1", {});
 			assert.equal(second.nodesProduced, 0);
 			assert.ok(second.nodesSkipped > 0);
 		} finally {
@@ -67,7 +67,7 @@ describe("framework: incremental scan + shallow run", () => {
 			seedSession(db);
 			const fw = frameworkFor(db); // throwing LLM
 			fw.register(turnPairCoreAnalyzer);
-			const summary = await fw.run("s1", { mode: "shallow" });
+			const summary = await fw.run("s1", {});
 			assert.equal(summary.errors.length, 0);
 			assert.ok(summary.nodesProduced > 0);
 		} finally {
@@ -76,7 +76,7 @@ describe("framework: incremental scan + shallow run", () => {
 	});
 });
 
-describe("framework: version lineage (deep mode)", () => {
+describe("framework: version lineage (revise)", () => {
 	it("re-analyses stale units into new versions linked by revises edges", async () => {
 		const { db, close } = tempDb();
 		try {
@@ -84,27 +84,28 @@ describe("framework: version lineage (deep mode)", () => {
 
 			const v1 = frameworkFor(db);
 			v1.register(turnPairCoreAnalyzer);
-			await v1.run("s1", { mode: "shallow" });
+			await v1.run("s1", {});
 
-			// A new analyzer version over the same logical units.
+			// A new major version over the same logical units.
 			const v2Analyzer: Analyzer = {
 				...turnPairCoreAnalyzer,
-				version: { ...turnPairCoreAnalyzer.version, versionId: "2.0.0" },
+				version: { ...turnPairCoreAnalyzer.version, major: 2 },
 			};
 			const v2 = frameworkFor(db);
 			v2.register(v2Analyzer);
 
 			const scan = await v2.scan("s1");
 			assert.ok(scan.every((c) => c.status === "stale"));
+			assert.ok(scan.every((c) => c.reasons.includes("major")), "a major bump grades as a major reason");
 
-			// Shallow ignores stale.
-			const shallow = await v2.run("s1", { mode: "shallow" });
-			assert.equal(shallow.nodesProduced, 0);
+			// A plain fill ignores stale units.
+			const fill = await v2.run("s1", {});
+			assert.equal(fill.nodesProduced, 0);
 
-			// Deep re-analyses.
-			const deep = await v2.run("s1", { mode: "deep" });
-			assert.ok(deep.nodesProduced > 0);
-			assert.equal(deep.nodesRevised, deep.nodesProduced);
+			// --revise major re-analyses.
+			const reviseRun = await v2.run("s1", { revise: ["major"] });
+			assert.ok(reviseRun.nodesProduced > 0);
+			assert.equal(reviseRun.nodesRevised, reviseRun.nodesProduced);
 
 			// Both versions coexist for the same logical unit, newest revises oldest.
 			const firstUnit = scan[0]!;
@@ -129,7 +130,7 @@ describe("framework: dependency visibility & ordering", () => {
 			seedSession(db);
 			const sneaky: Analyzer = {
 				def: { id: "sneaky", label: "Sneaky", description: "", anchorSpan: "full_session", dependencies: [] },
-				version: { analyzerId: "sneaky", versionId: "1.0.0", implementationKind: "deterministic" },
+				version: { analyzerId: "sneaky", major: 1, minor: 0, implementationKind: "deterministic" },
 				prompts: {},
 				defaultConfig: { id: "", analyzerId: "sneaky", configHash: "h", configJson: {}, label: "default" },
 				plan: (_ctx: AnalyzerPlanContext) => [
@@ -164,13 +165,13 @@ describe("framework: dependency visibility & ordering", () => {
 
 			const cyclicA: Analyzer = {
 				def: { id: "A", label: "A", description: "", anchorSpan: "pair", dependencies: ["B"] },
-				version: { analyzerId: "A", versionId: "1", implementationKind: "deterministic" },
+				version: { analyzerId: "A", major: 1, minor: 0, implementationKind: "deterministic" },
 				prompts: {},
 				defaultConfig: { id: "", analyzerId: "A", configHash: "h", configJson: {} },
 				plan: () => [],
 				analyze: () => ({ nodeKind: "metric", contentJson: {}, anchorKind: "session", anchorRef: "s", edges: [] }),
 			};
-			const cyclicB: Analyzer = { ...cyclicA, def: { ...cyclicA.def, id: "B", dependencies: ["A"] }, version: { analyzerId: "B", versionId: "1", implementationKind: "deterministic" }, defaultConfig: { id: "", analyzerId: "B", configHash: "h", configJson: {} } };
+			const cyclicB: Analyzer = { ...cyclicA, def: { ...cyclicA.def, id: "B", dependencies: ["A"] }, version: { analyzerId: "B", major: 1, minor: 0, implementationKind: "deterministic" }, defaultConfig: { id: "", analyzerId: "B", configHash: "h", configJson: {} } };
 			fw.register(cyclicA);
 			fw.register(cyclicB);
 			assert.throws(() => fw.topologicalSort(["A"]), /cycle/i);

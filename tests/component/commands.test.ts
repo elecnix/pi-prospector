@@ -102,13 +102,13 @@ describe("slash commands", () => {
 
 	it("prospect-analyze runs the deterministic analyzer without an LLM", async () => {
 		const out = await run("prospect-analyze", "--analyzer turn-pair-core");
-		assert.match(out, /Done \[shallow\]/);
+		assert.match(out, /Done \[fill\]/);
 		assert.match(out, /Nodes produced:/);
 	});
 
-	it("prospect-analyze --deep re-scans", async () => {
-		const out = await run("prospect-analyze", "--deep --analyzer turn-pair-core");
-		assert.match(out, /Done \[deep\]/);
+	it("prospect-analyze --revise re-scans", async () => {
+		const out = await run("prospect-analyze", "--revise all --analyzer turn-pair-core");
+		assert.match(out, /Done \[revise:/);
 	});
 
 	it("prospect-analyze reports when there is nothing to do", async () => {

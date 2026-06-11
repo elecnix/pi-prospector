@@ -34,11 +34,12 @@ export const NodeKind = Type.Union([
 ]);
 export type NodeKind = Static<typeof NodeKind>;
 
-export const RunMode = Type.Union([
-	Type.Literal("shallow"),
-	Type.Literal("deep"),
+export const ReviseReason = Type.Union([
+	Type.Literal("major"),
+	Type.Literal("minor"),
+	Type.Literal("config"),
 ]);
-export type RunMode = Static<typeof RunMode>;
+export type ReviseReason = Static<typeof ReviseReason>;
 
 export const UnitStatus = Type.Union([
 	Type.Literal("missing"),
@@ -67,7 +68,9 @@ export type AnalyzerDef = Static<typeof AnalyzerDef>;
 
 export const AnalyzerVersion = Type.Object({
 	analyzerId: Type.String(),
-	versionId: Type.String(),
+	/** Author-owned significance grade: bump major for significant changes, minor for small ones. */
+	major: Type.Integer({ minimum: 0 }),
+	minor: Type.Integer({ minimum: 0 }),
 	implementationKind: ImplementationKind,
 	codeRef: Type.Optional(Type.String()),
 });
@@ -153,6 +156,7 @@ export const AnalysisNodeRow = Type.Object({
 	content_json: Type.String(),
 	source_set_hash: Type.String(),
 	input_hash: Type.String(),
+	config_fingerprint: Type.String(),
 	model_used: Type.Union([Type.String(), Type.Null()]),
 	cost_usd: Type.Union([Type.Number(), Type.Null()]),
 	tokens_used: Type.Union([Type.Number(), Type.Null()]),
@@ -280,9 +284,10 @@ export interface Analyzer {
 	/**
 	 * The concrete models this analyzer will use under the given config, with
 	 * tier shorthands (cheap/mid/expensive) already resolved to `provider/model`.
-	 * These become part of node identity, so changing which model a tier resolves
-	 * to marks existing nodes `stale` (a deep run produces a new version; a
-	 * shallow run leaves them alone). Deterministic analyzers omit this: with no
+	 * The resolved model is part of a node's `config` identity, so changing which
+	 * model a tier resolves to marks existing nodes `stale` for the `config`
+	 * reason — a run that includes `config` revises them into a new version, while
+	 * a plain fill leaves them alone. Deterministic analyzers omit this: with no
 	 * model, their identity never depends on model settings.
 	 */
 	modelsForIdentity?: (config: Record<string, unknown>, modelTiers: ModelTierConfig) => string[];
@@ -295,13 +300,16 @@ export interface ClassifiedUnit {
 	unit: AnalysisUnit;
 	status: UnitStatus;
 	inputHash: string;
-	/** For `stale` units: the prior-version node this unit would revise. */
+	/** For `stale` units: the prior node this unit would revise. */
 	priorNodeId?: string;
+	/** For `stale` units: why it is out of date (any of major/minor/config). Empty otherwise. */
+	reasons: ReviseReason[];
 }
 
 export interface RunSummary {
 	sessionId: string;
-	mode: RunMode;
+	/** The revise reasons this run acted on (empty = a plain fill of missing work). */
+	revise: ReviseReason[];
 	analyzerResults: AnalyzerRunResult[];
 	nodesProduced: number;
 	nodesSkipped: number;

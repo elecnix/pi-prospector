@@ -50,7 +50,7 @@ TypeBox for all data shapes. No bare `interface` or `type` declarations. Every s
 
 ## Integration tests
 
-`test/integration/test-commands.ts` exercises the real pipeline end-to-end without a Pi runtime: it syncs fixtures, runs the analyzer framework with a deterministic mock LLM, and asserts the analysis graph, materialised proposals, idempotent re-runs, deep-mode version lineage, and the proposal lifecycle (accept/reject). Run it with `node --import tsx test/integration/test-commands.ts`, or via the wrapper `test/integration/run-integration.sh`.
+`test/integration/test-commands.ts` exercises the real pipeline end-to-end without a Pi runtime: it syncs fixtures, runs the analyzer framework with a deterministic mock LLM, and asserts the analysis graph, materialised proposals, idempotent re-runs, revise-mode version lineage, and the proposal lifecycle (accept/reject). Run it with `node --import tsx test/integration/test-commands.ts`, or via the wrapper `test/integration/run-integration.sh`.
 
 - Real SQLite (temp file), hand-written synthetic fixtures, mock LLM caller.
 - No real API keys, no network, no real Pi session — the mock LLM is injected via the framework's LLM seam, not an HTTP server.

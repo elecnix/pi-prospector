@@ -3,7 +3,8 @@
  *
  * The friction score is a weighted sum of deterministic signals, clamped to
  * [0, 1]. Weights and thresholds are part of the config so a change produces a
- * new content-addressed config version (and, in deep mode, new node versions).
+ * new config fingerprint (and, when a run includes the `config` reason, new node
+ * versions).
  */
 
 import { Type, type Static } from "typebox";

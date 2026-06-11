@@ -10,17 +10,22 @@
  *
  * `scan()` classifies every planned unit against the current graph state:
  *   - current  — a node already exists for this exact recipe (analyzer version +
- *                config + prompts + source set). Nothing to do.
- *   - stale    — a node exists for this logical unit, but from an *older* recipe
- *                (e.g. a previous analyzer version). A deep run re-analyses it.
+ *                config fingerprint + source set). Nothing to do.
+ *   - stale    — a node exists for this logical unit but under a different recipe.
+ *                Staleness carries its *reasons*: `major`/`minor` (the analyzer
+ *                version moved, graded by the author) and/or `config` (the user's
+ *                setup changed, ungraded).
  *   - missing  — no node exists for this logical unit at all.
  *
- * Run modes
- *   - shallow (default): only `missing` units are analysed. Existing analysis of
- *     any version is left untouched.
- *   - deep: `missing` *and* `stale` units are analysed. A stale unit produces a
- *     new node linked to its predecessor by a `revises` edge, so both versions
- *     coexist "at the same level" and the lineage is navigable.
+ * Revise reasons (a run's reach)
+ *   - no reasons (default): only `missing` units are analysed; existing nodes are
+ *     left untouched.
+ *   - any of `major`/`minor`/`config`: a stale unit is also analysed when one of
+ *     its reasons was requested (`minor` implies `major`). A recomputed unit
+ *     produces a new node linked to its predecessor by a `revises` edge, so both
+ *     versions coexist "at the same level" and the lineage is navigable. The
+ *     reasons only *select* units; a selected unit is always recomputed to the
+ *     current recipe in full — latest version, config, and resolved model.
  *
  * There is no crash-recovery bookkeeping. Idempotency is structural: a finished
  * node is `current` (skipped on the next run); an unfinished unit is still
@@ -42,15 +47,22 @@ import type {
 	LLMCaller,
 	MessageRow,
 	ModelTierConfig,
-	RunMode,
+	ReviseReason,
 	RunSummary,
 } from "./types.js";
 import {
+	computeConfigFingerprint,
 	computeInputHash,
-	computeModelBundleHash,
 	computePromptBundleHash,
 	uuidv7,
 } from "./input-hash.js";
+import {
+	expandReviseReasons,
+	gradeVersionMove,
+	parseVersionId,
+	reachLabel,
+	versionIdOf,
+} from "./version.js";
 import { EDGE_KINDS, REF_KINDS, validateEdge } from "./edge-kinds.js";
 import {
 	createRun,
@@ -81,7 +93,7 @@ interface ResolvedAnalyzer {
 	analyzer: Analyzer;
 	config: AnalyzerConfig;
 	promptBundleHash: string;
-	modelBundleHash: string;
+	configFingerprint: string;
 }
 
 export class AnalyzerFramework {
@@ -127,20 +139,21 @@ export class AnalyzerFramework {
 	}
 
 	/**
-	 * Run analysis for a session. In `shallow` mode only missing units are
-	 * produced; in `deep` mode stale units are re-analysed into new versions
-	 * linked by `revises` edges.
+	 * Run analysis for a session. With no revise reasons only missing units are
+	 * produced; reasons (`major`/`minor`/`config`) additionally recompute matching
+	 * stale units into new versions linked by `revises` edges.
 	 */
 	async run(
 		sessionId: string,
-		opts: { mode?: RunMode; analyzerIds?: string[]; modelSpec?: string } = {},
+		opts: { revise?: ReviseReason[]; analyzerIds?: string[]; modelSpec?: string } = {},
 	): Promise<RunSummary> {
-		const mode: RunMode = opts.mode ?? "shallow";
+		const revise = opts.revise ?? [];
+		const requested = expandReviseReasons(revise);
 		const order = this.topologicalSort(opts.analyzerIds);
 
 		const summary: RunSummary = {
 			sessionId,
-			mode,
+			revise,
 			analyzerResults: [],
 			nodesProduced: 0,
 			nodesSkipped: 0,
@@ -152,7 +165,7 @@ export class AnalyzerFramework {
 		};
 
 		for (const analyzerId of order) {
-			const result = await this.runAnalyzer(analyzerId, sessionId, mode, opts.modelSpec, summary);
+			const result = await this.runAnalyzer(analyzerId, sessionId, requested, opts.modelSpec, summary);
 			summary.analyzerResults.push(result);
 		}
 
@@ -162,7 +175,7 @@ export class AnalyzerFramework {
 	private async runAnalyzer(
 		analyzerId: string,
 		sessionId: string,
-		mode: RunMode,
+		requested: ReadonlySet<ReviseReason>,
 		modelSpec: string | undefined,
 		summary: RunSummary,
 	): Promise<AnalyzerRunResult> {
@@ -173,16 +186,18 @@ export class AnalyzerFramework {
 		const units = await analyzer.plan(planCtx);
 
 		const classified = units.map((unit) => this.classify(resolved, unit));
-		const todo = classified.filter((c) => (mode === "deep" ? c.status !== "current" : c.status === "missing"));
+		const todo = classified.filter(
+			(c) => c.status === "missing" || (c.status === "stale" && c.reasons.some((r) => requested.has(r))),
+		);
 
 		const runId = uuidv7();
 		createRun(this.deps.db, {
 			id: runId,
 			analyzerId: analyzer.def.id,
-			analyzerVersionId: analyzer.version.versionId,
+			analyzerVersionId: versionIdOf(analyzer.version),
 			configId: config.id,
 			sessionId,
-			mode,
+			mode: reachLabel(requested),
 			promptBundleHash,
 			modelSpec,
 		});
@@ -238,26 +253,42 @@ export class AnalyzerFramework {
 	// ───────────────────────── classification ─────────────────────────
 
 	private classify(resolved: ResolvedAnalyzer, unit: AnalysisUnit): ClassifiedUnit {
-		const { analyzer, config, promptBundleHash, modelBundleHash } = resolved;
+		const { analyzer, configFingerprint } = resolved;
 		const inputHash = computeInputHash({
 			analyzerId: analyzer.def.id,
-			analyzerVersionId: analyzer.version.versionId,
-			configId: config.id,
-			promptBundleHash,
-			modelBundleHash,
+			analyzerVersionId: versionIdOf(analyzer.version),
+			configFingerprint,
 			sourceSetHash: unit.sourceSetHash,
 		});
 
 		if (findNodeByInputHash(this.deps.db, inputHash)) {
-			return { analyzerId: analyzer.def.id, unit, status: "current", inputHash };
+			return { analyzerId: analyzer.def.id, unit, status: "current", inputHash, reasons: [] };
 		}
 
 		const prior = findLatestNodeBySourceSet(this.deps.db, analyzer.def.id, unit.sourceSetHash);
 		if (prior) {
-			return { analyzerId: analyzer.def.id, unit, status: "stale", inputHash, priorNodeId: prior.id };
+			const reasons = this.gradeStale(resolved, prior);
+			return { analyzerId: analyzer.def.id, unit, status: "stale", inputHash, priorNodeId: prior.id, reasons };
 		}
 
-		return { analyzerId: analyzer.def.id, unit, status: "missing", inputHash };
+		return { analyzerId: analyzer.def.id, unit, status: "missing", inputHash, reasons: [] };
+	}
+
+	/**
+	 * Why is an existing node out of date? At most one version reason
+	 * (`major`/`minor`, graded by the author from the version move) plus `config`
+	 * when the user's config fingerprint differs. A pure version downgrade yields
+	 * no reason, so the newer node is left in place.
+	 */
+	private gradeStale(resolved: ResolvedAnalyzer, prior: AnalysisNodeRow): ReviseReason[] {
+		const reasons: ReviseReason[] = [];
+		const versionReason = gradeVersionMove(parseVersionId(prior.analyzer_version_id), {
+			major: resolved.analyzer.version.major,
+			minor: resolved.analyzer.version.minor,
+		});
+		if (versionReason) reasons.push(versionReason);
+		if (prior.config_fingerprint !== resolved.configFingerprint) reasons.push("config");
+		return reasons;
 	}
 
 	// ───────────────────────── persistence ─────────────────────────
@@ -277,13 +308,14 @@ export class AnalyzerFramework {
 			id: nodeId,
 			sessionId,
 			analyzerId: analyzer.def.id,
-			analyzerVersionId: analyzer.version.versionId,
+			analyzerVersionId: versionIdOf(analyzer.version),
 			configId: config.id,
 			runId,
 			nodeKind: analysis.nodeKind,
 			contentJson: JSON.stringify(analysis.contentJson),
 			sourceSetHash: item.unit.sourceSetHash,
 			inputHash: item.inputHash,
+			configFingerprint: resolved.configFingerprint,
 			modelUsed: analysis.modelUsed ?? null,
 			costUsd: analysis.costUsd ?? null,
 			tokensUsed: analysis.tokensUsed ?? null,
@@ -355,13 +387,14 @@ export class AnalyzerFramework {
 				id: uuidv7(),
 				sessionId,
 				analyzerId: analyzer.def.id,
-				analyzerVersionId: analyzer.version.versionId,
+				analyzerVersionId: versionIdOf(analyzer.version),
 				configId: config.id,
 				runId,
 				nodeKind: "error",
 				contentJson: JSON.stringify({ error: message, anchor: item.unit.anchorRef }),
 				sourceSetHash: item.unit.sourceSetHash,
 				inputHash: item.inputHash,
+				configFingerprint: resolved.configFingerprint,
 				createdAt: new Date().toISOString(),
 			});
 		} catch {
@@ -424,10 +457,11 @@ export class AnalyzerFramework {
 			label: analyzer.defaultConfig.label,
 		});
 		const promptBundleHash = computePromptBundleHash(Object.values(analyzer.prompts).map((p) => p.hash));
-		// Resolve tier shorthands to concrete models so the model is part of identity.
+		// Resolve tier shorthands to concrete models; the resolved model is part of
+		// the user's `config` identity (a model swap is an ungraded config change).
 		const models = analyzer.modelsForIdentity?.(config.configJson, this.deps.modelTiers) ?? [];
-		const modelBundleHash = computeModelBundleHash(models);
-		return { analyzer, config, promptBundleHash, modelBundleHash };
+		const configFingerprint = computeConfigFingerprint(config.id, models);
+		return { analyzer, config, promptBundleHash, configFingerprint };
 	}
 
 	/** Dependency-respecting order of registered analyzers (Kahn-style DFS). */

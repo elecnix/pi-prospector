@@ -30,6 +30,7 @@ function coreNode(id: string, props: Partial<TurnPairCoreProperties>): AnalysisN
 		node_kind: "metric",
 		content_json: JSON.stringify(full),
 		source_set_hash: "ssh",
+		config_fingerprint: "",
 		input_hash: id,
 		model_used: null,
 		cost_usd: null,

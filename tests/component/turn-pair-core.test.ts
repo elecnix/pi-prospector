@@ -9,7 +9,7 @@ import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 async function runCore(db: import("better-sqlite3").Database, sessionId: string): Promise<TurnPairCoreProperties[]> {
 	const fw = new AnalyzerFramework({ db, llm: createThrowingLLM(), modelTiers: DEFAULT_MODEL_TIERS });
 	fw.register(turnPairCoreAnalyzer);
-	await fw.run(sessionId, { mode: "shallow" });
+	await fw.run(sessionId, {});
 	const rows = db
 		.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'turn-pair-core' ORDER BY rowid")
 		.all() as Array<{ content_json: string }>;

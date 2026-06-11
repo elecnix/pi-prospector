@@ -19,6 +19,7 @@ import type {
 	PromptVersion,
 } from "../analyze/types.js";
 import { computeConfigHash, uuidv7 } from "../analyze/input-hash.js";
+import { versionIdOf } from "../analyze/version.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 
 // ───────────────────────── analyzer registry ─────────────────────────
@@ -49,7 +50,7 @@ export function upsertAnalyzerVersion(db: Database.Database, version: AnalyzerVe
 		ON CONFLICT(analyzer_id, version_id) DO NOTHING
 	`).run(
 		version.analyzerId,
-		version.versionId,
+		versionIdOf(version),
 		version.implementationKind,
 		version.codeRef ?? null,
 		new Date().toISOString(),
@@ -184,6 +185,7 @@ export function insertNode(
 		contentJson: string;
 		sourceSetHash: string;
 		inputHash: string;
+		configFingerprint?: string;
 		modelUsed?: string | null;
 		costUsd?: number | null;
 		tokensUsed?: number | null;
@@ -194,8 +196,8 @@ export function insertNode(
 	db.prepare(`
 		INSERT INTO analysis_nodes
 			(id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind,
-			 content_json, source_set_hash, input_hash, model_used, cost_usd, tokens_used, duration_ms, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 content_json, source_set_hash, input_hash, config_fingerprint, model_used, cost_usd, tokens_used, duration_ms, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(
 		node.id,
 		node.sessionId,
@@ -207,6 +209,7 @@ export function insertNode(
 		node.contentJson,
 		node.sourceSetHash,
 		node.inputHash,
+		node.configFingerprint ?? "",
 		node.modelUsed ?? null,
 		node.costUsd ?? null,
 		node.tokensUsed ?? null,

@@ -51,14 +51,14 @@ function classificationNodes(db: import("better-sqlite3").Database) {
 		.all() as Array<{ id: string; source_set_hash: string }>;
 }
 
-describe("model is part of node identity (tier resolved to a concrete model)", () => {
-	it("remapping a tier to a new model marks the LLM node stale; core stays current", async () => {
+describe("the resolved model is part of a node's config identity", () => {
+	it("remapping a tier to a new model marks the LLM node stale (config reason); core stays current", async () => {
 		const { db, close } = tempDb();
 		try {
 			seedSession(db);
 
 			// First pass: default tiers (cheap = the default model).
-			await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", { mode: "shallow" });
+			await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", {});
 			assert.equal(classificationNodes(db).length, 1, "one classification produced initially");
 
 			// Re-scan with a different concrete model for the `cheap` tier.
@@ -69,29 +69,33 @@ describe("model is part of node identity (tier resolved to a concrete model)", (
 			const core = classified.filter((c) => c.analyzerId === "turn-pair-core");
 			assert.ok(llm.length >= 1);
 			assert.ok(llm.every((c) => c.status === "stale"), "model change makes the LLM unit stale");
+			assert.ok(
+				llm.every((c) => c.reasons.includes("config") && !c.reasons.includes("major") && !c.reasons.includes("minor")),
+				"a model swap is an ungraded config reason, not a version bump",
+			);
 			assert.ok(core.every((c) => c.status === "current"), "deterministic core is unaffected by model change");
 		} finally {
 			close();
 		}
 	});
 
-	it("shallow run leaves the stale (model-changed) node untouched; deep revises it", async () => {
+	it("a plain fill leaves the stale (model-changed) node untouched; --revise config revises it", async () => {
 		const { db, close } = tempDb();
 		try {
 			seedSession(db);
-			await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", { mode: "shallow" });
+			await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", {});
 			const before = classificationNodes(db);
 			assert.equal(before.length, 1);
 			const sourceSetHash = before[0]!.source_set_hash;
 
-			// Shallow run under the new model must NOT touch the stale node (cost-safe).
-			const shallow = await frameworkFor(db, REMAPPED_TIERS).run("s1", { mode: "shallow" });
-			assert.equal(shallow.nodesRevised, 0);
-			assert.equal(classificationNodes(db).length, 1, "shallow does not re-run a stale model change");
+			// A plain fill under the new model must NOT touch the stale node (cost-safe).
+			const fill = await frameworkFor(db, REMAPPED_TIERS).run("s1", {});
+			assert.equal(fill.nodesRevised, 0);
+			assert.equal(classificationNodes(db).length, 1, "a fill does not re-run a stale model change");
 
-			// Deep run produces a NEW version linked to the old one by a revises edge.
-			const deep = await frameworkFor(db, REMAPPED_TIERS).run("s1", { mode: "deep" });
-			assert.ok(deep.nodesRevised >= 1, "deep run revises the model-changed node");
+			// --revise config produces a NEW version linked to the old one by a revises edge.
+			const revised = await frameworkFor(db, REMAPPED_TIERS).run("s1", { revise: ["config"] });
+			assert.ok(revised.nodesRevised >= 1, "revise config revises the model-changed node");
 
 			const after = classificationNodes(db);
 			assert.equal(after.length, 2, "old and new versions coexist");
@@ -100,9 +104,9 @@ describe("model is part of node identity (tier resolved to a concrete model)", (
 			assert.equal(versions.length, 2);
 
 			const newest = versions[versions.length - 1]!;
-			const revised = getRevisedNode(db, newest.id);
-			assert.ok(revised, "newest version revises an older one");
-			assert.equal(revised!.id, before[0]!.id);
+			const revisedNode = getRevisedNode(db, newest.id);
+			assert.ok(revisedNode, "newest version revises an older one");
+			assert.equal(revisedNode!.id, before[0]!.id);
 		} finally {
 			close();
 		}
@@ -112,9 +116,9 @@ describe("model is part of node identity (tier resolved to a concrete model)", (
 		const { db, close } = tempDb();
 		try {
 			seedSession(db);
-			await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", { mode: "shallow" });
-			const deep = await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", { mode: "deep" });
-			assert.equal(deep.nodesRevised, 0, "unchanged model means nothing is stale");
+			await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", {});
+			const revised = await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", { revise: ["major", "minor", "config"] });
+			assert.equal(revised.nodesRevised, 0, "unchanged model means nothing is stale");
 			assert.equal(classificationNodes(db).length, 1);
 		} finally {
 			close();
@@ -134,7 +138,7 @@ describe("--model override is live (the pinned model is actually used)", () => {
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: effectiveTiers });
 			fw.register(turnPairCoreAnalyzer);
 			fw.register(turnPairLLMAnalyzer);
-			await fw.run("s1", { mode: "shallow", modelSpec: pinned });
+			await fw.run("s1", { modelSpec: pinned });
 
 			assert.ok(mock.calls.length >= 1, "the LLM analyzer ran");
 			assert.ok(

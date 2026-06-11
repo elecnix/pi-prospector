@@ -46,6 +46,15 @@ describe("schema migration", () => {
 		}
 	});
 
+	it("analysis_nodes carries the config fingerprint (config dimension of identity)", () => {
+		const { db, close } = tempDb();
+		try {
+			assert.ok(tableColumns(db, "analysis_nodes").has("config_fingerprint"), "analysis_nodes missing config_fingerprint");
+		} finally {
+			close();
+		}
+	});
+
 	it("analysis_nodes enforces unique input_hash", () => {
 		const { db, close } = tempDb();
 		try {

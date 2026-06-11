@@ -7,10 +7,11 @@ import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerDefaults } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
-import type { RunMode } from "../analyze/types.js";
+import { parseReviseArg, reachLabel } from "../analyze/version.js";
+import type { ReviseReason } from "../analyze/types.js";
 
 interface AnalyzeArgs {
-	deep: boolean;
+	revise: ReviseReason[];
 	limit?: number;
 	session?: string;
 	analyzer?: string;
@@ -20,10 +21,11 @@ interface AnalyzeArgs {
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --deep (re-analyse stale nodes into new versions), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity)",
 		handler: async (rawArgs: string, ctx: ExtensionCommandContext) => {
 			const args = parseArgs(rawArgs ?? "");
-			const mode: RunMode = args.deep ? "deep" : "shallow";
+			const reviseActive = args.revise.length > 0;
+			const reach = reachLabel(args.revise);
 			const config = loadConfig();
 			// A --model override pins every tier to that one model for this run. The
 			// same effective tiers feed both the LLM caller and the framework, so the
@@ -34,11 +36,11 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 			migrate(db);
 
 			try {
-				// In shallow mode we focus on not-yet-analysed sessions; deep mode
-				// re-scans every session so older-version nodes get fresh versions.
+				// A plain fill focuses on not-yet-analysed sessions; any revise reason
+				// re-scans every session so stale nodes can be picked up.
 				const sessions = args.session
 					? [{ id: args.session, file_path: "", started_at: "" }]
-					: mode === "deep"
+					: reviseActive
 						? getAllSessions(db, args.limit)
 						: getUnanalyzedSessions(db, args.limit);
 
@@ -52,7 +54,7 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 				registerDefaults(framework);
 				const analyzerIds = args.analyzer ? [args.analyzer] : undefined;
 
-				out(ctx, `Analysing ${sessions.length} session(s) [${mode}]…`, "info");
+				out(ctx, `Analysing ${sessions.length} session(s) [${reach}]…`, "info");
 
 				let nodesProduced = 0;
 				let nodesRevised = 0;
@@ -62,7 +64,7 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 
 				for (const session of sessions) {
 					try {
-						const summary = await framework.run(session.id, { mode, analyzerIds, modelSpec: args.model });
+						const summary = await framework.run(session.id, { revise: args.revise, analyzerIds, modelSpec: args.model });
 						nodesProduced += summary.nodesProduced;
 						nodesRevised += summary.nodesRevised;
 						proposals += summary.proposalsCreated;
@@ -75,7 +77,7 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 				}
 
 				const lines = [
-					`Done [${mode}]. ${sessions.length} session(s) scanned.`,
+					`Done [${reach}]. ${sessions.length} session(s) scanned.`,
 					`  Nodes produced: ${nodesProduced} (revised: ${nodesRevised})`,
 					`  Proposals created: ${proposals}`,
 					`  Estimated cost: $${cost.toFixed(4)}`,
@@ -98,12 +100,15 @@ function out(ctx: ExtensionCommandContext, text: string, level: string): void {
 }
 
 function parseArgs(raw: string): AnalyzeArgs {
-	const result: AnalyzeArgs = { deep: false };
+	const result: AnalyzeArgs = { revise: [] };
 	const parts = raw.trim().split(/\s+/).filter((p) => p.length > 0);
 	for (let i = 0; i < parts.length; i++) {
 		const p = parts[i];
-		if (p === "--deep" || p === "--reanalyze") result.deep = true;
-		else if (p === "--limit" && parts[i + 1]) {
+		if (p === "--revise" && parts[i + 1]) {
+			for (const r of parseReviseArg(parts[++i]!)) {
+				if (!result.revise.includes(r)) result.revise.push(r);
+			}
+		} else if (p === "--limit" && parts[i + 1]) {
 			const n = parseInt(parts[++i]!, 10);
 			if (!Number.isNaN(n)) result.limit = n;
 		} else if (p === "--session" && parts[i + 1]) result.session = parts[++i];

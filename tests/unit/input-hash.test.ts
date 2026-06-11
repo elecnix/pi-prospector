@@ -2,9 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
 	canonicalJson,
+	computeConfigFingerprint,
 	computeConfigHash,
 	computeInputHash,
-	computeModelBundleHash,
 	computePromptBundleHash,
 	computeSourceSetHash,
 	fullHash,
@@ -41,44 +41,44 @@ describe("hashing", () => {
 		assert.equal(computePromptBundleHash([]), computePromptBundleHash([]));
 	});
 
-	it("model bundle hash is order-independent and stable for empty", () => {
+	it("config fingerprint is order-independent over models and stable for empty", () => {
 		assert.equal(
-			computeModelBundleHash(["anthropic/a", "openai/b"]),
-			computeModelBundleHash(["openai/b", "anthropic/a"]),
+			computeConfigFingerprint("c1", ["anthropic/a", "openai/b"]),
+			computeConfigFingerprint("c1", ["openai/b", "anthropic/a"]),
 		);
-		assert.equal(computeModelBundleHash([]), computeModelBundleHash([]));
-		assert.notEqual(computeModelBundleHash(["anthropic/a"]), computeModelBundleHash(["openai/b"]));
+		assert.equal(computeConfigFingerprint("c1", []), computeConfigFingerprint("c1", []));
+		assert.notEqual(computeConfigFingerprint("c1", []), computeConfigFingerprint("c2", []));
+		assert.notEqual(
+			computeConfigFingerprint("c1", ["anthropic/a"]),
+			computeConfigFingerprint("c1", ["openai/b"]),
+		);
 	});
 
 	it("input hash changes when the analyzer version changes", () => {
 		const base = {
 			analyzerId: "x",
-			configId: "c1",
-			promptBundleHash: "p1",
-			modelBundleHash: "m1",
+			configFingerprint: "cf1",
 			sourceSetHash: "s1",
 		};
-		const v1 = computeInputHash({ ...base, analyzerVersionId: "1.0.0" });
-		const v2 = computeInputHash({ ...base, analyzerVersionId: "2.0.0" });
+		const v1 = computeInputHash({ ...base, analyzerVersionId: "1.0" });
+		const v2 = computeInputHash({ ...base, analyzerVersionId: "2.0" });
 		assert.notEqual(v1, v2);
 	});
 
-	it("input hash changes when the resolved model changes", () => {
+	it("input hash changes when the resolved model changes (via the config fingerprint)", () => {
 		const base = {
 			analyzerId: "x",
-			analyzerVersionId: "1",
-			configId: "c",
-			promptBundleHash: "p",
+			analyzerVersionId: "1.0",
 			sourceSetHash: "s",
 		};
 		assert.notEqual(
-			computeInputHash({ ...base, modelBundleHash: computeModelBundleHash(["anthropic/haiku"]) }),
-			computeInputHash({ ...base, modelBundleHash: computeModelBundleHash(["openai/gpt-5-mini"]) }),
+			computeInputHash({ ...base, configFingerprint: computeConfigFingerprint("c", ["anthropic/haiku"]) }),
+			computeInputHash({ ...base, configFingerprint: computeConfigFingerprint("c", ["openai/gpt-5-mini"]) }),
 		);
 	});
 
 	it("input hash changes when the source set changes", () => {
-		const base = { analyzerId: "x", analyzerVersionId: "1", configId: "c", promptBundleHash: "p", modelBundleHash: "m" };
+		const base = { analyzerId: "x", analyzerVersionId: "1.0", configFingerprint: "cf" };
 		assert.notEqual(
 			computeInputHash({ ...base, sourceSetHash: "s1" }),
 			computeInputHash({ ...base, sourceSetHash: "s2" }),

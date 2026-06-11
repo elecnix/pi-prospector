@@ -4,15 +4,19 @@
  * Idempotency hinges on these hashes:
  *   - `source_set_hash` identifies the exact set of inputs a node was built
  *     from. Two analyses over the same sources share a source_set_hash.
- *   - `input_hash` additionally folds in the analyzer identity, version,
- *     config, prompt bundle, and the concrete models it will use (tiers
- *     resolved). A node is uniquely identified by its input_hash; recomputing
+ *   - `input_hash` additionally folds in the analyzer identity, its version,
+ *     and the user's `config` fingerprint (parameters + the concrete models it
+ *     resolved to). A node is uniquely identified by its input_hash; recomputing
  *     the same recipe over the same sources is a no-op.
  *
- * The version dimension (same source_set_hash, different analyzer_version /
- * config / prompt bundle / resolved model) yields a *different* input_hash but
- * the *same* source_set_hash — that is how alternative versions of the same
- * logical unit are detected and linked via `revises` edges.
+ * The version dimension (same source_set_hash, different analyzer version or
+ * config fingerprint) yields a *different* input_hash but the *same*
+ * source_set_hash — that is how alternative versions of the same logical unit
+ * are detected and linked via `revises` edges.
+ *
+ * The analyzer's *shipped* prompt is represented by its version, not by a
+ * separate identity axis; only the user's config (including a prompt override
+ * and the resolved model) feeds the config fingerprint.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -25,10 +29,8 @@ export interface SourceRefLike {
 export interface InputHashParts {
 	analyzerId: string;
 	analyzerVersionId: string;
-	configId: string;
-	promptBundleHash: string;
-	/** Hash of the concrete models the analyzer will use (tiers already resolved). */
-	modelBundleHash: string;
+	/** Fingerprint of the user-controlled config: parameters + resolved model(s). */
+	configFingerprint: string;
 	sourceSetHash: string;
 }
 
@@ -59,8 +61,9 @@ export function computeSourceSetHash(sources: readonly SourceRefLike[]): string 
 }
 
 /**
- * Deterministic hash over a bundle of prompt hashes. Order-independent.
- * An analyzer with no prompts has a stable empty-bundle hash.
+ * Deterministic hash over a bundle of prompt hashes. Order-independent. Used for
+ * *run provenance* (which shipped prompts a run used); it is no longer part of
+ * node identity, since a shipped prompt is represented by the analyzer version.
  */
 export function computePromptBundleHash(promptHashes: readonly string[]): string {
 	const canonical = [...promptHashes].sort().join("|");
@@ -68,18 +71,16 @@ export function computePromptBundleHash(promptHashes: readonly string[]): string
 }
 
 /**
- * Deterministic hash over the concrete models an analyzer will use, with tier
- * shorthands (cheap/mid/expensive) already resolved to `provider/model`.
- * Order-independent. An analyzer that uses no model (a deterministic one) has a
- * stable empty-bundle hash, so its identity never depends on model settings.
- *
- * Because this folds into `input_hash`, changing which model a tier resolves to
- * makes existing nodes `stale`: a deep run re-analyses them into a new version,
- * while a shallow run leaves them untouched.
+ * Fingerprint of everything the *user* controls for a node: the parameter config
+ * identity plus the concrete models the analyzer resolved to (the tier→model
+ * mapping and any pin). Order-independent over models. This is the `config`
+ * dimension of identity — a change here marks nodes stale for the (ungraded)
+ * `config` reason. A deterministic analyzer passes no models, so only its config
+ * id contributes.
  */
-export function computeModelBundleHash(models: readonly string[]): string {
-	const canonical = [...models].sort().join("|");
-	return shortHash(`models(${canonical})`);
+export function computeConfigFingerprint(configId: string, models: readonly string[]): string {
+	const canonicalModels = [...models].sort().join("|");
+	return shortHash(`config(${configId}|${canonicalModels})`);
 }
 
 /**
@@ -91,17 +92,15 @@ export function computeConfigHash(config: unknown): string {
 }
 
 /**
- * The unique recipe identity for a node: analyzer + version + config + prompts
- * + source set. Re-running the same recipe over the same sources produces the
- * same input_hash, making analysis idempotent.
+ * The unique recipe identity for a node: analyzer + version + config
+ * fingerprint + source set. Re-running the same recipe over the same sources
+ * produces the same input_hash, making analysis idempotent.
  */
 export function computeInputHash(parts: InputHashParts): string {
 	const canonical = [
 		parts.analyzerId,
 		parts.analyzerVersionId,
-		parts.configId,
-		parts.promptBundleHash,
-		parts.modelBundleHash,
+		parts.configFingerprint,
 		parts.sourceSetHash,
 	].join("|");
 	return shortHash(`input(${canonical})`);

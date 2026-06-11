@@ -41,7 +41,8 @@ export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 
 export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	analyzerId: TURN_PAIR_LLM_DEF.id,
-	versionId: "1.0.0",
+	major: 1,
+	minor: 0,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };

@@ -68,7 +68,7 @@ assert(s0.totalSessions >= 1, "indexed >= 1 session", `got ${s0.totalSessions}`)
 assert(s0.proposalsByStatus.open === 0, "no proposals initially");
 assert(s0.analysis.nodes === 0, "no analysis nodes initially");
 
-console.log("\nRun analyzer framework (shallow, mock LLM):");
+console.log("\nRun analyzer framework (fill, mock LLM):");
 const mock = createMockLLM({ responder: respond, tokensPerCall: 10, costPerCall: 0.0001 });
 const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
 registerDefaults(fw);
@@ -77,7 +77,7 @@ const sessions = getAllSessions(db);
 let totalNodes = 0;
 let totalProposals = 0;
 for (const session of sessions) {
-	const summary = await fw.run(session.id, { mode: "shallow" });
+	const summary = await fw.run(session.id, {});
 	totalNodes += summary.nodesProduced;
 	totalProposals += summary.proposalsCreated;
 	assert(summary.errors.length === 0, `session ${session.id.slice(0, 8)} ran without errors`, summary.errors.join("; "));
@@ -91,20 +91,20 @@ assert(s1.analysis.nodes > 0, "analysis nodes recorded");
 assert((s1.analysis.nodesByKind["summary"] ?? 0) >= 1, "summary nodes present");
 assert((s1.analysis.nodesByKind["metric"] ?? 0) >= 1, "metric nodes present");
 
-console.log("\nIdempotent re-run (shallow):");
+console.log("\nIdempotent re-run (fill):");
 let reRunNodes = 0;
 for (const session of sessions) {
-	const summary = await fw.run(session.id, { mode: "shallow" });
+	const summary = await fw.run(session.id, {});
 	reRunNodes += summary.nodesProduced;
 }
-assert(reRunNodes === 0, "shallow re-run produces nothing new", `got ${reRunNodes}`);
+assert(reRunNodes === 0, "fill re-run produces nothing new", `got ${reRunNodes}`);
 
-console.log("\nDeep re-run with a new analyzer version (lineage):");
+console.log("\nRevise re-run with a new analyzer version (lineage):");
 const firstSession = sessions[0]!;
 const v2 = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-v2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, versionId: "2.0.0" } });
-const deep = await v2.run(firstSession.id, { mode: "deep", analyzerIds: ["turn-pair-core"] });
-assert(deep.nodesRevised > 0, "deep run revised stale nodes", `got ${deep.nodesRevised}`);
+v2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
+const deep = await v2.run(firstSession.id, { revise: ["major"], analyzerIds: ["turn-pair-core"] });
+assert(deep.nodesRevised > 0, "revise run revised stale nodes", `got ${deep.nodesRevised}`);
 
 const coreRows = db
 	.prepare("SELECT source_set_hash FROM analysis_nodes WHERE analyzer_id = 'turn-pair-core' AND session_id = ? LIMIT 1")

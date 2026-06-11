@@ -64,7 +64,7 @@ describe("analyzers end-to-end", () => {
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
 			registerDefaults(fw);
 
-			const summary = await fw.run("s1", { mode: "shallow" });
+			const summary = await fw.run("s1", {});
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
 			const kinds = db.prepare("SELECT node_kind, COUNT(*) AS c FROM analysis_nodes GROUP BY node_kind").all() as Array<{ node_kind: string; c: number }>;
@@ -120,7 +120,7 @@ describe("analyzers end-to-end", () => {
 			fw.register(turnPairLLMAnalyzer);
 			fw.register(tinyOverview);
 
-			const summary = await fw.run("s2", { mode: "shallow" });
+			const summary = await fw.run("s2", {});
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
 			// At least one map call must have happened (summarise one segment).

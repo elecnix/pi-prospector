@@ -48,7 +48,7 @@ describe("analysis runs", () => {
 				analyzerVersionId: "1",
 				configId: "c",
 				sessionId: "s1",
-				mode: "shallow",
+				mode: "fill",
 				promptBundleHash: "pb",
 				modelSpec: "anthropic/x",
 			});
@@ -124,7 +124,7 @@ describe("edges and anchored messages", () => {
 			]);
 			const fw = new AnalyzerFramework({ db, llm: createThrowingLLM(), modelTiers: DEFAULT_MODEL_TIERS });
 			fw.register(turnPairCoreAnalyzer);
-			await fw.run("s1", { mode: "shallow" });
+			await fw.run("s1", {});
 
 			const node = getNodesByAnalyzer(db, "turn-pair-core", "s1")[0]!;
 			const anchored = fw.getAnchoredMessages(node.id);
