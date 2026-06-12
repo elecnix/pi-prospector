@@ -8,7 +8,13 @@ import { registerDefaults } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
 import { parseReviseArg, reachLabel } from "../analyze/version.js";
-import type { ReviseReason } from "../analyze/types.js";
+import {
+	mapWithConcurrency,
+	createSemaphore,
+	DEFAULT_LLM_CONCURRENCY,
+	DEFAULT_DETERMINISTIC_CONCURRENCY,
+} from "../analyze/concurrency.js";
+import type { ReviseReason, LLMCaller } from "../analyze/types.js";
 
 interface AnalyzeArgs {
 	revise: ReviseReason[];
@@ -16,6 +22,8 @@ interface AnalyzeArgs {
 	session?: string;
 	analyzer?: string;
 	model?: string;
+	llmConcurrency?: number;
+	analyzerConcurrency?: number;
 }
 
 export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -45,12 +53,30 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			return;
 		}
 
-		const llm = makePiLLMCaller(ctx, { modelTiers });
+		const baseLlm = makePiLLMCaller(ctx, { modelTiers });
+		// Hard cap on concurrent LLM calls: a global semaphore wrapping the caller, so
+		// the limit holds regardless of how sessions are dispatched above it.
+		const llmConcurrency = args.llmConcurrency ?? DEFAULT_LLM_CONCURRENCY;
+		const analyzerConcurrency = args.analyzerConcurrency ?? DEFAULT_DETERMINISTIC_CONCURRENCY;
+		const llmGate = createSemaphore(llmConcurrency);
+		const llm: LLMCaller = (request) => llmGate(() => baseLlm(request));
 		const framework = new AnalyzerFramework({ db, llm, modelTiers });
 		registerDefaults(framework);
 		const analyzerIds = args.analyzer ? [args.analyzer] : undefined;
 
-		out(ctx, `Analysing ${sessions.length} session(s) [${reach}]…`, "info");
+		// Session fan-out: a run that touches an LLM analyzer is paced by the LLM
+		// gate (so the fan-out matches the LLM budget); a deterministic-only run has
+		// no provider to protect and uses the wider deterministic limit.
+		const selected = framework.list().filter((a) => !analyzerIds || analyzerIds.includes(a.def.id));
+		const runHasLLM = selected.some((a) => a.version.implementationKind !== "deterministic");
+		const sessionConcurrency = runHasLLM ? llmConcurrency : analyzerConcurrency;
+
+		out(
+			ctx,
+			`Analysing ${sessions.length} session(s) [${reach}] · ${sessionConcurrency}-way` +
+				`${runHasLLM ? ` (≤${llmConcurrency} concurrent LLM calls)` : " (deterministic)"}…`,
+			"info",
+		);
 
 		let nodesProduced = 0;
 		let nodesRevised = 0;
@@ -58,7 +84,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		let cost = 0;
 		const errors: string[] = [];
 
-		for (const session of sessions) {
+		await mapWithConcurrency(sessions, sessionConcurrency, async (session) => {
 			try {
 				const summary = await framework.run(session.id, { revise: args.revise, analyzerIds, modelSpec: args.model });
 				nodesProduced += summary.nodesProduced;
@@ -76,7 +102,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			} catch (err) {
 				errors.push(`${session.id}: ${err instanceof Error ? err.message : String(err)}`);
 			}
-		}
+		});
 
 		const lines = [
 			`Done [${reach}]. ${sessions.length} session(s) scanned.`,
@@ -97,7 +123,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --llm-concurrency N (max concurrent LLM calls, default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		handler: prospectAnalyze,
 	});
 }
@@ -122,6 +148,13 @@ function parseArgs(raw: string): AnalyzeArgs {
 		} else if (p === "--session" && parts[i + 1]) result.session = parts[++i];
 		else if (p === "--analyzer" && parts[i + 1]) result.analyzer = parts[++i];
 		else if (p === "--model" && parts[i + 1]) result.model = parts[++i];
+		else if (p === "--llm-concurrency" && parts[i + 1]) {
+			const n = parseInt(parts[++i]!, 10);
+			if (!Number.isNaN(n) && n >= 1) result.llmConcurrency = n;
+		} else if (p === "--analyzer-concurrency" && parts[i + 1]) {
+			const n = parseInt(parts[++i]!, 10);
+			if (!Number.isNaN(n) && n >= 1) result.analyzerConcurrency = n;
+		}
 	}
 	return result;
 }
