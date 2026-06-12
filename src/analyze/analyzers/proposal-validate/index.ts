@@ -50,7 +50,7 @@ export const PROPOSAL_VALIDATE_DEF: AnalyzerDef = {
 	id: "proposal-validate",
 	label: "Proposal Replay Validation",
 	description:
-		"Replays each open proposal against its originating turns with a distinct model, scoring whether the rule averts the friction. Consumes session-overview summaries.",
+		"Opt-in, advisory: replays each open proposal against its originating turns with a distinct validator model, scoring whether injecting the rule averts the friction, and writes a grounded validated_score/status back onto the proposal. Consumes session-overview summaries.",
 	anchorSpan: "full_session",
 	dependencies: [SESSION_OVERVIEW_DEF.id],
 };

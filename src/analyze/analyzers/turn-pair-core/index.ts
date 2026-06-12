@@ -27,7 +27,8 @@ import { DEFAULT_TURN_PAIR_CORE_CONFIG, type TurnPairCoreConfig } from "./config
 export const TURN_PAIR_CORE_DEF: AnalyzerDef = {
 	id: "turn-pair-core",
 	label: "Per-Turn Friction (deterministic)",
-	description: "Detects corrections, tool failures, empty responses, and tool waste per turn pair. No LLM.",
+	description:
+		"Scores every user→assistant turn pair deterministically (corrections, tool failures, empty replies, wasted tool output) and extracts a compact tool-action trace — call names, truncated arguments, and failed-result error heads — for downstream analyzers. No LLM; flags high-signal pairs.",
 	anchorSpan: "pair",
 	dependencies: [],
 };

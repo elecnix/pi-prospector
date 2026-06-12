@@ -40,7 +40,8 @@ import { computeEnrichCap, DEFAULT_TURN_PAIR_LLM_CONFIG, type TurnPairLLMConfig 
 export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 	id: "turn-pair-llm",
 	label: "Per-Turn Classification (LLM)",
-	description: "Classifies sentiment and friction for high-signal turn pairs using a cheap model.",
+	description:
+		"Classifies sentiment and friction type for high-signal turn pairs with a cheap model, given the user/assistant text plus the turn's actual tool calls and error heads so attribution lands on the command at fault.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id],
 };

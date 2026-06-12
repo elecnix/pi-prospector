@@ -27,13 +27,14 @@ Pi sessions (~/.pi/agent/sessions/)
 ┌──────────────────────┐
 │  /prospect-analyze   │  ← Builds the analysis graph incrementally:
 │                      │
-│  turn-pair-core      │    1. Score every turn — deterministic, no LLM.
-│        │             │
-│        ▼             │
-│  turn-pair-llm       │    2. Classify only high-signal turns — cheap tier.
-│        │             │
-│        ▼             │
-│  session-overview    │    3. Synthesise → materialise proposals.
+│  turn-pair-core      │    1. Score every turn pair — deterministic.
+│     │     │          │
+│     ▼     ▼          │    2. turn-pair-llm classifies high-signal turns
+│ turn-pair-  tool-    │       (cheap LLM); tool-trajectory finds tool-call
+│   llm    trajectory  │       loops & oscillation (deterministic).
+│     │     │          │
+│     ▼     ▼          │
+│  session-overview    │    3. Synthesise → materialise ranked proposals.
 └────────┬─────────────┘
          │
          ▼
@@ -87,7 +88,7 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
   Reasons only *select* which out-of-date nodes a run touches. A selected node is always recomputed to the **current recipe in full** (latest version, latest config, latest resolved model), and the new node is linked to its predecessor by a `revises` edge so lineage stays navigable. A plain fill scans only not-yet-analysed sessions; any `--revise` reason re-scans every session so stale work can be found.
 - `--limit N` — cap how many sessions are scanned
 - `--session ID` — analyse a single session
-- `--analyzer ID` — run a single analyzer (`turn-pair-core`, `turn-pair-llm`, or `session-overview`) and its dependencies
+- `--analyzer ID` — run a single analyzer (`turn-pair-core`, `turn-pair-llm`, `tool-trajectory`, or `session-overview`) and its dependencies
 - `--model provider/model` — pin **every** model tier to one concrete model for this run. Because the resolved model is part of a node's identity, a pinned run produces its own nodes; switching back to the normal mapping marks them stale (reason `config`).
 
 Proposals are never auto-applied. They sit in the database with status `open` until you accept or reject them.
@@ -162,6 +163,42 @@ pi-prospector reads **only what is inside Pi session files**. It does not read P
 - Model changes and thinking-level changes
 
 The unit of analysis is a **turn** — one round of work, segmented at the same boundaries Pi uses (a user or `bashExecution` message, or a `branch_summary`/`custom_message` entry). The deterministic layer scores every turn; only high-signal turns are sent to the LLM. The system prompt is not stored in session files and is not captured.
+
+## Analyzers
+
+Analysis is a small DAG of analyzers. The **deterministic** ones never call a model; the **LLM** ones ask for an abstract *tier* (`cheap`/`mid`), not a specific model. Every analyzer is versioned and content-addressed, so its nodes recompute only when its code version, config, or inputs change. All sources live under [`src/analyze/analyzers/`](./src/analyze/analyzers/).
+
+### turn-pair-core — per-turn friction metrics (deterministic)
+
+Scores every user→assistant **turn pair**: did the user correct the agent, did tools fail, was the reply empty, was tool output wasted? It also extracts a compact **tool-action trace** — each call's name, truncated arguments, and the first line of any failed result — which later analyzers rely on to blame the command actually at fault. No model; high-scoring pairs are flagged *high-signal*.
+
+Source: [`turn-pair-core/index.ts`](./src/analyze/analyzers/turn-pair-core/index.ts) · correction/repetition patterns in [`patterns.ts`](./src/analyze/analyzers/turn-pair-core/patterns.ts) · turn assembly + trace extraction in [`build.ts`](./src/analyze/analyzers/turn-pair-core/build.ts) · weights/thresholds in [`config.ts`](./src/analyze/analyzers/turn-pair-core/config.ts).
+
+### turn-pair-llm — per-turn classification (cheap LLM)
+
+For *only* the high-signal pairs, a cheap model labels the friction: sentiment, friction type (`wrong_approach`, `missed_instruction`, `tool_misuse`, `repetition`, …), whether it is a genuine correction, and a severity. The prompt includes the turn's **actual tool calls and error heads** (from turn-pair-core's trace), so the model attributes friction to the command that failed rather than paraphrasing your wording. A length-aware cap bounds how many pairs are enriched per session.
+
+Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.ts) · classifier prompt + evidence formatting in [`prompt.ts`](./src/analyze/analyzers/turn-pair-llm/prompt.ts) · tier + enrichment cap in [`config.ts`](./src/analyze/analyzers/turn-pair-llm/config.ts).
+
+### tool-trajectory — tool-call patterns (deterministic)
+
+Looks at the ordered stream of tool calls across the whole session and flags four shapes of wasted motion: **stuck-loops** (the same failing action repeated), **polling-loops** (re-checking the same state over and over), **oscillation** (doing and undoing), and **pre-flight gaps** (acting without the check that should precede it). No model — pure pattern detection that complements the text-based signals.
+
+Source: [`tool-trajectory/index.ts`](./src/analyze/analyzers/tool-trajectory/index.ts) · detectors in [`detectors.ts`](./src/analyze/analyzers/tool-trajectory/detectors.ts) · call normalisation in [`arg-parser.ts`](./src/analyze/analyzers/tool-trajectory/arg-parser.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/tool-trajectory/config.ts).
+
+### session-overview — synthesis & proposals (LLM map-reduce)
+
+Consumes the three analyzers above and turns a whole session into a short summary, a list of **positive signals** (what went well), and a set of **ranked improvement proposals**. It uses an *enumerate-then-propose* strategy — first list every friction point as a textual gradient, then emit one proposal per point — so recurring issues are not collapsed away. It emits a node even for clean sessions, which can yield `reinforcement` proposals that praise good habits. Proposals are materialised into the `proposals` table, each linked to the node that justifies it.
+
+Source: [`session-overview/index.ts`](./src/analyze/analyzers/session-overview/index.ts) · deterministic digest in [`digest.ts`](./src/analyze/analyzers/session-overview/digest.ts) · map/reduce prompts in [`prompt-map.ts`](./src/analyze/analyzers/session-overview/prompt-map.ts) and [`prompt-reduce.ts`](./src/analyze/analyzers/session-overview/prompt-reduce.ts).
+
+### proposal-validate — replay validation (opt-in LLM, advisory)
+
+Run separately via `/prospect-validate`. For each open proposal it replays the originating high-signal turns twice with a **distinct** validator model — once as-is, once with the candidate rule injected as a standing instruction — and credits the proposal only where the rule turns friction into no-friction. The result is a grounded `validated_score` and a `supported`/`unsupported`/`unvalidated` status written back onto the proposal (mutable result fields — never part of any identity key). Advisory only; it never edits anything.
+
+Source: [`proposal-validate/index.ts`](./src/analyze/analyzers/proposal-validate/index.ts) · baseline/with-rule replay prompts in [`prompt.ts`](./src/analyze/analyzers/proposal-validate/prompt.ts) · validator tier in [`config.ts`](./src/analyze/analyzers/proposal-validate/config.ts).
+
+Registration and dependency order live in [`src/analyze/defaults.ts`](./src/analyze/defaults.ts); the framework that schedules analyzers, computes their content-addressed identities, and tracks lineage is [`src/analyze/framework.ts`](./src/analyze/framework.ts).
 
 ## Fork deduplication
 

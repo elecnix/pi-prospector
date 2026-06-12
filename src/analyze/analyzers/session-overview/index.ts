@@ -40,7 +40,8 @@ import { DEFAULT_SESSION_OVERVIEW_CONFIG, type SessionOverviewConfig } from "./c
 export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	id: "session-overview",
 	label: "Session Analysis & Proposals",
-	description: "Summarises a session and proposes improvements. Consumes turn-pair-core and turn-pair-llm nodes.",
+	description:
+		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, and tool-trajectory nodes; always emits a node, even for clean sessions.",
 	anchorSpan: "full_session",
 	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id],
 };
