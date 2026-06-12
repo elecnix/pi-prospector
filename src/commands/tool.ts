@@ -4,10 +4,20 @@ import { Type } from "typebox";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
 import { getStats, listProposals, acceptProposal, rejectProposal } from "../db/queries.js";
+import type { DecisionInput } from "../db/queries.js";
 import { getDbPath, getSessionsDir } from "../config.js";
 
 function text(body: string, details: unknown): ToolResult {
 	return { content: [{ type: "text", text: body }], details };
+}
+
+/** Build the optional decision payload from tool params (all fields optional). */
+function decisionInputFrom(params: Record<string, unknown>): DecisionInput {
+	return {
+		disposition: (params.disposition as DecisionInput["disposition"]) ?? null,
+		rationale: (params.rationale as string | undefined) ?? null,
+		actual_change: (params.actual_change as string | undefined) ?? null,
+	};
 }
 
 export function registerProspectTool(pi: ExtensionAPI): void {
@@ -15,7 +25,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		name: "prospect",
 		label: "Prospect",
 		description:
-			"Index sessions, check stats, list/accept/reject proposals. Actions: sync, stats, list_proposals, accept, reject.",
+			"Index sessions, check stats, list/accept/reject proposals. Actions: sync, stats, list_proposals, accept, reject. " +
+			"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
+			"recommended action is planned, already done, or done_differently (the idea triggered a different action).",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
@@ -33,6 +45,13 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				]),
 			),
 			proposal_id: Type.Optional(Type.String()),
+			rationale: Type.Optional(Type.String({ description: "Human reasoning behind the decision (stored as durable memory)." })),
+			disposition: Type.Optional(
+				Type.Union([Type.Literal("planned"), Type.Literal("done"), Type.Literal("done_differently")], {
+					description: "planned = will do it; done = did the recommended action; done_differently = the idea triggered a different action.",
+				}),
+			),
+			actual_change: Type.Optional(Type.String({ description: "Commit sha / path / note of what was actually done." })),
 		}),
 		async execute(
 			_toolCallId: string,
@@ -63,12 +82,12 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					}
 					case "accept": {
 						if (!params.proposal_id) return text("proposal_id required", {});
-						const ok = acceptProposal(db, params.proposal_id as string);
+						const ok = acceptProposal(db, params.proposal_id as string, decisionInputFrom(params));
 						return text(ok ? `Applied ${params.proposal_id}` : "Not found or not open", { ok });
 					}
 					case "reject": {
 						if (!params.proposal_id) return text("proposal_id required", {});
-						const ok = rejectProposal(db, params.proposal_id as string);
+						const ok = rejectProposal(db, params.proposal_id as string, decisionInputFrom(params));
 						return text(ok ? `Rejected ${params.proposal_id}` : "Not found or not open", { ok });
 					}
 					default:

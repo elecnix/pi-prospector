@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseProposalsArgs, rankProposals, sessionLabel, statusLabel } from "../../src/commands/proposals.js";
+import { parseProposalsArgs, parseDecisionArgs, rankProposals, sessionLabel, statusLabel } from "../../src/commands/proposals.js";
 import type { Proposal } from "../../src/types.js";
 import { homedir } from "node:os";
 
@@ -99,4 +99,28 @@ test("sessionLabel: falls back to project then short id", () => {
 	assert.equal(sessionLabel({ project: "proj", cwd: "" }, "abcdef1234"), "proj");
 	assert.equal(sessionLabel(undefined, "abcdef1234"), "abcdef12");
 	assert.equal(sessionLabel({ project: "", cwd: "" }, "abcdef1234"), "abcdef12");
+});
+
+test("parseDecisionArgs: id only (backward compatible)", () => {
+	const r = parseDecisionArgs("p1");
+	assert.equal(r.id, "p1");
+	assert.equal(r.input.disposition, null);
+	assert.equal(r.input.rationale, null);
+});
+
+test("parseDecisionArgs: disposition flag + free rationale", () => {
+	const r = parseDecisionArgs("p1 --done already added the rule to AGENTS.md");
+	assert.equal(r.id, "p1");
+	assert.equal(r.input.disposition, "done");
+	assert.equal(r.input.rationale, "already added the rule to AGENTS.md");
+});
+
+test("parseDecisionArgs: done-differently alias and flag-anywhere", () => {
+	const r = parseDecisionArgs("p1 capped iterations --done-differently instead");
+	assert.equal(r.input.disposition, "done_differently");
+	assert.equal(r.input.rationale, "capped iterations instead");
+});
+
+test("parseDecisionArgs: empty args yields no id", () => {
+	assert.equal(parseDecisionArgs("").id, undefined);
 });

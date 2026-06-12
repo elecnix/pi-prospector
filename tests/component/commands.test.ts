@@ -7,6 +7,7 @@ import registerExtension from "../../src/index.js";
 import { insertProposalRow } from "./helpers.js";
 import Database from "better-sqlite3";
 import { migrate } from "../../src/db/schema.js";
+import { getLatestDecision } from "../../src/db/queries.js";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -178,6 +179,24 @@ describe("slash commands", () => {
 
 		const rejectMissing = await run("prospect-reject", "");
 		assert.match(rejectMissing, /Usage/);
+	});
+
+	it("prospect-accept captures rationale + disposition as a decision", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		insertProposalRow(db, { id: "cmd-p3", sessionId: session.id, title: "Rationale proposal", inputKey: "ik-cmd-p3" });
+		db.close();
+
+		const accepted = await run("prospect-accept", "cmd-p3 --done already added the rule to AGENTS.md");
+		assert.match(accepted, /applied/);
+
+		const db2 = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		const d = getLatestDecision(db2, "ik-cmd-p3")!;
+		db2.close();
+		assert.equal(d.decision, "accepted");
+		assert.equal(d.disposition, "done");
+		assert.match(d.rationale!, /already added the rule/);
 	});
 
 	it("prospect-proposals reports empty state", async () => {

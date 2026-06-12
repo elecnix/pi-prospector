@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { listProposals, acceptProposal, rejectProposal, getSessionLabels } from "../db/queries.js";
+import type { DecisionInput } from "../db/queries.js";
 import { getNode } from "../db/analysis-queries.js";
 import { getDbPath } from "../config.js";
 import type { Proposal } from "../types.js";
@@ -28,6 +29,28 @@ export function parseProposalsArgs(args: string): { status?: string; full: boole
 		else if (PROPOSAL_STATUSES.has(t)) status = t;
 	}
 	return { status, full };
+}
+
+/**
+ * Parse `<id> [--planned|--done|--done-differently] [rationale...]` for the
+ * accept/reject commands. The first token is the proposal id; an optional
+ * disposition flag may appear anywhere; everything else is the free-text
+ * rationale. id-only invocations remain valid (empty decision payload).
+ */
+export function parseDecisionArgs(args: string): { id?: string; input: DecisionInput } {
+	const toks = (args ?? "").trim().split(/\s+/).filter(Boolean);
+	const id = toks.shift();
+	let disposition: DecisionInput["disposition"] = null;
+	const rest: string[] = [];
+	for (const tok of toks) {
+		const t = tok.toLowerCase();
+		if (t === "--planned") disposition = "planned";
+		else if (t === "--done") disposition = "done";
+		else if (t === "--done-differently" || t === "--done_differently") disposition = "done_differently";
+		else rest.push(tok);
+	}
+	const rationale = rest.join(" ").trim();
+	return { id, input: { disposition, rationale: rationale.length > 0 ? rationale : null } };
 }
 
 function formatConfidence(confidence: number | null): string {
@@ -161,15 +184,15 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 }
 
 export async function prospectAccept(args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const id = args?.trim();
+	const { id, input } = parseDecisionArgs(args);
 	if (!id) {
-		output(ctx, "Usage: /prospect-accept <id>", "warning");
+		output(ctx, "Usage: /prospect-accept <id> [--planned|--done|--done-differently] [rationale...]", "warning");
 		return;
 	}
 	const db = new Database(getDbPath());
 	migrate(db);
 	try {
-		const ok = acceptProposal(db, id);
+		const ok = acceptProposal(db, id, input);
 		output(ctx, ok ? `Proposal ${id} applied.` : `Proposal ${id} not found or not open.`, ok ? "info" : "warning");
 	} finally {
 		db.close();
@@ -177,15 +200,15 @@ export async function prospectAccept(args: string, ctx: ExtensionCommandContext)
 }
 
 export async function prospectReject(args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const id = args?.trim();
+	const { id, input } = parseDecisionArgs(args);
 	if (!id) {
-		output(ctx, "Usage: /prospect-reject <id>", "warning");
+		output(ctx, "Usage: /prospect-reject <id> [rationale...]", "warning");
 		return;
 	}
 	const db = new Database(getDbPath());
 	migrate(db);
 	try {
-		const ok = rejectProposal(db, id);
+		const ok = rejectProposal(db, id, input);
 		output(ctx, ok ? `Proposal ${id} rejected.` : `Proposal ${id} not found or not open.`, ok ? "info" : "warning");
 	} finally {
 		db.close();
