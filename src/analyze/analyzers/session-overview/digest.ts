@@ -21,6 +21,7 @@ export interface SessionDigest {
 	header: string;
 	perPairLines: string[];
 	trajectoryLines: string[];
+	positiveSignals: string[];
 	text: string;
 	totalChars: number;
 	pairCount: number;
@@ -29,6 +30,12 @@ export interface SessionDigest {
 	correctionCount: number;
 	toolFailureCount: number;
 	trajectorySignalCount: number;
+	/** True when the session had at least one correction followed by a clean (no-friction) pair — a "good pivot". */
+	cleanRecovery: boolean;
+	/** True when the session completed all turns without any correction or high-signal friction. */
+	taskCompletedWithoutCorrection: boolean;
+	/** True when fewer than half the turns had a tool failure (density check). */
+	lowToolFailureDensity: boolean;
 }
 
 export interface BuildDigestInput {
@@ -89,6 +96,32 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	const toolFailureCount = core.reduce((sum, p) => sum + p.tool_failure_count, 0);
 	const trajectorySignalCount = trajectory.reduce((sum, t) => sum + (t.signals?.length ?? 0), 0);
 
+	// ── Positive signals ──────────────────────────────────────────────────
+	// task-completed-without-correction: zero corrections across all pairs.
+	const taskCompletedWithoutCorrection = core.length > 0 && correctionCount === 0;
+
+	// correction-then-clean-recovery: at least one correction followed by a
+	// clean (low-friction, no correction) pair — the agent recovered gracefully.
+	let cleanRecovery = false;
+	for (let i = 0; i < core.length - 1; i++) {
+		if (core[i]!.correction_detected) {
+			const next = core[i + 1]!;
+			if (!next.correction_detected && !next.high_signal) {
+				cleanRecovery = true;
+				break;
+			}
+		}
+	}
+
+	// low tool-failure density: fewer than half the pairs have a tool failure.
+	const pairsWithToolFailure = core.filter((p) => p.tool_failure_count > 0).length;
+	const lowToolFailureDensity = core.length > 0 && pairsWithToolFailure < core.length / 2;
+
+	const positiveSignals: string[] = [];
+	if (taskCompletedWithoutCorrection) positiveSignals.push("task-completed-without-correction");
+	if (cleanRecovery) positiveSignals.push("correction-then-clean-recovery");
+	if (lowToolFailureDensity) positiveSignals.push("low-tool-failure-density");
+
 	const perPairLines = core.map((p) => {
 		const llm = llmByUser.get(p.user_message_id);
 		const bits = [
@@ -108,7 +141,7 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		return bits.join(" ");
 	});
 
-	// Build trajectory signal lines
+	// Build trajectory signal lines.
 	const trajectoryLines = trajectory.flatMap((t) =>
 		(t.signals ?? []).map((s) =>
 			`trajectory:${s.pattern} tool=${s.tool} count=${s.count} ${s.description}`,
@@ -122,22 +155,29 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	if (trajectory.length > 0) {
 		headerLines.push(`trajectory_friction=${trajectory.reduce((max, t) => Math.max(max, t.trajectory_friction_score ?? 0), 0).toFixed(2)}`);
 	}
+	if (positiveSignals.length > 0) {
+		headerLines.push(`positive_signals=${positiveSignals.join(",")}`);
+	}
 	if (compactions.length > 0) {
 		headerLines.push("", "### Compaction summaries (verbatim)");
 		for (const c of compactions) headerLines.push(c.slice(0, 2000));
 	}
 	const header = headerLines.join("\n");
 
-	const parts = [header, "", "### Per-pair signals", ...perPairLines];
-	if (trajectoryLines.length > 0) {
-		parts.push("", "### Trajectory signals", ...trajectoryLines);
+	const sections = [header, "", "### Per-pair signals", ...perPairLines];
+	if (positiveSignals.length > 0) {
+		sections.push("", "### Positive signals", ...positiveSignals.map((s) => `- ${s}`));
 	}
-	const text = parts.join("\n");
+	if (trajectoryLines.length > 0) {
+		sections.push("", "### Trajectory signals", ...trajectoryLines);
+	}
+	const text = sections.join("\n");
 
 	return {
 		header,
 		perPairLines,
 		trajectoryLines,
+		positiveSignals,
 		text,
 		totalChars: text.length,
 		pairCount: core.length,
@@ -146,6 +186,9 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		correctionCount,
 		toolFailureCount,
 		trajectorySignalCount,
+		cleanRecovery,
+		taskCompletedWithoutCorrection,
+		lowToolFailureDensity,
 	};
 }
 
@@ -164,9 +207,14 @@ export function splitDigest(digest: SessionDigest, segmentChars: number): Digest
 		return [{ index: 0, text: digest.text }];
 	}
 
-	const trajectorySection = digest.trajectoryLines.length > 0
-		? ["", "### Trajectory signals", ...digest.trajectoryLines]
-		: [];
+	const trailingSection = [
+		...(digest.positiveSignals.length > 0
+			? ["", "### Positive signals", ...digest.positiveSignals.map((s) => `- ${s}`)]
+			: []),
+		...(digest.trajectoryLines.length > 0
+			? ["", "### Trajectory signals", ...digest.trajectoryLines]
+			: []),
+	];
 
 	const segments: DigestSegment[] = [];
 	let buffer: string[] = [];
@@ -189,15 +237,15 @@ export function splitDigest(digest: SessionDigest, segmentChars: number): Digest
 	}
 	flush();
 
-	// Append trajectory section to the last segment if it fits, or create a new segment
-	if (trajectorySection.length > 0) {
-		const trajText = trajectorySection.join("\n");
-		if (segments.length > 0 && (segments[segments.length - 1]!.text.length + trajText.length) <= segmentChars) {
-			segments[segments.length - 1]!.text += "\n" + trajText;
+	// Append positive/trajectory sections to the last segment if they fit, or create a new segment.
+	if (trailingSection.length > 0) {
+		const trailingText = trailingSection.join("\n");
+		if (segments.length > 0 && segments[segments.length - 1]!.text.length + 1 + trailingText.length <= segmentChars) {
+			segments[segments.length - 1]!.text += `\n${trailingText}`;
 		} else {
 			segments.push({
 				index: segments.length,
-				text: [digest.header, ...trajectorySection].join("\n"),
+				text: [digest.header, ...trailingSection].join("\n"),
 			});
 		}
 	}

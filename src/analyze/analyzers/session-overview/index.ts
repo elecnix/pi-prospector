@@ -111,7 +111,9 @@ export const sessionOverviewAnalyzer: Analyzer = {
 				high_signal: digest.frictionCount,
 				corrections: digest.correctionCount,
 				tool_failures: digest.toolFailureCount,
+				trajectory_signals: digest.trajectorySignalCount,
 				compactions: digest.compactionCount,
+				positive_signals: digest.positiveSignals,
 			},
 			null,
 			2,
@@ -152,7 +154,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const reduceRes = await ctx.llm({
 			model: resolveModelSpec(config.reduceTier, ctx.modelTiers),
 			system: ctx.prompts["reduce"] ?? REDUCE_PROMPT,
-			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText }),
+			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals }),
 			temperature: config.temperature,
 			maxTokens: 2000,
 		});
@@ -167,6 +169,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			corrections: digest.correctionCount,
 			tool_failures: digest.toolFailureCount,
 			trajectory_signals: digest.trajectorySignalCount,
+			positive_signals: digest.positiveSignals,
 		};
 
 		const edges: AnalysisResult["edges"] = [
