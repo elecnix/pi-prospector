@@ -23,7 +23,7 @@ import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { resolveModelSpec } from "../../model-tiers.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { extractJsonObject } from "../turn-pair-llm/prompt.js";
-import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
+import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import { TURN_PAIR_LLM_DEF } from "../turn-pair-llm/index.js";
 import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
@@ -48,6 +48,10 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	analyzerId: SESSION_OVERVIEW_DEF.id,
 	major: 1,
+	// 1.1: additively attach `source_message_ids` (the session's high-signal turn
+	// ids, highest-friction first) to every proposal, so the proposal-validate
+	// analyzer (issue #6) has a concrete replay set. Minor: output gains a field,
+	// the synthesis itself is unchanged.
 	minor: 1,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
@@ -172,6 +176,19 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			positive_signals: digest.positiveSignals,
 		};
 
+		// Deterministically attach the session's high-signal turn ids (highest
+		// friction first) to every proposal as its replay set for proposal-validate
+		// (issue #6). This is computed from the deterministic core metrics — never
+		// from the model — so it stays reproducible and does not depend on the LLM
+		// citing turn ids it never saw. The mapping is deliberately coarse
+		// (session-level, not per-proposal): failure-step attribution is unreliable,
+		// and replaying a candidate rule against the session's friction turns is a
+		// fair, discriminating test of whether the rule averts the friction.
+		const frictionMessageIds = collectHighSignalMessageIds(coreNodes);
+		for (const proposal of properties.improvement_proposals) {
+			proposal["source_message_ids"] = frictionMessageIds;
+		}
+
 		const edges: AnalysisResult["edges"] = [
 			{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 		];
@@ -195,3 +212,23 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		};
 	},
 };
+
+/**
+ * The high-signal turns' user-message ids, highest friction first. This is the
+ * replay set attached to each proposal for offline validation. Ties broken by
+ * pair order for a deterministic, reproducible ordering.
+ */
+function collectHighSignalMessageIds(coreNodes: readonly { content_json: string }[]): string[] {
+	const props: TurnPairCoreProperties[] = [];
+	for (const n of coreNodes) {
+		try {
+			props.push(JSON.parse(n.content_json) as TurnPairCoreProperties);
+		} catch {
+			/* skip unparseable */
+		}
+	}
+	return props
+		.filter((p) => p.high_signal)
+		.sort((a, b) => b.friction_score - a.friction_score || a.pair_index - b.pair_index)
+		.map((p) => p.user_message_id);
+}

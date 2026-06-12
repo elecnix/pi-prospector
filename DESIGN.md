@@ -92,9 +92,11 @@ roughly the order concepts build on one another.
 - **Node kind** — the category of a node's content. The kinds in use are
   **metric** (deterministic measurements of a turn or session), **classification**
   (a language-model judgement about a turn), **summary** (a session-level
-  synthesis that carries proposals), and **error** (a record that an analysis
-  attempt failed). An error node's identity is its recipe plus the failure's message and
-  timestamp, so every failure is a distinct, append-only record that never
+  synthesis that carries proposals), **validation** (a replay test of a proposal
+  against the turns it came from — see *Replay validation* below), and **error**
+  (a record that an analysis attempt failed). An error node's identity is its
+  recipe plus the failure's message and timestamp, so every failure is a distinct,
+  append-only record that never
   occupies the recipe identity reserved for a successful result. Failures stay
   visible and auditable, yet never mark a unit as done: the unit stays *missing*
   and is recomputed on the next scan that reaches it.
@@ -301,6 +303,26 @@ contribute to the session's friction score and surface in the digest.
 - **Severity** — the nature of the signal behind a proposal (for example
   friction, correction, waste, suggestion, insight, or reinforcement). It
   describes *why the proposal exists*, not how urgent it is.
+- **Confidence** — how much to trust a proposal. Two kinds, never conflated: the
+  **model-rated** confidence the synthesising model assigns to itself, and the
+  **replay-validated** score produced by validation (below). When a proposal has
+  been validated, its grounded score supersedes the self-rating for ranking and
+  display, and the view labels which kind it is showing.
+- **Replay validation** — an offline check of whether a proposal would actually
+  have helped. For each of the proposal's originating high-signal turns
+  (`source_message_ids`, attached by the session summary), a *distinct* validator
+  model classifies the turn twice — once as-is, once with the candidate rule
+  injected as a standing instruction — and the proposal is credited only where
+  injecting the rule turns friction into no-friction. The grounded
+  **validated_score** is the fraction of friction turns the rule averts, and the
+  proposal's **validation status** is **supported**, **unsupported**, or
+  **unvalidated** (not yet tested). The result is a content-addressed
+  *validation* node that `consumes` the summary and `anchors` to the replayed
+  turns; the score is written back onto the proposal for fast ranking. This is
+  advisory only — it grounds confidence, it never edits anything — and it
+  deliberately inherits the classifier's blind spots (text-only, no tool calls),
+  so the score is labelled *replay-validated* rather than presented as ground
+  truth.
 - **Positive signal** — a deterministic or model-derived observation that
   something went *well* in a session: the task was completed without correction,
   a correction was followed by a clean recovery, or the tool-failure density was
@@ -444,6 +466,11 @@ layer synthesise everything into proposals. The reason is cost and reliability:
 the cheap, repeatable layer does the bulk of the triage and always works, the
 expensive layer is spent sparingly on the moments that warrant it, and the whole
 pipeline still produces useful structure even if the model layer is unavailable.
+A final, optional layer **replay-validates** the proposals (see *Replay
+validation*): it re-judges each proposal's originating turns with and without the
+candidate rule, using a distinct model, and grounds the proposal's confidence in
+whether the rule actually averts the friction — turning a self-rating into an
+empirical score without ever editing anything.
 
 **Tool arguments and error payloads are first-class evidence.** Analyzers may
 consume tool-call arguments and tool-result error text, not just message prose.

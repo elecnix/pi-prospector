@@ -98,13 +98,14 @@ Print a summary of the database: sessions indexed, messages and tool results, se
 
 ### `/prospect-proposals [status]`
 
-List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`). Each row shows its status, severity, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous).
+List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`). Each row shows its status, a score label, severity, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous).
 
 - **Target** — what the proposal suggests changing (a category and optional path, e.g. a standing instruction file or a skill)
-- **Severity** — the nature of the signal: `friction` | `correction` | `waste` | `suggestion`
+- **Severity** — the nature of the signal: `friction` | `correction` | `waste` | `suggestion` | `reinforcement` (listed as `reinforce`)
 - **Status** — `open`, `applied`, `rejected`, or `duplicate`
+- **Score** — either `replay-validated:<supported|unsupported> NN%` once the proposal has been replay-validated (see `/prospect-validate`), or `model-rated NN%` (the synthesising model's self-rating) until then
 
-Add `--full` (or `-v`) to also print each proposal's detail, evidence, and source node.
+Proposals are ranked **supported → unvalidated → unsupported**, so a replay-validated success rises to the top and a replay-validated failure sinks below untested ones — regardless of the model's self-rated confidence. Add `--full` (or `-v`) to also print each proposal's detail, evidence, validation delta, and source node.
 
 ### `/prospect-show <id>`
 
@@ -129,6 +130,12 @@ Mark an open proposal as `rejected`.
 ### `/prospect-verify`
 
 Recompute every analysis node's output key from its stored content and confirm it matches what is recorded. Because identities are content-addressed, any mismatch reveals out-of-band tampering or corruption of the database. Pure read; reports `ok` or lists the mismatching nodes. See [Verification](#design) in `DESIGN.md`.
+
+### `/prospect-validate [--revise <reasons>] [--limit N] [--session ID] [--model provider/model]`
+
+Replay-validate open proposals to ground their confidence empirically instead of trusting the synthesising model's self-rating. For each proposal, a **distinct** validator model (the `mid` tier by default, vs. the `cheap` tier that generated it) re-classifies the proposal's originating high-signal turns twice — once as-is, once with the candidate rule injected as a standing instruction the agent "already had" — and the proposal is credited only where injecting the rule turns friction into no-friction.
+
+The result is a content-addressed `validation` node (covered by `/prospect-verify`) plus a grounded `validated_score` and a status of `supported`, `unsupported`, or `unvalidated` written back onto the proposal. This is **advisory only** — it never edits anything — and it deliberately inherits the text-only classifier's blind spots, so the score is labelled *replay-validated*, not treated as ground truth. `--model` pins every tier to one model for the run (the resolved model is part of node identity); `--revise config` re-validates after a validator-model change.
 
 ## Pi tool: `prospect`
 
@@ -196,7 +203,7 @@ pi -e ./src/index.ts --prospect proposals
 pi -e ./src/index.ts --prospect "accept <id>"
 ```
 
-The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status] [--full]`, `show <id>`, `verify`, `accept <id>`, `reject <id>`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
+The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status] [--full]`, `show <id>`, `verify`, `validate [flags]`, `accept <id>`, `reject <id>`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
 
 To iterate on a small **private** subset rather than your whole history, copy a few session folders somewhere outside any repo and point the env overrides at them — the sessions directory is only ever read:
 

@@ -30,6 +30,7 @@ export const NodeKind = Type.Union([
 	Type.Literal("classification"),
 	Type.Literal("summary"),
 	Type.Literal("proposal"),
+	Type.Literal("validation"),
 	Type.Literal("error"),
 ]);
 export type NodeKind = Static<typeof NodeKind>;

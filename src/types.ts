@@ -117,6 +117,14 @@ export interface Proposal {
 	confidence: number | null;
 	status: ProposalStatus;
 	input_key: string;
+	/** JSON array (text) of the originating high-signal user-message ids; null until set. */
+	source_message_ids: string | null;
+	/** Grounded replay score in [0,1]; null until validated (issue #6). */
+	validated_score: number | null;
+	/** unvalidated | supported | unsupported. */
+	validation_status: string;
+	/** The validation node that produced the grounded score, if any. */
+	validation_node_id: string | null;
 }
 
 // ─── Stats ───

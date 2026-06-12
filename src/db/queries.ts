@@ -124,6 +124,34 @@ export function rejectProposal(db: Database.Database, id: string): boolean {
 		.run(new Date().toISOString(), id).changes > 0;
 }
 
+// ── Proposal validation (issue #6) ──
+
+/** Open proposals for a session, in stable order — the input to proposal-validate. */
+export function listOpenProposalsForSession(db: Database.Database, sessionId: string): Proposal[] {
+	return db
+		.prepare("SELECT * FROM proposals WHERE session_id = ? AND status = 'open' ORDER BY created_at ASC, rowid ASC")
+		.all(sessionId) as Proposal[];
+}
+
+/** Distinct session ids that currently have at least one open proposal to validate. */
+export function listSessionIdsWithOpenProposals(db: Database.Database, limit?: number): string[] {
+	const rows = db
+		.prepare("SELECT DISTINCT session_id FROM proposals WHERE status = 'open' ORDER BY session_id")
+		.all() as Array<{ session_id: string }>;
+	const ids = rows.map((r) => r.session_id);
+	return typeof limit === "number" ? ids.slice(0, limit) : ids;
+}
+
+/** Count open proposals grouped by validation status, for a run summary. */
+export function countOpenProposalsByValidationStatus(db: Database.Database): Record<string, number> {
+	const rows = db
+		.prepare("SELECT validation_status AS s, COUNT(*) AS c FROM proposals WHERE status = 'open' GROUP BY validation_status")
+		.all() as Array<{ s: string; c: number }>;
+	const out: Record<string, number> = {};
+	for (const r of rows) out[r.s] = r.c;
+	return out;
+}
+
 // ── Stats ──
 
 export function getStats(db: Database.Database): Stats {

@@ -83,7 +83,7 @@ import {
 	upsertAnalyzerDef,
 	upsertAnalyzerVersion,
 } from "../db/analysis-queries.js";
-import { materializeProposalsFromNode } from "./proposal-materializer.js";
+import { materializeProposalsFromNode, applyValidationFromNode } from "./proposal-materializer.js";
 
 export interface FrameworkDeps {
 	db: Database.Database;
@@ -355,6 +355,14 @@ export class AnalyzerFramework {
 				analyzerId: analyzer.def.id,
 				sourceNodeId: nodeId,
 				sourceOutputKey: outputKey,
+				contentJson: analysis.contentJson,
+				now,
+			});
+		} else if (analysis.nodeKind === "validation") {
+			// Symmetric to materialisation: a validation node writes its grounded
+			// replay score back onto the proposal it scored (matched by input_key).
+			applyValidationFromNode(this.deps.db, {
+				validationNodeId: nodeId,
 				contentJson: analysis.contentJson,
 				now,
 			});

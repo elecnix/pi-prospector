@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { listProposals, acceptProposal, rejectProposal, getSessionLabels } from "../db/queries.js";
+import { getNode } from "../db/analysis-queries.js";
 import { getDbPath } from "../config.js";
 import type { Proposal } from "../types.js";
 import { homedir } from "node:os";
@@ -30,18 +31,44 @@ export function parseProposalsArgs(args: string): { status?: string; full: boole
 }
 
 function formatConfidence(confidence: number | null): string {
-	return confidence == null ? " n/a" : `${Math.round(confidence * 100)}%`;
+	return confidence == null ? "n/a" : `${Math.round(confidence * 100)}%`;
 }
 
 function formatTarget(p: Proposal): string {
 	return p.target_path ? `${p.target_type}: ${p.target_path}` : p.target_type;
 }
 
-/** Strongest recommendations first: confidence desc (nulls last), then newest. */
+/**
+ * The headline score label for a proposal. A replay-validated proposal shows its
+ * grounded outcome (`supported`/`unsupported`) and score; an unvalidated one
+ * falls back to the model's self-rated confidence, clearly marked as such so the
+ * two are never confused.
+ */
+export function statusLabel(p: Proposal): string {
+	if (p.validation_status === "supported" || p.validation_status === "unsupported") {
+		const pct = p.validated_score == null ? "n/a" : `${Math.round(p.validated_score * 100)}%`;
+		return `replay-validated:${p.validation_status} ${pct}`;
+	}
+	return `model-rated ${formatConfidence(p.confidence)}`;
+}
+
+/**
+ * Tiered ranking so the user acts on the most trustworthy proposals first:
+ *   supported (by validated score)  >  unvalidated (by model confidence)  >
+ *   unsupported (by validated score).
+ * A replay-validated failure therefore sinks below an untested proposal, and a
+ * replay-validated success rises above everything. Ties broken by newest.
+ */
+function rankKey(p: Proposal): number {
+	if (p.validation_status === "supported") return 2 + (p.validated_score ?? 0);
+	if (p.validation_status === "unsupported") return p.validated_score ?? 0;
+	return 1 + (p.confidence ?? 0);
+}
+
 export function rankProposals(a: Proposal, b: Proposal): number {
-	const ca = a.confidence ?? -1;
-	const cb = b.confidence ?? -1;
-	if (cb !== ca) return cb - ca;
+	const ka = rankKey(a);
+	const kb = rankKey(b);
+	if (kb !== ka) return kb - ka;
 	if (a.created_at === b.created_at) return 0;
 	return a.created_at < b.created_at ? 1 : -1;
 }
@@ -52,11 +79,34 @@ function severityLabel(severity: string): string {
 }
 
 function conciseEntry(p: Proposal): string {
-	return `  [${p.status}] ${formatConfidence(p.confidence).padStart(4)} ${severityLabel(p.severity)} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}\n    id: ${p.id}  ·  prospect show ${p.id}`;
+	return `  [${p.status}] ${statusLabel(p)} · ${severityLabel(p.severity)} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}\n    id: ${p.id}  ·  prospect show ${p.id}`;
 }
 
-function fullEntry(p: Proposal): string {
+/** A one-line with/without replay summary, read from the validation node. */
+function validationDeltaLine(db: Database.Database, p: Proposal): string | null {
+	if (!p.validation_node_id) return null;
+	const node = getNode(db, p.validation_node_id);
+	if (!node) return null;
+	try {
+		const c = JSON.parse(node.content_json) as {
+			replay_turn_count?: number;
+			baseline_friction_turns?: number;
+			averted_turns?: number;
+			validator_model?: string;
+		};
+		return (
+			`validation: ${c.averted_turns ?? 0}/${c.baseline_friction_turns ?? 0} friction turn(s) averted ` +
+			`across ${c.replay_turn_count ?? 0} replayed (model ${c.validator_model ?? "?"})`
+		);
+	} catch {
+		return null;
+	}
+}
+
+function fullEntry(db: Database.Database, p: Proposal): string {
 	const lines = [conciseEntry(p)];
+	const delta = validationDeltaLine(db, p);
+	if (delta) lines.push(`    ${delta}`);
 	if (p.detail && p.detail.trim()) lines.push(`    detail:   ${p.detail.trim()}`);
 	if (p.evidence && p.evidence.trim()) lines.push(`    evidence: ${p.evidence.trim()}`);
 	lines.push(`    source:   ${p.analyzer_id ?? "?"} · node ${p.source_node_id ?? "?"}`);
@@ -95,7 +145,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			else groups.set(p.session_id, [p]);
 		}
 
-		const format = full ? fullEntry : conciseEntry;
+		const format = full ? (p: Proposal) => fullEntry(db, p) : conciseEntry;
 		const blocks: string[] = [];
 		for (const [sessionId, group] of groups) {
 			const label = sessionLabel(labels.get(sessionId), sessionId);
@@ -103,7 +153,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			blocks.push(`${header}\n${group.map(format).join("\n\n")}`);
 		}
 
-		const headline = `Proposals (${proposals.length}${status ? `, ${status}` : ""}) in ${groups.size} session(s), ranked by confidence:`;
+		const headline = `Proposals (${proposals.length}${status ? `, ${status}` : ""}) in ${groups.size} session(s), ranked by validated score then confidence:`;
 		output(ctx, `${headline}\n\n${blocks.join("\n\n")}`);
 	} finally {
 		db.close();

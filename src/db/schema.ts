@@ -71,6 +71,14 @@ export function migrate(db: Database.Database): void {
 			confidence REAL,
 			status TEXT NOT NULL DEFAULT 'open',
 			input_key TEXT NOT NULL, -- content-addressed: H(source output_key | ordinal)
+			-- replay validation (issue #6): the originating high-signal turn ids the
+			-- proposal is replayed against, and the grounded result written back from a
+			-- 'validation' analysis node. validation_status is one of
+			-- unvalidated | supported | unsupported.
+			source_message_ids TEXT, -- JSON array of user-message ids; NULL until set
+			validated_score REAL, -- [0,1] fraction of replay turns whose friction the rule averts; NULL until validated
+			validation_status TEXT NOT NULL DEFAULT 'unvalidated',
+			validation_node_id TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 

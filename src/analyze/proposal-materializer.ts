@@ -21,6 +21,8 @@ export interface RawProposal {
 	evidence?: string;
 	confidence?: number;
 	severity: string;
+	/** Originating high-signal turn ids this proposal is replayed against (issue #6). */
+	source_message_ids?: string[];
 }
 
 export interface MaterializeParams {
@@ -69,8 +71,8 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 		db.prepare(`
 			INSERT INTO proposals
 				(id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path,
-				 title, severity, summary, detail, evidence, confidence, status, input_key)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+				 title, severity, summary, detail, evidence, confidence, status, input_key, source_message_ids)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
 		`).run(
 			proposalId,
 			params.now,
@@ -87,6 +89,9 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 			proposal.evidence ?? null,
 			proposal.confidence ?? null,
 			inputKey,
+			proposal.source_message_ids && proposal.source_message_ids.length > 0
+				? JSON.stringify(proposal.source_message_ids)
+				: null,
 		);
 
 		insertEdge(db, {
@@ -113,6 +118,9 @@ function normalizeProposal(value: unknown): RawProposal | null {
 
 	const targetType = typeof v["target_type"] === "string" && v["target_type"] ? (v["target_type"] as string) : "general";
 	const severity = typeof v["severity"] === "string" && v["severity"] ? (v["severity"] as string) : "suggestion";
+	const sourceMessageIds = Array.isArray(v["source_message_ids"])
+		? (v["source_message_ids"] as unknown[]).filter((x): x is string => typeof x === "string")
+		: undefined;
 
 	return {
 		target_type: targetType,
@@ -123,5 +131,38 @@ function normalizeProposal(value: unknown): RawProposal | null {
 		evidence: typeof v["evidence"] === "string" ? (v["evidence"] as string) : undefined,
 		confidence: typeof v["confidence"] === "number" ? (v["confidence"] as number) : undefined,
 		severity,
+		source_message_ids: sourceMessageIds,
 	};
+}
+
+/**
+ * Write a `validation` node's grounded result back onto the proposal it scored
+ * (issue #6). The symmetric counterpart to `materializeProposalsFromNode`: the
+ * framework calls this whenever it persists a `validation` node, so the fast
+ * `proposals` table carries the replay-validated score for ranking and display,
+ * while the node itself remains the content-addressed, verifiable record.
+ *
+ * The proposal is matched by its content-addressed `input_key` (carried in the
+ * validation node's content), so the write-back is independent of row ids and
+ * survives a wipe + recompute. Returns true if a proposal row was updated.
+ */
+export function applyValidationFromNode(
+	db: Database.Database,
+	params: { validationNodeId: string; contentJson: Record<string, unknown>; now: string },
+): boolean {
+	const proposalInputKey = params.contentJson["proposal_input_key"];
+	if (typeof proposalInputKey !== "string" || proposalInputKey.length === 0) return false;
+
+	const rawStatus = params.contentJson["validation_status"];
+	const status = rawStatus === "supported" || rawStatus === "unsupported" ? rawStatus : "unvalidated";
+	const rawScore = params.contentJson["validated_score"];
+	const score = typeof rawScore === "number" ? rawScore : null;
+
+	const res = db
+		.prepare(
+			"UPDATE proposals SET validated_score = ?, validation_status = ?, validation_node_id = ?, updated_at = ? " +
+				"WHERE input_key = ? AND status = 'open'",
+		)
+		.run(score, status, params.validationNodeId, params.now, proposalInputKey);
+	return res.changes > 0;
 }

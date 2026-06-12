@@ -4,6 +4,7 @@ import { prospectStats } from "./stats.js";
 import { prospectProposals, prospectAccept, prospectReject } from "./proposals.js";
 import { prospectAnalyze } from "./analyze.js";
 import { prospectVerify } from "./verify.js";
+import { prospectValidate } from "./validate.js";
 import { prospectShow } from "./show.js";
 
 /** A command runnable both as a slash command and via the `--prospect` flag. */
@@ -17,13 +18,14 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 	proposals: prospectProposals,
 	show: prospectShow,
 	verify: prospectVerify,
+	validate: prospectValidate,
 	accept: prospectAccept,
 	reject: prospectReject,
 };
 
 const USAGE =
 	'Usage: pi -e <prospector>/src/index.ts --prospect "<command> [args]"\n' +
-	"  commands: sync | analyze [flags] | stats | proposals [status] [--full] | show <id> | verify | accept <id> | reject <id>";
+	"  commands: sync | analyze [flags] | stats | proposals [status] [--full] | show <id> | verify | validate [flags] | accept <id> | reject <id>";
 
 /** Split a `--prospect` flag value into a command name and the remaining args. */
 export function splitProspectSpec(spec: string): { command: string; args: string } {
@@ -65,7 +67,7 @@ export async function runProspectSpec(
 export function registerHeadlessFlag(pi: ExtensionAPI): void {
 	pi.registerFlag("prospect", {
 		description:
-			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | accept <id> | reject <id>',
+			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | verify | validate | accept <id> | reject <id>',
 		type: "string",
 	});
 
