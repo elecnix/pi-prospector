@@ -2,7 +2,7 @@
 
 Incremental session analysis and proposal generation for the [Pi coding agent](https://github.com/earendil-works/pi).
 
-pi-prospector reads your Pi session transcripts, indexes them into a local SQLite database, and builds an **append-only analysis graph** over them — measuring every turn deterministically and using an LLM only where the signal warrants it. From that graph it surfaces concrete, deduplicated proposals to improve your prompts, skills, and configuration. It never applies them. You decide what to develop.
+pi-prospector reads your Pi session transcripts, indexes them into a local SQLite database, and builds an **append-only analysis graph** over them — measuring every turn deterministically and using an LLM only where the signal warrants it. From that graph it surfaces concrete, ranked proposals to improve your prompts, skills, and configuration. It never applies them. You decide what to develop.
 
 pi-prospector is a Pi **extension**: it has no standalone CLI. Everything runs through slash commands and a `prospect` tool inside a Pi session.
 
@@ -98,11 +98,25 @@ Print a summary of the database: sessions indexed, messages and tool results, se
 
 ### `/prospect-proposals [status]`
 
-List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`). Each row shows its status, severity, target, title, and summary.
+List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`). Each row shows its status, severity, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous).
 
 - **Target** — what the proposal suggests changing (a category and optional path, e.g. a standing instruction file or a skill)
 - **Severity** — the nature of the signal: `friction` | `correction` | `waste` | `suggestion`
 - **Status** — `open`, `applied`, `rejected`, or `duplicate`
+
+Add `--full` (or `-v`) to also print each proposal's detail, evidence, and source node.
+
+### `/prospect-show <id>`
+
+Show one proposal together with the **verbatim turns it was synthesised from**, so you can judge it against the real conversation without re-opening the transcript. It accepts a full proposal id or any unambiguous id-prefix.
+
+It walks the proposal's provenance — proposal → its source `session-overview` node → the turn nodes that node **consumed** → the messages those turns **anchor** — and prints, for each high-signal turn:
+
+- the deterministic and LLM signals for that turn (friction score, correction type, tool-failure count, sentiment/severity)
+- the **user** text and the **assistant** text, verbatim
+- every **tool call with its arguments**, plus any tool-result errors
+
+Because the overview consumes every turn, output is focused to the high-signal turns (those with friction or an LLM classification) and capped, with a note for any omitted turns. Surfacing the actual tool-call arguments often reveals mechanism-level detail the text-only classifier cannot see — for example whether a push failure was really about the push command or about a later `gh pr create` target.
 
 ### `/prospect-accept <id>`
 
@@ -111,6 +125,10 @@ Mark an open proposal as `applied`. This does **not** apply the change — it on
 ### `/prospect-reject <id>`
 
 Mark an open proposal as `rejected`.
+
+### `/prospect-verify`
+
+Recompute every analysis node's output key from its stored content and confirm it matches what is recorded. Because identities are content-addressed, any mismatch reveals out-of-band tampering or corruption of the database. Pure read; reports `ok` or lists the mismatching nodes. See [Verification](#design) in `DESIGN.md`.
 
 ## Pi tool: `prospect`
 
@@ -178,7 +196,7 @@ pi -e ./src/index.ts --prospect proposals
 pi -e ./src/index.ts --prospect "accept <id>"
 ```
 
-The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status]`, `accept <id>`, `reject <id>`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
+The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status] [--full]`, `show <id>`, `verify`, `accept <id>`, `reject <id>`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
 
 To iterate on a small **private** subset rather than your whole history, copy a few session folders somewhere outside any repo and point the env overrides at them — the sessions directory is only ever read:
 

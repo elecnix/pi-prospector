@@ -243,10 +243,10 @@ roughly the order concepts build on one another.
   proposal exists*, not how urgent it is.
 - **Materialisation** — the step that lifts proposals out of a summary node into
   the fast, reviewable proposal store, attaching the evidence trail via
-  *produces* and *anchors* edges.
-- **Dedup key** — a fingerprint of a proposal's essence (its target, severity,
-  and normalised title) used to recognise when two proposals are effectively the
-  same suggestion.
+  *produces* and *anchors* edges. That trail is browsable after the fact: from a
+  proposal you can walk back through the node that produced it to the turns it
+  consumed and the messages they anchor, and read those turns verbatim
+  (`prospect show`).
 - **Proposal status** — where a proposal sits in its lifecycle: **open** (awaiting
   a decision), **applied** (accepted/acted upon), **rejected** (declined), or
   **duplicate** (recognised as the same as an existing open proposal).
@@ -383,7 +383,7 @@ inserts), but two genuinely distinct sources — a different session, or a revis
 version — keep their proposals separately. Overlapping suggestions across
 sessions are intentionally retained rather than collapsed: the review step is
 expected to be consumed with the help of an AI agent that sees the whole
-picture, so the listing simply groups recommendations per session and ranks them
+picture, so the listing simply groups proposals per session and ranks them
 by confidence. The reason identity is anchored to the source rather than the
 wording is that an idempotency key must be a function of *inputs*; the LLM's
 output never feeds it, it only flows into a downstream consumer's source
