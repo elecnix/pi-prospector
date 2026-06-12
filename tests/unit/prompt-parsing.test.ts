@@ -142,49 +142,57 @@ describe("parseMapResponse", () => {
 });
 
 describe("parseReduceResponse", () => {
-	it("parses summary, friction points, and proposals", () => {
+	it("parses summary, friction points (enumerate-then-propose shape), positive signals, and proposals", () => {
 		const json = JSON.stringify({
 			session_summary: "did stuff",
-			key_friction_points: [{ description: "x", severity: "high" }, { bad: true }],
-			improvement_proposals: [{ title: "t", summary: "s", target_type: "config", severity: "friction" }],
+			friction_points: [
+				{ description: "x", what_to_change: "change X", evidence: "turn 3", severity: "high" },
+				{ bad: true },
+			],
+			key_positive_signals: [
+				{ description: "agent recovered well after a correction", signal: "correction-then-clean-recovery" },
+			],
+			improvement_proposals: [
+				{ title: "t", summary: "s", target_type: "config", severity: "friction" },
+				{ title: "Keep recovery", summary: "encode recovery", target_type: "agents_md", severity: "reinforcement" },
+			],
 		});
 		const r = parseReduceResponse(json, extractJsonObject);
 		assert.equal(r.session_summary, "did stuff");
-		assert.equal(r.key_friction_points.length, 1);
-		assert.equal(r.improvement_proposals.length, 1);
+		assert.equal(r.friction_points.length, 1);
+		assert.equal(r.friction_points[0]!.description, "x");
+		assert.equal(r.friction_points[0]!.what_to_change, "change X");
+		assert.equal(r.friction_points[0]!.evidence, "turn 3");
+		assert.equal(r.friction_points[0]!.severity, "high");
+		assert.equal(r.key_positive_signals.length, 1);
+		assert.equal(r.key_positive_signals[0]!.signal, "correction-then-clean-recovery");
+		assert.equal(r.improvement_proposals.length, 2);
+		assert.equal(r.improvement_proposals[1]!["severity"], "reinforcement");
+	});
+
+	it("defaults what_to_change and evidence to empty string when absent", () => {
+		const json = JSON.stringify({
+			session_summary: "s",
+			friction_points: [{ description: "d", severity: "medium" }],
+			improvement_proposals: [],
+		});
+		const r = parseReduceResponse(json, extractJsonObject);
+		assert.equal(r.friction_points[0]!.what_to_change, "");
+		assert.equal(r.friction_points[0]!.evidence, "");
+		assert.equal(r.friction_points[0]!.severity, "medium");
 	});
 
 	it("defaults arrays when missing", () => {
 		const r = parseReduceResponse("{}", extractJsonObject);
-		assert.deepEqual(r.key_friction_points, []);
+		assert.deepEqual(r.friction_points, []);
 		assert.deepEqual(r.key_positive_signals, []);
 		assert.deepEqual(r.improvement_proposals, []);
-	});
-
-	it("parses key_positive_signals from the LLM response", () => {
-		const json = JSON.stringify({
-			session_summary: "clean session",
-			key_friction_points: [],
-			key_positive_signals: [
-				{ description: "agent recovered well after a correction", signal: "correction-then-clean-recovery" },
-				{ description: "no tool failures", signal: "low-tool-failure-density" },
-			],
-			improvement_proposals: [
-				{ title: "Add recovery pattern", summary: "encode the clean recovery", severity: "reinforcement", target_type: "agents_md" },
-			],
-		});
-		const r = parseReduceResponse(json, extractJsonObject);
-		assert.equal(r.key_positive_signals.length, 2);
-		assert.equal(r.key_positive_signals[0]!.signal, "correction-then-clean-recovery");
-		assert.equal(r.key_positive_signals[1]!.description, "no tool failures");
-		assert.equal(r.improvement_proposals.length, 1);
-		assert.equal((r.improvement_proposals[0] as Record<string, unknown>)["severity"], "reinforcement");
 	});
 
 	it("filters out invalid positive signals", () => {
 		const json = JSON.stringify({
 			session_summary: "test",
-			key_friction_points: [],
+			friction_points: [],
 			key_positive_signals: [
 				{ description: "valid", signal: "task-completed-without-correction" },
 				{ bad: true },
@@ -195,5 +203,41 @@ describe("parseReduceResponse", () => {
 		const r = parseReduceResponse(json, extractJsonObject);
 		assert.equal(r.key_positive_signals.length, 1);
 		assert.equal(r.key_positive_signals[0]!.description, "valid");
+	});
+
+	it("falls back friction severity to 'low' for invalid values", () => {
+		const json = JSON.stringify({
+			session_summary: "s",
+			friction_points: [{ description: "d", severity: "huge" }],
+			improvement_proposals: [],
+		});
+		const r = parseReduceResponse(json, extractJsonObject);
+		assert.equal(r.friction_points[0]!.severity, "low");
+	});
+
+	it("rejects friction point entries missing a description", () => {
+		const json = JSON.stringify({
+			session_summary: "s",
+			friction_points: [{ severity: "high" }, null, { description: "valid", what_to_change: "c", evidence: "e", severity: "low" }],
+			improvement_proposals: [],
+		});
+		const r = parseReduceResponse(json, extractJsonObject);
+		assert.equal(r.friction_points.length, 1);
+		assert.equal(r.friction_points[0]!.description, "valid");
+	});
+
+	it("falls back proposal severity to suggestion but preserves reinforcement", () => {
+		const json = JSON.stringify({
+			session_summary: "s",
+			friction_points: [],
+			key_positive_signals: [],
+			improvement_proposals: [
+				{ title: "bad", summary: "bad", severity: "urgent" },
+				{ title: "reinforce", summary: "keep it", severity: "reinforcement" },
+			],
+		});
+		const r = parseReduceResponse(json, extractJsonObject);
+		assert.equal(r.improvement_proposals[0]!["severity"], "suggestion");
+		assert.equal(r.improvement_proposals[1]!["severity"], "reinforcement");
 	});
 });

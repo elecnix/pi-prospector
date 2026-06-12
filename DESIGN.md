@@ -320,6 +320,17 @@ contribute to the session's friction score and surface in the digest.
   proposal you can walk back through the node that produced it to the turns it
   consumed and the messages they anchor, and read those turns verbatim
   (`prospect show`).
+- **Textual gradient** — the per-friction record that a synthesis step produces
+  *before* generating proposals: a concise *why it failed → what to change*
+  explanation, consisting of a description of the friction, what should change,
+  the session evidence supporting it, and a severity rating. The textual
+  gradient is the exhaustive enumeration of distinct friction; proposals are
+  derived from it.
+- **Enumerate-then-propose** — the synthesis discipline where the model first
+  enumerates *every* distinct friction point as a textual gradient, then emits
+  one proposal per enumerated point. The model does not prune or merge
+  distinct friction during generation; volume is managed downstream by
+  display-time grouping, not by suppressing distinct signals at synthesis time.
 - **Proposal status** — where a proposal sits in its lifecycle: **open** (awaiting
   a decision), **applied** (accepted/acted upon), **rejected** (declined), or
   **duplicate** (recognised as the same as an existing open proposal).
@@ -444,6 +455,22 @@ it must never *gate* what the synthesizer is allowed to see. Every pair carries
 a truncated verbatim user-text snippet in the digest; pairs the regex misses are
 still visible to the session-level LLM. The un-gating ensures that recall is
 not bounded by regex coverage.
+
+### Synthesis enumerates exhaustively; volume managed by display-time grouping
+
+The reduce prompt must not prune or merge distinct friction during generation.
+Instead of asking the model to "prefer a few" proposals, the synthesis contract
+requires it to **enumerate** every distinct friction point as a textual gradient
+(description, what_to_change, evidence, severity) and then emit one proposal
+per enumerated point. Reinforcement proposals may also be emitted for positive
+patterns worth preserving. Overlapping or redundant proposals are acceptable;
+deduplication is a downstream concern handled at display time, not at synthesis
+time. This ensures recall does not fall as a session gets longer: every distinct
+friction surface is preserved regardless of how many there are, and the human
+(or AI agent) reviewing the output can group and prioritise rather than having
+the model silently drop signals. The enrichment cap for high-signal turns must
+also scale with session length so that long sessions are not under-enriched;
+a hard ceiling still bounds cost.
 
 ### Model access through the host platform, with a test seam
 

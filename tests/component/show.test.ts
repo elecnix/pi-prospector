@@ -23,7 +23,8 @@ function respond(req: LLMRequest): string {
 	if (sys.includes("summarise one segment")) return JSON.stringify({ segment_summary: "seg", notable_points: [] });
 	return JSON.stringify({
 		session_summary: "A wrong approach was corrected.",
-		key_friction_points: [{ description: "wrong approach", severity: "high" }],
+		friction_points: [{ description: "wrong approach", what_to_change: "document the correct approach", evidence: "user corrected in turn 2", severity: "high" }],
+		key_positive_signals: [],
 		improvement_proposals: [
 			{ target_type: "agents_md", target_path: "AGENTS.md", title: "Document the auth module", summary: "s", detail: "d", evidence: "user corrected in turn 2", confidence: 0.7, severity: "correction" },
 		],

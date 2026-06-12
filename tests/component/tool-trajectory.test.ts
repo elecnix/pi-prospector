@@ -169,9 +169,15 @@ function respond(req: LLMRequest): string {
 	// session-overview reduce: produce a proposal triggered by trajectory signals
 	return JSON.stringify({
 		session_summary: "The agent polled PR status 5 times without changing approach and switched branches back and forth.",
-		key_friction_points: [
-			{ description: "Agent repeatedly polled PR status without adapting strategy", severity: "high" },
+		friction_points: [
+			{
+				description: "Agent repeatedly polled PR status without adapting strategy",
+				what_to_change: "add polling backoff or a strategy change before repeated status checks",
+				evidence: "gh pr view 29 called 5× consecutively",
+				severity: "high",
+			},
 		],
+		key_positive_signals: [],
 		improvement_proposals: [
 			{
 				target_type: "agents_md",

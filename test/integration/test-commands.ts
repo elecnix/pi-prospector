@@ -45,7 +45,8 @@ function respond(req: LLMRequest): string {
 	}
 	return JSON.stringify({
 		session_summary: "summary",
-		key_friction_points: [],
+		friction_points: [],
+		key_positive_signals: [],
 		improvement_proposals: [
 			{ target_type: "config", target_path: "prospector.json", title: "Tune model tiers", summary: "pick cheaper models", detail: "d", evidence: "e", confidence: 0.5, severity: "suggestion" },
 		],

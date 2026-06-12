@@ -28,7 +28,8 @@ function respond(req: LLMRequest): string {
 	// reduce
 	return JSON.stringify({
 		session_summary: "The agent took a wrong approach and was corrected.",
-		key_friction_points: [{ description: "wrong approach to auth", severity: "high" }],
+		friction_points: [{ description: "wrong approach to auth", what_to_change: "document auth module location", evidence: "user corrected in turn 2", severity: "high" }],
+		key_positive_signals: [],
 		improvement_proposals: [
 			{
 				target_type: "agents_md",
@@ -60,7 +61,9 @@ function respondCleanRecovery(req: LLMRequest): string {
 	// reduce: produce a reinforcement proposal for the clean recovery
 	return JSON.stringify({
 		session_summary: "The agent was corrected once but recovered well, completing the task cleanly afterward.",
-		key_friction_points: [{ description: "initial wrong approach", severity: "low" }],
+		friction_points: [
+			{ description: "initial wrong approach", what_to_change: "pivot immediately to the corrected approach", evidence: "user corrected the first turn", severity: "low" },
+		],
 		key_positive_signals: [
 			{ description: "agent recovered quickly after correction", signal: "correction-then-clean-recovery" },
 		],
@@ -91,7 +94,7 @@ function respondCleanSession(req: LLMRequest): string {
 	// reduce: produce a clean overview with a reinforcement proposal
 	return JSON.stringify({
 		session_summary: "This was a smooth session with no friction. The agent completed the task without corrections or tool failures.",
-		key_friction_points: [],
+		friction_points: [],
 		key_positive_signals: [
 			{ description: "task completed without any correction", signal: "task-completed-without-correction" },
 			{ description: "no tool failures throughout", signal: "low-tool-failure-density" },
@@ -152,7 +155,7 @@ describe("analyzers end-to-end", () => {
 		}
 	});
 
-	it("enforces maxPairsPerSession as a cost guard, enriching highest-friction turns first", async () => {
+	it("enforces the length-aware enrich cap (minPairFraction * ceiling), enriching highest-friction turns first", async () => {
 		const { db, close } = tempDb();
 		try {
 			insertSession(db, "s3");
@@ -167,12 +170,14 @@ describe("analyzers end-to-end", () => {
 			const mock = createMockLLM({ responder: respond, tokensPerCall: 10, costPerCall: 0.0001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
 			fw.register(turnPairCoreAnalyzer);
-			// turn-pair-llm variant whose cost guard allows only two enrichments.
+			// turn-pair-llm variant whose length-aware cap limits to exactly 2 enrichments.
+			// With minPairFraction=0.5 and 6 high-signal pairs: round(0.5 * 6) = 3.
+			// With maxPairsHardCeiling=2, min(3, 2) = 2.
 			const cappedLLM = {
 				...turnPairLLMAnalyzer,
 				defaultConfig: {
 					...turnPairLLMAnalyzer.defaultConfig,
-					configJson: { ...turnPairLLMAnalyzer.defaultConfig.configJson, maxPairsPerSession: 2 },
+					configJson: { ...turnPairLLMAnalyzer.defaultConfig.configJson, minPairFraction: 0.5, maxPairsHardCeiling: 2 },
 				},
 			};
 			fw.register(cappedLLM);
@@ -184,7 +189,7 @@ describe("analyzers end-to-end", () => {
 			assert.ok(highSignal > 2, `expected more than the cap of high-signal pairs, got ${highSignal}`);
 
 			const classifications = (db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id='turn-pair-llm'").get() as { c: number }).c;
-			assert.equal(classifications, 2, "llm enrichment is capped at maxPairsPerSession");
+			assert.equal(classifications, 2, "llm enrichment is capped at the length-aware ceiling");
 			const classifyCalls = mock.calls.filter((c) => (c.system ?? "").includes("classify a single turn"));
 			assert.equal(classifyCalls.length, 2, "the model is called only for the capped set");
 		} finally {

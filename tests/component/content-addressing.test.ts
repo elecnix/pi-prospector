@@ -24,7 +24,8 @@ function respond(req: LLMRequest): string {
 	}
 	return JSON.stringify({
 		session_summary: "The agent took a wrong approach and was corrected.",
-		key_friction_points: [{ description: "wrong approach", severity: "high" }],
+		friction_points: [{ description: "wrong approach", what_to_change: "document correct approach", evidence: "user corrected", severity: "high" }],
+		key_positive_signals: [],
 		improvement_proposals: [
 			{ target_type: "agents_md", target_path: "AGENTS.md", title: "Doc auth", summary: "s", detail: "d", evidence: "e", confidence: 0.7, severity: "correction" },
 		],

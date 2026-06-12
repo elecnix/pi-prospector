@@ -35,7 +35,7 @@ import {
 	type ToolCallEvidence,
 	type ToolResultEvidence,
 } from "./prompt.js";
-import { DEFAULT_TURN_PAIR_LLM_CONFIG, type TurnPairLLMConfig } from "./config.js";
+import { computeEnrichCap, DEFAULT_TURN_PAIR_LLM_CONFIG, type TurnPairLLMConfig } from "./config.js";
 
 export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 	id: "turn-pair-llm",
@@ -103,11 +103,11 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			candidates.push({ node, props });
 		}
 
-		// Cost guard: enrich at most `maxPairsPerSession`, highest friction first
-		// (ties broken by pair order so selection is deterministic across runs).
+		// Cost guard: enrich up to a length-aware cap (minPairFraction * total, clamped to ceiling),
+		// highest friction first (ties broken by pair order so selection is deterministic across runs).
 		candidates.sort((a, b) => b.props.friction_score - a.props.friction_score || a.props.pair_index - b.props.pair_index);
-		const cap = config.maxPairsPerSession;
-		const selected = Number.isFinite(cap) && cap >= 0 ? candidates.slice(0, cap) : candidates;
+		const cap = computeEnrichCap(candidates.length, config);
+		const selected = candidates.slice(0, cap);
 
 		const units: AnalysisUnit[] = [];
 		for (const { node, props } of selected) {
