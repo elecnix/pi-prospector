@@ -127,6 +127,35 @@ export interface Proposal {
 	validation_node_id: string | null;
 }
 
+// ─── Decisions (append-only human feedback) ───
+
+/** What the human decided about a proposal. */
+export type DecisionVerdict = "accepted" | "rejected" | "accepted_modified";
+
+/**
+ * How the human acted on an accepted proposal:
+ *   planned          — "I will do it" (intent recorded, not yet done)
+ *   done             — "I did the recommended action"
+ *   done_differently — "the idea triggered a different action than recommended"
+ */
+export type DecisionDisposition = "planned" | "done" | "done_differently";
+
+/**
+ * An append-only record of a human accept/reject. Keyed by the proposal's
+ * content-addressed `proposal_input_key` (not a row id) so it survives a wipe +
+ * recompute. The latest row by `decided_at` is authoritative.
+ */
+export interface ProposalDecision {
+	id: string;
+	proposal_input_key: string;
+	decision: DecisionVerdict;
+	disposition: DecisionDisposition | null;
+	rationale: string | null;
+	actual_change: string | null;
+	harness_ref: string | null;
+	decided_at: string;
+}
+
 // ─── Stats ───
 
 export interface Stats {

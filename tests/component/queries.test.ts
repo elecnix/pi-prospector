@@ -1,7 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { tempDb, insertSession, insertProposalRow } from "./helpers.js";
-import { acceptProposal, getProposal, getStats, listProposals, rejectProposal } from "../../src/db/queries.js";
+import {
+	acceptProposal,
+	getProposal,
+	getStats,
+	listProposals,
+	rejectProposal,
+	getLatestDecision,
+	getDecisionsForProposal,
+	getAllDecisions,
+} from "../../src/db/queries.js";
 
 describe("proposal queries (v2)", () => {
 	it("lists, filters, accepts, and rejects", () => {
@@ -54,6 +63,64 @@ describe("proposal queries (v2)", () => {
 			assert.equal(stats.totalSessions, 1);
 			assert.equal(stats.analysis.nodes, 0);
 			assert.deepEqual(stats.analysis.nodesByKind, {});
+		} finally {
+			close();
+		}
+	});
+});
+
+describe("proposal decisions (append-only human feedback)", () => {
+	it("records a decision keyed by input_key when accepting/rejecting", () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s1");
+			insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", inputKey: "ik-1" });
+			insertProposalRow(db, { id: "p2", sessionId: "s1", title: "B", inputKey: "ik-2" });
+
+			assert.equal(acceptProposal(db, "p1", { disposition: "done", rationale: "already did it", actual_change: "commit abc123" }), true);
+			assert.equal(rejectProposal(db, "p2", { rationale: "current harness already covers this" }), true);
+
+			const d1 = getLatestDecision(db, "ik-1")!;
+			assert.equal(d1.decision, "accepted");
+			assert.equal(d1.disposition, "done");
+			assert.equal(d1.rationale, "already did it");
+			assert.equal(d1.actual_change, "commit abc123");
+
+			const d2 = getLatestDecision(db, "ik-2")!;
+			assert.equal(d2.decision, "rejected");
+			assert.equal(d2.rationale, "current harness already covers this");
+			assert.equal(getAllDecisions(db).length, 2);
+		} finally {
+			close();
+		}
+	});
+
+	it("maps done_differently disposition to accepted_modified", () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s1");
+			insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", inputKey: "ik-1" });
+			assert.equal(acceptProposal(db, "p1", { disposition: "done_differently", rationale: "capped iterations instead of banning loops" }), true);
+			const d = getLatestDecision(db, "ik-1")!;
+			assert.equal(d.decision, "accepted_modified");
+			assert.equal(d.disposition, "done_differently");
+			assert.equal(getProposal(db, "p1")!.status, "applied");
+		} finally {
+			close();
+		}
+	});
+
+	it("records no decision when the proposal is not open, and id-only accept still works", () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s1");
+			insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", status: "applied", inputKey: "ik-1" });
+			assert.equal(acceptProposal(db, "p1", { rationale: "too late" }), false);
+			assert.equal(getDecisionsForProposal(db, "ik-1").length, 0);
+
+			insertProposalRow(db, { id: "p2", sessionId: "s1", title: "B", inputKey: "ik-2" });
+			assert.equal(acceptProposal(db, "p2"), true); // backward-compatible id-only call
+			assert.equal(getDecisionsForProposal(db, "ik-2").length, 1);
 		} finally {
 			close();
 		}

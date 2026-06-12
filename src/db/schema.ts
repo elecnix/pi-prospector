@@ -10,6 +10,7 @@ import Database from "better-sqlite3";
  * Tables:
  *   sessions, messages, messages_fts   — the read-only session index
  *   proposals                          — materialised, user-reviewable proposals
+ *   proposal_decisions                 — append-only human accept/reject + rationale
  *   analyzer_defs / _versions          — analyzer identity and code releases
  *   prompt_registry                    — content-addressed prompt store
  *   analyzer_configs                   — content-addressed config store
@@ -80,6 +81,26 @@ export function migrate(db: Database.Database): void {
 			validation_status TEXT NOT NULL DEFAULT 'unvalidated',
 			validation_node_id TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+
+		-- ──────────────────── human decisions (append-only) ────────────────────
+		-- A decision is EXTERNAL human input (same category as messages), not
+		-- derived data: it is not an analysis_node and is not part of a proposal's
+		-- identity. It is keyed by the proposal's content-addressed input_key
+		-- (NOT the row id) so it re-attaches to the regenerated proposal after a
+		-- wipe + recompute — durable memory of how the human responded. Append-only:
+		-- never UPDATE/DELETE a row; the latest by decided_at wins. This corpus is
+		-- the input source for the future meta-analyzer that proposes improvements
+		-- to raise proposal quality.
+		CREATE TABLE IF NOT EXISTS proposal_decisions (
+			id TEXT PRIMARY KEY,
+			proposal_input_key TEXT NOT NULL,
+			decision TEXT NOT NULL,        -- accepted | rejected | accepted_modified
+			disposition TEXT,              -- planned | done | done_differently (nullable)
+			rationale TEXT,               -- free-text human reasoning (nullable)
+			actual_change TEXT,           -- commit sha / path / note of what was actually done (nullable)
+			harness_ref TEXT,             -- marker of the active prompt/AGENTS.md at decision time (nullable)
+			decided_at TEXT NOT NULL
 		);
 
 		-- ──────────────────── analyzer identity & recipe ────────────────────
@@ -181,6 +202,8 @@ export function migrate(db: Database.Database): void {
 		CREATE INDEX IF NOT EXISTS idx_proposals_session ON proposals(session_id);
 		CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
 		CREATE INDEX IF NOT EXISTS idx_proposals_dedup ON proposals(input_key);
+
+		CREATE INDEX IF NOT EXISTS idx_decisions_input_key ON proposal_decisions(proposal_input_key);
 
 		-- Group nodes into logical units (analyzer + source set) for the
 		-- version-alternative timeline, and look up by recipe identity.
