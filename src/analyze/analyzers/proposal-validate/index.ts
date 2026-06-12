@@ -39,7 +39,9 @@ import { buildTurnPairs } from "../turn-pair-core/build.js";
 import {
 	CLASSIFY_PROMPT,
 	CLASSIFY_PROMPT_HASH,
+	CLASSIFY_TOOL,
 	parseClassifyResponse,
+	parseClassifyObject,
 } from "../turn-pair-llm/prompt.js";
 import { SESSION_OVERVIEW_DEF } from "../session-overview/index.js";
 import { listOpenProposalsForSession } from "../../../db/queries.js";
@@ -58,7 +60,7 @@ export const PROPOSAL_VALIDATE_DEF: AnalyzerDef = {
 export const PROPOSAL_VALIDATE_VERSION: AnalyzerVersion = {
 	analyzerId: PROPOSAL_VALIDATE_DEF.id,
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/proposal-validate/index.ts",
 };
@@ -187,6 +189,7 @@ export const proposalValidateAnalyzer: Analyzer = {
 				user: buildBaselinePrompt({ userText: pair.userText, assistantText: pair.assistantText }),
 				temperature: config.temperature,
 				maxTokens: 500,
+				tool: CLASSIFY_TOOL,
 			});
 			costUsd += baselineRes.costUsd;
 			tokensUsed += baselineRes.tokensUsed;
@@ -197,12 +200,17 @@ export const proposalValidateAnalyzer: Analyzer = {
 				user: buildWithRulePrompt({ userText: pair.userText, assistantText: pair.assistantText, rule: meta.ruleText }),
 				temperature: config.temperature,
 				maxTokens: 500,
+				tool: CLASSIFY_TOOL,
 			});
 			costUsd += withRuleRes.costUsd;
 			tokensUsed += withRuleRes.tokensUsed;
 
-			const baseline = parseClassifyResponse(baselineRes.text);
-			const withRule = parseClassifyResponse(withRuleRes.text);
+			const baseline = baselineRes.structured
+				? parseClassifyObject(baselineRes.structured as Record<string, unknown>)
+				: parseClassifyResponse(baselineRes.text);
+			const withRule = withRuleRes.structured
+				? parseClassifyObject(withRuleRes.structured as Record<string, unknown>)
+				: parseClassifyResponse(withRuleRes.text);
 			const baselineFriction = baseline.friction_type !== "none";
 			const withRuleFriction = withRule.friction_type !== "none";
 

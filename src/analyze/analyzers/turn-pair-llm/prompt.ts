@@ -7,11 +7,13 @@
  */
 
 import { shortHash } from "../../input-hash.js";
+import { Type } from "typebox";
 
 export const CLASSIFY_PROMPT = `You classify a single turn in a coding-agent session.
 A "turn" is one user message and the assistant's response to it.
 
-Return ONLY a JSON object, no prose, with exactly these fields:
+Return your classification by calling the \`classify_turn\` tool. Do NOT reply with
+prose. The tool takes exactly these fields:
 {
   "sentiment": "positive" | "neutral" | "frustrated",
   "friction_type": "none" | "wrong_approach" | "missed_instruction" | "tool_misuse" | "repetition" | "other",
@@ -25,9 +27,31 @@ no friction, use sentiment "neutral", friction_type "none", is_genuine_correctio
 
 When TOOL CALLS are shown, use them to ground your diagnosis: prefer friction_type
 "tool_misuse" when the tool name, arguments, or error reveal the mechanism of the
-failure (e.g. wrong flags, missing --repo, targeting the wrong resource).`;
+failure (e.g. wrong flags, missing --repo, targeting the wrong resource).
+
+Always respond by calling the classify_turn tool — never answer in prose.`;
 
 export const CLASSIFY_PROMPT_HASH = shortHash(CLASSIFY_PROMPT);
+
+/** Forced-tool-call schema for the classify phase (reliable structured output). */
+export const CLASSIFY_TOOL = {
+	name: "classify_turn",
+	description: "Submit the structured classification of a single coding-agent turn.",
+	parameters: Type.Object({
+		sentiment: Type.Union([Type.Literal("positive"), Type.Literal("neutral"), Type.Literal("frustrated")]),
+		friction_type: Type.Union([
+			Type.Literal("none"),
+			Type.Literal("wrong_approach"),
+			Type.Literal("missed_instruction"),
+			Type.Literal("tool_misuse"),
+			Type.Literal("repetition"),
+			Type.Literal("other"),
+		]),
+		is_genuine_correction: Type.Boolean(),
+		severity: Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
+		rationale: Type.String({ description: "one short sentence" }),
+	}),
+};
 
 export interface ToolCallEvidence {
 	/** Tool name (e.g. "bash", "gh", "git"). */
@@ -117,7 +141,11 @@ const VALID_SEVERITY = new Set(["low", "medium", "high"]);
 
 /** Parse the model's JSON, tolerating markdown fences and extra prose. */
 export function parseClassifyResponse(text: string): ClassifyResult {
-	const obj = extractJsonObject(text);
+	return parseClassifyObject(extractJsonObject(text));
+}
+
+/** Normalise an already-parsed classify object (e.g. forced-tool-call arguments). */
+export function parseClassifyObject(obj: Record<string, unknown>): ClassifyResult {
 	const sentiment = pickString(obj["sentiment"], VALID_SENTIMENT, "neutral");
 	const frictionType = pickString(obj["friction_type"], VALID_FRICTION, "none");
 	const severity = pickString(obj["severity"], VALID_SEVERITY, "low");

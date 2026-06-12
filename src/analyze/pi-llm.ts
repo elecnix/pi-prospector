@@ -66,6 +66,11 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			systemPrompt: request.system,
 			messages: [{ role: "user", content: request.user, timestamp: Date.now() }],
 		};
+		if (request.tool) {
+			context.tools = [
+				{ name: request.tool.name, description: request.tool.description, parameters: request.tool.parameters },
+			];
+		}
 
 		const message = await piAi.complete(model, context, {
 			apiKey: auth.apiKey,
@@ -86,21 +91,26 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, durationMs: number): LLMResponse {
 	const textParts: string[] = [];
 	const thinkingParts: string[] = [];
+	let structured: Record<string, unknown> | undefined;
 	for (const part of message.content) {
 		if (part.type === "text") textParts.push(part.text);
 		else if (part.type === "thinking") thinkingParts.push(part.thinking);
+		else if (part.type === "toolCall" && structured === undefined) structured = part.arguments;
 	}
 
 	if (message.stopReason === "error") {
 		throw new Error(`LLM error from ${modelSpec}: ${message.errorMessage ?? "unknown error"}`);
 	}
 
+
+
 	// Every call this caller makes expects a complete structured (JSON) answer, so
 	// a response cut off at the output limit is never usable. Fail fast with an
 	// actionable message instead of letting the truncated body surface later as a
 	// cryptic "Unterminated JSON object" parse error. Reasoning models are the
-	// usual cause: their thinking tokens consume the maxTokens budget.
-	if (message.stopReason === "length") {
+	// usual cause: their thinking tokens consume the maxTokens budget. A complete
+	// tool call is still usable even if the stream then reports "length".
+	if (message.stopReason === "length" && structured === undefined) {
 		const outputTokens = message.usage?.output ?? 0;
 		throw new Error(
 			`LLM response from ${modelSpec} was truncated at the output limit (${outputTokens} output tokens) ` +
@@ -111,6 +121,7 @@ export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, du
 	return {
 		text: textParts.join("\n").trim(),
 		thinking: thinkingParts.length > 0 ? thinkingParts.join("\n").trim() : undefined,
+		structured,
 		model: message.model || modelSpec,
 		costUsd: message.usage?.cost?.total ?? 0,
 		tokensUsed: message.usage?.totalTokens ?? 0,

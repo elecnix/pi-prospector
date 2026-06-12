@@ -29,8 +29,10 @@ import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-co
 import {
 	CLASSIFY_PROMPT,
 	CLASSIFY_PROMPT_HASH,
+	CLASSIFY_TOOL,
 	buildClassifyPrompt,
 	parseClassifyResponse,
+	parseClassifyObject,
 	type TurnPairLLMProperties,
 	type ToolCallEvidence,
 	type ToolResultEvidence,
@@ -49,7 +51,10 @@ export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	analyzerId: TURN_PAIR_LLM_DEF.id,
 	major: 1,
-	minor: 1,
+	// 1.2: classify prompt now requests structured output via a forced tool call
+	// (classify_turn) instead of "return only JSON". Robustness change for reasoning
+	// models; prompt text changed, hence a version bump.
+	minor: 2,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };
@@ -156,10 +161,13 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			}),
 			temperature: config.temperature,
 			maxTokens: 500,
+			tool: CLASSIFY_TOOL,
 		});
 
 		const properties: TurnPairLLMProperties = {
-			...parseClassifyResponse(response.text),
+			...(response.structured
+				? parseClassifyObject(response.structured as Record<string, unknown>)
+				: parseClassifyResponse(response.text)),
 			user_message_id: unit.anchorRef,
 		};
 

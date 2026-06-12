@@ -27,12 +27,14 @@ import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-co
 import { TURN_PAIR_LLM_DEF } from "../turn-pair-llm/index.js";
 import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
-import { MAP_PROMPT, MAP_PROMPT_HASH, buildMapPrompt, parseMapResponse, type MapSummary } from "./prompt-map.js";
+import { MAP_PROMPT, MAP_PROMPT_HASH, MAP_TOOL, buildMapPrompt, parseMapResponse, parseMapObject, type MapSummary } from "./prompt-map.js";
 import {
 	REDUCE_PROMPT,
 	REDUCE_PROMPT_HASH,
+	REDUCE_TOOL,
 	buildReducePrompt,
 	parseReduceResponse,
+	parseReduceObject,
 	type SessionOverviewProperties,
 } from "./prompt-reduce.js";
 import { DEFAULT_SESSION_OVERVIEW_CONFIG, type SessionOverviewConfig } from "./config.js";
@@ -53,7 +55,11 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// ids, highest-friction first) to every proposal, so the proposal-validate
 	// analyzer (issue #6) has a concrete replay set. Minor: output gains a field,
 	// the synthesis itself is unchanged.
-	minor: 1,
+	// 1.2: map/reduce prompts now request structured output via a forced tool call
+	// (submit_segment_summary / submit_session_analysis) instead of "return only
+	// JSON", so reasoning models stop returning prose. Behaviour-preserving
+	// robustness change; prompt text changed, hence a version bump.
+	minor: 2,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -140,11 +146,16 @@ export const sessionOverviewAnalyzer: Analyzer = {
 					user: buildMapPrompt(seg.text),
 					temperature: config.temperature,
 					maxTokens: 800,
+					tool: MAP_TOOL,
 				});
 				costUsd += res.costUsd;
 				tokensUsed += res.tokensUsed;
 				modelUsed = res.model;
-				summaries.push(parseMapResponse(res.text, extractJsonObject));
+				summaries.push(
+					res.structured
+						? parseMapObject(res.structured as Record<string, unknown>)
+						: parseMapResponse(res.text, extractJsonObject),
+				);
 			}
 			reduceInput = JSON.stringify(
 				summaries.map((s, i) => ({ segment: i, summary: s.segment_summary, notable: s.notable_points })),
@@ -162,12 +173,17 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals }),
 			temperature: config.temperature,
 			maxTokens: 2000,
+			tool: REDUCE_TOOL,
 		});
 		costUsd += reduceRes.costUsd;
 		tokensUsed += reduceRes.tokensUsed;
 		modelUsed = reduceRes.model;
 
-		const properties: SessionOverviewProperties = parseReduceResponse(reduceRes.text, extractJsonObject);
+		// Prefer the forced tool call's structured arguments; fall back to parsing
+		// JSON out of the text channel for models/providers that answered in prose.
+		const properties: SessionOverviewProperties = reduceRes.structured
+			? parseReduceObject(reduceRes.structured as Record<string, unknown>)
+			: parseReduceResponse(reduceRes.text, extractJsonObject);
 		properties.stats = {
 			pairs: digest.pairCount,
 			high_signal: digest.frictionCount,

@@ -38,7 +38,8 @@ reinforcement proposals for positive patterns worth preserving; use severity
 "reinforcement" for those. Overlapping proposals are fine — dedup happens
 downstream, not here.
 
-Return ONLY a JSON object with exactly these fields:
+Return your analysis by calling the \`submit_session_analysis\` tool. Do NOT reply
+with prose or markdown. The tool takes exactly these fields:
 {
   "session_summary": "3-5 sentences summarising the session, its friction, and its strengths; never empty for a non-empty session",
   "friction_points": [
@@ -77,7 +78,9 @@ improvement_proposals array if the session is truly empty (no turns at all).
 
 Enumerate exhaustively. Do NOT merge distinct problems into a single entry. Do
 NOT prefer a few high-quality proposals over complete coverage. Volume is managed
-by display-time grouping, not by dropping signals during synthesis.`;
+by display-time grouping, not by dropping signals during synthesis.
+
+Always respond by calling the submit_session_analysis tool — never answer in prose.`;
 
 export const REDUCE_PROMPT_HASH = shortHash(REDUCE_PROMPT);
 
@@ -105,6 +108,71 @@ export const SessionOverviewProperties = Type.Object({
 });
 export type SessionOverviewProperties = Static<typeof SessionOverviewProperties>;
 
+/**
+ * Forced-tool-call parameter schema for the reduce phase. Offering this as the
+ * single tool and instructing the model to call it yields reliable structured
+ * output even from reasoning models that otherwise return prose. Mirrors the
+ * JSON contract documented in REDUCE_PROMPT.
+ */
+export const ReduceToolParameters = Type.Object({
+	session_summary: Type.String({
+		description: "3-5 sentences summarising the session, its friction, and its strengths; never empty for a non-empty session.",
+	}),
+	friction_points: Type.Array(
+		Type.Object({
+			description: Type.String({ description: "what went wrong" }),
+			what_to_change: Type.String({ description: "what should be different next time" }),
+			evidence: Type.String({ description: "specific moment(s) in the session that show this" }),
+			severity: Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
+		}),
+		{ description: "EVERY distinct friction point as a textual gradient. Empty only if the session was genuinely smooth." },
+	),
+	key_positive_signals: Type.Array(
+		Type.Object({
+			description: Type.String({ description: "what went well" }),
+			signal: Type.Union([
+				Type.Literal("task-completed-without-correction"),
+				Type.Literal("correction-then-clean-recovery"),
+				Type.Literal("low-tool-failure-density"),
+			]),
+		}),
+	),
+	improvement_proposals: Type.Array(
+		Type.Object({
+			target_type: Type.Union([
+				Type.Literal("agents_md"),
+				Type.Literal("skill"),
+				Type.Literal("prompt"),
+				Type.Literal("config"),
+				Type.Literal("workflow"),
+				Type.Literal("general"),
+			]),
+			target_path: Type.Optional(Type.String({ description: "optional path or section, e.g. AGENTS.md § Tooling" })),
+			title: Type.String({ description: "short imperative title" }),
+			summary: Type.String({ description: "one sentence" }),
+			detail: Type.String({ description: "2-4 sentences with the concrete change to make" }),
+			evidence: Type.String({ description: "what in the session motivates this" }),
+			confidence: Type.Number({ description: "0.0 to 1.0" }),
+			severity: Type.Union([
+				Type.Literal("friction"),
+				Type.Literal("correction"),
+				Type.Literal("waste"),
+				Type.Literal("suggestion"),
+				Type.Literal("reinforcement"),
+			]),
+		}),
+		{ description: "One proposal per friction point, plus reinforcement proposals for positive patterns worth preserving." },
+	),
+});
+
+/** The reduce-phase structured-output tool. */
+export const REDUCE_TOOL = {
+	name: "submit_session_analysis",
+	description:
+		"Submit the structured analysis of the coding-agent session: summary, an exhaustive enumeration of friction points, positive signals, and one improvement proposal per friction point.",
+	parameters: ReduceToolParameters,
+};
+
 export function buildReducePrompt(params: { digestOrSummaries: string; stats: string; positiveSignals?: string[] }): string {
 	const parts = [
 		"AGGREGATE STATS:",
@@ -121,7 +189,11 @@ export function parseReduceResponse(
 	text: string,
 	extractJsonObject: (t: string) => Record<string, unknown>,
 ): SessionOverviewProperties {
-	const obj = extractJsonObject(text);
+	return parseReduceObject(extractJsonObject(text));
+}
+
+/** Normalise an already-parsed reduce object (e.g. forced-tool-call arguments). */
+export function parseReduceObject(obj: Record<string, unknown>): SessionOverviewProperties {
 	const friction = Array.isArray(obj["friction_points"])
 		? (obj["friction_points"] as unknown[])
 				.map((x) => normalizeFrictionPoint(x))

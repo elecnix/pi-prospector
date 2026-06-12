@@ -144,9 +144,18 @@ export interface PiUserMessage {
 	timestamp: number;
 }
 
+/** A tool offered to the model. `parameters` is a TypeBox schema (TSchema). */
+export interface PiTool {
+	name: string;
+	description: string;
+	parameters: unknown;
+}
+
 export interface PiContext {
 	systemPrompt?: string;
 	messages: PiUserMessage[];
+	/** Tools the model may call; used to force structured output. */
+	tools?: PiTool[];
 }
 
 export interface PiCompleteOptions {

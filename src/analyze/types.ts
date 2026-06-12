@@ -224,12 +224,27 @@ export const LLMRequest = Type.Object({
 	user: Type.String(),
 	temperature: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
+	/**
+	 * Request structured output via a forced tool call. When set, the caller
+	 * offers this single tool to the model and returns its parsed call arguments
+	 * in `LLMResponse.structured`. `parameters` is a TypeBox schema (TSchema).
+	 * Far more reliable than "return only JSON" for reasoning models.
+	 */
+	tool: Type.Optional(
+		Type.Object({
+			name: Type.String(),
+			description: Type.String(),
+			parameters: Type.Unknown(),
+		}),
+	),
 });
 export type LLMRequest = Static<typeof LLMRequest>;
 
 export const LLMResponse = Type.Object({
 	text: Type.String(),
 	thinking: Type.Optional(Type.String()),
+	/** Parsed arguments of the forced tool call, when `request.tool` was set and the model called it. */
+	structured: Type.Optional(Type.Unknown()),
 	model: Type.String(),
 	costUsd: Type.Number(),
 	tokensUsed: Type.Number(),
