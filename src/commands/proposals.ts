@@ -1,11 +1,11 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
-import { listProposals, acceptProposal, rejectProposal, getSessionLabels } from "../db/queries.js";
+import { listProposals, acceptProposal, rejectProposal, getSessionLabels, getLatestDecision } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { getNode } from "../db/analysis-queries.js";
 import { getDbPath } from "../config.js";
-import type { Proposal } from "../types.js";
+import type { Proposal, ProposalDecision } from "../types.js";
 import { homedir } from "node:os";
 
 function output(ctx: ExtensionCommandContext, text: string, level: "info" | "warning" | "error" = "info"): void {
@@ -101,8 +101,21 @@ function severityLabel(severity: string): string {
 	return severity;
 }
 
-function conciseEntry(p: Proposal): string {
-	return `  [${p.status}] ${statusLabel(p)} · ${severityLabel(p.severity)} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}\n    id: ${p.id}  ·  prospect show ${p.id}`;
+function conciseEntry(p: Proposal, decision?: ProposalDecision): string {
+	const base = `  [${p.status}] ${statusLabel(p)} · ${severityLabel(p.severity)} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}\n    id: ${p.id}  ·  prospect show ${p.id}`;
+	return decision ? `${base}\n    ${formatDecisionLine(decision)}` : base;
+}
+
+/**
+ * One-line render of the latest human decision on a proposal — the durable
+ * memory that survives recompute. Shows the verdict, how it was acted on
+ * (disposition), the reasoning, and what was actually changed.
+ */
+export function formatDecisionLine(d: ProposalDecision): string {
+	const disp = d.disposition ? ` (${d.disposition})` : "";
+	const why = d.rationale ? ` — ${d.rationale}` : "";
+	const change = d.actual_change ? ` [${d.actual_change}]` : "";
+	return `decision: ${d.decision}${disp}${why}${change}`;
 }
 
 /** A one-line with/without replay summary, read from the validation node. */
@@ -126,8 +139,8 @@ function validationDeltaLine(db: Database.Database, p: Proposal): string | null 
 	}
 }
 
-function fullEntry(db: Database.Database, p: Proposal): string {
-	const lines = [conciseEntry(p)];
+function fullEntry(db: Database.Database, p: Proposal, decision?: ProposalDecision): string {
+	const lines = [conciseEntry(p, decision)];
 	const delta = validationDeltaLine(db, p);
 	if (delta) lines.push(`    ${delta}`);
 	if (p.detail && p.detail.trim()) lines.push(`    detail:   ${p.detail.trim()}`);
@@ -168,7 +181,9 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			else groups.set(p.session_id, [p]);
 		}
 
-		const format = full ? (p: Proposal) => fullEntry(db, p) : conciseEntry;
+		const format = full
+			? (p: Proposal) => fullEntry(db, p, getLatestDecision(db, p.input_key))
+			: (p: Proposal) => conciseEntry(p, getLatestDecision(db, p.input_key));
 		const blocks: string[] = [];
 		for (const [sessionId, group] of groups) {
 			const label = sessionLabel(labels.get(sessionId), sessionId);

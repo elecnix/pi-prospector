@@ -1,11 +1,11 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
-import { getProposal, listProposals, getSessionLabels } from "../db/queries.js";
+import { getProposal, listProposals, getSessionLabels, getLatestDecision } from "../db/queries.js";
 import { getNode, getEdgesFrom, getAnchoredMessageIds, getSessionNodes, getSessionMessageRows } from "../db/analysis-queries.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 import { buildTurnPairs, type TurnPair } from "../analyze/analyzers/turn-pair-core/build.js";
-import { sessionLabel } from "./proposals.js";
+import { sessionLabel, formatDecisionLine } from "./proposals.js";
 import { getDbPath } from "../config.js";
 import type { Proposal } from "../types.js";
 import type { MessageRow } from "../analyze/types.js";
@@ -180,6 +180,7 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 		const labels = new Map(getSessionLabels(db).map((s) => [s.id, s]));
 		const label = sessionLabel(labels.get(proposal.session_id), proposal.session_id);
 		const conf = proposal.confidence == null ? "n/a" : `${Math.round(proposal.confidence * 100)}%`;
+		const decision = getLatestDecision(db, proposal.input_key);
 
 		const head = [
 			`Proposal ${proposal.id.slice(0, 8)}  [${conf}] ${proposal.severity}  (${proposal.status})`,
@@ -190,6 +191,7 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 			proposal.evidence ? `  evidence: ${proposal.evidence}` : "",
 			`  session:  ${proposal.session_id.slice(0, 8)} · ${label}`,
 			proposal.source_node_id ? `  source:   node ${proposal.source_node_id.slice(0, 8)} (${proposal.analyzer_id ?? "?"})` : "",
+			decision ? `  ${formatDecisionLine(decision)}` : "",
 		].filter(Boolean);
 		out(ctx, head.join("\n"));
 

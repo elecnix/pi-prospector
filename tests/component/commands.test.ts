@@ -197,6 +197,10 @@ describe("slash commands", () => {
 		assert.equal(d.decision, "accepted");
 		assert.equal(d.disposition, "done");
 		assert.match(d.rationale!, /already added the rule/);
+
+		// The decision (durable memory) surfaces in the proposals view.
+		const listed = await run("prospect-proposals", "--full");
+		assert.match(listed, /decision: accepted \(done\) — already added the rule/);
 	});
 
 	it("prospect-proposals reports empty state", async () => {
