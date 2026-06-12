@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseProposalsArgs, rankProposals } from "../../src/commands/proposals.js";
+import { parseProposalsArgs, rankProposals, sessionLabel } from "../../src/commands/proposals.js";
 import type { Proposal } from "../../src/types.js";
+import { homedir } from "node:os";
 
 function makeProposal(overrides: Partial<Proposal>): Proposal {
 	return {
@@ -58,4 +59,15 @@ test("rankProposals: equal confidence breaks ties by newest created_at", () => {
 	const newer = makeProposal({ id: "new", confidence: 0.8, created_at: "2026-02-01T00:00:00.000Z" });
 	const sorted = [older, newer].sort(rankProposals).map((p) => p.id);
 	assert.deepEqual(sorted, ["new", "old"]);
+});
+
+test("sessionLabel: prefers cwd with $HOME collapsed to ~", () => {
+	const cwd = `${homedir()}/Source/pi-prospector/main`;
+	assert.equal(sessionLabel({ project: "proj", cwd }, "abcdef12"), "~/Source/pi-prospector/main");
+});
+
+test("sessionLabel: falls back to project then short id", () => {
+	assert.equal(sessionLabel({ project: "proj", cwd: "" }, "abcdef1234"), "proj");
+	assert.equal(sessionLabel(undefined, "abcdef1234"), "abcdef12");
+	assert.equal(sessionLabel({ project: "", cwd: "" }, "abcdef1234"), "abcdef12");
 });

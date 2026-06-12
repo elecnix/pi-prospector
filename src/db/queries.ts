@@ -60,6 +60,18 @@ export function getAllSessions(db: Database.Database, limit?: number): Array<{ i
 	return (limit ? db.prepare(sql).all(limit) : db.prepare(sql).all()) as Array<{ id: string; file_path: string; started_at: string }>;
 }
 
+export interface SessionLabel {
+	id: string;
+	project: string;
+	cwd: string;
+	message_count: number;
+}
+
+/** Lightweight labels (project/cwd/message_count) for every session, for display. */
+export function getSessionLabels(db: Database.Database): SessionLabel[] {
+	return db.prepare("SELECT id, project, cwd, message_count FROM sessions").all() as SessionLabel[];
+}
+
 // ── Messages ──
 
 export interface MessageInsert {

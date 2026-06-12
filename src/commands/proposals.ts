@@ -1,9 +1,10 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
-import { listProposals, acceptProposal, rejectProposal } from "../db/queries.js";
+import { listProposals, acceptProposal, rejectProposal, getSessionLabels } from "../db/queries.js";
 import { getDbPath } from "../config.js";
 import type { Proposal } from "../types.js";
+import { homedir } from "node:os";
 
 function output(ctx: ExtensionCommandContext, text: string, level: "info" | "warning" | "error" = "info"): void {
 	ctx.ui.notify(text, level);
@@ -46,18 +47,23 @@ export function rankProposals(a: Proposal, b: Proposal): number {
 }
 
 function conciseEntry(p: Proposal): string {
-	return `[${p.status}] ${formatConfidence(p.confidence).padStart(4)} ${p.severity} · ${formatTarget(p)}\n  ${p.title}\n  ${p.summary}`;
+	return `  [${p.status}] ${formatConfidence(p.confidence).padStart(4)} ${p.severity} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}`;
 }
 
 function fullEntry(p: Proposal): string {
 	const lines = [conciseEntry(p)];
-	if (p.detail && p.detail.trim()) lines.push(`  detail:   ${p.detail.trim()}`);
-	if (p.evidence && p.evidence.trim()) lines.push(`  evidence: ${p.evidence.trim()}`);
-	const provenance = [`session ${p.session_id.slice(0, 8)}`];
-	if (p.analyzer_id) provenance.push(p.analyzer_id);
-	provenance.push(`proposal ${p.id.slice(0, 8)}`);
-	lines.push(`  source:   ${provenance.join(" · ")}`);
+	if (p.detail && p.detail.trim()) lines.push(`    detail:   ${p.detail.trim()}`);
+	if (p.evidence && p.evidence.trim()) lines.push(`    evidence: ${p.evidence.trim()}`);
+	lines.push(`    source:   ${p.analyzer_id ?? "?"} · proposal ${p.id.slice(0, 8)}`);
 	return lines.join("\n");
+}
+
+/** A short, readable session label: cwd (with $HOME → ~), else project, else id. */
+export function sessionLabel(s: { project: string; cwd: string } | undefined, id: string): string {
+	const home = homedir();
+	if (s?.cwd) return s.cwd.startsWith(home) ? `~${s.cwd.slice(home.length)}` : s.cwd;
+	if (s?.project) return s.project;
+	return id.slice(0, 8);
 }
 
 export async function prospectProposals(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -72,9 +78,28 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			return;
 		}
 
-		const body = proposals.map(full ? fullEntry : conciseEntry).join("\n\n");
-		const header = `Proposals (${proposals.length}${status ? `, ${status}` : ""}):`;
-		output(ctx, `${header}\n${body}`);
+		const labels = new Map(getSessionLabels(db).map((s) => [s.id, s]));
+
+		// Group by session. Because `proposals` is already globally ranked by
+		// confidence, first-seen order puts the session with the strongest single
+		// recommendation first, and each group stays confidence-ranked within.
+		const groups = new Map<string, Proposal[]>();
+		for (const p of proposals) {
+			const bucket = groups.get(p.session_id);
+			if (bucket) bucket.push(p);
+			else groups.set(p.session_id, [p]);
+		}
+
+		const format = full ? fullEntry : conciseEntry;
+		const blocks: string[] = [];
+		for (const [sessionId, group] of groups) {
+			const label = sessionLabel(labels.get(sessionId), sessionId);
+			const header = `═══ ${sessionId.slice(0, 8)} · ${label} · ${group.length} proposal(s) ═══`;
+			blocks.push(`${header}\n${group.map(format).join("\n\n")}`);
+		}
+
+		const headline = `Proposals (${proposals.length}${status ? `, ${status}` : ""}) in ${groups.size} session(s), ranked by confidence:`;
+		output(ctx, `${headline}\n\n${blocks.join("\n\n")}`);
 	} finally {
 		db.close();
 	}
