@@ -47,14 +47,14 @@ export function rankProposals(a: Proposal, b: Proposal): number {
 }
 
 function conciseEntry(p: Proposal): string {
-	return `  [${p.status}] ${formatConfidence(p.confidence).padStart(4)} ${p.severity} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}`;
+	return `  [${p.status}] ${formatConfidence(p.confidence).padStart(4)} ${p.severity} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}\n    id: ${p.id}  ·  prospect show ${p.id}`;
 }
 
 function fullEntry(p: Proposal): string {
 	const lines = [conciseEntry(p)];
 	if (p.detail && p.detail.trim()) lines.push(`    detail:   ${p.detail.trim()}`);
 	if (p.evidence && p.evidence.trim()) lines.push(`    evidence: ${p.evidence.trim()}`);
-	lines.push(`    source:   ${p.analyzer_id ?? "?"} · proposal ${p.id.slice(0, 8)}`);
+	lines.push(`    source:   ${p.analyzer_id ?? "?"} · node ${p.source_node_id ?? "?"}`);
 	return lines.join("\n");
 }
 

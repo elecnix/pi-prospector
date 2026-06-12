@@ -255,6 +255,16 @@ export function getAllAnalysisNodes(db: Database.Database): AnalysisNodeRow[] {
 	return db.prepare("SELECT * FROM analysis_nodes ORDER BY created_at ASC, rowid ASC").all() as AnalysisNodeRow[];
 }
 
+/** A session's messages in stream order — for reconstructing turns verbatim. */
+export function getSessionMessageRows(db: Database.Database, sessionId: string): MessageRow[] {
+	return db
+		.prepare(
+			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results " +
+				"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
+		)
+		.all(sessionId) as MessageRow[];
+}
+
 export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, sessionId: string): AnalysisNodeRow[] {
 	return db
 		.prepare("SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND session_id = ? ORDER BY created_at ASC, rowid ASC")

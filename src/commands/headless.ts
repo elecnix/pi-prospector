@@ -4,6 +4,7 @@ import { prospectStats } from "./stats.js";
 import { prospectProposals, prospectAccept, prospectReject } from "./proposals.js";
 import { prospectAnalyze } from "./analyze.js";
 import { prospectVerify } from "./verify.js";
+import { prospectShow } from "./show.js";
 
 /** A command runnable both as a slash command and via the `--prospect` flag. */
 export type ProspectAction = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
@@ -14,6 +15,7 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 	analyze: prospectAnalyze,
 	stats: prospectStats,
 	proposals: prospectProposals,
+	show: prospectShow,
 	verify: prospectVerify,
 	accept: prospectAccept,
 	reject: prospectReject,
@@ -21,7 +23,7 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 
 const USAGE =
 	'Usage: pi -e <prospector>/src/index.ts --prospect "<command> [args]"\n' +
-	"  commands: sync | analyze [flags] | stats | proposals [status] [--full] | verify | accept <id> | reject <id>";
+	"  commands: sync | analyze [flags] | stats | proposals [status] [--full] | show <id> | verify | accept <id> | reject <id>";
 
 /** Split a `--prospect` flag value into a command name and the remaining args. */
 export function splitProspectSpec(spec: string): { command: string; args: string } {
