@@ -98,6 +98,33 @@ describe("materializeProposalsFromNode", () => {
 		}
 	});
 
+	it("does not resurrect a decided proposal on re-materialise (status preserved)", () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s1");
+			seedNode(db, "n1");
+			const payload = {
+				improvement_proposals: [{ target_type: "agents_md", title: "Add a rule", summary: "s", severity: "friction" }],
+			};
+			const mk = () => ({ sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: payload });
+			assert.equal(materializeProposalsFromNode(db, mk()), 1);
+			const p = listProposals(db)[0]!;
+
+			// Human decides on it: flip out of 'open'.
+			db.prepare("UPDATE proposals SET status = 'rejected', updated_at = ? WHERE id = ?").run(new Date().toISOString(), p.id);
+
+			// A later analysis run re-materialises the same source node. The decided
+			// proposal must NOT be re-created as a fresh 'open' row.
+			assert.equal(materializeProposalsFromNode(db, mk()), 0, "must not re-create a decided proposal");
+			const all = listProposals(db);
+			assert.equal(all.length, 1, "exactly one row for the input_key");
+			assert.equal(all[0]!.id, p.id, "same row preserved");
+			assert.equal(all[0]!.status, "rejected", "human decision preserved across recompute");
+		} finally {
+			close();
+		}
+	});
+
 	it("returns 0 when there are no proposals", () => {
 		const { db, close } = tempDb();
 		try {

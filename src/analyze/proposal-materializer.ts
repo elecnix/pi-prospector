@@ -48,7 +48,15 @@ export function computeProposalInputKey(p: { sourceOutputKey: string; ordinal: n
 
 /**
  * Extract and persist proposals from a node's content. Returns the number of
- * *new* proposals created (duplicates of still-open proposals are skipped).
+ * *new* proposals created.
+ *
+ * Dedup is by the content-addressed `input_key` regardless of the existing
+ * row's status. A proposal's identity is reproducible (H(source output_key |
+ * ordinal)), so the same logical proposal must materialise exactly once. Keying
+ * dedup on `status = 'open'` (as an earlier version did) re-inserted a fresh
+ * `open` row every time a re-run hit a proposal the human had already
+ * accepted/rejected — silently resurrecting decided proposals. Matching on
+ * input_key alone preserves the existing row and its human decision.
  */
 export function materializeProposalsFromNode(db: Database.Database, params: MaterializeParams): number {
 	const raw = params.contentJson["improvement_proposals"];
@@ -63,7 +71,7 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 
 		const inputKey = computeProposalInputKey({ sourceOutputKey: params.sourceOutputKey, ordinal });
 		const existing = db
-			.prepare("SELECT id FROM proposals WHERE input_key = ? AND status = 'open' LIMIT 1")
+			.prepare("SELECT id FROM proposals WHERE input_key = ? LIMIT 1")
 			.get(inputKey) as { id: string } | undefined;
 		if (existing) continue;
 
