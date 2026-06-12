@@ -99,7 +99,7 @@ Print a summary of the database: sessions indexed, messages and tool results, se
 
 ### `/prospect-proposals [status]`
 
-List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`). Each row shows its status, a score label, severity, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous).
+List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`). Each row shows its status, a score label, severity, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous). If you have decided a proposal, the row also shows your latest **decision** (verdict, disposition, and rationale).
 
 - **Target** — what the proposal suggests changing (a category and optional path, e.g. a standing instruction file or a skill)
 - **Severity** — the nature of the signal: `friction` | `correction` | `waste` | `suggestion` | `reinforcement` (listed as `reinforce`)
@@ -120,13 +120,33 @@ It walks the proposal's provenance — proposal → its source `session-overview
 
 Because the overview consumes every turn, output is focused to the high-signal turns (those with friction or an LLM classification) and capped, with a note for any omitted turns. Surfacing the actual tool-call arguments often reveals mechanism-level detail the text-only classifier cannot see — for example whether a push failure was really about the push command or about a later `gh pr create` target.
 
-### `/prospect-accept <id>`
+### `/prospect-accept <id> [--planned|--done|--done-differently] [rationale...]`
 
-Mark an open proposal as `applied`. This does **not** apply the change — it only updates the status. You then ask your Pi coding agent to implement it.
+Mark an open proposal as `applied`. This does **not** apply the change — it only
+records your decision. You then ask your Pi coding agent to implement it (or, in
+practice, you accept *because* you are about to implement it).
 
-### `/prospect-reject <id>`
+You can attach durable feedback to the decision:
 
-Mark an open proposal as `rejected`.
+- a **disposition** — `--planned` ("I will do it"), `--done` ("I already did the
+  recommended action"), or `--done-differently` ("the idea was useful but I did
+  something other than the literal recommendation"; recorded as the
+  `accepted_modified` verdict)
+- a free-text **rationale** — everything after the id/flags
+
+Example: `/prospect-accept 0c9f --done capped polling iterations instead of banning loops`.
+
+The decision is stored append-only, keyed by the proposal's content-addressed
+input key, so it survives a wipe-and-recompute and re-attaches to the
+regenerated proposal. It is shown in `/prospect-proposals` and `/prospect-show`,
+and is the intended training signal for a future quality-improving meta-analyzer.
+Calling with just an id still works.
+
+### `/prospect-reject <id> [rationale...]`
+
+Mark an open proposal as `rejected`, optionally with a rationale (for example
+*"my current harness already enforces this"*). The rationale is recorded as a
+durable decision exactly as for accept.
 
 ### `/prospect-verify`
 
@@ -147,8 +167,8 @@ When installed, pi-prospector registers a `prospect` tool the Pi coding agent ca
 | `sync` | Index new/modified sessions into the database |
 | `stats` | Return sync and proposal statistics |
 | `list_proposals` | List proposals, optionally filtered by status |
-| `accept` | Mark a proposal as applied |
-| `reject` | Mark a proposal as rejected |
+| `accept` | Mark a proposal as applied; optional `rationale`, `disposition` (planned/done/done_differently), `actual_change` record a durable decision |
+| `reject` | Mark a proposal as rejected; optional `rationale` records a durable decision |
 
 This lets you say things like "show me open proposals" or "sync my sessions and check stats" directly in a Pi conversation. (Analysis itself runs through `/prospect-analyze`, not the tool, because it can be long-running and cost money.)
 
@@ -240,7 +260,7 @@ pi -e ./src/index.ts --prospect proposals
 pi -e ./src/index.ts --prospect "accept <id>"
 ```
 
-The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status] [--full]`, `show <id>`, `verify`, `validate [flags]`, `accept <id>`, `reject <id>`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
+The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status] [--full]`, `show <id>`, `verify`, `validate [flags]`, `accept <id> [--planned|--done|--done-differently] [rationale]`, `reject <id> [rationale]`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
 
 To iterate on a small **private** subset rather than your whole history, copy a few session folders somewhere outside any repo and point the env overrides at them — the sessions directory is only ever read:
 

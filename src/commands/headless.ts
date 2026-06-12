@@ -25,7 +25,7 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 
 const USAGE =
 	'Usage: pi -e <prospector>/src/index.ts --prospect "<command> [args]"\n' +
-	"  commands: sync | analyze [flags] | stats | proposals [status] [--full] | show <id> | verify | validate [flags] | accept <id> | reject <id>";
+	"  commands: sync | analyze [flags] | stats | proposals [status] [--full] | show <id> | verify | validate [flags] | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale]";
 
 /** Split a `--prospect` flag value into a command name and the remaining args. */
 export function splitProspectSpec(spec: string): { command: string; args: string } {
@@ -67,7 +67,7 @@ export async function runProspectSpec(
 export function registerHeadlessFlag(pi: ExtensionAPI): void {
 	pi.registerFlag("prospect", {
 		description:
-			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | verify | validate | accept <id> | reject <id>',
+			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | verify | validate | accept <id> [rationale] | reject <id> [rationale]',
 		type: "string",
 	});
 

@@ -356,6 +356,21 @@ contribute to the session's friction score and surface in the digest.
 - **Proposal status** — where a proposal sits in its lifecycle: **open** (awaiting
   a decision), **applied** (accepted/acted upon), **rejected** (declined), or
   **duplicate** (recognised as the same as an existing open proposal).
+- **Decision** — the human's verdict on a proposal: **accepted**, **rejected**,
+  or **accepted_modified** (the idea was useful but the human did something other
+  than the literal recommendation). A decision is *external human input* — the
+  same category as a conversation message, the opposite of derived analysis — so
+  it is **not** an analysis node and is **never** folded into a proposal's
+  identity. Decisions are recorded append-only and keyed by the proposal's
+  content-addressed **input key** (not a row id), so a decision re-attaches to the
+  regenerated proposal after a wipe-and-recompute: it is durable memory of how the
+  human responds, and the corpus of decisions is the intended input to a future
+  meta-analyzer that proposes improvements to raise proposal quality.
+- **Disposition** — how the human acted on an accepted proposal: **planned** ("I
+  will do it"), **done** ("I did the recommended action"), or **done_differently**
+  ("the idea triggered a different action than recommended"). Disposition captures
+  the realistic feedback loop where accepting a proposal and acting on it are the
+  same moment, and where the action taken may diverge from the literal text.
 
 ---
 
@@ -518,7 +533,10 @@ content-addressed **output key** of the node that produced it plus its ordinal
 in that node's output — never from the model's free-text title, path, or
 severity. So re-materialising the same node is idempotent (it never double-
 inserts), but two genuinely distinct sources — a different session, or a revised
-version — keep their proposals separately. Overlapping suggestions across
+version — keep their proposals separately. Because identity is the input key
+alone (independent of status), a proposal is materialised **exactly once** and is
+never re-created in the *open* state after a human has decided it — the decision
+is preserved across every later recompute. Overlapping suggestions across
 sessions are intentionally retained rather than collapsed: the review step is
 expected to be consumed with the help of an AI agent that sees the whole
 picture, so the listing simply groups proposals per session and ranks them
@@ -526,6 +544,24 @@ by confidence. The reason identity is anchored to the source rather than the
 wording is that an idempotency key must be a function of *inputs*; the LLM's
 output never feeds it, it only flows into a downstream consumer's source
 reference via the output key.
+
+---
+
+### Human decisions are external input, not derived analysis
+
+When a human accepts or rejects a proposal, that verdict — with its rationale,
+disposition, and a note of what was actually changed — is recorded in an
+append-only decision log keyed by the proposal's content-addressed input key.
+Decisions sit on the *input* side of the system, alongside conversation
+messages: they are never analysis nodes, never participate in a proposal's
+identity, and the latest decision for an input key is authoritative. Keying on
+the input key (rather than a row id) is what makes a decision durable: wipe the
+database, re-sync, re-analyse, and the same proposal is regenerated with the
+same input key, so its decision re-attaches automatically. This decision corpus
+is the gold-label training signal for a future meta-analyzer, which consumes it
+as a source (folding the decisions into *its* identity, exactly as a turn-pair
+analyzer folds in messages) and proposes changes to analyzer prompts, config, or
+standing instructions so that future proposals are higher quality.
 
 ---
 
@@ -554,6 +590,10 @@ wrong.
   that justifies it.
 - The system proposes changes to steering artifacts; it never applies them
   itself.
+- A human decision is external input: it is append-only, keyed by the proposal's
+  input key, never an analysis node, and never part of a proposal's identity. A
+  proposal materialises exactly once per input key, so a recorded decision is
+  never lost to recompute.
 
 ---
 
