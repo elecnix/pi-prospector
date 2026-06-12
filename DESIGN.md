@@ -27,7 +27,7 @@ pi-prospector mines that history. It reads the local record of past agent
 into concrete, reviewable **proposals** — suggested edits to the artifacts that
 steer future agent behaviour (standing instruction files, skills, tool
 descriptions, configuration, and similar). The human stays in control: the
-system proposes, deduplicates, and explains; it never edits those artifacts on
+system proposes, ranks, and explains; it never edits those artifacts on
 its own.
 
 The guiding intent behind every design choice is **trust through traceability
@@ -132,16 +132,32 @@ roughly the order concepts build on one another.
   contributes to identity, as part of config.
 - **Source set** — the exact collection of inputs a single piece of analysis
   draws on, reduced to a stable fingerprint. Two analyses over the same inputs
-  share a source-set fingerprint; adding or changing inputs changes it.
+  share a source-set fingerprint; adding or changing inputs changes it. A
+  consumer's source set references its upstream sources by their **output key**
+  (below), so the consumer's identity folds in *what those sources concluded*,
+  not merely that they exist.
 - **Recipe** — the full description of *how a node came to be*: which analyzer,
   which version, which config, and which source set. The recipe is condensed
-  into a single fingerprint called the **input hash**.
-- **Input hash** — the fingerprint of a recipe. It is the system's notion of
-  identity for derived analysis: if a node with a given input hash already
-  exists, the work it represents is already done.
+  into a single fingerprint called the **input key**.
+- **Input key** — the content-addressed fingerprint of a recipe (analyzer +
+  version + config + source set). It is the system's notion of identity for
+  *whether work needs doing*: if a node with a given input key already exists,
+  the work it represents is already done. An input key folds in only *inputs* —
+  never the model's output — so the same recipe over the same sources always has
+  the same input key.
+- **Output key** — the content-addressed fingerprint of a node's *result*:
+  `hash(input_key, content)`. It identifies a *specific output*. A downstream
+  analyzer references its sources by their output key, so the whole graph is a
+  Merkle DAG: identical inputs and outputs reproduce identical keys on any
+  machine, after any wipe, and a stored key can be re-derived from content to
+  **verify** the node. Because analysis is append-only, a different output is
+  always a different node and therefore a different output key.
 - **Idempotency** — the property that running analysis again produces no
   duplicate work and no changed results, because identity is the recipe. Re-running
   is always safe and usually a no-op.
+- **Verification** — recomputing every node's output key from its stored content
+  and confirming it matches. Because identities are content-addressed, any drift
+  reveals out-of-band tampering or corruption. (`prospect verify`.)
 
 ### Running analysis
 
@@ -260,10 +276,11 @@ single typed-edge fabric answers all of them uniformly. Hiding some relationship
 inside nodes and others in a side table would make traversal inconsistent and
 provenance unreliable.
 
-### Identity is the recipe (idempotency by input hash)
+### Identity is the recipe (idempotency by input key)
 
 A node's identity is the fingerprint of everything that determines its content:
-the analyzer, its **version**, its **config**, and its **inputs**. This is what
+the analyzer, its **version**, its **config**, and its **inputs** — condensed
+into the **input key**. This is what
 makes re-running safe and cheap, and it separates two kinds of change. A change
 the analyzer's *author* ships — new logic, a reworked default prompt, a different
 default tier — is a **version** bump, and the author grades it major or minor. A
@@ -275,6 +292,18 @@ picked up only by a run that asks for it, so a model swap never forces surprise
 recomputation. Deterministic analyzers use no model, so nothing about model
 settings touches their identity. Leave version, config, and inputs all the same
 and nothing is recomputed.
+
+Identities are **content-addressed end to end**. The input key folds in only
+inputs (the config's *content* hash, not any database row id; and upstream
+sources by their **output key**, not their incidental node id), and the output
+key is `hash(input_key, content)`. So the same sessions analysed with the same
+analyzers reproduce byte-identical keys on any machine and after any wipe, and
+the graph forms a Merkle DAG whose integrity can be re-derived from content
+alone (`prospect verify`). Crucially, this is what makes "output matters for
+consumers" automatic: because a consumer references its sources by their output
+key, a changed upstream output is a new output key, which changes the consumer's
+input key and correctly marks it for recomputation — while a *re-run that
+reproduces the same output* changes nothing.
 
 ### Incrementality by scanning, not by cursors or crash recovery
 
@@ -342,15 +371,23 @@ already manages them — and to avoid drift between this tool and its host. That
 same seam accepts a deterministic stand-in for testing, so the analysis logic can
 be verified end to end without a network, a key, or any nondeterminism.
 
-### Proposals are materialised and deduplicated
+### Proposals are materialised from their source
 
 Proposals are synthesised inside session-level analysis but then lifted into a
 dedicated, fast store for review, each carrying an evidence trail back to the
-conversation. Near-identical suggestions are recognised by a dedup key so the
-reviewer sees one actionable item instead of the same idea repeated across many
-sessions. The reason is to make the human review step short and high-signal: the
-output is a deduplicated queue of concrete, evidence-backed changes, not a pile of
-raw analysis.
+conversation. A proposal's identity is its **input key**, derived from the
+content-addressed **output key** of the node that produced it plus its ordinal
+in that node's output — never from the model's free-text title, path, or
+severity. So re-materialising the same node is idempotent (it never double-
+inserts), but two genuinely distinct sources — a different session, or a revised
+version — keep their proposals separately. Overlapping suggestions across
+sessions are intentionally retained rather than collapsed: the review step is
+expected to be consumed with the help of an AI agent that sees the whole
+picture, so the listing simply groups recommendations per session and ranks them
+by confidence. The reason identity is anchored to the source rather than the
+wording is that an idempotency key must be a function of *inputs*; the LLM's
+output never feeds it, it only flows into a downstream consumer's source
+reference via the output key.
 
 ---
 

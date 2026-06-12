@@ -1,16 +1,21 @@
 /**
  * Content-addressed hashing and id helpers for the analyzer framework.
  *
- * Idempotency hinges on these hashes:
- *   - `source_set_hash` identifies the exact set of inputs a node was built
- *     from. Two analyses over the same sources share a source_set_hash.
- *   - `input_hash` additionally folds in the analyzer identity, its version,
- *     and the user's `config` fingerprint (parameters + the concrete models it
- *     resolved to). A node is uniquely identified by its input_hash; recomputing
- *     the same recipe over the same sources is a no-op.
+ * Idempotency and reproducibility hinge on two content-addressed keys:
+ *   - `input_key` is the *recipe* identity: analyzer + version + config
+ *     fingerprint + source set. It folds in only *inputs* — never the LLM's
+ *     output — so a node is uniquely identified by its input_key, and recomputing
+ *     the same recipe over the same sources is a no-op. (`source_set_hash`
+ *     identifies just the inputs; two analyses over the same sources share it.)
+ *   - `output_key` = H(input_key | canonical(content)) is the content-addressed
+ *     id of a *specific result*. A consumer references its upstream sources by
+ *     their `output_key`, so a consumer's `input_key` transitively commits to
+ *     every upstream output. The whole graph is therefore a Merkle DAG: identical
+ *     inputs+outputs reproduce identical keys on any machine, after any wipe, and
+ *     a stored key can be re-derived from content to verify it.
  *
  * The version dimension (same source_set_hash, different analyzer version or
- * config fingerprint) yields a *different* input_hash but the *same*
+ * config fingerprint) yields a *different* input_key but the *same*
  * source_set_hash — that is how alternative versions of the same logical unit
  * are detected and linked via `revises` edges.
  *
@@ -71,16 +76,18 @@ export function computePromptBundleHash(promptHashes: readonly string[]): string
 }
 
 /**
- * Fingerprint of everything the *user* controls for a node: the parameter config
- * identity plus the concrete models the analyzer resolved to (the tier→model
- * mapping and any pin). Order-independent over models. This is the `config`
- * dimension of identity — a change here marks nodes stale for the (ungraded)
- * `config` reason. A deterministic analyzer passes no models, so only its config
- * id contributes.
+ * Fingerprint of everything the *user* controls for a node: the config's
+ * content identity (its canonical-JSON hash) plus the concrete models the
+ * analyzer resolved to (the tier→model mapping and any pin). Order-independent
+ * over models. This is the `config` dimension of identity — a change here marks
+ * nodes stale for the (ungraded) `config` reason. Using the config's *content*
+ * hash (not its DB-local row id) keeps the fingerprint reproducible across
+ * databases. A deterministic analyzer passes no models, so only its config
+ * hash contributes.
  */
-export function computeConfigFingerprint(configId: string, models: readonly string[]): string {
+export function computeConfigFingerprint(configHash: string, models: readonly string[]): string {
 	const canonicalModels = [...models].sort().join("|");
-	return shortHash(`config(${configId}|${canonicalModels})`);
+	return shortHash(`config(${configHash}|${canonicalModels})`);
 }
 
 /**
@@ -94,9 +101,10 @@ export function computeConfigHash(config: unknown): string {
 /**
  * The unique recipe identity for a node: analyzer + version + config
  * fingerprint + source set. Re-running the same recipe over the same sources
- * produces the same input_hash, making analysis idempotent.
+ * produces the same input_key, making analysis idempotent. Inputs only — the
+ * LLM's output never feeds this key.
  */
-export function computeInputHash(parts: InputHashParts): string {
+export function computeInputKey(parts: InputHashParts): string {
 	const canonical = [
 		parts.analyzerId,
 		parts.analyzerVersionId,
@@ -104,6 +112,18 @@ export function computeInputHash(parts: InputHashParts): string {
 		parts.sourceSetHash,
 	].join("|");
 	return shortHash(`input(${canonical})`);
+}
+
+/**
+ * The content-addressed identity of a node's *result*: the recipe identity
+ * (`input_key`) folded together with the canonical node content. Deterministic
+ * and reproducible — recomputing it from stored content verifies the node, and
+ * a downstream consumer that references this key inherits the output into its
+ * own `input_key`. A different output (always a different node, by the
+ * append-only invariant) yields a different `output_key`.
+ */
+export function computeOutputKey(inputKey: string, content: unknown): string {
+	return shortHash(`output(${inputKey}|${canonicalJson(content)})`);
 }
 
 /** Stable, sorted-key JSON serialisation for hashing. */

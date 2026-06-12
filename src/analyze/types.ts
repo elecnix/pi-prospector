@@ -155,7 +155,8 @@ export const AnalysisNodeRow = Type.Object({
 	node_kind: Type.String(),
 	content_json: Type.String(),
 	source_set_hash: Type.String(),
-	input_hash: Type.String(),
+	input_key: Type.String(),
+	output_key: Type.String(),
 	config_fingerprint: Type.String(),
 	model_used: Type.Union([Type.String(), Type.Null()]),
 	cost_usd: Type.Union([Type.Number(), Type.Null()]),
@@ -301,7 +302,7 @@ export interface ClassifiedUnit {
 	analyzerId: string;
 	unit: AnalysisUnit;
 	status: UnitStatus;
-	inputHash: string;
+	inputKey: string;
 	/** For `stale` units: the prior node this unit would revise. */
 	priorNodeId?: string;
 	/** For `stale` units: why it is out of date (any of major/minor/config). Empty otherwise. */

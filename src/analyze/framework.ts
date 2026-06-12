@@ -52,7 +52,8 @@ import type {
 } from "./types.js";
 import {
 	computeConfigFingerprint,
-	computeInputHash,
+	computeInputKey,
+	computeOutputKey,
 	computePromptBundleHash,
 	shortHash,
 	uuidv7,
@@ -69,7 +70,7 @@ import {
 	createRun,
 	finishRun,
 	findLatestNodeBySourceSet,
-	findNodeByInputHash,
+	findNodeByInputKey,
 	getAnchoredMessageIds,
 	getMessage,
 	getNode,
@@ -255,28 +256,28 @@ export class AnalyzerFramework {
 
 	private classify(resolved: ResolvedAnalyzer, unit: AnalysisUnit): ClassifiedUnit {
 		const { analyzer, configFingerprint } = resolved;
-		const inputHash = computeInputHash({
+		const inputKey = computeInputKey({
 			analyzerId: analyzer.def.id,
 			analyzerVersionId: versionIdOf(analyzer.version),
 			configFingerprint,
 			sourceSetHash: unit.sourceSetHash,
 		});
 
-		// Error nodes carry a decoupled identity, so `findNodeByInputHash` matches
+		// Error nodes carry a decoupled identity, so `findNodeByInputKey` matches
 		// only a successful result at this exact recipe, and `findLatestNodeBySourceSet`
 		// skips errors. A unit whose only history is failures therefore classifies as
 		// `missing` and is recomputed on the next scan that reaches it.
-		if (findNodeByInputHash(this.deps.db, inputHash)) {
-			return { analyzerId: analyzer.def.id, unit, status: "current", inputHash, reasons: [] };
+		if (findNodeByInputKey(this.deps.db, inputKey)) {
+			return { analyzerId: analyzer.def.id, unit, status: "current", inputKey, reasons: [] };
 		}
 
 		const prior = findLatestNodeBySourceSet(this.deps.db, analyzer.def.id, unit.sourceSetHash);
 		if (prior) {
 			const reasons = this.gradeStale(resolved, prior);
-			return { analyzerId: analyzer.def.id, unit, status: "stale", inputHash, priorNodeId: prior.id, reasons };
+			return { analyzerId: analyzer.def.id, unit, status: "stale", inputKey, priorNodeId: prior.id, reasons };
 		}
 
-		return { analyzerId: analyzer.def.id, unit, status: "missing", inputHash, reasons: [] };
+		return { analyzerId: analyzer.def.id, unit, status: "missing", inputKey, reasons: [] };
 	}
 
 	/**
@@ -308,6 +309,11 @@ export class AnalyzerFramework {
 		const { analyzer, config } = resolved;
 		const nodeId = uuidv7();
 		const now = new Date().toISOString();
+		const contentJson = JSON.stringify(analysis.contentJson);
+		// Content-addressed result identity: a downstream consumer references this
+		// key in its source set, so a changed output propagates into the consumer's
+		// input_key. Reproducible from (input_key, content) on any machine.
+		const outputKey = computeOutputKey(item.inputKey, analysis.contentJson);
 
 		insertNode(this.deps.db, {
 			id: nodeId,
@@ -317,9 +323,10 @@ export class AnalyzerFramework {
 			configId: config.id,
 			runId,
 			nodeKind: analysis.nodeKind,
-			contentJson: JSON.stringify(analysis.contentJson),
+			contentJson,
 			sourceSetHash: item.unit.sourceSetHash,
-			inputHash: item.inputHash,
+			inputKey: item.inputKey,
+			outputKey,
 			configFingerprint: resolved.configFingerprint,
 			modelUsed: analysis.modelUsed ?? null,
 			costUsd: analysis.costUsd ?? null,
@@ -347,6 +354,7 @@ export class AnalyzerFramework {
 				sessionId,
 				analyzerId: analyzer.def.id,
 				sourceNodeId: nodeId,
+				sourceOutputKey: outputKey,
 				contentJson: analysis.contentJson,
 				now,
 			});
@@ -394,7 +402,8 @@ export class AnalyzerFramework {
 		// the recipe identity reserved for a successful result. The unit therefore
 		// stays `missing` and is recomputed on the next scan that reaches it — error
 		// nodes are an append-only record of failures, not a completion marker.
-		const errorInputHash = shortHash(`error(${item.inputHash}|${message}|${now}|${nodeId})`);
+		const errorInputKey = shortHash(`error(${item.inputKey}|${message}|${now}|${nodeId})`);
+		const content = { error: message, anchor: item.unit.anchorRef, timestamp: now };
 		try {
 			insertNode(this.deps.db, {
 				id: nodeId,
@@ -404,9 +413,10 @@ export class AnalyzerFramework {
 				configId: config.id,
 				runId,
 				nodeKind: "error",
-				contentJson: JSON.stringify({ error: message, anchor: item.unit.anchorRef, timestamp: now }),
+				contentJson: JSON.stringify(content),
 				sourceSetHash: item.unit.sourceSetHash,
-				inputHash: errorInputHash,
+				inputKey: errorInputKey,
+				outputKey: computeOutputKey(errorInputKey, content),
 				configFingerprint: resolved.configFingerprint,
 				createdAt: now,
 			});
@@ -472,7 +482,10 @@ export class AnalyzerFramework {
 		// Resolve tier shorthands to concrete models; the resolved model is part of
 		// the user's `config` identity (a model swap is an ungraded config change).
 		const models = analyzer.modelsForIdentity?.(config.configJson, this.deps.modelTiers) ?? [];
-		const configFingerprint = computeConfigFingerprint(config.id, models);
+		// Use the config's *content* hash (not its DB-local uuid row id) so the
+		// fingerprint — and therefore every input_key/output_key — is reproducible
+		// across databases and wipes.
+		const configFingerprint = computeConfigFingerprint(config.configHash, models);
 		return { analyzer, config, promptBundleHash, configFingerprint };
 	}
 

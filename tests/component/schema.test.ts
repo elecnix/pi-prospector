@@ -38,7 +38,7 @@ describe("schema migration", () => {
 		const { db, close } = tempDb();
 		try {
 			const cols = tableColumns(db, "proposals");
-			for (const c of ["target_type", "target_path", "title", "confidence", "status", "dedup_key", "source_node_id", "updated_at"]) {
+			for (const c of ["target_type", "target_path", "title", "confidence", "status", "input_key", "source_node_id", "updated_at"]) {
 				assert.ok(cols.has(c), `proposals missing ${c}`);
 			}
 		} finally {
@@ -55,17 +55,17 @@ describe("schema migration", () => {
 		}
 	});
 
-	it("analysis_nodes enforces unique input_hash", () => {
+	it("analysis_nodes enforces unique input_key", () => {
 		const { db, close } = tempDb();
 		try {
 			db.prepare("INSERT INTO sessions (id, file_path) VALUES ('s', '/tmp/s.jsonl')").run();
-			const insert = (inputHash: string) =>
+			const insert = (inputKey: string) =>
 				db
 					.prepare(
-						"INSERT INTO analysis_nodes (id, session_id, analyzer_id, analyzer_version_id, config_id, node_kind, content_json, source_set_hash, input_hash, created_at) " +
+						"INSERT INTO analysis_nodes (id, session_id, analyzer_id, analyzer_version_id, config_id, node_kind, content_json, source_set_hash, input_key, created_at) " +
 							"VALUES (?, 's', 'a', '1', 'c', 'metric', '{}', 'ssh', ?, ?)",
 					)
-					.run(Math.random().toString(36), inputHash, new Date().toISOString());
+					.run(Math.random().toString(36), inputKey, new Date().toISOString());
 			insert("h1");
 			assert.throws(() => insert("h1"), /UNIQUE/);
 		} finally {

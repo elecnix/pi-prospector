@@ -8,8 +8,7 @@
  */
 
 import type Database from "better-sqlite3";
-import { createHash } from "node:crypto";
-import { uuidv7 } from "./input-hash.js";
+import { shortHash, uuidv7 } from "./input-hash.js";
 import { insertEdge } from "../db/analysis-queries.js";
 import { EDGE_KINDS, REF_KINDS } from "./edge-kinds.js";
 
@@ -28,15 +27,21 @@ export interface MaterializeParams {
 	sessionId: string;
 	analyzerId: string;
 	sourceNodeId: string;
+	/** The content-addressed output_key of the source node; the proposal's identity derives from it. */
+	sourceOutputKey: string;
 	contentJson: Record<string, unknown>;
 	now: string;
 }
 
-/** SHA-256 dedup key over the stable identity of a proposal. */
-export function computeDedupKey(p: { target_type: string; target_path?: string; severity: string; title: string }): string {
-	const normalizedTitle = p.title.trim().toLowerCase().replace(/\s+/g, " ");
-	const basis = `${p.target_type}|${p.target_path ?? ""}|${p.severity}|${normalizedTitle}`;
-	return createHash("sha256").update(basis).digest("hex").slice(0, 32);
+/**
+ * A proposal's identity is derived from its *source* — the content-addressed
+ * `output_key` of the node that produced it, plus its ordinal within that node's
+ * proposal array — never from the model's free-text title/path/severity. So
+ * re-materialising the same node is idempotent, while two distinct nodes (a
+ * different session, or a revised version) keep their proposals separately.
+ */
+export function computeProposalInputKey(p: { sourceOutputKey: string; ordinal: number }): string {
+	return shortHash(`proposal(${p.sourceOutputKey}|${p.ordinal})`);
 }
 
 /**
@@ -48,21 +53,23 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 	if (!Array.isArray(raw)) return 0;
 
 	let created = 0;
+	let ordinal = -1;
 	for (const candidate of raw) {
+		ordinal++;
 		const proposal = normalizeProposal(candidate);
 		if (!proposal) continue;
 
-		const dedupKey = computeDedupKey(proposal);
+		const inputKey = computeProposalInputKey({ sourceOutputKey: params.sourceOutputKey, ordinal });
 		const existing = db
-			.prepare("SELECT id FROM proposals WHERE dedup_key = ? AND status = 'open' LIMIT 1")
-			.get(dedupKey) as { id: string } | undefined;
+			.prepare("SELECT id FROM proposals WHERE input_key = ? AND status = 'open' LIMIT 1")
+			.get(inputKey) as { id: string } | undefined;
 		if (existing) continue;
 
 		const proposalId = uuidv7();
 		db.prepare(`
 			INSERT INTO proposals
 				(id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path,
-				 title, severity, summary, detail, evidence, confidence, status, dedup_key)
+				 title, severity, summary, detail, evidence, confidence, status, input_key)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
 		`).run(
 			proposalId,
@@ -79,7 +86,7 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 			proposal.detail ?? null,
 			proposal.evidence ?? null,
 			proposal.confidence ?? null,
-			dedupKey,
+			inputKey,
 		);
 
 		insertEdge(db, {

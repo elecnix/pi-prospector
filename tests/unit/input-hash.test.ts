@@ -4,7 +4,8 @@ import {
 	canonicalJson,
 	computeConfigFingerprint,
 	computeConfigHash,
-	computeInputHash,
+	computeInputKey,
+	computeOutputKey,
 	computePromptBundleHash,
 	computeSourceSetHash,
 	fullHash,
@@ -60,8 +61,8 @@ describe("hashing", () => {
 			configFingerprint: "cf1",
 			sourceSetHash: "s1",
 		};
-		const v1 = computeInputHash({ ...base, analyzerVersionId: "1.0" });
-		const v2 = computeInputHash({ ...base, analyzerVersionId: "2.0" });
+		const v1 = computeInputKey({ ...base, analyzerVersionId: "1.0" });
+		const v2 = computeInputKey({ ...base, analyzerVersionId: "2.0" });
 		assert.notEqual(v1, v2);
 	});
 
@@ -72,17 +73,28 @@ describe("hashing", () => {
 			sourceSetHash: "s",
 		};
 		assert.notEqual(
-			computeInputHash({ ...base, configFingerprint: computeConfigFingerprint("c", ["anthropic/haiku"]) }),
-			computeInputHash({ ...base, configFingerprint: computeConfigFingerprint("c", ["openai/gpt-5-mini"]) }),
+			computeInputKey({ ...base, configFingerprint: computeConfigFingerprint("c", ["anthropic/haiku"]) }),
+			computeInputKey({ ...base, configFingerprint: computeConfigFingerprint("c", ["openai/gpt-5-mini"]) }),
 		);
 	});
 
 	it("input hash changes when the source set changes", () => {
 		const base = { analyzerId: "x", analyzerVersionId: "1.0", configFingerprint: "cf" };
 		assert.notEqual(
-			computeInputHash({ ...base, sourceSetHash: "s1" }),
-			computeInputHash({ ...base, sourceSetHash: "s2" }),
+			computeInputKey({ ...base, sourceSetHash: "s1" }),
+			computeInputKey({ ...base, sourceSetHash: "s2" }),
 		);
+	});
+
+	it("output key is deterministic and folds in both input key and content", () => {
+		const content = { a: 1, b: [2, 3] };
+		// Deterministic: same (input_key, content) → same output_key, and key order in content is irrelevant.
+		assert.equal(computeOutputKey("ik1", content), computeOutputKey("ik1", { b: [2, 3], a: 1 }));
+		// Changes with content.
+		assert.notEqual(computeOutputKey("ik1", content), computeOutputKey("ik1", { a: 2, b: [2, 3] }));
+		// Changes with input key (same output text under a different recipe is a different node).
+		assert.notEqual(computeOutputKey("ik1", content), computeOutputKey("ik2", content));
+		assert.match(computeOutputKey("ik1", content), /^[0-9a-f]{16}$/);
 	});
 
 	it("canonicalJson sorts keys recursively", () => {

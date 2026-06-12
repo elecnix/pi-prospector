@@ -21,7 +21,7 @@ function makeProposal(overrides: Partial<Proposal>): Proposal {
 		evidence: null,
 		confidence: null,
 		status: "open",
-		dedup_key: "k",
+		input_key: "k",
 		...overrides,
 	};
 }

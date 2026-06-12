@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { tempDb, insertSession } from "./helpers.js";
-import { computeDedupKey, materializeProposalsFromNode } from "../../src/analyze/proposal-materializer.js";
+import { computeProposalInputKey, materializeProposalsFromNode } from "../../src/analyze/proposal-materializer.js";
 import { insertNode } from "../../src/db/analysis-queries.js";
 import { listProposals } from "../../src/db/queries.js";
 
@@ -16,22 +16,28 @@ function seedNode(db: import("better-sqlite3").Database, id: string): void {
 		nodeKind: "summary",
 		contentJson: "{}",
 		sourceSetHash: "ssh",
-		inputHash: `ih-${id}`,
+		inputKey: `ih-${id}`,
+		outputKey: `ok-${id}`,
 		createdAt: new Date().toISOString(),
 	});
 }
 
-describe("computeDedupKey", () => {
-	it("is stable across title whitespace/case", () => {
-		const a = computeDedupKey({ target_type: "config", target_path: "x", severity: "friction", title: "Use Pnpm" });
-		const b = computeDedupKey({ target_type: "config", target_path: "x", severity: "friction", title: "use   pnpm" });
-		assert.equal(a, b);
+describe("computeProposalInputKey", () => {
+	it("derives from the source output_key + ordinal, never the LLM text", () => {
+		const a = computeProposalInputKey({ sourceOutputKey: "ok-1", ordinal: 0 });
+		const b = computeProposalInputKey({ sourceOutputKey: "ok-1", ordinal: 0 });
+		assert.equal(a, b, "same source+ordinal is stable regardless of title/path/severity");
 	});
 
-	it("differs across target or severity", () => {
-		const base = { target_type: "config", target_path: "x", severity: "friction", title: "t" };
-		assert.notEqual(computeDedupKey(base), computeDedupKey({ ...base, severity: "waste" }));
-		assert.notEqual(computeDedupKey(base), computeDedupKey({ ...base, target_path: "y" }));
+	it("differs across ordinal and across source", () => {
+		assert.notEqual(
+			computeProposalInputKey({ sourceOutputKey: "ok-1", ordinal: 0 }),
+			computeProposalInputKey({ sourceOutputKey: "ok-1", ordinal: 1 }),
+		);
+		assert.notEqual(
+			computeProposalInputKey({ sourceOutputKey: "ok-1", ordinal: 0 }),
+			computeProposalInputKey({ sourceOutputKey: "ok-2", ordinal: 0 }),
+		);
 	});
 });
 
@@ -45,6 +51,7 @@ describe("materializeProposalsFromNode", () => {
 				sessionId: "s1",
 				analyzerId: "session-overview",
 				sourceNodeId: "node1",
+				sourceOutputKey: "ok-node1",
 				now: new Date().toISOString(),
 				contentJson: {
 					improvement_proposals: [
@@ -71,7 +78,7 @@ describe("materializeProposalsFromNode", () => {
 		}
 	});
 
-	it("deduplicates against still-open proposals", () => {
+	it("is idempotent for the same source node, but keeps duplicates from distinct sources", () => {
 		const { db, close } = tempDb();
 		try {
 			insertSession(db, "s1");
@@ -80,9 +87,12 @@ describe("materializeProposalsFromNode", () => {
 			const payload = {
 				improvement_proposals: [{ target_type: "config", title: "Same thing", summary: "s", severity: "friction" }],
 			};
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", now: new Date().toISOString(), contentJson: payload }), 1);
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n2", now: new Date().toISOString(), contentJson: payload }), 0);
-			assert.equal(listProposals(db).length, 1);
+			// Same source node, materialised twice → idempotent (keyed on source output_key + ordinal).
+			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: payload }), 1);
+			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: payload }), 0);
+			// Distinct source node with byte-identical text → intentionally retained.
+			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n2", sourceOutputKey: "ok-n2", now: new Date().toISOString(), contentJson: payload }), 1);
+			assert.equal(listProposals(db).length, 2);
 		} finally {
 			close();
 		}
@@ -93,8 +103,8 @@ describe("materializeProposalsFromNode", () => {
 		try {
 			insertSession(db, "s1");
 			seedNode(db, "n1");
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", now: new Date().toISOString(), contentJson: {} }), 0);
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", now: new Date().toISOString(), contentJson: { improvement_proposals: "not-an-array" } }), 0);
+			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: {} }), 0);
+			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: { improvement_proposals: "not-an-array" } }), 0);
 		} finally {
 			close();
 		}

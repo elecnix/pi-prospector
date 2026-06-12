@@ -32,7 +32,8 @@ function seedNode(db: import("better-sqlite3").Database, id: string, sessionId =
 		nodeKind: "metric",
 		contentJson: "{}",
 		sourceSetHash: "ssh",
-		inputHash: `ih-${id}`,
+		inputKey: `ih-${id}`,
+		outputKey: `ok-${id}`,
 		createdAt: new Date().toISOString(),
 	});
 }

@@ -116,7 +116,7 @@ export interface Proposal {
 	evidence: string | null;
 	confidence: number | null;
 	status: ProposalStatus;
-	dedup_key: string;
+	input_key: string;
 }
 
 // ─── Stats ───

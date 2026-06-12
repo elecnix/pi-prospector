@@ -104,7 +104,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		const units: AnalysisUnit[] = [];
 		for (const { node, props } of selected) {
 			const pair = pairByUserId.get(props.user_message_id)!;
-			const sources: SourceRef[] = [{ kind: "analysis_node", id: node.id }];
+			const sources: SourceRef[] = [{ kind: "analysis_node", id: node.output_key }];
 			const meta: EnrichMeta = {
 				userText: pair.userText,
 				assistantText: pair.assistantText,

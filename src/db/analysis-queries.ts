@@ -184,7 +184,8 @@ export function insertNode(
 		nodeKind: string;
 		contentJson: string;
 		sourceSetHash: string;
-		inputHash: string;
+		inputKey: string;
+		outputKey: string;
 		configFingerprint?: string;
 		modelUsed?: string | null;
 		costUsd?: number | null;
@@ -196,8 +197,8 @@ export function insertNode(
 	db.prepare(`
 		INSERT INTO analysis_nodes
 			(id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind,
-			 content_json, source_set_hash, input_hash, config_fingerprint, model_used, cost_usd, tokens_used, duration_ms, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 content_json, source_set_hash, input_key, output_key, config_fingerprint, model_used, cost_usd, tokens_used, duration_ms, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(
 		node.id,
 		node.sessionId,
@@ -208,7 +209,8 @@ export function insertNode(
 		node.nodeKind,
 		node.contentJson,
 		node.sourceSetHash,
-		node.inputHash,
+		node.inputKey,
+		node.outputKey,
 		node.configFingerprint ?? "",
 		node.modelUsed ?? null,
 		node.costUsd ?? null,
@@ -223,8 +225,8 @@ export function getNode(db: Database.Database, id: string): AnalysisNodeRow | un
 }
 
 /** Idempotency lookup: a node produced by an exact recipe over an exact source set. */
-export function findNodeByInputHash(db: Database.Database, inputHash: string): AnalysisNodeRow | undefined {
-	return db.prepare("SELECT * FROM analysis_nodes WHERE input_hash = ?").get(inputHash) as AnalysisNodeRow | undefined;
+export function findNodeByInputKey(db: Database.Database, inputKey: string): AnalysisNodeRow | undefined {
+	return db.prepare("SELECT * FROM analysis_nodes WHERE input_key = ?").get(inputKey) as AnalysisNodeRow | undefined;
 }
 
 /**
@@ -246,6 +248,11 @@ export function findLatestNodeBySourceSet(
 
 export function getSessionNodes(db: Database.Database, sessionId: string): AnalysisNodeRow[] {
 	return db.prepare("SELECT * FROM analysis_nodes WHERE session_id = ? ORDER BY created_at ASC, rowid ASC").all(sessionId) as AnalysisNodeRow[];
+}
+
+/** Every analysis node, for integrity verification. */
+export function getAllAnalysisNodes(db: Database.Database): AnalysisNodeRow[] {
+	return db.prepare("SELECT * FROM analysis_nodes ORDER BY created_at ASC, rowid ASC").all() as AnalysisNodeRow[];
 }
 
 export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, sessionId: string): AnalysisNodeRow[] {

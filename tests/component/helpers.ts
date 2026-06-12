@@ -89,12 +89,12 @@ export function insertProposalRow(
 		severity?: string;
 		summary?: string;
 		status?: string;
-		dedupKey?: string;
+		inputKey?: string;
 	},
 ): void {
 	const now = new Date().toISOString();
 	db.prepare(
-		"INSERT INTO proposals (id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path, title, severity, summary, detail, evidence, confidence, status, dedup_key) " +
+		"INSERT INTO proposals (id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path, title, severity, summary, detail, evidence, confidence, status, input_key) " +
 			"VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
 	).run(
 		p.id,
@@ -107,6 +107,6 @@ export function insertProposalRow(
 		p.severity ?? "suggestion",
 		p.summary ?? p.title,
 		p.status ?? "open",
-		p.dedupKey ?? `dk-${p.id}`,
+		p.inputKey ?? `ik-${p.id}`,
 	);
 }

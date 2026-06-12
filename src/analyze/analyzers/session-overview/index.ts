@@ -80,8 +80,8 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const llm = (ctx.dependencyNodes[TURN_PAIR_LLM_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 
 		const sources: SourceRef[] = [
-			...core.map((n) => ({ kind: "analysis_node" as const, id: n.id })),
-			...llm.map((n) => ({ kind: "analysis_node" as const, id: n.id })),
+			...core.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+			...llm.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 		];
 
 		return [

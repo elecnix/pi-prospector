@@ -70,7 +70,7 @@ export function migrate(db: Database.Database): void {
 			evidence TEXT,
 			confidence REAL,
 			status TEXT NOT NULL DEFAULT 'open',
-			dedup_key TEXT NOT NULL,
+			input_key TEXT NOT NULL, -- content-addressed: H(source output_key | ordinal)
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
@@ -143,7 +143,8 @@ export function migrate(db: Database.Database): void {
 			node_kind TEXT NOT NULL,
 			content_json TEXT NOT NULL,
 			source_set_hash TEXT NOT NULL,
-			input_hash TEXT NOT NULL UNIQUE,
+			input_key TEXT NOT NULL UNIQUE,
+			output_key TEXT NOT NULL DEFAULT '',
 			config_fingerprint TEXT NOT NULL DEFAULT '',
 			model_used TEXT,
 			cost_usd REAL,
@@ -171,11 +172,12 @@ export function migrate(db: Database.Database): void {
 
 		CREATE INDEX IF NOT EXISTS idx_proposals_session ON proposals(session_id);
 		CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
-		CREATE INDEX IF NOT EXISTS idx_proposals_dedup ON proposals(dedup_key);
+		CREATE INDEX IF NOT EXISTS idx_proposals_dedup ON proposals(input_key);
 
 		-- Group nodes into logical units (analyzer + source set) for the
 		-- version-alternative timeline, and look up by recipe identity.
 		CREATE INDEX IF NOT EXISTS idx_nodes_unit ON analysis_nodes(analyzer_id, source_set_hash);
+		CREATE INDEX IF NOT EXISTS idx_nodes_output ON analysis_nodes(output_key);
 		CREATE INDEX IF NOT EXISTS idx_nodes_session ON analysis_nodes(session_id);
 		CREATE INDEX IF NOT EXISTS idx_nodes_analyzer ON analysis_nodes(analyzer_id);
 

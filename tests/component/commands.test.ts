@@ -90,6 +90,7 @@ describe("slash commands", () => {
 			"prospect-accept",
 			"prospect-reject",
 			"prospect-analyze",
+			"prospect-verify",
 		]) {
 			assert.ok(commands.has(name), `missing command ${name}`);
 		}
@@ -117,6 +118,27 @@ describe("slash commands", () => {
 	it("prospect-analyze --revise re-scans", async () => {
 		const out = await run("prospect-analyze", "--revise all --analyzer turn-pair-core");
 		assert.match(out, /Done \[revise:/);
+	});
+
+	it("prospect-verify confirms integrity and flags tampering", async () => {
+		await run("prospect-sync");
+		await run("prospect-analyze", "--analyzer turn-pair-core");
+		const ok = await run("prospect-verify");
+		assert.match(ok, /verified|No analysis nodes/);
+
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		try {
+			const rows = db.prepare("SELECT id FROM analysis_nodes LIMIT 2").all() as Array<{ id: string }>;
+			assert.ok(rows.length >= 1, "expected nodes to tamper with");
+			// Valid-but-different content → output_key mismatch.
+			db.prepare("UPDATE analysis_nodes SET content_json = '{\"x\":1}' WHERE id = ?").run(rows[0]!.id);
+			// Unparseable content → exercises the parse-failure branch.
+			if (rows[1]) db.prepare("UPDATE analysis_nodes SET content_json = 'not json' WHERE id = ?").run(rows[1].id);
+		} finally {
+			db.close();
+		}
+		const bad = await run("prospect-verify");
+		assert.match(bad, /failed verification/);
 	});
 
 	it("prospect-analyze reports when there is nothing to do", async () => {

@@ -151,7 +151,7 @@ describe("framework: dependency visibility & ordering", () => {
 			// carrying the message.
 			const errNode = db
 				.prepare("SELECT * FROM analysis_nodes WHERE node_kind = 'error'")
-				.get() as { content_json: string; input_hash: string } | undefined;
+				.get() as { content_json: string; input_key: string } | undefined;
 			assert.ok(errNode);
 			assert.match(JSON.parse(errNode!.content_json).error, /without declaring it/);
 
@@ -160,7 +160,7 @@ describe("framework: dependency visibility & ordering", () => {
 			const after = (await fw.scan("s1")).filter((c) => c.analyzerId === "sneaky");
 			assert.ok(after.length >= 1);
 			assert.ok(after.every((c) => c.status === "missing"));
-			assert.notEqual(errNode!.input_hash, after[0]!.inputHash);
+			assert.notEqual(errNode!.input_key, after[0]!.inputKey);
 		} finally {
 			close();
 		}
