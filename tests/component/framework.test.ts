@@ -213,6 +213,50 @@ describe("framework: dependency visibility & ordering", () => {
 		}
 	});
 
+	it("dedups two same-recipe units in one run (no UNIQUE collision, no wasted analyze)", async () => {
+		const { db, close } = tempDb();
+		try {
+			seedSession(db);
+			let analyzeCalls = 0;
+			// Plans TWO units that resolve to the SAME source_set_hash. By the
+			// framework's contract they are the same logical unit; only one node
+			// should be produced and the duplicate must not throw
+			// `UNIQUE constraint failed: analysis_nodes.input_key`.
+			const dupe: Analyzer = {
+				def: { id: "dupe", label: "Dupe", description: "", anchorSpan: "full_session", dependencies: [] },
+				version: { analyzerId: "dupe", major: 1, minor: 0, implementationKind: "deterministic" },
+				prompts: {},
+				defaultConfig: { id: "", analyzerId: "dupe", configHash: "h", configJson: {}, label: "default" },
+				plan: (_ctx: AnalyzerPlanContext) => [
+					{ sources: [{ kind: "session" as const, id: "s1" }], sourceSetHash: "same-ssh", anchorKind: "session" as const, anchorRef: "s1" },
+					{ sources: [{ kind: "session" as const, id: "s1" }], sourceSetHash: "same-ssh", anchorKind: "session" as const, anchorRef: "s1" },
+				],
+				analyze: (_unit, _ctx: AnalyzerRunContext): AnalysisResult => {
+					analyzeCalls++;
+					return { nodeKind: "metric", contentJson: { ok: true }, anchorKind: "session", anchorRef: "s1", edges: [] };
+				},
+			};
+			const fw = frameworkFor(db);
+			fw.register(dupe);
+
+			const summary = await fw.run("s1", {});
+			assert.equal(summary.errors.length, 0);
+			assert.equal(summary.nodesProduced, 1);
+			assert.equal(analyzeCalls, 1, "the duplicate unit must not be analysed twice");
+			const counts = db
+				.prepare("SELECT node_kind, COUNT(*) c FROM analysis_nodes WHERE analyzer_id='dupe' GROUP BY node_kind")
+				.all() as Array<{ node_kind: string; c: number }>;
+			assert.deepEqual(counts, [{ node_kind: "metric", c: 1 }]);
+
+			// Convergence: a re-run produces nothing new and never collides.
+			const second = await fw.run("s1", {});
+			assert.equal(second.errors.length, 0);
+			assert.equal(second.nodesProduced, 0);
+		} finally {
+			close();
+		}
+	});
+
 	it("orders analyzers by dependency and detects cycles", () => {
 		const { db, close } = tempDb();
 		try {

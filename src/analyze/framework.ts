@@ -188,9 +188,26 @@ export class AnalyzerFramework {
 		const units = await analyzer.plan(planCtx);
 
 		const classified = units.map((unit) => this.classify(resolved, unit));
-		const todo = classified.filter(
-			(c) => c.status === "missing" || (c.status === "stale" && c.reasons.some((r) => requested.has(r))),
-		);
+		// Within-run dedup by input_key. `scan()` snapshots every unit *before* any
+		// insert, so if an analyzer plans two units that resolve to the same
+		// source_set_hash (e.g. two byte-identical turn-pairs, or identical map/reduce
+		// source sets), both classify as `missing` at snapshot time. They share one
+		// input_key — by the framework's own contract they are the *same* logical
+		// unit covering the same inputs — so a single node is correct. Without this
+		// guard the first insert wins and the duplicate throws
+		// `UNIQUE constraint failed: analysis_nodes.input_key`, leaving a spurious
+		// error node and burning a redundant LLM call. (The cross-run case already
+		// converges: on a later scan the duplicate finds the existing node via
+		// findNodeByInputKey and classifies as `current`.)
+		const seenInputKeys = new Set<string>();
+		const todo = classified.filter((c) => {
+			const selected =
+				c.status === "missing" || (c.status === "stale" && c.reasons.some((r) => requested.has(r)));
+			if (!selected) return false;
+			if (seenInputKeys.has(c.inputKey)) return false;
+			seenInputKeys.add(c.inputKey);
+			return true;
+		});
 
 		const runId = uuidv7();
 		createRun(this.deps.db, {
