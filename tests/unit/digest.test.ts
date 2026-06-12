@@ -63,6 +63,7 @@ describe("buildDigest", () => {
 				coreNode("n2", { pair_index: 1, friction_score: 0.1, tool_failure_count: 0 }),
 			],
 			llmNodes: [],
+			trajectoryNodes: [],
 		});
 		assert.equal(digest.pairCount, 2);
 		assert.equal(digest.frictionCount, 1);
@@ -77,6 +78,7 @@ describe("buildDigest", () => {
 			messages: NO_MESSAGES,
 			coreNodes: [coreNode("n2", { pair_index: 5 }), coreNode("n1", { pair_index: 1 })],
 			llmNodes: [],
+			trajectoryNodes: [],
 		});
 		assert.ok(digest.perPairLines[0]!.startsWith("#1"));
 		assert.ok(digest.perPairLines[1]!.startsWith("#5"));
@@ -96,7 +98,7 @@ describe("buildDigest", () => {
 				tool_results: null,
 			},
 		];
-		const digest = buildDigest({ sessionId: "s1", messages, coreNodes: [coreNode("n1", {})], llmNodes: [] });
+		const digest = buildDigest({ sessionId: "s1", messages, coreNodes: [coreNode("n1", {})], llmNodes: [], trajectoryNodes: [] });
 		assert.equal(digest.compactionCount, 1);
 		assert.ok(digest.text.includes("refactored auth"));
 	});
@@ -119,6 +121,7 @@ describe("buildDigest", () => {
 					rationale: "x",
 				}),
 			],
+			trajectoryNodes: [],
 		});
 		const hotLine = digest.perPairLines.find((l) => l.startsWith("#0"))!;
 		const coldLine = digest.perPairLines.find((l) => l.startsWith("#1"))!;
@@ -141,14 +144,14 @@ describe("buildDigest", () => {
 				tool_results: null,
 			},
 		];
-		const digest = buildDigest({ sessionId: "s1", messages, coreNodes: [coreNode("n1", {})], llmNodes: [] });
+		const digest = buildDigest({ sessionId: "s1", messages, coreNodes: [coreNode("n1", {})], llmNodes: [], trajectoryNodes: [] });
 		assert.equal(digest.compactionCount, 1);
 		assert.ok(digest.text.includes("split off to try OAuth"));
 	});
 
 	it("tolerates malformed node content", () => {
 		const bad: AnalysisNodeRow = { ...coreNode("n1", {}), content_json: "{bad" };
-		const digest = buildDigest({ sessionId: "s1", messages: NO_MESSAGES, coreNodes: [bad], llmNodes: [] });
+		const digest = buildDigest({ sessionId: "s1", messages: NO_MESSAGES, coreNodes: [bad], llmNodes: [], trajectoryNodes: [] });
 		assert.equal(digest.pairCount, 0);
 	});
 
@@ -164,6 +167,7 @@ describe("buildDigest", () => {
 				coreNode("n1", { pair_index: 0, user_message_id: "u-circleci", correction_detected: false, friction_score: 0.3 }),
 			],
 			llmNodes: [],
+			trajectoryNodes: [],
 		});
 		const line = digest.perPairLines[0]!;
 		// The key assertion: even without correction_detected, the user text appears.
@@ -181,6 +185,7 @@ describe("buildDigest", () => {
 				coreNode("n1", { pair_index: 0, user_message_id: "u-plain", friction_score: 0.05 }),
 			],
 			llmNodes: [],
+			trajectoryNodes: [],
 		});
 		const line = digest.perPairLines[0]!;
 		assert.ok(line.includes("text="), "plain pair must have a text= snippet");
@@ -198,6 +203,7 @@ describe("buildDigest", () => {
 				coreNode("n1", { pair_index: 0, user_message_id: "u-long", friction_score: 0.1 }),
 			],
 			llmNodes: [],
+			trajectoryNodes: [],
 		});
 		const line = digest.perPairLines[0]!;
 		// The text field should be truncated to USER_TEXT_SNIPPET_MAX (200) + ellipsis
@@ -211,13 +217,13 @@ describe("buildDigest", () => {
 
 describe("splitDigest", () => {
 	it("returns a single segment when under budget", () => {
-		const digest = buildDigest({ sessionId: "s1", messages: NO_MESSAGES, coreNodes: [coreNode("n1", {})], llmNodes: [] });
+		const digest = buildDigest({ sessionId: "s1", messages: NO_MESSAGES, coreNodes: [coreNode("n1", {})], llmNodes: [], trajectoryNodes: [] });
 		assert.equal(splitDigest(digest, 100000).length, 1);
 	});
 
 	it("splits into multiple segments when over budget", () => {
 		const nodes = Array.from({ length: 40 }, (_, i) => coreNode(`n${i}`, { pair_index: i, correction_text: "x".repeat(100) }));
-		const digest = buildDigest({ sessionId: "s1", messages: NO_MESSAGES, coreNodes: nodes, llmNodes: [] });
+		const digest = buildDigest({ sessionId: "s1", messages: NO_MESSAGES, coreNodes: nodes, llmNodes: [], trajectoryNodes: [] });
 		const segments = splitDigest(digest, 500);
 		assert.ok(segments.length > 1);
 		for (const seg of segments) assert.ok(seg.text.includes("Per-pair signals"));
