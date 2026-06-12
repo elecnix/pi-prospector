@@ -28,6 +28,26 @@ function truncate(s: string, max: number): string {
 	return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
+/**
+ * Build the warning shown when an id prefix matches more than one proposal.
+ * Same-run proposal ids are uuidv7 values that share a long timestamp prefix, so
+ * an 8-char prefix is rarely unique. We show, per match, the shortest id prefix
+ * that is distinct across the matches plus the title — a fragment the user can
+ * copy straight back into `prospect show`.
+ */
+export function formatAmbiguousMatches(ref: string, matches: Array<{ id: string; title: string }>): string {
+	const ordered = [...matches].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+	const full = ordered.reduce((m, x) => Math.max(m, x.id.length), 0);
+	// Grow the prefix until every match's prefix is distinct (so it resolves uniquely).
+	let len = Math.max(ref.length + 1, 1);
+	while (len < full && new Set(ordered.map((m) => m.id.slice(0, len))).size < ordered.length) len++;
+	const rows = ordered.map((m) => {
+		const prefix = m.id.slice(0, len);
+		return `  ${prefix}${len < m.id.length ? "…" : ""}  ${m.title}`;
+	});
+	return [`"${ref}" matches ${ordered.length} proposals — copy a longer id:`, ...rows].join("\n");
+}
+
 /** A compact one-line preview of a tool call's most salient argument. */
 export function toolCallPreview(name: string, args: Record<string, unknown>): string {
 	const pick = (k: string): string | undefined => (typeof args[k] === "string" ? (args[k] as string) : undefined);
@@ -153,7 +173,7 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 		const { proposal, matches } = resolveProposal(db, ref);
 		if (!proposal) {
 			if (matches.length === 0) out(ctx, `No proposal matches "${ref}".`, "warning");
-			else out(ctx, `"${ref}" is ambiguous (${matches.length} matches): ${matches.map((m) => m.id.slice(0, 8)).join(", ")}`, "warning");
+			else out(ctx, formatAmbiguousMatches(ref, matches), "warning");
 			return;
 		}
 

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { toolCallPreview, renderAnchoredTurns } from "../../src/commands/show.js";
+import { toolCallPreview, renderAnchoredTurns, formatAmbiguousMatches } from "../../src/commands/show.js";
 import type { TurnPair } from "../../src/analyze/analyzers/turn-pair-core/build.js";
 import type { MessageRow } from "../../src/analyze/types.js";
 
@@ -70,5 +70,32 @@ describe("renderAnchoredTurns", () => {
 		assert.match(text, /pair #0/);
 		assert.doesNotMatch(text, /pair #1/);
 		assert.match(text, /…1 more turn\(s\) not shown\./);
+	});
+});
+
+describe("formatAmbiguousMatches", () => {
+	// Same-run uuidv7 ids share a long timestamp prefix; only chars ≥15 differ.
+	const matches = [
+		{ id: "019eb958-b8ce-72f1-178e-4d5d544a1aac", title: "Create a git-push skill" },
+		{ id: "019eb958-b8ce-7531-28eb-42e0c470bb52", title: "Add explicit git push target verification" },
+		{ id: "019eb958-b8ce-7a86-9bda-c851849149a3", title: "Add repetition-loop escape hatch rule" },
+	];
+
+	it("lists every match with its title and a uniquely-resolvable, non-identical id prefix", () => {
+		const text = formatAmbiguousMatches("019eb958", matches);
+		// Every title is shown so the user can tell the proposals apart.
+		for (const m of matches) assert.ok(text.includes(m.title), `missing title: ${m.title}`);
+		// Regression guard for the old `id.slice(0, 8)` bug: the per-match id
+		// fragments must NOT all be identical.
+		const frags = text
+			.split("\n")
+			.filter((l) => /^\s+0/.test(l))
+			.map((l) => l.trim().split(/\s{2,}/)[0]!.replace(/…$/, ""));
+		assert.equal(frags.length, matches.length);
+		assert.equal(new Set(frags).size, matches.length, `id fragments not distinct: ${frags.join(", ")}`);
+		// Each displayed fragment uniquely resolves its proposal via startsWith.
+		for (const frag of frags) {
+			assert.equal(matches.filter((m) => m.id.startsWith(frag)).length, 1, `fragment not unique: ${frag}`);
+		}
 	});
 });
