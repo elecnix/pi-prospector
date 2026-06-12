@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { tempDb, insertSession, insertMessages } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
-import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import { createMockLLM, type MockLLMReply } from "../../src/analyze/mock-llm.js";
 import { registerDefaults } from "../../src/analyze/defaults.js";
 import { sessionOverviewAnalyzer } from "../../src/analyze/analyzers/session-overview/index.js";
 import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
@@ -43,6 +43,46 @@ function respond(req: LLMRequest): string {
 			},
 		],
 	});
+}
+
+function respondStructuredToolCalls(req: LLMRequest): MockLLMReply {
+	if (req.tool?.name === "classify_turn") {
+		return {
+			text: "this text is deliberately not JSON",
+			structured: {
+				sentiment: "frustrated",
+				friction_type: "tool_misuse",
+				is_genuine_correction: true,
+				severity: "high",
+				rationale: "structured classify output was used",
+			},
+		};
+	}
+	if (req.tool?.name === "submit_session_analysis") {
+		return {
+			text: "this text is deliberately not JSON",
+			structured: {
+				session_summary: "Structured reduce output was used for the session overview.",
+				friction_points: [
+					{ description: "tool misuse", what_to_change: "document the correct tool path", evidence: "structured reduce evidence", severity: "high" },
+				],
+				key_positive_signals: [],
+				improvement_proposals: [
+					{
+						target_type: "agents_md",
+						target_path: "AGENTS.md § Tools",
+						title: "Document the correct tool path",
+						summary: "Tell the agent which tool path to use.",
+						detail: "Add a note that prevents the observed tool misuse.",
+						evidence: "Structured reduce evidence.",
+						confidence: 0.82,
+						severity: "correction",
+					},
+				],
+			},
+		};
+	}
+	return "this text is deliberately not JSON";
 }
 
 function respondCleanRecovery(req: LLMRequest): string {
@@ -150,6 +190,40 @@ describe("analyzers end-to-end", () => {
 
 			// The LLM was only consulted for high-signal pairs + the overview.
 			assert.ok(mock.calls.length >= 2);
+		} finally {
+			close();
+		}
+	});
+
+	it("consumes structured tool-call replies from the mock instead of text JSON", async () => {
+		const { db, close } = tempDb();
+		try {
+			seedSession(db, "s-structured");
+			const mock = createMockLLM({ responder: respondStructuredToolCalls, tokensPerCall: 100, costPerCall: 0.001 });
+			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
+			registerDefaults(fw);
+
+			const summary = await fw.run("s-structured", {});
+			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
+
+			const classificationRows = db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='turn-pair-llm'").all() as Array<{ content_json: string }>;
+			assert.ok(classificationRows.length >= 1, "expected at least one structured classification node");
+			const classification = JSON.parse(classificationRows[0]!.content_json) as Record<string, unknown>;
+			assert.equal(classification["friction_type"], "tool_misuse");
+			assert.equal(classification["rationale"], "structured classify output was used");
+
+			const summaryRows = db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='session-overview'").all() as Array<{ content_json: string }>;
+			assert.equal(summaryRows.length, 1, "expected one structured session overview node");
+			const content = JSON.parse(summaryRows[0]!.content_json) as Record<string, unknown>;
+			assert.equal(content["session_summary"], "Structured reduce output was used for the session overview.");
+			assert.equal((content["friction_points"] as Array<Record<string, unknown>>)[0]!["description"], "tool misuse");
+
+			const proposals = listProposals(db);
+			assert.equal(proposals.length, 1);
+			assert.equal(proposals[0]!.title, "Document the correct tool path");
+			assert.equal(proposals[0]!.severity, "correction");
+			assert.ok(mock.calls.some((c) => c.tool?.name === "classify_turn"));
+			assert.ok(mock.calls.some((c) => c.tool?.name === "submit_session_analysis"));
 		} finally {
 			close();
 		}

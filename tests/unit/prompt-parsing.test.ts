@@ -2,11 +2,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
 	extractJsonObject,
+	parseClassifyObject,
 	parseClassifyResponse,
 	buildClassifyPrompt,
 } from "../../src/analyze/analyzers/turn-pair-llm/prompt.js";
-import { parseMapResponse } from "../../src/analyze/analyzers/session-overview/prompt-map.js";
-import { parseReduceResponse } from "../../src/analyze/analyzers/session-overview/prompt-reduce.js";
+import { parseMapObject, parseMapResponse } from "../../src/analyze/analyzers/session-overview/prompt-map.js";
+import { parseReduceObject, parseReduceResponse } from "../../src/analyze/analyzers/session-overview/prompt-reduce.js";
 
 describe("extractJsonObject", () => {
 	it("parses a bare JSON object", () => {
@@ -49,6 +50,32 @@ describe("parseClassifyResponse", () => {
 		assert.equal(r.friction_type, "none");
 		assert.equal(r.severity, "low");
 		assert.equal(r.is_genuine_correction, false);
+	});
+
+	it("normalises parsed tool-call objects the same way as text JSON", () => {
+		const cases: Record<string, unknown>[] = [
+			{ sentiment: "frustrated", friction_type: "tool_misuse", is_genuine_correction: true, severity: "high", rationale: "wrong flag" },
+			{ sentiment: "positive", is_genuine_correction: false, rationale: "smooth" },
+			{ sentiment: "weird", friction_type: "nope", is_genuine_correction: true, severity: "urgent", rationale: "invalid enums" },
+			{},
+		];
+		for (const obj of cases) {
+			assert.deepEqual(parseClassifyObject(obj), parseClassifyResponse(JSON.stringify(obj)));
+		}
+		assert.deepEqual(parseClassifyObject(cases[2]!), {
+			sentiment: "neutral",
+			friction_type: "none",
+			is_genuine_correction: true,
+			severity: "low",
+			rationale: "invalid enums",
+		});
+		assert.deepEqual(parseClassifyObject(cases[3]!), {
+			sentiment: "neutral",
+			friction_type: "none",
+			is_genuine_correction: false,
+			severity: "low",
+			rationale: "",
+		});
 	});
 });
 
@@ -139,9 +166,66 @@ describe("parseMapResponse", () => {
 		assert.equal(r.segment_summary, "");
 		assert.deepEqual(r.notable_points, []);
 	});
+
+	it("normalises parsed tool-call objects the same way as text JSON", () => {
+		const cases: Record<string, unknown>[] = [
+			{ segment_summary: "segment ok", notable_points: ["a", "b"] },
+			{ segment_summary: "partial" },
+			{ segment_summary: 42, notable_points: ["keep", 1, null, "also keep"] },
+			{},
+		];
+		for (const obj of cases) {
+			assert.deepEqual(parseMapObject(obj), parseMapResponse(JSON.stringify(obj), extractJsonObject));
+		}
+		assert.deepEqual(parseMapObject(cases[2]!), {
+			segment_summary: "",
+			notable_points: ["keep", "also keep"],
+		});
+	});
 });
 
 describe("parseReduceResponse", () => {
+	it("normalises parsed tool-call objects the same way as text JSON", () => {
+		const cases: Record<string, unknown>[] = [
+			{
+				session_summary: "valid summary",
+				friction_points: [{ description: "tool failed", what_to_change: "check flags", evidence: "turn 2", severity: "high" }],
+				key_positive_signals: [{ description: "clean recovery", signal: "correction-then-clean-recovery" }],
+				improvement_proposals: [{ title: "Document flags", summary: "Add flag guidance", severity: "correction" }],
+			},
+			{
+				session_summary: "partial summary",
+				friction_points: [{ description: "missing optional fields", severity: "medium" }],
+				improvement_proposals: [{ title: "Partial proposal" }],
+			},
+			{
+				session_summary: "invalid severities",
+				friction_points: [{ description: "bad severity", what_to_change: "normalise", evidence: "unit", severity: "urgent" }],
+				key_positive_signals: [{ description: "unknown signal", signal: "surprisingly-good" }],
+				improvement_proposals: [{ title: "Bad severity", severity: "urgent" }, { title: "Keep good work", severity: "reinforcement" }],
+			},
+			{
+				friction_points: [{ severity: "high" }, null, { description: "valid fallback", severity: "low" }],
+				key_positive_signals: [{ signal: "low-tool-failure-density" }, 5],
+				improvement_proposals: [null, "bad"],
+			},
+			{},
+		];
+		for (const obj of cases) {
+			assert.deepEqual(parseReduceObject(obj), parseReduceResponse(JSON.stringify(obj), extractJsonObject));
+		}
+		const invalid = parseReduceObject(cases[2]!);
+		assert.equal(invalid.friction_points[0]!.severity, "low");
+		assert.equal(invalid.key_positive_signals[0]!.signal, "");
+		assert.equal(invalid.improvement_proposals[0]!["severity"], "suggestion");
+		assert.equal(invalid.improvement_proposals[1]!["severity"], "reinforcement");
+		const missing = parseReduceObject(cases[3]!);
+		assert.equal(missing.session_summary, "");
+		assert.deepEqual(missing.friction_points, [{ description: "valid fallback", what_to_change: "", evidence: "", severity: "low" }]);
+		assert.deepEqual(missing.key_positive_signals, []);
+		assert.deepEqual(missing.improvement_proposals, []);
+	});
+
 	it("parses summary, friction points (enumerate-then-propose shape), positive signals, and proposals", () => {
 		const json = JSON.stringify({
 			session_summary: "did stuff",

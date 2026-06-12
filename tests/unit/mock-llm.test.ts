@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { Type } from "typebox";
 import { createMockLLM, createThrowingLLM } from "../../src/analyze/mock-llm.js";
+
+const TOOL = {
+	name: "submit_test_result",
+	description: "Submit a synthetic structured test result.",
+	parameters: Type.Object({ ok: Type.Boolean() }),
+};
 
 describe("createMockLLM", () => {
 	it("returns scripted responses in order and records calls", async () => {
@@ -31,6 +38,27 @@ describe("createMockLLM", () => {
 		assert.equal(r.costUsd, 0.01);
 		assert.equal(r.tokensUsed, 42);
 		assert.equal(r.stopReason, "stop");
+	});
+
+	it("returns structured scripted replies for tool requests", async () => {
+		const mock = createMockLLM({ scripted: [{ structured: { ok: true } }] });
+		const r = await mock.caller({ model: "m", user: "", tool: TOOL });
+		assert.equal(r.text, "");
+		assert.deepEqual(r.structured, { ok: true });
+	});
+
+	it("returns text and structured data from object responder replies", async () => {
+		const mock = createMockLLM({ responder: () => ({ text: "fallback text", structured: { ok: true } }) });
+		const r = await mock.caller({ model: "m", user: "", tool: TOOL });
+		assert.equal(r.text, "fallback text");
+		assert.deepEqual(r.structured, { ok: true });
+	});
+
+	it("only exposes structured mock replies when the request offered a tool", async () => {
+		const mock = createMockLLM({ fallback: { text: "{}", structured: { ok: true } } });
+		const r = await mock.caller({ model: "m", user: "" });
+		assert.equal(r.text, "{}");
+		assert.equal(r.structured, undefined);
 	});
 
 	it("defaults to empty text", async () => {

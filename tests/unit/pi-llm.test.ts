@@ -51,6 +51,29 @@ describe("toLLMResponse", () => {
 		assert.equal(r.tokensUsed, 15);
 		assert.equal(r.costUsd, 0.02);
 		assert.equal(r.durationMs, 123);
+		assert.equal(r.structured, undefined);
+	});
+
+	it("extracts tool-call arguments as structured output", () => {
+		const args = { sentiment: "neutral", is_genuine_correction: false };
+		const msg = assistantMessage({
+			content: [{ type: "toolCall", id: "tc-1", name: "classify_turn", arguments: args }],
+		});
+		const r = toLLMResponse(msg, "anthropic/m", 0);
+		assert.equal(r.text, "");
+		assert.deepEqual(r.structured, args);
+	});
+
+	it("returns complete structured output even when the stop reason is length", () => {
+		const args = { session_summary: "complete despite length" };
+		const msg = assistantMessage({
+			content: [{ type: "toolCall", id: "tc-1", name: "submit_session_analysis", arguments: args }],
+			stopReason: "length",
+			usage: { input: 100, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 600, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		});
+		const r = toLLMResponse(msg, "google/gemini-2.5-flash", 0);
+		assert.equal(r.stopReason, "length");
+		assert.deepEqual(r.structured, args);
 	});
 
 	it("omits thinking when none present", () => {
