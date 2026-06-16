@@ -2,7 +2,7 @@
 
 Incremental session analysis and proposal generation for the [Pi coding agent](https://github.com/earendil-works/pi).
 
-pi-prospector reads your Pi session transcripts, indexes them into a local SQLite database, and builds an **append-only analysis graph** over them — measuring every turn deterministically and using an LLM only where the signal warrants it. From that graph it surfaces concrete, ranked proposals to improve your prompts, skills, and configuration. It never applies them. You decide what to develop.
+pi-prospector reads your Pi and Claude Code session transcripts, indexes them into a local SQLite database, and builds an **append-only analysis graph** over them — measuring every turn deterministically and using an LLM only where the signal warrants it. From that graph it surfaces concrete, ranked proposals to improve your prompts, skills, and configuration. It never applies them. You decide what to develop.
 
 pi-prospector is a Pi **extension**: it has no standalone CLI. Everything runs through slash commands and a `prospect` tool inside a Pi session.
 
@@ -174,7 +174,7 @@ This lets you say things like "show me open proposals" or "sync my sessions and 
 
 ## What gets analyzed
 
-pi-prospector reads **only what is inside Pi session files**. It does not read Pi configuration files, `AGENTS.md`, skill files, or any other artifact directly. A session file contains:
+pi-prospector reads **only what is inside Pi and Claude Code session files**. It does not read Pi configuration files, `AGENTS.md`, skill files, or any other artifact directly. Claude sessions are synced and indexed, but the analysis pipeline runs as a Pi extension — you need Pi to run `/prospect-analyze`. A Pi session file contains:
 
 - User messages (what you said)
 - Assistant messages (what the agent said, including thinking)
@@ -246,7 +246,7 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 
 Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. All model access goes through Pi's own provider system — pick any model Pi supports (configured via `/login` or API keys). The deterministic `turn-pair-core` layer needs no model and always runs.
 
-The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CONFIG`.
+The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CLAUDE_SESSIONS_DIR`, `PROSPECTOR_CONFIG`.
 
 ## Running headlessly
 
