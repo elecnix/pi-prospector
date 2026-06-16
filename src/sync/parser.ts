@@ -110,7 +110,7 @@ export function parseLine(line: string): ParsedLine | null {
 		};
 	}
 
-	// Other message-like types (bashExecution, branchSummary, compactionSummary, custom)
+	// Other message-like types (bashExecution, branch_summary, compactionSummary, custom_message)
 	if (type && obj.id) {
 		const id = String(obj.id);
 		const parentId = (obj.parentId as string) ?? null;
