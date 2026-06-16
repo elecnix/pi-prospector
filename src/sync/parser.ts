@@ -143,7 +143,32 @@ function parsePiLine(line: string): ParsedLine | null {
 	return null;
 }
 
-// ─── Claude parser ───
+// ─── Claude tool-name normalization ───
+
+/**
+ * Map Claude Code capitalized tool names to the Pi lowercase convention
+ * so the trajectory analyzer and turn-pair builder see a uniform vocabulary.
+ * All downstream code (arg-parser, detectors, build.ts) expects lowercase.
+ */
+const CLAUDE_TOOL_NAME_MAP: Record<string, string> = {
+	"Bash": "bash",
+	"Read": "read",
+	"Write": "write",
+	"Edit": "edit",
+	"Glob": "glob",
+	"Grep": "grep",
+	"WebSearch": "webSearch",
+	"WebFetch": "webFetch",
+	"Task": "task",
+	"TodoWrite": "todoWrite",
+	"NotebookEdit": "notebookEdit",
+};
+
+function normalizeClaudeToolName(name: string): string {
+	return CLAUDE_TOOL_NAME_MAP[name] ?? name;
+}
+
+// ─── Claude line parser ───
 
 /** Parse a line from a Claude Code JSONL session file. */
 export function parseClaudeLine(line: string): ParsedLine | null {
@@ -165,10 +190,16 @@ export function parseClaudeLine(line: string): ParsedLine | null {
 
 	// User message
 	if (type === "user") {
+		// Skip meta-only user lines (slash-command expansions, caveats, command stdout)
+		// that carry no user intent and create spurious turn boundaries.
+		if (obj.isMeta === true) return null;
+
+		if (!obj.uuid) return null; // id is required for identity
+
 		const msg = obj.message as Record<string, unknown> | undefined;
 		if (!msg) return null;
 
-		const uuid = String(obj.uuid ?? "");
+		const uuid = String(obj.uuid);
 		const parentUuid = (obj.parentUuid as string) ?? null;
 		const timestamp = (obj.timestamp as string) ?? null;
 
@@ -223,10 +254,12 @@ export function parseClaudeLine(line: string): ParsedLine | null {
 
 	// Assistant message
 	if (type === "assistant") {
+		if (!obj.uuid) return null; // id is required for identity
+
 		const msg = obj.message as Record<string, unknown> | undefined;
 		if (!msg) return null;
 
-		const uuid = String(obj.uuid ?? "");
+		const uuid = String(obj.uuid);
 		const parentUuid = (obj.parentUuid as string) ?? null;
 		const timestamp = (obj.timestamp as string) ?? null;
 
@@ -249,7 +282,7 @@ export function parseClaudeLine(line: string): ParsedLine | null {
 					thinkParts.push(p.thinking);
 				} else if (p.type === "tool_use") {
 					calls.push({
-						name: String(p.name ?? ""),
+						name: normalizeClaudeToolName(String(p.name ?? "")),
 						arguments: (p.input as Record<string, unknown>) ?? {},
 					});
 				}
@@ -281,6 +314,7 @@ export function parseClaudeSessionMeta(lines: string[]): ClaudeSessionMeta | nul
 
 	let title: string | null = null;
 	let timestamp: string | null = null;
+	let cwd: string | null = null;
 
 	for (const line of lines) {
 		if (!line.trim()) continue;
@@ -292,12 +326,19 @@ export function parseClaudeSessionMeta(lines: string[]): ClaudeSessionMeta | nul
 
 		if (type === "ai-title" && obj.aiTitle) {
 			title = String(obj.aiTitle);
-		} else if (type === "user" || type === "assistant") {
+		}
+
+		if (type === "user" || type === "assistant") {
 			if (!timestamp && obj.timestamp) {
 				timestamp = String(obj.timestamp);
 			}
+			if (!cwd && typeof obj.cwd === "string" && obj.cwd) {
+				cwd = obj.cwd;
+			}
+			// Early exit once we have both
+			if (timestamp && cwd) break;
 		}
 	}
 
-	return { sessionId: "", title, timestamp, cwd: "" };
+	return { title, timestamp, cwd };
 }

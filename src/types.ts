@@ -33,10 +33,9 @@ export interface SessionHeader {
 // ─── Claude-specific types ───
 
 export interface ClaudeSessionMeta {
-	sessionId: string;
 	title: string | null;
 	timestamp: string | null;
-	cwd: string;
+	cwd: string | null;
 }
 
 // ─── Messages ───

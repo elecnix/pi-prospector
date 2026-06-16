@@ -163,19 +163,91 @@ describe("parseLine (claude source)", () => {
 	it("returns null for invalid JSON (claude)", () => {
 		assert.equal(parseLine("not json", "claude"), null);
 	});
+
+	it("skips user messages with isMeta flag", () => {
+		const line = JSON.stringify({
+			type: "user",
+			uuid: "meta1",
+			isMeta: true,
+			message: { role: "user", content: "/model" },
+		});
+		assert.equal(parseLine(line, "claude"), null);
+	});
+
+	it("returns null for user message missing uuid", () => {
+		const line = JSON.stringify({
+			type: "user",
+			message: { role: "user", content: "hello" },
+		});
+		assert.equal(parseLine(line, "claude"), null);
+	});
+
+	it("returns null for assistant message missing uuid", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+		});
+		assert.equal(parseLine(line, "claude"), null);
+	});
+
+	it("normalizes Claude capitalized tool names to lowercase", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			uuid: "asst-tools",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "tool_use", name: "Bash", input: { command: "ls" } },
+					{ type: "tool_use", name: "Read", input: { path: "/f" } },
+					{ type: "tool_use", name: "Write", input: { path: "/f", content: "x" } },
+					{ type: "tool_use", name: "Edit", input: { path: "/f", oldText: "a", newText: "b" } },
+					{ type: "tool_use", name: "Glob", input: { pattern: "*.ts" } },
+					{ type: "tool_use", name: "Grep", input: { pattern: "foo" } },
+				],
+			},
+		});
+		const result = parseLine(line, "claude");
+		assert.ok(result);
+		if (result.kind === "message") {
+			assert.ok(result.entry.tool_calls);
+			assert.equal(result.entry.tool_calls![0]!.name, "bash");
+			assert.equal(result.entry.tool_calls![1]!.name, "read");
+			assert.equal(result.entry.tool_calls![2]!.name, "write");
+			assert.equal(result.entry.tool_calls![3]!.name, "edit");
+			assert.equal(result.entry.tool_calls![4]!.name, "glob");
+			assert.equal(result.entry.tool_calls![5]!.name, "grep");
+		}
+	});
+
+	it("passes through unknown tool names unchanged", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			uuid: "asst-custom",
+			message: {
+				role: "assistant",
+				content: [{ type: "tool_use", name: "CustomPlugin", input: {} }],
+			},
+		});
+		const result = parseLine(line, "claude");
+		assert.ok(result);
+		if (result.kind === "message") {
+			assert.equal(result.entry.tool_calls![0]!.name, "CustomPlugin");
+		}
+	});
 });
 
 describe("parseClaudeSessionMeta", () => {
-	it("extracts title and timestamp from session lines", () => {
+	it("extracts title, timestamp, and cwd from session lines", () => {
 		const lines = [
 			JSON.stringify({ type: "last-prompt", leafUuid: "x", sessionId: "s1" }),
 			JSON.stringify({ type: "ai-title", aiTitle: "My Session", sessionId: "s1" }),
-			JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-01-15T10:30:00.000Z", message: { role: "user", content: "hi" } }),
+			JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-01-15T10:30:00.000Z", cwd: "/home/user/project", message: { role: "user", content: "hi" } }),
 		];
 		const meta = parseClaudeSessionMeta(lines);
 		assert.ok(meta);
 		assert.equal(meta.title, "My Session");
 		assert.equal(meta.timestamp, "2026-01-15T10:30:00.000Z");
+		assert.equal(meta.cwd, "/home/user/project");
 	});
 
 	it("returns null for empty lines array", () => {
@@ -191,5 +263,6 @@ describe("parseClaudeSessionMeta", () => {
 		assert.ok(meta);
 		assert.equal(meta.title, null);
 		assert.equal(meta.timestamp, null);
+		assert.equal(meta.cwd, null);
 	});
 });

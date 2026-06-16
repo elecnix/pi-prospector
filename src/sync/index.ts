@@ -146,6 +146,7 @@ function syncClaudeSession(
 
 	const meta = parseClaudeSessionMeta(lines);
 	const startedAt = meta?.timestamp ?? null;
+	const cwd = (meta?.cwd ?? disc.project) || "";
 
 	// Upsert session
 	upsertSession(db, {
@@ -153,7 +154,7 @@ function syncClaudeSession(
 		file_path: disc.filePath,
 		project: disc.project,
 		source: disc.source,
-		cwd: disc.project || "",
+		cwd,
 		parent_session: null,
 		started_at: startedAt ?? "",
 		last_line: cursor?.last_line ?? 0,
