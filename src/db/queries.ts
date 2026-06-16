@@ -16,6 +16,7 @@ export interface SessionInsert {
 	id: string;
 	file_path: string;
 	project: string;
+	source: string;
 	cwd: string;
 	parent_session: string | null;
 	started_at: string;
@@ -28,14 +29,14 @@ export interface SessionInsert {
 
 export function upsertSession(db: Database.Database, s: SessionInsert): void {
 	db.prepare(`
-		INSERT INTO sessions (id, file_path, project, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			file_path=excluded.file_path, project=excluded.project, cwd=excluded.cwd,
+			file_path=excluded.file_path, project=excluded.project, source=excluded.source, cwd=excluded.cwd,
 			parent_session=excluded.parent_session, last_line=excluded.last_line,
 			last_modified=excluded.last_modified, message_count=excluded.message_count,
 			branch_count=excluded.branch_count
-	`).run(s.id, s.file_path, s.project, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count);
+	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count);
 }
 
 export function getCursor(db: Database.Database, filePath: string): { last_line: number; last_modified: number } | undefined {
@@ -85,6 +86,7 @@ export function getSessionLabels(db: Database.Database): SessionLabel[] {
 export interface MessageInsert {
 	id: string;
 	session_id: string;
+	source: string;
 	parent_id: string | null;
 	timestamp: string | null;
 	role: string;
@@ -96,9 +98,9 @@ export interface MessageInsert {
 
 export function insertMessage(db: Database.Database, m: MessageInsert): void {
 	db.prepare(`
-		INSERT OR IGNORE INTO messages (id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, content_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(m.id, m.session_id, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, null);
+		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, content_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, null);
 }
 
 export function countMessages(db: Database.Database, sessionId: string): number {
@@ -230,7 +232,11 @@ export function countOpenProposalsByValidationStatus(db: Database.Database): Rec
 
 export function getStats(db: Database.Database): Stats {
 	const totalSessions = (db.prepare("SELECT COUNT(*) as c FROM sessions").get() as { c: number }).c;
+	const piSessions = (db.prepare("SELECT COUNT(*) as c FROM sessions WHERE source = 'pi'").get() as { c: number }).c;
+	const claudeSessions = (db.prepare("SELECT COUNT(*) as c FROM sessions WHERE source = 'claude'").get() as { c: number }).c;
 	const totalMessages = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant')").get() as { c: number }).c;
+	const piMessages = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'pi'").get() as { c: number }).c;
+	const claudeMessages = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'claude'").get() as { c: number }).c;
 	const totalToolResults = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE role = 'toolResult'").get() as { c: number }).c;
 	const sessionsAnalyzed = (db.prepare("SELECT COUNT(*) as c FROM sessions WHERE analyzed_at IS NOT NULL").get() as { c: number }).c;
 
@@ -244,7 +250,11 @@ export function getStats(db: Database.Database): Stats {
 
 	return {
 		totalSessions,
+		piSessions,
+		claudeSessions,
 		totalMessages,
+		piMessages,
+		claudeMessages,
 		totalToolResults,
 		sessionsAnalyzed,
 		proposalsByStatus,

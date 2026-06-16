@@ -20,12 +20,23 @@ export interface ProspectorConfig {
 
 // ─── Session ───
 
+export type SessionSource = "pi" | "claude";
+
 export interface SessionHeader {
 	id: string;
 	version: number;
 	timestamp?: string;
 	cwd?: string;
 	parentSession?: string;
+}
+
+// ─── Claude-specific types ───
+
+export interface ClaudeSessionMeta {
+	sessionId: string;
+	title: string | null;
+	timestamp: string | null;
+	cwd: string;
 }
 
 // ─── Messages ───
@@ -73,10 +84,11 @@ export interface DiscoveredSession {
 	filePath: string;
 	project: string;
 	mtime: number; // milliseconds
+	size: number;
+	source: SessionSource;
 }
 
 export interface SyncCursor {
-	session_id: string;
 	last_line: number;
 	last_modified: number;
 }
@@ -160,7 +172,11 @@ export interface ProposalDecision {
 
 export interface Stats {
 	totalSessions: number;
+	piSessions: number;
+	claudeSessions: number;
 	totalMessages: number;
+	piMessages: number;
+	claudeMessages: number;
 	totalToolResults: number;
 	sessionsAnalyzed: number;
 	proposalsByStatus: Record<ProposalStatus, number>;

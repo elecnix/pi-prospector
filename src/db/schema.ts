@@ -29,6 +29,7 @@ export function migrate(db: Database.Database): void {
 			id TEXT PRIMARY KEY,
 			file_path TEXT NOT NULL,
 			project TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT 'pi',
 			cwd TEXT NOT NULL DEFAULT '',
 			parent_session TEXT,
 			started_at TEXT,
@@ -42,6 +43,7 @@ export function migrate(db: Database.Database): void {
 		CREATE TABLE IF NOT EXISTS messages (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT 'pi',
 			parent_id TEXT,
 			timestamp TEXT,
 			role TEXT NOT NULL,
@@ -196,8 +198,10 @@ export function migrate(db: Database.Database): void {
 		-- ───────────────────────────── indexes ─────────────────────────────
 
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+		CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
 		CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
 		CREATE INDEX IF NOT EXISTS idx_sessions_file ON sessions(file_path);
+		CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 
 		CREATE INDEX IF NOT EXISTS idx_proposals_session ON proposals(session_id);
 		CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
