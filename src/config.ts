@@ -36,7 +36,7 @@ export function getSessionsDir(): string {
 }
 
 export function getClaudeSessionsDir(): string {
-	return CLAUDE_SESSIONS_DIR;
+	return process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] ?? CLAUDE_SESSIONS_DIR;
 }
 
 /** Resolve the model-tier mapping, falling back to defaults. */

@@ -18,15 +18,14 @@ function tempDb(): { db: Database.Database; close: () => void } {
 /**
  * Create a temp directory structure that mimics the real layout:
  *   <tmpRoot>/.pi/agent/sessions/    ← Pi sessions dir (passed to runSync)
- *   <tmpRoot>/.claude/projects/       ← Claude sessions dir (scanner auto-discovers)
+ *   <tmpRoot>/.claude/projects/       ← Claude sessions dir (set via PROSPECTOR_CLAUDE_SESSIONS_DIR)
  *
- * Returns the path to use as the Pi sessions dir.
+ * Returns { piRoot, claudeRoot } — the caller must set PROSPECTOR_CLAUDE_SESSIONS_DIR.
  */
 function createMixedFixture(
 	piSessions: Array<{ projectDir: string; fileName: string; lines: string[] }>,
 	claudeSessions: Array<{ projectDir: string; fileName: string; lines: string[] }>,
-): string {
-	// Create a temp directory that acts as the user home
+): { piRoot: string; claudeRoot: string } {
 	const home = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-home-"));
 	const piRoot = path.join(home, ".pi", "agent", "sessions");
 	const claudeRoot = path.join(home, ".claude", "projects");
@@ -45,7 +44,7 @@ function createMixedFixture(
 		fs.writeFileSync(path.join(projectDir, sess.fileName), sess.lines.join("\n") + "\n");
 	}
 
-	return piRoot;
+	return { piRoot, claudeRoot };
 }
 
 function cleanupFixture(piRoot: string): void {
@@ -54,11 +53,23 @@ function cleanupFixture(piRoot: string): void {
 	fs.rmSync(home, { recursive: true, force: true });
 }
 
+/** Set PROSPECTOR_CLAUDE_SESSIONS_DIR and restore it on cleanup. */
+function withClaudeDir(claudeRoot: string, fn: () => void): void {
+	const prev = process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR;
+	try {
+		process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR = claudeRoot;
+		fn();
+	} finally {
+		if (prev === undefined) delete process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR;
+		else process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR = prev;
+	}
+}
+
 describe("Claude session sync", () => {
 	it("syncs a Claude session into database", () => {
 		const { db, close } = tempDb();
 		try {
-			const piRoot = createMixedFixture(
+			const { piRoot, claudeRoot } = createMixedFixture(
 				[],
 				[
 					{
@@ -73,26 +84,30 @@ describe("Claude session sync", () => {
 					},
 				],
 			);
+			try {
+				withClaudeDir(claudeRoot, () => {
+					const result = runSync(db, piRoot);
+					assert.ok(result.sessionsProcessed >= 1, `expected >=1 session, got ${result.sessionsProcessed}`);
 
-			const result = runSync(db, piRoot);
-			assert.ok(result.sessionsProcessed >= 1, `expected >=1 session, got ${result.sessionsProcessed}`);
+					// Verify session row
+					const session = db.prepare("SELECT * FROM sessions WHERE source = 'claude'").get() as Record<string, unknown>;
+					assert.ok(session);
+					assert.equal(session.id, "claude-sess-001");
+					assert.equal(session.source, "claude");
 
-			// Verify session row
-			const session = db.prepare("SELECT * FROM sessions WHERE source = 'claude'").get() as Record<string, unknown>;
-			assert.ok(session);
-			assert.equal(session.id, "claude-sess-001");
-			assert.equal(session.source, "claude");
+					// Verify messages: ai-title is not inserted as a message
+					const messages = db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all("claude-sess-001") as Array<{ role: string; source: string }>;
+					assert.equal(messages.length, 2);
+					assert.equal(messages[0]!.role, "user");
+					assert.equal(messages[1]!.role, "assistant");
+					for (const m of messages) assert.equal(m.source, "claude");
 
-			// Verify messages
-			const messages = db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all("claude-sess-001") as Array<{ role: string; source: string }>;
-			assert.ok(messages.length >= 2);
-			assert.equal(messages[0]!.role, "custom_message"); // ai-title
-			for (const m of messages) assert.equal(m.source, "claude");
-
-			const stats = getStats(db);
-			assert.equal(stats.claudeSessions, 1);
-
-			cleanupFixture(piRoot);
+					const stats = getStats(db);
+					assert.equal(stats.claudeSessions, 1);
+				});
+			} finally {
+				cleanupFixture(piRoot);
+			}
 		} finally {
 			close();
 		}
@@ -101,7 +116,7 @@ describe("Claude session sync", () => {
 	it("handles incremental re-sync of Claude sessions", () => {
 		const { db, close } = tempDb();
 		try {
-			const piRoot = createMixedFixture(
+			const { piRoot, claudeRoot } = createMixedFixture(
 				[],
 				[
 					{
@@ -113,15 +128,18 @@ describe("Claude session sync", () => {
 					},
 				],
 			);
+			try {
+				withClaudeDir(claudeRoot, () => {
+					const r1 = runSync(db, piRoot);
+					assert.equal(r1.sessionsProcessed, 1);
 
-			const r1 = runSync(db, piRoot);
-			assert.equal(r1.sessionsProcessed, 1);
-
-			const r2 = runSync(db, piRoot);
-			assert.equal(r2.sessionsSkipped, 1);
-			assert.equal(r2.messagesInserted, 0);
-
-			cleanupFixture(piRoot);
+					const r2 = runSync(db, piRoot);
+					assert.equal(r2.sessionsSkipped, 1);
+					assert.equal(r2.messagesInserted, 0);
+				});
+			} finally {
+				cleanupFixture(piRoot);
+			}
 		} finally {
 			close();
 		}
@@ -130,7 +148,7 @@ describe("Claude session sync", () => {
 	it("syncs both Pi and Claude sessions together", () => {
 		const { db, close } = tempDb();
 		try {
-			const piRoot = createMixedFixture(
+			const { piRoot, claudeRoot } = createMixedFixture(
 				[
 					{
 						projectDir: "--Users-testuser--myproject",
@@ -151,15 +169,18 @@ describe("Claude session sync", () => {
 					},
 				],
 			);
+			try {
+				withClaudeDir(claudeRoot, () => {
+					const result = runSync(db, piRoot);
+					assert.ok(result.sessionsProcessed >= 2, `expected >=2 sessions, got ${result.sessionsProcessed}`);
 
-			const result = runSync(db, piRoot);
-			assert.ok(result.sessionsProcessed >= 2, `expected >=2 sessions, got ${result.sessionsProcessed}`);
-
-			const stats = getStats(db);
-			assert.ok(stats.piSessions >= 1);
-			assert.ok(stats.claudeSessions >= 1);
-
-			cleanupFixture(piRoot);
+					const stats = getStats(db);
+					assert.ok(stats.piSessions >= 1);
+					assert.ok(stats.claudeSessions >= 1);
+				});
+			} finally {
+				cleanupFixture(piRoot);
+			}
 		} finally {
 			close();
 		}

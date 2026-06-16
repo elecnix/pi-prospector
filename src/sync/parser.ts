@@ -268,23 +268,9 @@ export function parseClaudeLine(line: string): ParsedLine | null {
 		};
 	}
 
-	// ai-title — session metadata
-	if (type === "ai-title" && obj.aiTitle) {
-		// We stash this in a synthetic message so sync can pick it up
-		return {
-			kind: "message",
-			entry: {
-				id: `title-${obj.sessionId ?? "unknown"}`,
-				parentId: null,
-				timestamp: null,
-				role: "custom_message",
-				text: `__CLAUDE_TITLE__${obj.aiTitle}`,
-				thinking: null,
-				tool_calls: null,
-				tool_results: null,
-			},
-		};
-	}
+	// ai-title is session metadata, not a conversation turn — skip it here.
+	// It is extracted by parseClaudeSessionMeta (called from syncClaudeSession).
+	if (type === "ai-title") return null;
 
 	return null;
 }

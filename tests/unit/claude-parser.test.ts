@@ -140,18 +140,19 @@ describe("parseLine (claude source)", () => {
 		}
 	});
 
-	it("extracts ai-title as a custom message", () => {
+	it("skips ai-title (not inserted as a message)", () => {
 		const line = JSON.stringify({
 			type: "ai-title",
 			aiTitle: "Review dotfiles repo",
 			sessionId: "sess-1",
 		});
 		const result = parseLine(line, "claude");
-		assert.ok(result);
-		if (result.kind === "message") {
-			assert.equal(result.entry.role, "custom_message");
-			assert.equal(result.entry.text, "__CLAUDE_TITLE__Review dotfiles repo");
-		}
+		assert.equal(result, null);
+	});
+
+	it("skips ai-title type without aiTitle field", () => {
+		const line = JSON.stringify({ type: "ai-title", sessionId: "sess-1" });
+		assert.equal(parseLine(line, "claude"), null);
 	});
 
 	it("returns null for empty lines (claude)", () => {

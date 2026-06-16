@@ -1,17 +1,19 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { DiscoveredSession, SessionSource } from "../types.js";
+import { getClaudeSessionsDir } from "../config.js";
 
 /**
- * Walk a directory of session files (Pi: ~/.pi/agent/sessions/, Claude: ~/.claude/projects/)
+ * Walk session directories (Pi: ~/.pi/agent/sessions/, Claude: ~/.claude/projects/)
  * and discover all .jsonl files. Groups by project directory name.
+ *
+ * Pi dir is passed explicitly (overridable via PROSPECTOR_SESSIONS_DIR).
+ * Claude dir is resolved via getClaudeSessionsDir() (overridable via PROSPECTOR_CLAUDE_SESSIONS_DIR).
  */
 export function discoverSessions(
 	sessionsDir: string,
 ): DiscoveredSession[] {
-	// Pi sessions live at ~/.pi/agent/sessions/; Claude sessions at ~/.claude/projects/
-	// sessions → agent → .pi → ~ → .claude → projects
-	const claudeDir = path.resolve(sessionsDir, "..", "..", "..", ".claude", "projects");
+	const claudeDir = getClaudeSessionsDir();
 	return [
 		...discoverPiSessions(sessionsDir),
 		...discoverClaudeSessions(claudeDir),
