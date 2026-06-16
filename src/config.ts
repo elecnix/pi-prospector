@@ -8,6 +8,7 @@ import type { ModelTierConfig } from "./analyze/types.js";
 const DEFAULT_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "prospector.json");
 const DEFAULT_DB_PATH = path.join(os.homedir(), ".pi", "agent", "prospector.db");
 const DEFAULT_SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
+const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "projects");
 
 /** Path to the JSON config, overridable via PROSPECTOR_CONFIG (used by tests). */
 function configPath(): string {
@@ -32,6 +33,10 @@ export function getDbPath(config?: ProspectorConfig): string {
 
 export function getSessionsDir(): string {
 	return process.env["PROSPECTOR_SESSIONS_DIR"] ?? DEFAULT_SESSIONS_DIR;
+}
+
+export function getClaudeSessionsDir(): string {
+	return process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] ?? CLAUDE_SESSIONS_DIR;
 }
 
 /** Resolve the model-tier mapping, falling back to defaults. */

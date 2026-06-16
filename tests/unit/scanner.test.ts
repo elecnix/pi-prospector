@@ -26,34 +26,56 @@ describe("projectNameFromDir", () => {
 });
 
 describe("discoverSessions", () => {
+	// Isolate from real Claude sessions by pointing to a non-existent path.
+	function withClaudeDirDisabled(fn: () => void): void {
+		const prev = process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR;
+		try {
+			process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR = "/nonexistent-claude";
+			fn();
+		} finally {
+			if (prev === undefined) delete process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR;
+			else process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR = prev;
+		}
+	}
+
 	it("discovers .jsonl files in session dirs", () => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-test-"));
-		const projectDir = path.join(tmpDir, "--Users-test-myproject");
-		fs.mkdirSync(projectDir, { recursive: true });
-		fs.writeFileSync(path.join(projectDir, "2026-01-15T10-30-00_abc123.jsonl"), '{"type":"session"}\n');
-		fs.writeFileSync(path.join(projectDir, "not-a-session.txt"), "nope");
+		withClaudeDirDisabled(() => {
+			const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-test-"));
+			try {
+				const projectDir = path.join(tmpDir, "--Users-test-myproject");
+				fs.mkdirSync(projectDir, { recursive: true });
+				fs.writeFileSync(path.join(projectDir, "2026-01-15T10-30-00_abc123.jsonl"), '{"type":"session"}\n');
+				fs.writeFileSync(path.join(projectDir, "not-a-session.txt"), "nope");
 
-		const sessions = discoverSessions(tmpDir);
-		assert.equal(sessions.length, 1);
-		assert.ok(sessions[0]!.filePath.endsWith(".jsonl"));
-		assert.ok(sessions[0]!.mtime > 0);
-
-		fs.rmSync(tmpDir, { recursive: true });
+				const sessions = discoverSessions(tmpDir);
+				assert.equal(sessions.length, 1);
+				assert.ok(sessions[0]!.filePath.endsWith(".jsonl"));
+				assert.ok(sessions[0]!.mtime > 0);
+			} finally {
+				fs.rmSync(tmpDir, { recursive: true });
+			}
+		});
 	});
 
 	it("returns empty for nonexistent dir", () => {
-		assert.deepEqual(discoverSessions("/nonexistent"), []);
+		withClaudeDirDisabled(() => {
+			assert.deepEqual(discoverSessions("/nonexistent"), []);
+		});
 	});
 
 	it("skips var-folders directories", () => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-test-"));
-		const varDir = path.join(tmpDir, "--var-folders-xx");
-		fs.mkdirSync(varDir);
-		fs.writeFileSync(path.join(varDir, "session.jsonl"), '{"type":"session"}');
+		withClaudeDirDisabled(() => {
+			const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-test-"));
+			try {
+				const varDir = path.join(tmpDir, "--var-folders-xx");
+				fs.mkdirSync(varDir);
+				fs.writeFileSync(path.join(varDir, "session.jsonl"), '{"type":"session"}');
 
-		const sessions = discoverSessions(tmpDir);
-		assert.equal(sessions.length, 0);
-
-		fs.rmSync(tmpDir, { recursive: true });
+				const sessions = discoverSessions(tmpDir);
+				assert.equal(sessions.length, 0);
+			} finally {
+				fs.rmSync(tmpDir, { recursive: true });
+			}
+		});
 	});
 });

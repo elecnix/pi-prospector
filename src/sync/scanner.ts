@@ -1,19 +1,36 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-
-export interface DiscoveredSession {
-	filePath: string;
-	project: string;
-	mtime: number; // mtime in ms
-	size: number;
-}
+import type { DiscoveredSession, SessionSource } from "../types.js";
+import { getClaudeSessionsDir } from "../config.js";
 
 /**
- * Walk ~/.pi/agent/sessions/ and discover all .jsonl files.
- * Groups by project directory name.
+ * Walk session directories (Pi: ~/.pi/agent/sessions/, Claude: ~/.claude/projects/)
+ * and discover all .jsonl files. Groups by project directory name.
+ *
+ * Pi dir is passed explicitly (overridable via PROSPECTOR_SESSIONS_DIR).
+ * Claude dir is resolved via getClaudeSessionsDir() (overridable via PROSPECTOR_CLAUDE_SESSIONS_DIR).
  */
 export function discoverSessions(
 	sessionsDir: string,
+): DiscoveredSession[] {
+	const claudeDir = getClaudeSessionsDir();
+	return [
+		...discoverPiSessions(sessionsDir),
+		...discoverClaudeSessions(claudeDir),
+	];
+}
+
+function discoverPiSessions(sessionsDir: string): DiscoveredSession[] {
+	return walkSessionDir(sessionsDir, "pi");
+}
+
+function discoverClaudeSessions(sessionsDir: string): DiscoveredSession[] {
+	return walkSessionDir(sessionsDir, "claude");
+}
+
+function walkSessionDir(
+	sessionsDir: string,
+	source: SessionSource,
 ): DiscoveredSession[] {
 	const results: DiscoveredSession[] = [];
 
@@ -62,6 +79,7 @@ export function discoverSessions(
 				project,
 				mtime: fileStat.mtimeMs,
 				size: fileStat.size,
+				source,
 			});
 		}
 	}
@@ -71,30 +89,45 @@ export function discoverSessions(
 
 /**
  * Extract a human-readable project name from a session directory name.
- * e.g. "--Users-alice-projects-myapp" → "projects/myapp"
+ * Handles both Pi encoding (-- separator) and Claude encoding (- separator).
+ *
+ * Pi:    /Users/nicolas/Source/project  → --Users-nicolas--Source--project
+ * Claude: /Users/nicolas/Source/project  → -Users-nicolas-Source-project
  */
 export function projectNameFromDir(dirname: string): string {
 	const user = process.env.USER ?? "user";
-
-	// Pi encodes paths with -- as separator:
-	// /Users/nicolas.marchildon/Source/project → --Users-nicolas.marchildon--Source--project
 	let name = dirname;
 
-	// Strip the user home prefix
-	const macPrefix = `--Users-${user}--`;
-	const linuxPrefix = `--home-${user}--`;
+	// Pi encoding: -- separator
+	const macPiPrefix = `--Users-${user}--`;
+	const linuxPiPrefix = `--home-${user}--`;
 
-	if (name.startsWith(macPrefix)) {
-		name = name.slice(macPrefix.length);
-	} else if (name.startsWith(linuxPrefix)) {
-		name = name.slice(linuxPrefix.length);
+	// Claude encoding: - separator
+	const macClaudePrefix = `-Users-${user}-`;
+	const linuxClaudePrefix = `-home-${user}-`;
+
+	if (name.startsWith(macPiPrefix)) {
+		name = name.slice(macPiPrefix.length);
+		name = name.replace(/--/g, "/");
+	} else if (name.startsWith(linuxPiPrefix)) {
+		name = name.slice(linuxPiPrefix.length);
+		name = name.replace(/--/g, "/");
+	} else if (name.startsWith(macClaudePrefix)) {
+		name = name.slice(macClaudePrefix.length);
+		name = name.replace(/-/g, "/");
+	} else if (name.startsWith(linuxClaudePrefix)) {
+		name = name.slice(linuxClaudePrefix.length);
+		name = name.replace(/-/g, "/");
 	} else if (name.startsWith("--")) {
-		// Strip leading -- for absolute paths that don't match home
+		// Pi encoding: absolute paths that don't match home
 		name = name.slice(2);
+		name = name.replace(/--/g, "/");
+	} else if (name.startsWith("-")) {
+		// Claude encoding: absolute path
+		name = name.slice(1);
+		name = name.replace(/-/g, "/");
 	}
 
-	// Replace -- with / (path separators)
-	name = name.replace(/--/g, "/");
 	// Strip trailing slashes/dashes
 	name = name.replace(/[-/]+$/, "");
 
