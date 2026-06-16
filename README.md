@@ -55,7 +55,7 @@ The analysis graph is **append-only and incremental**. Each node records the exa
 ## Install
 
 ```bash
-pi install git:github.com/elecnix/pi-prospector
+pi install git:github.com/v2nic/pi-prospector
 ```
 
 Requires Pi with an LLM API key configured for at least one provider. You choose which models analysis uses (see [Configuration](#configuration)); the deterministic layer needs no model at all.
