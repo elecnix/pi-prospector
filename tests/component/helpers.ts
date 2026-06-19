@@ -34,8 +34,8 @@ export function tempDb(): TempDb {
 /** Insert a minimal session row so foreign keys on messages/proposals are satisfied. */
 export function insertSession(db: Database.Database, id: string, filePath = `/tmp/${id}.jsonl`): void {
 	db.prepare(
-		"INSERT INTO sessions (id, file_path, project, cwd, started_at, last_line, last_modified, message_count, branch_count) " +
-			"VALUES (?, ?, '', '', ?, 0, 0, 0, 0)",
+		"INSERT INTO sessions (id, file_path, project, source, cwd, started_at, last_line, last_modified, message_count, branch_count) " +
+			"VALUES (?, ?, '', 'pi', '', ?, 0, 0, 0, 0)",
 	).run(id, filePath, new Date().toISOString());
 }
 
@@ -53,8 +53,8 @@ export interface TestMessage {
 /** Insert messages for a session in order, returning the inserted ids. */
 export function insertMessages(db: Database.Database, sessionId: string, messages: TestMessage[]): string[] {
 	const stmt = db.prepare(
-		"INSERT INTO messages (id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results) " +
-			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results) " +
+			"VALUES (?, ?, 'pi', ?, ?, ?, ?, ?, ?, ?)",
 	);
 	const ids: string[] = [];
 	let parent: string | null = null;

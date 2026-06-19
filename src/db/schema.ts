@@ -22,6 +22,8 @@ export function migrate(db: Database.Database): void {
 	db.pragma("journal_mode = WAL");
 	db.pragma("foreign_keys = ON");
 
+	// Create tables in dependency order (messages depends on sessions, etc.)
+	// Use IF NOT EXISTS for idempotency. Schema evolution handled below.
 	db.exec(`
 		-- ───────────────────────── session index ─────────────────────────
 
@@ -194,9 +196,39 @@ export function migrate(db: Database.Database): void {
 			ordinal INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (from_node_id) REFERENCES analysis_nodes(id)
 		);
+	`);
 
-		-- ───────────────────────────── indexes ─────────────────────────────
+	// Full-text virtual table (must be recreated to sync with messages table changes)
+	db.exec(`
+		DROP TABLE IF EXISTS messages_fts;
+		CREATE VIRTUAL TABLE messages_fts USING fts5(
+			content_text,
+			content_thinking,
+			content='messages',
+			content_rowid='rowid'
+		);
 
+		DROP TRIGGER IF EXISTS messages_ai;
+		CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+			INSERT INTO messages_fts(rowid, content_text, content_thinking)
+			VALUES (NEW.rowid, NEW.content_text, NEW.content_thinking);
+		END;
+
+		DROP TRIGGER IF EXISTS messages_ad;
+		CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, content_text, content_thinking)
+			VALUES ('delete', OLD.rowid, OLD.content_text, OLD.content_thinking);
+		END;
+	`);
+
+	// Schema evolution: add missing columns for older databases.
+	// Separate from table creation because indexes may reference columns.
+	// Also clean up any partial migration artifacts.
+	cleanupPartialMigrations(db);
+	addMissingColumns(db);
+
+	// Create indexes after schema evolution (they may reference new columns)
+	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
 		CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
@@ -219,27 +251,129 @@ export function migrate(db: Database.Database): void {
 		CREATE INDEX IF NOT EXISTS idx_edges_from ON analysis_edges(from_node_id);
 		CREATE INDEX IF NOT EXISTS idx_edges_to ON analysis_edges(to_ref_id, edge_kind);
 		CREATE INDEX IF NOT EXISTS idx_edges_kind ON analysis_edges(edge_kind);
-
-		-- ──────────────────────────── full text ────────────────────────────
-
-		DROP TABLE IF EXISTS messages_fts;
-		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-			content_text,
-			content_thinking,
-			content='messages',
-			content_rowid='rowid'
-		);
-
-		DROP TRIGGER IF EXISTS messages_ai;
-		CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-			INSERT INTO messages_fts(rowid, content_text, content_thinking)
-			VALUES (NEW.rowid, NEW.content_text, NEW.content_thinking);
-		END;
-
-		DROP TRIGGER IF EXISTS messages_ad;
-		CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-			INSERT INTO messages_fts(messages_fts, rowid, content_text, content_thinking)
-			VALUES ('delete', OLD.rowid, OLD.content_text, OLD.content_thinking);
-		END;
 	`);
+}
+
+/**
+ * Clean up partial migration artifacts that may exist from interrupted migrations.
+ */
+function cleanupPartialMigrations(db: Database.Database): void {
+	// Drop proposals_old if it exists (leftover from failed v1→v2 migration)
+	db.exec("DROP TABLE IF EXISTS proposals_old");
+
+	// Drop the old indexes that referenced old column names
+	db.exec("DROP INDEX IF EXISTS idx_nodes_input_hash");
+	db.exec("DROP INDEX IF EXISTS idx_nodes_config");
+}
+
+/**
+ * Add missing columns to existing tables. This handles schema evolution for
+ * databases created before these columns were added. We check if the column
+ * exists before adding it, since SQLite doesn't support IF NOT EXISTS on ALTER.
+ */
+function addMissingColumns(db: Database.Database): void {
+	const hasColumn = (table: string, column: string): boolean => {
+		const rows = db
+			.prepare(`PRAGMA table_info(${table})`)
+			.all() as Array<{ name: string; type: string }>;
+		return rows.some((r) => r.name === column);
+	};
+
+	// sessions: add source column if missing
+	if (!hasColumn("sessions", "source")) {
+		db.exec("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'pi'");
+		db.exec("UPDATE sessions SET source = 'pi' WHERE source IS NULL");
+	}
+
+	// messages: add source column if missing
+	if (!hasColumn("messages", "source")) {
+		db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'pi'");
+		db.exec("UPDATE messages SET source = 'pi' WHERE source IS NULL");
+	}
+
+	// proposals v2: check if it has v1 schema (has "target" instead of "title")
+	// and migrate to v2
+	if (!hasColumn("proposals", "title") && hasColumn("proposals", "target")) {
+		migrateProposalsToV2(db);
+	}
+
+	// analysis_nodes: rename input_hash to input_key, add output_key and config_fingerprint
+	if (!hasColumn("analysis_nodes", "input_key")) {
+		if (hasColumn("analysis_nodes", "input_hash")) {
+			db.exec("ALTER TABLE analysis_nodes RENAME COLUMN input_hash TO input_key");
+		}
+	}
+	if (!hasColumn("analysis_nodes", "output_key")) {
+		db.exec("ALTER TABLE analysis_nodes ADD COLUMN output_key TEXT DEFAULT ''");
+		db.exec("UPDATE analysis_nodes SET output_key = '' WHERE output_key IS NULL");
+	}
+	if (!hasColumn("analysis_nodes", "config_fingerprint")) {
+		db.exec("ALTER TABLE analysis_nodes ADD COLUMN config_fingerprint TEXT DEFAULT ''");
+		db.exec("UPDATE analysis_nodes SET config_fingerprint = '' WHERE config_fingerprint IS NULL");
+	}
+
+	// analysis_runs: add missing columns
+	if (!hasColumn("analysis_runs", "mode")) {
+		db.exec("ALTER TABLE analysis_runs ADD COLUMN mode TEXT DEFAULT 'fill'");
+		db.exec("UPDATE analysis_runs SET mode = 'fill' WHERE mode IS NULL");
+	}
+	if (!hasColumn("analysis_runs", "nodes_produced")) {
+		db.exec("ALTER TABLE analysis_runs ADD COLUMN nodes_produced INTEGER DEFAULT 0");
+		db.exec("UPDATE analysis_runs SET nodes_produced = 0 WHERE nodes_produced IS NULL");
+	}
+	if (!hasColumn("analysis_runs", "nodes_skipped")) {
+		db.exec("ALTER TABLE analysis_runs ADD COLUMN nodes_skipped INTEGER DEFAULT 0");
+		db.exec("UPDATE analysis_runs SET nodes_skipped = 0 WHERE nodes_skipped IS NULL");
+	}
+
+	// analysis_edges: add missing id and ordinal columns
+	if (!hasColumn("analysis_edges", "id")) {
+		db.exec("ALTER TABLE analysis_edges ADD COLUMN id TEXT");
+	}
+	if (!hasColumn("analysis_edges", "ordinal")) {
+		db.exec("ALTER TABLE analysis_edges ADD COLUMN ordinal INTEGER DEFAULT 0");
+		db.exec("UPDATE analysis_edges SET ordinal = 0 WHERE ordinal IS NULL");
+	}
+}
+
+/**
+ * Migrate proposals table from v1 to v2 by recreating with correct schema.
+ * V1 had: id, created_at, session_id, target, severity, summary, detail, evidence, status, dedup_hash, source_node_id
+ * V2 has: id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path, title, severity, summary, detail, evidence, confidence, status, input_key, source_message_ids, validated_score, validation_status, validation_node_id
+ */
+function migrateProposalsToV2(db: Database.Database): void {
+	// Rename existing proposals to proposals_old (backup)
+	db.exec("ALTER TABLE proposals RENAME TO proposals_old");
+	// Create new table with correct schema
+	db.exec(`CREATE TABLE proposals (
+		id TEXT PRIMARY KEY,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		source_node_id TEXT,
+		analyzer_id TEXT,
+		target_type TEXT NOT NULL,
+		target_path TEXT,
+		title TEXT NOT NULL,
+		severity TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		detail TEXT,
+		evidence TEXT,
+		confidence REAL,
+		status TEXT NOT NULL DEFAULT 'open',
+		input_key TEXT NOT NULL,
+		source_message_ids TEXT,
+		validated_score REAL,
+		validation_status TEXT NOT NULL DEFAULT 'unvalidated',
+		validation_node_id TEXT,
+		FOREIGN KEY (session_id) REFERENCES sessions(id)
+	)`);
+	// Copy data with column mapping
+	db.exec(`INSERT INTO proposals SELECT
+		id, created_at, created_at AS updated_at, session_id, source_node_id, NULL AS analyzer_id,
+		target AS target_type, NULL AS target_path, summary AS title, severity, summary, detail, evidence, confidence,
+		status, dedup_hash AS input_key, NULL AS source_message_ids, NULL AS validated_score,
+		'unvalidated' AS validation_status, NULL AS validation_node_id
+		FROM proposals_old`);
+	db.exec("DROP TABLE proposals_old");
 }
