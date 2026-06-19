@@ -9,8 +9,6 @@ import { resolveFork } from "./forks.js";
 import type { SyncResult, SessionSource } from "../types.js";
 
 export function runSync(db: Database.Database, sessionsDir: string): SyncResult {
-	migrate(db);
-
 	const discovered = discoverSessions(sessionsDir);
 	const result: SyncResult = { sessionsProcessed: 0, sessionsSkipped: 0, messagesInserted: 0, forksResolved: 0, errors: [] };
 
