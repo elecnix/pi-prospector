@@ -61,6 +61,14 @@ export interface ToolResultInfo {
 	textLength: number;
 }
 
+export interface UsageInfo {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	totalTokens: number;
+}
+
 export interface MessageEntry {
 	id: string;
 	parentId: string | null;
@@ -70,6 +78,7 @@ export interface MessageEntry {
 	contentThinking: string | null;
 	toolCalls: ToolCallInfo[] | null;
 	toolResults: ToolResultInfo[] | null;
+	usage: UsageInfo | null;
 }
 
 export interface ParsedLine {
@@ -169,6 +178,40 @@ export interface ProposalDecision {
 
 // ─── Stats ───
 
+export interface TokenStats {
+	totalInput: number;
+	totalOutput: number;
+	totalCacheRead: number;
+	totalCacheWrite: number;
+	totalTokens: number;
+	turnCount: number;
+	toolCallCount: number;
+	/** Tokens per turn (0 if no turns) */
+	inputPerTurn: number;
+	outputPerTurn: number;
+	cacheReadPerTurn: number;
+	/** Tool calls per turn */
+	toolCallsPerTurn: number;
+}
+
+export interface SourceTokenStats {
+	combined: TokenStats;
+	pi: TokenStats;
+	claude: TokenStats;
+	/** Pi-to-Claude ratio for each metric (null if Claude is 0) */
+	ratios: {
+		turns: number | null;
+		toolCalls: number | null;
+		input: number | null;
+		output: number | null;
+		cacheRead: number | null;
+		cacheWrite: number | null;
+		inputPerTurn: number | null;
+		outputPerTurn: number | null;
+		toolCallsPerTurn: number | null;
+	};
+}
+
 export interface Stats {
 	totalSessions: number;
 	piSessions: number;
@@ -185,6 +228,8 @@ export interface Stats {
 		runs: number;
 		nodesByKind: Record<string, number>;
 	};
+	/** Per-source token and tool-call stats */
+	tokens: SourceTokenStats;
 }
 
 // ─── Analyze ───

@@ -121,6 +121,7 @@ function syncPiSession(
 			content_thinking: entry.thinking,
 			tool_calls: entry.tool_calls ? JSON.stringify(entry.tool_calls) : null,
 			tool_results: entry.tool_results ? JSON.stringify(entry.tool_results) : null,
+			usage: entry.usage ? JSON.stringify(entry.usage) : null,
 		});
 		msgCount++;
 	}
@@ -187,6 +188,7 @@ function syncClaudeSession(
 			content_thinking: entry.thinking,
 			tool_calls: entry.tool_calls ? JSON.stringify(entry.tool_calls) : null,
 			tool_results: entry.tool_results ? JSON.stringify(entry.tool_results) : null,
+			usage: entry.usage ? JSON.stringify(entry.usage) : null,
 		});
 		msgCount++;
 	}
