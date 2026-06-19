@@ -53,6 +53,7 @@ export function migrate(db: Database.Database): void {
 			content_thinking TEXT,
 			tool_calls TEXT,
 			tool_results TEXT,
+			usage TEXT,
 			content_hash TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);

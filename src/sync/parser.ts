@@ -1,11 +1,19 @@
 /**
  * JSONL line parser for Pi and Claude session files.
  */
-import type { SessionHeader, MessageRole, ClaudeSessionMeta, SessionSource } from "../types.js";
+import type { SessionHeader, MessageRole, ClaudeSessionMeta, SessionSource, UsageInfo } from "../types.js";
 
 export interface ParsedSession {
 	kind: "session";
 	header: SessionHeader;
+}
+
+export interface UsageData {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	totalTokens: number;
 }
 
 export interface ParsedMessage {
@@ -19,6 +27,7 @@ export interface ParsedMessage {
 		thinking: string | null;
 		tool_calls: Array<{ name: string; arguments: Record<string, unknown> }> | null;
 		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number }> | null;
+		usage: UsageData | null;
 	};
 }
 
@@ -109,9 +118,11 @@ function parsePiLine(line: string): ParsedLine | null {
 			}];
 		}
 
+		const usage = role === "assistant" ? extractUsage(msg, "pi") : null;
+
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, usage },
 		};
 	}
 
@@ -136,7 +147,7 @@ function parsePiLine(line: string): ParsedLine | null {
 
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, usage: null },
 		};
 	}
 
@@ -248,7 +259,7 @@ export function parseClaudeLine(line: string): ParsedLine | null {
 
 		return {
 			kind: "message",
-			entry: { id: uuid, parentId: parentUuid, timestamp, role, text, thinking: null, tool_calls: null, tool_results },
+			entry: { id: uuid, parentId: parentUuid, timestamp, role, text, thinking: null, tool_calls: null, tool_results, usage: null },
 		};
 	}
 
@@ -295,9 +306,11 @@ export function parseClaudeLine(line: string): ParsedLine | null {
 			text = content;
 		}
 
+		const usage = extractUsage(msg, "claude");
+
 		return {
 			kind: "message",
-			entry: { id: uuid, parentId: parentUuid, timestamp, role: "assistant", text, thinking, tool_calls, tool_results: null },
+			entry: { id: uuid, parentId: parentUuid, timestamp, role: "assistant", text, thinking, tool_calls, tool_results: null, usage },
 		};
 	}
 
@@ -341,4 +354,44 @@ export function parseClaudeSessionMeta(lines: string[]): ClaudeSessionMeta | nul
 	}
 
 	return { title, timestamp, cwd };
+}
+
+// ─── Usage extraction ───
+
+/**
+ * Extract token usage from an assistant message in either Pi or Claude format.
+ *
+ * Pi format:
+ *   message.usage = { input, output, cacheRead, cacheWrite, totalTokens }
+ *
+ * Claude format:
+ *   message.usage = { input_tokens, output_tokens, cache_read_input_tokens,
+ *                      cache_creation_input_tokens }
+ */
+export function extractUsage(msg: Record<string, unknown>, source: SessionSource): UsageInfo | null {
+	const usage = msg.usage as Record<string, unknown> | undefined;
+	if (!usage || typeof usage !== "object") return null;
+
+	if (source === "claude") {
+		const input = safeNum(usage.input_tokens);
+		const output = safeNum(usage.output_tokens);
+		const cacheRead = safeNum(usage.cache_read_input_tokens);
+		const cacheWrite = safeNum(usage.cache_creation_input_tokens);
+		const totalTokens = input + output;
+		if (input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0) return null;
+		return { input, output, cacheRead, cacheWrite, totalTokens };
+	}
+
+	// Pi format
+	const input = safeNum(usage.input);
+	const output = safeNum(usage.output);
+	const cacheRead = safeNum(usage.cacheRead);
+	const cacheWrite = safeNum(usage.cacheWrite);
+	const totalTokens = safeNum(usage.totalTokens) || input + output;
+	if (input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0) return null;
+	return { input, output, cacheRead, cacheWrite, totalTokens };
+}
+
+function safeNum(v: unknown): number {
+	return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }

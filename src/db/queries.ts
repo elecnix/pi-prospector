@@ -9,6 +9,7 @@ import type {
 } from "../types.js";
 import { getAnalysisStats } from "./analysis-queries.js";
 import { uuidv7 } from "../analyze/input-hash.js";
+import type { TokenStats, SourceTokenStats } from "../types.js";
 
 // ── Sessions ──
 
@@ -94,13 +95,14 @@ export interface MessageInsert {
 	content_thinking: string | null;
 	tool_calls: string | null;
 	tool_results: string | null;
+	usage: string | null;
 }
 
 export function insertMessage(db: Database.Database, m: MessageInsert): void {
 	db.prepare(`
-		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, content_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, null);
+		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, content_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, m.usage, null);
 }
 
 export function countMessages(db: Database.Database, sessionId: string): number {
@@ -259,5 +261,103 @@ export function getStats(db: Database.Database): Stats {
 		sessionsAnalyzed,
 		proposalsByStatus,
 		analysis: getAnalysisStats(db),
+		tokens: getTokenStats(db),
+	};
+}
+
+// ── Token stats (per-source token & tool-call aggregation) ──
+
+/**
+ * Compute per-source token and tool-call stats from the messages table.
+ *
+ * Usage is stored as a JSON column: {"input":N,"output":N,"cacheRead":N,...}
+ * Tool calls are stored as a JSON array; we count the array length.
+ */
+export function getTokenStats(db: Database.Database): SourceTokenStats {
+	function query(source: string | null): TokenStats {
+		const sourceClause = source ? "AND source = ?" : "";
+		const params: unknown[] = source ? [source] : [];
+
+		// Count turns and tool calls for assistant messages that have usage
+		const row = db.prepare(`
+			SELECT
+				COUNT(*) as turnCount,
+				COALESCE(SUM(json_extract(usage, '$.input')), 0) as totalInput,
+				COALESCE(SUM(json_extract(usage, '$.output')), 0) as totalOutput,
+				COALESCE(SUM(json_extract(usage, '$.cacheRead')), 0) as totalCacheRead,
+				COALESCE(SUM(json_extract(usage, '$.cacheWrite')), 0) as totalCacheWrite,
+				COALESCE(SUM(json_extract(usage, '$.totalTokens')), 0) as totalTokens
+			FROM messages
+			WHERE role = 'assistant'
+				AND usage IS NOT NULL
+				AND json_extract(usage, '$.input') IS NOT NULL
+				${sourceClause}
+		`).get(...params) as {
+			turnCount: number;
+			totalInput: number;
+			totalOutput: number;
+			totalCacheRead: number;
+			totalCacheWrite: number;
+			totalTokens: number;
+		};
+
+		// Count tool calls from tool_calls JSON array
+		const tcRow = db.prepare(`
+			SELECT
+				COALESCE(SUM(CASE
+					WHEN tool_calls IS NOT NULL AND tool_calls != '[]'
+					THEN json_array_length(tool_calls)
+					ELSE 0
+				END), 0) as toolCallCount
+			FROM messages
+			WHERE role = 'assistant'
+				AND usage IS NOT NULL
+				${sourceClause}
+		`).get(...params) as { toolCallCount: number };
+
+		const turns = row.turnCount;
+		const inputPerTurn = turns > 0 ? Math.round(row.totalInput / turns) : 0;
+		const outputPerTurn = turns > 0 ? Math.round(row.totalOutput / turns) : 0;
+		const cacheReadPerTurn = turns > 0 ? Math.round(row.totalCacheRead / turns) : 0;
+		const toolCallsPerTurn = turns > 0 ? Math.round((tcRow.toolCallCount / turns) * 10) / 10 : 0;
+
+		return {
+			totalInput: row.totalInput,
+			totalOutput: row.totalOutput,
+			totalCacheRead: row.totalCacheRead,
+			totalCacheWrite: row.totalCacheWrite,
+			totalTokens: row.totalTokens,
+			turnCount: turns,
+			toolCallCount: tcRow.toolCallCount,
+			inputPerTurn,
+			outputPerTurn,
+			cacheReadPerTurn,
+			toolCallsPerTurn,
+		};
+	}
+
+	const combined = query(null);
+	const pi = query("pi");
+	const claude = query("claude");
+
+	function ratio(piVal: number, claudeVal: number): number | null {
+		return claudeVal === 0 ? null : Math.round((piVal / claudeVal) * 10) / 10;
+	}
+
+	return {
+		combined,
+		pi,
+		claude,
+		ratios: {
+			turns: ratio(pi.turnCount, claude.turnCount),
+			toolCalls: ratio(pi.toolCallCount, claude.toolCallCount),
+			input: ratio(pi.totalInput, claude.totalInput),
+			output: ratio(pi.totalOutput, claude.totalOutput),
+			cacheRead: ratio(pi.totalCacheRead, claude.totalCacheRead),
+			cacheWrite: ratio(pi.totalCacheWrite, claude.totalCacheWrite),
+			inputPerTurn: ratio(pi.inputPerTurn, claude.inputPerTurn),
+			outputPerTurn: ratio(pi.outputPerTurn, claude.outputPerTurn),
+			toolCallsPerTurn: ratio(pi.toolCallsPerTurn, claude.toolCallsPerTurn),
+		},
 	};
 }
