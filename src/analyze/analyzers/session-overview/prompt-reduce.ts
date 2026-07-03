@@ -23,6 +23,11 @@ went well). Use success/failure contrast: compare what went right against what
 went wrong. When a session is smooth, focus on reinforcement — capturing what
 worked so it can be encoded into standing instructions.
 
+If a CROSS-SESSION CONTRAST section is present, it lists smooth sibling sessions
+in the SAME repo. Use them as negative examples: if this session hit friction that
+the smooth siblings avoided, say what the smooth sessions did differently and
+propose encoding it. Do not invent contrast the evidence does not support.
+
 STEP 1 — ENUMERATE FRICTION: List EVERY distinct friction point in the session.
 For each one, write a textual gradient: what went wrong, what should change, the
 evidence that supports it, and how severe it is. Do NOT merge or drop distinct
@@ -173,13 +178,22 @@ export const REDUCE_TOOL = {
 	parameters: ReduceToolParameters,
 };
 
-export function buildReducePrompt(params: { digestOrSummaries: string; stats: string; positiveSignals?: string[] }): string {
+export function buildReducePrompt(params: {
+	digestOrSummaries: string;
+	stats: string;
+	positiveSignals?: string[];
+	/** Cross-session contrast: smooth sibling sessions in the same repo (issue #10). */
+	contrastContext?: string;
+}): string {
 	const parts = [
 		"AGGREGATE STATS:",
 		params.stats,
 	];
 	if (params.positiveSignals && params.positiveSignals.length > 0) {
 		parts.push("", "POSITIVE SIGNALS:", ...params.positiveSignals);
+	}
+	if (params.contrastContext && params.contrastContext.length > 0) {
+		parts.push("", "CROSS-SESSION CONTRAST:", params.contrastContext);
 	}
 	parts.push("", "SESSION SIGNALS / SEGMENT SUMMARIES:", params.digestOrSummaries);
 	return parts.join("\n");

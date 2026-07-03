@@ -38,6 +38,11 @@ import {
 	type SessionOverviewProperties,
 } from "./prompt-reduce.js";
 import { DEFAULT_SESSION_OVERVIEW_CONFIG, type SessionOverviewConfig } from "./config.js";
+import {
+	selectCrossSessionContrast,
+	formatContrastContext,
+	type SiblingContrast,
+} from "./cross-session.js";
 
 export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	id: "session-overview",
@@ -63,7 +68,15 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// a tool-evidence fragment (tool name + truncated args + failed-result error
 	// head) for high-signal/failing pairs. The digest feeds the reduce prompt, so
 	// the input_key (and node version) changes; recomputed on the next run.
-	minor: 3,
+	// 1.4: cross-session success/failure contrast (issue #10) — when a session's
+	// repo/`cwd` also contains smooth sibling sessions, plan() deterministically
+	// selects up to N of them (from their RAW messages, never their analysis nodes)
+	// and folds them into the source set as `session`-kind refs whose id embeds a
+	// hash of the contrast digest. The reduce step is handed that digest as negative
+	// examples. Identity stays reproducible: the siblings are part of the source set,
+	// derived deterministically from ingested content. Minor: additive contrast
+	// context; the per-session synthesis contract is unchanged.
+	minor: 4,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -102,12 +115,22 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			...traj.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 		];
 
+		// Cross-session contrast (issue #10): deterministically fold up to N smooth
+		// sibling sessions in the same repo into the source set, so pulling their
+		// contrast digest into this node's synthesis keeps identity content-addressed
+		// and reproducible. Derived from sibling RAW messages (present after ingest),
+		// never from their analysis nodes — so it is order-independent and acyclic.
+		const cfg = (ctx.config as unknown as SessionOverviewConfig) ?? DEFAULT_SESSION_OVERVIEW_CONFIG;
+		const contrast = selectCrossSessionContrast(ctx.db, ctx.sessionId, cfg);
+		sources.push(...contrast.sourceRefs);
+
 		return [
 			{
 				sources,
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "session",
 				anchorRef: ctx.sessionId,
+				meta: contrast.siblings.length > 0 ? { crossSessionContrast: contrast.siblings } : undefined,
 			},
 		];
 	},
@@ -171,10 +194,15 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			reduceInput = digest.text;
 		}
 
+		// Cross-session contrast digest (issue #10), attached by plan() from the
+		// smooth sibling sessions already folded into this unit's source set.
+		const siblings = (unit.meta?.["crossSessionContrast"] as SiblingContrast[] | undefined) ?? [];
+		const contrastContext = formatContrastContext(siblings);
+
 		const reduceRes = await ctx.llm({
 			model: resolveModelSpec(config.reduceTier, ctx.modelTiers),
 			system: ctx.prompts["reduce"] ?? REDUCE_PROMPT,
-			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals }),
+			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals, contrastContext }),
 			temperature: config.temperature,
 			maxTokens: 2000,
 			tool: REDUCE_TOOL,
@@ -219,6 +247,12 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		}
 		for (const h of usedPromptHashes) {
 			edges.push({ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: h, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: ordinal++ });
+		}
+		// Provenance for the cross-session contrast: a `contrasts_with` edge to each
+		// smooth sibling session used as a negative example. Identity already commits
+		// to these siblings via the source set; the edge makes the trail navigable.
+		for (const sibling of siblings) {
+			edges.push({ toRefKind: REF_KINDS.SESSION, toRefId: sibling.sessionId, edgeKind: EDGE_KINDS.CONTRASTS_WITH, ordinal: ordinal++ });
 		}
 
 		return {

@@ -344,9 +344,20 @@ contribute to the session's friction score and surface in the digest.
   failed trajectories for the same class of task, so the synthesiser can spot
   patterns that friction-only analysis misses. ExpeL (Zhao et al. 2023) shows
   that comparing successes against failures is what produces useful insights;
-  summarising only one side is insufficient. In pi-prospector the contrast starts
-  within-session (a clean pair versus a friction pair in the same session) and
-  may later extend cross-session.
+  summarising only one side is insufficient. In pi-prospector the contrast works
+  at two scopes: **within-session** (a clean pair versus a friction pair in the
+  same session) and **cross-session** (a session is handed a compact digest of up
+  to N *smooth* sibling sessions in the same repo/`cwd` as negative examples —
+  "what the smooth sessions did instead"). Cross-session contrast is derived
+  deterministically from the siblings' **raw messages** (present after ingest,
+  before any analysis — so it never depends on analysis order or on a sibling
+  being analysed yet, and can never form a cycle between session-overview nodes),
+  reusing the deterministic turn-pair-core scoring to decide which siblings are
+  smooth. Each selected sibling is folded into the session-overview node's
+  **source set** as a `session`-kind source ref whose id embeds a hash of the exact
+  contrast digest, so the node's `input_key`/`output_key` stay content-addressed
+  and reproduce across a DB rebuild, and a `contrasts_with` edge records the
+  provenance. This is contrast for *detection*, not cross-session merging.
 - **Materialisation** — the step that lifts proposals out of a summary node into
   the fast, reviewable proposal store, attaching the evidence trail via
   *produces* and *anchors* edges. That trail is browsable after the fact: from a
@@ -619,8 +630,11 @@ To keep the system focused, the following are explicitly *not* part of it:
 - **No bespoke model or credential management.** Model access is delegated to the
   host platform; tiers abstract concrete models.
 - **No cross-session meta-analysis as a first concern.** The unit of analysis is a
-  session; broader pattern-finding builds on top of that later. Within-session
-  **success/failure contrast** is in scope; cross-session consolidation/dedup is not.
+  session; broader pattern-finding builds on top of that later. **Success/failure
+  contrast** is in scope both within-session and cross-session (a session may
+  reference smooth sibling sessions in the same repo as negative examples, folded
+  into its source set so identity stays content-addressed); cross-session proposal
+  consolidation/dedup is still out of scope.
 - **No real session data inside the project.** All test material is hand-written
   synthetic conversation; real user sessions never enter source, tests, history,
   or build artifacts.
