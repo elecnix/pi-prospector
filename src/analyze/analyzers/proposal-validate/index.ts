@@ -93,7 +93,8 @@ interface ValidateMeta {
 	proposalInputKey: string;
 	ruleText: string;
 	replayMessageIds: string[];
-	summaryNodeId: string | null;
+	/** The consumed summary node's content-addressed output_key (the `consumes` edge target). */
+	summaryOutputKey: string;
 }
 
 function parseMessageIds(json: string | null): string[] {
@@ -135,7 +136,11 @@ export const proposalValidateAnalyzer: Analyzer = {
 		for (const p of proposals) {
 			const allReplayIds = parseMessageIds(p.source_message_ids);
 			const replayMessageIds = cap === undefined ? allReplayIds : allReplayIds.slice(0, cap);
-			const summaryOutputKey = p.source_node_id ? nodeById.get(p.source_node_id)?.output_key ?? p.source_node_id : "";
+			const summaryNode = p.source_node_id ? nodeById.get(p.source_node_id) : undefined;
+			// For the source-set *hash* keep the historical uuid fallback so identity is
+			// stable even if the summary node is absent; the `consumes` *edge* uses only a
+			// real content-addressed output_key (below), never a uuid.
+			const summaryOutputKey = summaryNode?.output_key ?? (p.source_node_id ?? "");
 
 			// Identity: the proposal (by its content-addressed input_key) + the exact
 			// replay turns. Folding the proposal input_key in keeps each proposal's
@@ -152,7 +157,7 @@ export const proposalValidateAnalyzer: Analyzer = {
 				proposalInputKey: p.input_key,
 				ruleText: composeRuleText(p),
 				replayMessageIds,
-				summaryNodeId: p.source_node_id,
+				summaryOutputKey: summaryNode?.output_key ?? "",
 			};
 
 			units.push({
@@ -226,10 +231,10 @@ export const proposalValidateAnalyzer: Analyzer = {
 
 		const edges: AnalysisResult["edges"] = [];
 		let ordinal = 0;
-		if (meta.summaryNodeId) {
+		if (meta.summaryOutputKey) {
 			edges.push({
 				toRefKind: REF_KINDS.ANALYSIS_NODE,
-				toRefId: meta.summaryNodeId,
+				toRefId: meta.summaryOutputKey,
 				edgeKind: EDGE_KINDS.CONSUMES,
 				ordinal: ordinal++,
 			});

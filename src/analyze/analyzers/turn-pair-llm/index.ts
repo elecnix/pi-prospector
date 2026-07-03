@@ -69,7 +69,7 @@ interface EnrichMeta {
 	correctionText: string | null;
 	toolCalls: ToolCallEvidence[];
 	toolResults: ToolResultEvidence[];
-	coreNodeId: string;
+	coreOutputKey: string;
 }
 
 export const turnPairLLMAnalyzer: Analyzer = {
@@ -132,7 +132,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 					isError: tr.isError,
 					errorHead: tr.errorHead,
 				})),
-				coreNodeId: node.id,
+				coreOutputKey: node.output_key,
 			};
 			units.push({
 				sources,
@@ -182,7 +182,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			durationMs: response.durationMs,
 			edges: [
 				{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
-				{ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: meta.coreNodeId, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 },
+				{ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: meta.coreOutputKey, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 },
 				{ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: CLASSIFY_PROMPT_HASH, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: 2 },
 			],
 		};

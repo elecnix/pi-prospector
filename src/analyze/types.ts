@@ -321,6 +321,8 @@ export interface ClassifiedUnit {
 	inputKey: string;
 	/** For `stale` units: the prior node this unit would revise. */
 	priorNodeId?: string;
+	/** For `stale` units: the prior node's content-addressed output_key (the `revises` edge target). */
+	priorOutputKey?: string;
 	/** For `stale` units: why it is out of date (any of major/minor/config). Empty otherwise. */
 	reasons: ReviseReason[];
 }

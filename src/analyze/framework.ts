@@ -291,7 +291,7 @@ export class AnalyzerFramework {
 		const prior = findLatestNodeBySourceSet(this.deps.db, analyzer.def.id, unit.sourceSetHash);
 		if (prior) {
 			const reasons = this.gradeStale(resolved, prior);
-			return { analyzerId: analyzer.def.id, unit, status: "stale", inputKey, priorNodeId: prior.id, reasons };
+			return { analyzerId: analyzer.def.id, unit, status: "stale", inputKey, priorNodeId: prior.id, priorOutputKey: prior.output_key, reasons };
 		}
 
 		return { analyzerId: analyzer.def.id, unit, status: "missing", inputKey, reasons: [] };
@@ -354,12 +354,14 @@ export class AnalyzerFramework {
 
 		this.persistEdges(nodeId, config, analysis);
 
-		// Version lineage: a re-analysed stale unit revises its predecessor.
-		if (item.status === "stale" && item.priorNodeId) {
+		// Version lineage: a re-analysed stale unit revises its predecessor. The edge
+		// references the predecessor's content-addressed output_key (not its uuid), so
+		// lineage edges reproduce across a wipe/rebuild like every other identity.
+		if (item.status === "stale" && item.priorOutputKey) {
 			insertEdge(this.deps.db, {
 				fromNodeId: nodeId,
 				toRefKind: REF_KINDS.ANALYSIS_NODE,
-				toRefId: item.priorNodeId,
+				toRefId: item.priorOutputKey,
 				edgeKind: EDGE_KINDS.REVISES,
 				ordinal: 0,
 			});
