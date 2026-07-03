@@ -310,6 +310,16 @@ export interface Analyzer {
 	 * model, their identity never depends on model settings.
 	 */
 	modelsForIdentity?: (config: Record<string, unknown>, modelTiers: ModelTierConfig) => string[];
+	/**
+	 * Content hash of a disk-loaded analyzer's source (module text + prompt
+	 * contents). Set by the loader for custom analyzers and folded into the config
+	 * fingerprint, so editing the file marks prior nodes `stale` without a manual
+	 * version bump — the authoring loop. Built-in analyzers leave this undefined;
+	 * their identity is governed solely by the author-graded version.
+	 */
+	contentHash?: string;
+	/** Absolute path a disk-loaded analyzer was loaded from (diagnostics only). */
+	sourcePath?: string;
 }
 
 // ─────────────────────────── framework results ───────────────────────────

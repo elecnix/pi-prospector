@@ -85,8 +85,16 @@ export function computePromptBundleHash(promptHashes: readonly string[]): string
  * databases. A deterministic analyzer passes no models, so only its config
  * hash contributes.
  */
-export function computeConfigFingerprint(configHash: string, models: readonly string[]): string {
-	const canonicalModels = [...models].sort().join("|");
+export function computeConfigFingerprint(
+	configHash: string,
+	models: readonly string[],
+	extra: readonly string[] = [],
+): string {
+	// `extra` folds in additional identity tokens that are neither config content
+	// nor a resolved model — currently a disk-loaded analyzer's source `contentHash`
+	// (`code:<hash>`), so editing a custom analyzer marks its nodes stale without a
+	// manual version bump. Sorted with the models so it is order-independent.
+	const canonicalModels = [...models, ...extra].sort().join("|");
 	return shortHash(`config(${configHash}|${canonicalModels})`);
 }
 

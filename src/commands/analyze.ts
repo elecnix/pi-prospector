@@ -2,9 +2,9 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { getAllSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
-import { getDbPath, getModelTiers, loadConfig } from "../config.js";
+import { getAnalyzerPaths, getDbPath, getModelTiers, loadConfig } from "../config.js";
 import { AnalyzerFramework } from "../analyze/framework.js";
-import { registerDefaults } from "../analyze/defaults.js";
+import { registerAll } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
 import { parseReviseArg, reachLabel } from "../analyze/version.js";
@@ -24,6 +24,7 @@ interface AnalyzeArgs {
 	model?: string;
 	llmConcurrency?: number;
 	analyzerConcurrency?: number;
+	analyzerPaths: string[];
 }
 
 export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -61,7 +62,16 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const llmGate = createSemaphore(llmConcurrency);
 		const llm: LLMCaller = (request) => llmGate(() => baseLlm(request));
 		const framework = new AnalyzerFramework({ db, llm, modelTiers });
-		registerDefaults(framework);
+		// Register built-ins plus any locally-authored custom analyzers discovered
+		// on the analyzer paths (explicit --analyzer-path, config, project dir, Pi
+		// agent dir). A malformed custom analyzer is skipped and reported, not fatal.
+		const { customRegistered, errors: loadErrors } = await registerAll(framework, {
+			paths: getAnalyzerPaths(args.analyzerPaths, config),
+		});
+		if (customRegistered.length > 0) {
+			out(ctx, `Loaded ${customRegistered.length} custom analyzer(s): ${customRegistered.join(", ")}`, "info");
+		}
+		for (const e of loadErrors) out(ctx, `Skipped analyzer ${e.path}: ${e.message}`, "warning");
 		const analyzerIds = args.analyzer ? [args.analyzer] : undefined;
 
 		// Session fan-out: a run that touches an LLM analyzer is paced by the LLM
@@ -123,7 +133,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --llm-concurrency N (max concurrent LLM calls, default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		handler: prospectAnalyze,
 	});
 }
@@ -134,7 +144,7 @@ function out(ctx: ExtensionCommandContext, text: string, level: string): void {
 }
 
 function parseArgs(raw: string): AnalyzeArgs {
-	const result: AnalyzeArgs = { revise: [] };
+	const result: AnalyzeArgs = { revise: [], analyzerPaths: [] };
 	const parts = raw.trim().split(/\s+/).filter((p) => p.length > 0);
 	for (let i = 0; i < parts.length; i++) {
 		const p = parts[i];
@@ -147,6 +157,7 @@ function parseArgs(raw: string): AnalyzeArgs {
 			if (!Number.isNaN(n)) result.limit = n;
 		} else if (p === "--session" && parts[i + 1]) result.session = parts[++i];
 		else if (p === "--analyzer" && parts[i + 1]) result.analyzer = parts[++i];
+		else if (p === "--analyzer-path" && parts[i + 1]) result.analyzerPaths.push(parts[++i]!);
 		else if (p === "--model" && parts[i + 1]) result.model = parts[++i];
 		else if (p === "--llm-concurrency" && parts[i + 1]) {
 			const n = parseInt(parts[++i]!, 10);
