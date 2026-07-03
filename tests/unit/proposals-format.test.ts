@@ -31,23 +31,39 @@ function makeProposal(overrides: Partial<Proposal>): Proposal {
 }
 
 test("parseProposalsArgs: empty yields no status and concise", () => {
-	assert.deepEqual(parseProposalsArgs(""), { status: undefined, full: false });
-	assert.deepEqual(parseProposalsArgs("   "), { status: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs(""), { status: undefined, severity: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs("   "), { status: undefined, severity: undefined, full: false });
 });
 
 test("parseProposalsArgs: recognises a status word", () => {
-	assert.deepEqual(parseProposalsArgs("applied"), { status: "applied", full: false });
-	assert.deepEqual(parseProposalsArgs("OPEN"), { status: "open", full: false });
+	assert.deepEqual(parseProposalsArgs("applied"), { status: "applied", severity: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs("OPEN"), { status: "open", severity: undefined, full: false });
 });
 
 test("parseProposalsArgs: recognises --full / -v / --verbose in any order", () => {
-	assert.deepEqual(parseProposalsArgs("--full"), { status: undefined, full: true });
-	assert.deepEqual(parseProposalsArgs("-v rejected"), { status: "rejected", full: true });
-	assert.deepEqual(parseProposalsArgs("duplicate --verbose"), { status: "duplicate", full: true });
+	assert.deepEqual(parseProposalsArgs("--full"), { status: undefined, severity: undefined, full: true });
+	assert.deepEqual(parseProposalsArgs("-v rejected"), { status: "rejected", severity: undefined, full: true });
+	assert.deepEqual(parseProposalsArgs("duplicate --verbose"), { status: "duplicate", severity: undefined, full: true });
 });
 
 test("parseProposalsArgs: ignores unknown tokens", () => {
-	assert.deepEqual(parseProposalsArgs("garbage --nope"), { status: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs("garbage --nope"), { status: undefined, severity: undefined, full: false });
+});
+
+test("parseProposalsArgs: recognises --severity <value>", () => {
+	assert.deepEqual(parseProposalsArgs("--severity friction"), { status: undefined, severity: "friction", full: false });
+	assert.deepEqual(parseProposalsArgs("--severity REINFORCEMENT"), { status: undefined, severity: "reinforcement", full: false });
+});
+
+test("parseProposalsArgs: --severity combines with status and --full in any order", () => {
+	assert.deepEqual(parseProposalsArgs("open --severity waste --full"), { status: "open", severity: "waste", full: true });
+	assert.deepEqual(parseProposalsArgs("--severity correction applied"), { status: "applied", severity: "correction", full: false });
+});
+
+test("parseProposalsArgs: ignores an unknown --severity value (mirrors status)", () => {
+	assert.deepEqual(parseProposalsArgs("--severity garbage"), { status: undefined, severity: undefined, full: false });
+	// The bogus value is consumed by the flag, not mistaken for a status word.
+	assert.deepEqual(parseProposalsArgs("--severity nope open"), { status: "open", severity: undefined, full: false });
 });
 
 test("rankProposals: higher confidence sorts first; nulls last", () => {

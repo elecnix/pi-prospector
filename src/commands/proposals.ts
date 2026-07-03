@@ -14,21 +14,32 @@ function output(ctx: ExtensionCommandContext, text: string, level: "info" | "war
 }
 
 const PROPOSAL_STATUSES = new Set(["open", "applied", "rejected", "duplicate"]);
+const PROPOSAL_SEVERITIES = new Set<string>(["friction", "correction", "waste", "suggestion", "reinforcement"]);
 
 /**
- * Parse the `proposals` argument string into an optional status filter and a
- * `full` flag. Accepts a status word (open|applied|rejected|duplicate) and/or
- * `--full`/`-v`/`--verbose`, in any order; unknown tokens are ignored.
+ * Parse the `proposals` argument string into optional status/severity filters
+ * and a `full` flag. Accepts a status word (open|applied|rejected|duplicate),
+ * `--severity <friction|correction|waste|suggestion|reinforcement>`, and/or
+ * `--full`/`-v`/`--verbose`, in any order. Unknown tokens — and an unknown
+ * `--severity` value — are ignored, mirroring the status filter.
  */
-export function parseProposalsArgs(args: string): { status?: string; full: boolean } {
+export function parseProposalsArgs(args: string): { status?: string; severity?: string; full: boolean } {
 	let status: string | undefined;
+	let severity: string | undefined;
 	let full = false;
-	for (const tok of (args ?? "").trim().split(/\s+/).filter(Boolean)) {
-		const t = tok.toLowerCase();
+	const toks = (args ?? "").trim().split(/\s+/).filter(Boolean);
+	for (let i = 0; i < toks.length; i++) {
+		const t = toks[i]!.toLowerCase();
 		if (t === "--full" || t === "-v" || t === "--verbose") full = true;
-		else if (PROPOSAL_STATUSES.has(t)) status = t;
+		else if (t === "--severity") {
+			// The following token is the value; consume it even when invalid so it
+			// is never mistaken for a status word.
+			const val = toks[i + 1]?.toLowerCase();
+			if (val && PROPOSAL_SEVERITIES.has(val)) severity = val;
+			i++;
+		} else if (PROPOSAL_STATUSES.has(t)) status = t;
 	}
-	return { status, full };
+	return { status, severity, full };
 }
 
 /**
@@ -161,11 +172,12 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 	const db = new Database(getDbPath());
 	migrate(db);
 	try {
-		const { status, full } = parseProposalsArgs(args);
-		const proposals = listProposals(db, status).sort(rankProposals);
+		const { status, severity, full } = parseProposalsArgs(args);
+		const proposals = listProposals(db, status, severity).sort(rankProposals);
+		const filterDesc = [status, severity].filter(Boolean).join(" ");
 
 		if (proposals.length === 0) {
-			output(ctx, status ? `No ${status} proposals found.` : "No proposals found.");
+			output(ctx, filterDesc ? `No ${filterDesc} proposals found.` : "No proposals found.");
 			return;
 		}
 
@@ -191,7 +203,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			blocks.push(`${header}\n${group.map(format).join("\n\n")}`);
 		}
 
-		const headline = `Proposals (${proposals.length}${status ? `, ${status}` : ""}) in ${groups.size} session(s), ranked by validated score then confidence:`;
+		const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validated score then confidence:`;
 		output(ctx, `${headline}\n\n${blocks.join("\n\n")}`);
 	} finally {
 		db.close();
@@ -233,7 +245,7 @@ export async function prospectReject(args: string, ctx: ExtensionCommandContext)
 export function registerProposalsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-proposals", {
 		description:
-			"List proposals, ranked by confidence. Optional status filter (open|applied|rejected|duplicate) and --full for evidence/source.",
+			"List proposals, ranked by confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, and --full for evidence/source.",
 		handler: prospectProposals,
 	});
 
