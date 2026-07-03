@@ -96,12 +96,12 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					case "accept": {
 						if (!params.proposal_id) return text("proposal_id required", {});
 						const ok = acceptProposal(db, params.proposal_id as string, decisionInputFrom(params));
-						return text(ok ? `Applied ${params.proposal_id}` : "Not found or not open", { ok });
+						return text(ok ? `Applied ${params.proposal_id}` : `Proposal "${params.proposal_id}" not found or not open. Use the full ID from the list_proposals output (e.g., prospect show <id>). Check that the proposal is still "open".`, { ok });
 					}
 					case "reject": {
 						if (!params.proposal_id) return text("proposal_id required", {});
 						const ok = rejectProposal(db, params.proposal_id as string, decisionInputFrom(params));
-						return text(ok ? `Rejected ${params.proposal_id}` : "Not found or not open", { ok });
+						return text(ok ? `Rejected ${params.proposal_id}` : `Proposal "${params.proposal_id}" not found or not open. Use the full ID from the list_proposals output (e.g., prospect show <id>). Check that the proposal is still "open".`, { ok });
 					}
 					default:
 						return text(`Unknown action: ${String(params.action)}`, {});
