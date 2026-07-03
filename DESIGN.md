@@ -358,6 +358,18 @@ contribute to the session's friction score and surface in the digest.
   contrast digest, so the node's `input_key`/`output_key` stay content-addressed
   and reproduce across a DB rebuild, and a `contrasts_with` edge records the
   provenance. This is contrast for *detection*, not cross-session merging.
+  *Churn caveat* (expected, and the price of correctness): because the siblings
+  are genuinely inputs, editing/adding/removing a smooth session in a repo changes
+  the `sourceSetHash` of every friction session's overview in that same `cwd` — so
+  those overviews re-identify as `missing` (a fresh recipe over a new source set),
+  not as `stale`/`revises` of the old one, and are recomputed with an LLM call on
+  the next run. Selection is capped at `maxContrastSiblings` (default 3) ranked by
+  pair count, so a new, more substantial smooth sibling can also *swap* which three
+  are chosen, reshuffling identities across the repo. This is correct — the nodes'
+  inputs really did change — but it is churny when `crossSessionContrast` is on by
+  default. The follow-up that bounds it is a per-`cwd` smoothness cache so the
+  candidate scan is not repeated per session; consolidation/dedup of the resulting
+  proposals remains explicitly out of scope.
 - **Materialisation** — the step that lifts proposals out of a summary node into
   the fast, reviewable proposal store, attaching the evidence trail via
   *produces* and *anchors* edges. That trail is browsable after the fact: from a
