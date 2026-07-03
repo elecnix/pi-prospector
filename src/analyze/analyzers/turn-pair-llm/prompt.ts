@@ -79,6 +79,13 @@ export interface ClassifyInput {
 	toolResults: ToolResultEvidence[];
 }
 
+/**
+ * Fixed cap on the number of tool calls / failed results rendered per turn.
+ * Bounds the prompt (and thus the content-addressed input_key) deterministically:
+ * high tool-count turns render their first N entries only, in stable order.
+ */
+export const MAX_TOOL_EVIDENCE_PER_TURN = 8;
+
 export function buildClassifyPrompt(input: ClassifyInput): string {
 	const sections: string[] = [
 		"USER MESSAGE:",
@@ -93,20 +100,20 @@ export function buildClassifyPrompt(input: ClassifyInput): string {
 	}
 
 	// Tool-call evidence: failing tool names, truncated arguments, and error heads.
+	// Bounded to the first MAX_TOOL_EVIDENCE_PER_TURN calls/results so the rendered
+	// prompt stays deterministic and small for high tool-count turns.
 	if (input.toolCalls.length > 0 || input.toolResults.some((r) => r.isError)) {
 		const toolLines: string[] = [];
-		for (const tc of input.toolCalls) {
+		for (const tc of input.toolCalls.slice(0, MAX_TOOL_EVIDENCE_PER_TURN)) {
 			if (tc.argumentsPreview) {
 				toolLines.push(`  ${tc.name}: ${truncate(tc.argumentsPreview, 200)}`);
 			} else {
 				toolLines.push(`  ${tc.name}`);
 			}
 		}
-		for (const tr of input.toolResults) {
-			if (tr.isError) {
-				const errLine = tr.errorHead ? ` error="${truncate(tr.errorHead, 200)}"` : "";
-				toolLines.push(`  ${tr.toolName} (FAILED)${errLine}`);
-			}
+		for (const tr of input.toolResults.filter((r) => r.isError).slice(0, MAX_TOOL_EVIDENCE_PER_TURN)) {
+			const errLine = tr.errorHead ? ` error="${truncate(tr.errorHead, 200)}"` : "";
+			toolLines.push(`  ${tr.toolName} (FAILED)${errLine}`);
 		}
 		if (toolLines.length > 0) {
 			sections.push("", "TOOL CALLS:", ...toolLines);

@@ -54,7 +54,11 @@ export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	// 1.2: classify prompt now requests structured output via a forced tool call
 	// (classify_turn) instead of "return only JSON". Robustness change for reasoning
 	// models; prompt text changed, hence a version bump.
-	minor: 2,
+	// 1.3: tool-evidence channel (issue #12) — the classify prompt now carries the
+	// turn's tool calls (name + truncated args) and failed-result error heads,
+	// bounded to MAX_TOOL_EVIDENCE_PER_TURN. The prompt input changed, so the
+	// input_key (and hence node version) changes; recomputed on the next run.
+	minor: 3,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };

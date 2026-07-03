@@ -59,7 +59,11 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// (submit_segment_summary / submit_session_analysis) instead of "return only
 	// JSON", so reasoning models stop returning prose. Behaviour-preserving
 	// robustness change; prompt text changed, hence a version bump.
-	minor: 2,
+	// 1.3: tool-evidence channel (issue #12) — the per-pair digest line now appends
+	// a tool-evidence fragment (tool name + truncated args + failed-result error
+	// head) for high-signal/failing pairs. The digest feeds the reduce prompt, so
+	// the input_key (and node version) changes; recomputed on the next run.
+	minor: 3,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };

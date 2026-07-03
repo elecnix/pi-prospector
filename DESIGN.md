@@ -73,6 +73,17 @@ roughly the order concepts build on one another.
   form (with known-flag prefixes stripped of values); for structured tools the
   relevant fields are extracted. Normalization makes "same call" detection robust
   against incidental differences.
+- **Tool evidence** — the tool name, truncated arguments, and (for failed
+  results) truncated error output for the tool calls within a turn, supplied to
+  LLM analyzers alongside message text so proposals can be attributed to specific
+  commands rather than paraphrased from user wording. The `turn-pair-core`
+  builder extracts it deterministically under fixed caps (arguments and error
+  head each truncated to a fixed length, at most eight calls surfaced per turn);
+  those caps keep the derived prompts bounded so content-addressed identities
+  stay reproducible. Two analyzers consume tool evidence: `turn-pair-llm` renders
+  a `TOOL CALLS:` block into the classifier prompt, and `session-overview`
+  appends a `tool=<name> args="…" err="…"` fragment to the per-pair digest line
+  for high-signal or failing turns.
 - **Compaction boundary** — a point where the conversation history was
   summarised and truncated to fit the model's context. The system is aware of
   these so it does not mistake a summary for an ordinary message.

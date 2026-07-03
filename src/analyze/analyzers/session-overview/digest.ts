@@ -11,6 +11,7 @@ import type { AnalysisNodeRow, MessageRow } from "../../types.js";
 import type { TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import type { TurnPairLLMProperties } from "../turn-pair-llm/prompt.js";
 import type { ToolTrajectoryProperties } from "../tool-trajectory/index.js";
+import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
 
 export interface DigestSegment {
 	index: number;
@@ -57,6 +58,31 @@ function safeParse<T>(json: string): T | null {
 /** Max length for a user-text snippet included in the per-pair digest line. */
 const USER_TEXT_SNIPPET_MAX = 200;
 
+/** Fixed caps for the per-pair tool-evidence fragment (bounded, deterministic). */
+const MAX_DIGEST_TOOL_CALLS = 8;
+const MAX_DIGEST_TOOL_ERRORS = 4;
+const TOOL_ARGS_SNIPPET_MAX = 120;
+const TOOL_ERR_SNIPPET_MAX = 160;
+
+/**
+ * Build the compact tool-evidence fragment for a per-pair digest line: the tool
+ * name + truncated arguments for each call, plus truncated error heads for
+ * failed results. Emitted only for high-signal / failing pairs so the reduce
+ * phase can attribute a root cause to a specific command rather than paraphrase
+ * the user's wording. Bounded to fixed caps so content-addressing stays stable.
+ */
+function formatToolFragment(pair: TurnPair): string {
+	const bits: string[] = [];
+	for (const tc of pair.toolCalls.slice(0, MAX_DIGEST_TOOL_CALLS)) {
+		const args = tc.argumentsPreview ? ` args="${truncateLine(tc.argumentsPreview, TOOL_ARGS_SNIPPET_MAX)}"` : "";
+		bits.push(`tool=${tc.name}${args}`);
+	}
+	for (const tr of pair.toolResults.filter((r) => r.isError).slice(0, MAX_DIGEST_TOOL_ERRORS)) {
+		if (tr.errorHead) bits.push(`err="${truncateLine(tr.errorHead, TOOL_ERR_SNIPPET_MAX)}"`);
+	}
+	return bits.join(" ");
+}
+
 export function buildDigest(input: BuildDigestInput): SessionDigest {
 	const core = input.coreNodes
 		.map((n) => safeParse<TurnPairCoreProperties>(n.content_json))
@@ -79,6 +105,13 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		if (m.role === "user" && m.content_text) {
 			userTextById.set(m.id, m.content_text);
 		}
+	}
+
+	// Map user_message_id → turn pair, so high-signal / failing pairs can carry a
+	// tool-evidence fragment (tool names + truncated args + failed-result error heads).
+	const pairByUser = new Map<string, TurnPair>();
+	for (const pair of buildTurnPairs(input.messages)) {
+		pairByUser.set(pair.userMessageId, pair);
 	}
 
 	// Parse trajectory signal nodes.
@@ -132,6 +165,15 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		];
 		if (llm) bits.push(`sentiment=${llm.sentiment}`, `type=${llm.friction_type}`, `sev=${llm.severity}`);
 		if (p.correction_text) bits.push(`note="${p.correction_text.slice(0, 120)}"`);
+		// Tool evidence for failing / high-signal pairs: lets the reduce phase attribute
+		// the root cause to a specific command instead of paraphrasing user wording.
+		if (p.high_signal || p.tool_failure_count > 0) {
+			const pair = pairByUser.get(p.user_message_id);
+			if (pair) {
+				const fragment = formatToolFragment(pair);
+				if (fragment) bits.push(fragment);
+			}
+		}
 		// Un-gate: include a user-text snippet for every pair, not just regex-matched ones.
 		// The correction regex is a ranking signal only; the synthesizer must see all text.
 		const userText = userTextById.get(p.user_message_id);
