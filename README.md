@@ -220,6 +220,35 @@ Source: [`proposal-validate/index.ts`](./src/analyze/analyzers/proposal-validate
 
 Registration and dependency order live in [`src/analyze/defaults.ts`](./src/analyze/defaults.ts); the framework that schedules analyzers, computes their content-addressed identities, and tracks lineage is [`src/analyze/framework.ts`](./src/analyze/framework.ts).
 
+### Custom analyzers (author your own, no rebuild)
+
+You — or your Pi coding agent — can drop a locally-authored analyzer on disk and run it without touching the extension source. An analyzer is a module that **default-exports** an object satisfying the [`Analyzer`](./src/analyze/types.ts) contract (`def` / `version` / `prompts` / `defaultConfig` / `plan()` / `analyze()`). Write it in TypeScript — the extension runs under `tsx`, so no build step is needed; `.js`/`.mjs` also work.
+
+Files are discovered from these locations, in precedence order:
+
+1. `--analyzer-path <file|dir>` on `/prospect-analyze` (repeatable)
+2. `analyzerPaths` in `~/.pi/agent/prospector.json`
+3. `./.prospector/analyzers/` (project-local)
+4. `~/.pi/agent/prospector/analyzers/` (**the Pi agent path — always scanned**)
+
+A file is picked up only if it is named `*.analyzer.{ts,js,mjs}` (helper files alongside it are ignored). A copy-paste starting point lives at [`examples/analyzers/example.analyzer.ts`](./examples/analyzers/example.analyzer.ts).
+
+**The authoring loop.** Write the file into `~/.pi/agent/prospector/analyzers/`, then:
+
+```
+/reload                                   # re-imports the extension; picks up new/edited analyzers
+/prospect-analyzers list                  # confirm it loaded (or see a precise validation error)
+/prospect-analyze --analyzer <your-id>    # run just yours
+```
+
+`/prospect-analyzers list` shows built-ins + discovered custom analyzers and any load errors; `/prospect-analyzers validate <path>` checks one file without running. A malformed analyzer is skipped and reported — the valid ones still run. Everything works headlessly too, e.g. `--prospect "analyzers list"` and `--prospect "analyze --analyzer <id>"`.
+
+**Editing while iterating.** Node identity normally changes only when you bump `version`. For analyzers loaded from disk, pi-prospector additionally folds a hash of the file's source into the node identity, so **editing the code or prompt automatically marks its prior nodes stale** — re-run with `--revise config` (or `--revise all`) to recompute them. No manual version bump while you iterate; bump `version.major`/`minor` when you ship a change you want graded for existing users.
+
+Custom analyzer code runs in-process with full privileges — only load analyzers you trust (typically ones you or your own agent authored).
+
+Loader and discovery: [`src/analyze/loader.ts`](./src/analyze/loader.ts) · optional `defineAnalyzer()` helper: [`src/analyze/authoring.ts`](./src/analyze/authoring.ts) · registration: [`registerAll()` in `src/analyze/defaults.ts`](./src/analyze/defaults.ts).
+
 ## Fork deduplication
 
 Pi sessions are stored as trees. When you branch a session with `/tree`, the new session file carries a `parentSession` header pointing to the original, and messages before the branch point are shared. During sync, pi-prospector reads that header, resolves the parent, stores shared messages once, and marks the forked session as starting from the branch point — so analysing a fork only processes the **new** messages after the branch.
