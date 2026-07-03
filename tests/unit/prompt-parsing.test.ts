@@ -140,6 +140,15 @@ describe("buildClassifyPrompt", () => {
 		assert.ok(!p.includes("TOOL CALLS:"));
 	});
 
+	it("caps rendered tool calls at MAX_TOOL_EVIDENCE_PER_TURN (deterministic bound)", () => {
+		const many = Array.from({ length: 20 }, (_, i) => ({ name: "bash", argumentsPreview: `echo ${i}` }));
+		const p = buildClassifyPrompt({ userText: "do things", assistantText: "ok", correctionText: null, toolCalls: many, toolResults: [] });
+		const rendered = (p.match(/ {2}bash: echo/g) ?? []).length;
+		assert.equal(rendered, 8, "renders only the first 8 tool calls");
+		assert.ok(p.includes("echo 0") && p.includes("echo 7"), "keeps the first 8 in order");
+		assert.ok(!p.includes("echo 8"), "drops the 9th and beyond");
+	});
+
 	it("shows tool calls section when there are errors even without tool calls", () => {
 		const p = buildClassifyPrompt({
 			userText: "run it",

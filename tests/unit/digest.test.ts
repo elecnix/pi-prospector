@@ -147,6 +147,58 @@ describe("buildDigest", () => {
 		assert.ok(!coldLine.includes("sentiment="), "un-enriched pair has no LLM fields");
 	});
 
+	it("carries a tool-evidence fragment (name + args + error head) for failing/high-signal pairs", () => {
+		const messages: MessageRow[] = [
+			{ id: "u-hot", session_id: "s1", parent_id: null, timestamp: null, role: "user", content_text: "YOU SHOULD HAVE PUSHED TO v2nic/gh-pr-review", content_thinking: null, tool_calls: null, tool_results: null },
+			{ id: "a1", session_id: "s1", parent_id: "u-hot", timestamp: null, role: "assistant", content_text: "creating PR", content_thinking: null, tool_calls: JSON.stringify([{ name: "bash", arguments: { command: "gh pr create --draft --title fix" } }]), tool_results: null },
+			{ id: "t1", session_id: "s1", parent_id: "a1", timestamp: null, role: "toolResult", content_text: "fatal: 'agynio/gh-pr-review' not found: 403", content_thinking: null, tool_calls: null, tool_results: JSON.stringify([{ toolName: "bash", isError: true, textLength: 42 }]) },
+		];
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages,
+			coreNodes: [coreNode("n1", { pair_index: 0, user_message_id: "u-hot", friction_score: 0.8, high_signal: true, tool_failure_count: 1 })],
+			llmNodes: [],
+			trajectoryNodes: [],
+		});
+		const line = digest.perPairLines[0]!;
+		assert.ok(line.includes("tool=bash"), "per-pair line names the tool");
+		assert.ok(line.includes("gh pr create"), "per-pair line carries the command args");
+		assert.ok(!/args="[^"]*--repo/.test(line), "the gh pr create args carry no --repo flag (the actual bug)");
+		assert.ok(line.includes('err="fatal'), "per-pair line carries the failed-result error head");
+	});
+
+	it("omits the tool-evidence fragment for clean, low-signal pairs", () => {
+		const messages: MessageRow[] = [
+			{ id: "u-cold", session_id: "s1", parent_id: null, timestamp: null, role: "user", content_text: "add a test", content_thinking: null, tool_calls: null, tool_results: null },
+			{ id: "a1", session_id: "s1", parent_id: "u-cold", timestamp: null, role: "assistant", content_text: "done", content_thinking: null, tool_calls: JSON.stringify([{ name: "bash", arguments: { command: "npm test" } }]), tool_results: null },
+		];
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages,
+			coreNodes: [coreNode("n1", { pair_index: 0, user_message_id: "u-cold", friction_score: 0.05, high_signal: false, tool_failure_count: 0 })],
+			llmNodes: [],
+			trajectoryNodes: [],
+		});
+		assert.ok(!digest.perPairLines[0]!.includes("tool="), "clean pair has no tool-evidence fragment");
+	});
+
+	it("bounds the tool-evidence fragment to the per-turn call cap", () => {
+		const calls = Array.from({ length: 20 }, (_, i) => ({ name: "bash", arguments: { command: `echo ${i}` } }));
+		const messages: MessageRow[] = [
+			{ id: "u-many", session_id: "s1", parent_id: null, timestamp: null, role: "user", content_text: "do many things", content_thinking: null, tool_calls: null, tool_results: null },
+			{ id: "a1", session_id: "s1", parent_id: "u-many", timestamp: null, role: "assistant", content_text: "ok", content_thinking: null, tool_calls: JSON.stringify(calls), tool_results: null },
+		];
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages,
+			coreNodes: [coreNode("n1", { pair_index: 0, user_message_id: "u-many", friction_score: 0.8, high_signal: true })],
+			llmNodes: [],
+			trajectoryNodes: [],
+		});
+		const toolCount = (digest.perPairLines[0]!.match(/tool=/g) ?? []).length;
+		assert.ok(toolCount <= 8, `rendered ${toolCount} tool= tokens, expected ≤ 8`);
+	});
+
 	it("includes branch summaries verbatim (Pi's snake_case branch_summary role)", () => {
 		const messages: MessageRow[] = [
 			{

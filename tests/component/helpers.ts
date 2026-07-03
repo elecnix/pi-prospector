@@ -45,7 +45,7 @@ export interface TestMessage {
 	role: string;
 	text?: string;
 	thinking?: string;
-	toolCalls?: Array<{ name: string }>;
+	toolCalls?: Array<{ name: string; arguments?: Record<string, unknown> }>;
 	toolResults?: Array<{ toolName: string; isError: boolean; textLength: number }>;
 	id?: string;
 }
