@@ -44,6 +44,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					Type.Literal("duplicate"),
 				]),
 			),
+			severity: Type.Optional(Type.String({ description: "Filter by severity: friction, correction, waste, suggestion, reinforcement" })),
 			proposal_id: Type.Optional(Type.String()),
 			limit: Type.Optional(Type.Number({ description: "Maximum number of proposals to return (defaults to 100 if omitted)." })),
 			offset: Type.Optional(Type.Number({ description: "Number of proposals to skip before starting to return results." })),
@@ -77,7 +78,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					case "list_proposals": {
 						const limit = params.limit !== undefined ? (params.limit as number) : 100;
 						const offset = params.offset as number | undefined;
-						const proposals = listProposals(db, params.status as string | undefined, undefined, limit, offset);
+						const proposals = listProposals(db, params.status as string | undefined, params.severity as string | undefined, limit, offset);
 						if (proposals.length === 0) return text("No proposals found.", []);
 						const body = proposals
 							.map((p) => `[${p.status}] ${p.id.slice(0, 8)} | ${p.severity} | ${p.target_type}\n  ${p.title}`)
