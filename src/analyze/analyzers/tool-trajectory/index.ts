@@ -83,11 +83,18 @@ function extractToolCalls(messages: MessageRow[]): ToolCallWithResult[] {
 	for (const m of messages) {
 		if (m.role === "assistant" && m.tool_calls) {
 			try {
-				const parsed = JSON.parse(m.tool_calls) as Array<{ name?: unknown; input?: unknown }>;
+				const parsed = JSON.parse(m.tool_calls) as Array<{ name?: unknown; arguments?: unknown; input?: unknown }>;
 				for (const tc of parsed) {
 					calls.push({
 						name: typeof tc.name === "string" ? tc.name : "",
-						args: tc.input && typeof tc.input === "object" ? tc.input as Record<string, unknown> : {},
+						// Stored tool calls carry their args under `arguments` (see
+						// src/sync/parser.ts and turn-pair-core's parseToolCalls). Older or
+						// alternate shapes may use `input`; accept it as a fallback so the
+						// normaliser always receives the real command string.
+						args: (() => {
+							const rawArgs = tc.arguments ?? tc.input;
+							return rawArgs && typeof rawArgs === "object" ? rawArgs as Record<string, unknown> : {};
+						})(),
 						messageId: m.id,
 					});
 				}
