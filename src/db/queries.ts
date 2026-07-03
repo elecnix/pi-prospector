@@ -115,9 +115,9 @@ export function getSessionMessages(db: Database.Database, sessionId: string): Ar
 
 // ── Proposals (v2) ──
 
-export function listProposals(db: Database.Database, status?: string, severity?: string): Proposal[] {
+export function listProposals(db: Database.Database, status?: string, severity?: string, limit?: number, offset?: number): Proposal[] {
 	const clauses: string[] = [];
-	const params: string[] = [];
+	const params: (string | number)[] = [];
 	if (status) {
 		clauses.push("status = ?");
 		params.push(status);
@@ -127,7 +127,16 @@ export function listProposals(db: Database.Database, status?: string, severity?:
 		params.push(severity);
 	}
 	const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
-	return db.prepare(`SELECT * FROM proposals${where} ORDER BY created_at DESC`).all(...params) as Proposal[];
+	let sql = `SELECT * FROM proposals${where} ORDER BY created_at DESC`;
+	if (limit !== undefined) {
+		sql += ` LIMIT ?`;
+		params.push(limit);
+		if (offset !== undefined) {
+			sql += ` OFFSET ?`;
+			params.push(offset);
+		}
+	}
+	return db.prepare(sql).all(...params) as Proposal[];
 }
 
 export function getProposal(db: Database.Database, id: string): Proposal | undefined {

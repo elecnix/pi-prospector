@@ -45,6 +45,8 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				]),
 			),
 			proposal_id: Type.Optional(Type.String()),
+			limit: Type.Optional(Type.Number({ description: "Maximum number of proposals to return (defaults to 100 if omitted)." })),
+			offset: Type.Optional(Type.Number({ description: "Number of proposals to skip before starting to return results." })),
 			rationale: Type.Optional(Type.String({ description: "Human reasoning behind the decision (stored as durable memory)." })),
 			disposition: Type.Optional(
 				Type.Union([Type.Literal("planned"), Type.Literal("done"), Type.Literal("done_differently")], {
@@ -73,7 +75,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						return text(JSON.stringify(stats, null, 2), stats);
 					}
 					case "list_proposals": {
-						const proposals = listProposals(db, params.status as string | undefined);
+						const limit = params.limit !== undefined ? (params.limit as number) : 100;
+						const offset = params.offset as number | undefined;
+						const proposals = listProposals(db, params.status as string | undefined, undefined, limit, offset);
 						if (proposals.length === 0) return text("No proposals found.", []);
 						const body = proposals
 							.map((p) => `[${p.status}] ${p.id.slice(0, 8)} | ${p.severity} | ${p.target_type}\n  ${p.title}`)
