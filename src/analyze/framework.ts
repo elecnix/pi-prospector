@@ -510,7 +510,12 @@ export class AnalyzerFramework {
 		// Use the config's *content* hash (not its DB-local uuid row id) so the
 		// fingerprint — and therefore every input_key/output_key — is reproducible
 		// across databases and wipes.
-		const configFingerprint = computeConfigFingerprint(config.configHash, models);
+		// A disk-loaded custom analyzer folds its source `contentHash` into identity,
+		// so editing the file (code or prompt) marks its nodes stale for the `config`
+		// reason and a re-run recomputes them — no manual version bump while authoring.
+		// Built-in analyzers leave `contentHash` undefined and are unaffected.
+		const extra = analyzer.contentHash ? [`code:${analyzer.contentHash}`] : [];
+		const configFingerprint = computeConfigFingerprint(config.configHash, models, extra);
 		return { analyzer, config, promptBundleHash, configFingerprint };
 	}
 

@@ -16,6 +16,12 @@ export interface ProspectorConfig {
 		mid: string;
 		expensive: string;
 	};
+	/**
+	 * Extra directories (or files) to load custom analyzers from, in addition to
+	 * the always-scanned Pi agent path (~/.pi/agent/prospector/analyzers) and a
+	 * project-local ./.prospector/analyzers. A leading ~ is expanded.
+	 */
+	analyzerPaths?: string[];
 }
 
 // ─── Session ───

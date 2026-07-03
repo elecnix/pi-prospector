@@ -3,6 +3,7 @@ import { prospectSync } from "./sync.js";
 import { prospectStats } from "./stats.js";
 import { prospectProposals, prospectAccept, prospectReject } from "./proposals.js";
 import { prospectAnalyze } from "./analyze.js";
+import { prospectAnalyzers } from "./analyzers.js";
 import { prospectVerify } from "./verify.js";
 import { prospectValidate } from "./validate.js";
 import { prospectShow } from "./show.js";
@@ -14,6 +15,7 @@ export type ProspectAction = (args: string, ctx: ExtensionCommandContext) => Pro
 export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 	sync: prospectSync,
 	analyze: prospectAnalyze,
+	analyzers: prospectAnalyzers,
 	stats: prospectStats,
 	proposals: prospectProposals,
 	show: prospectShow,
@@ -25,7 +27,7 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 
 const USAGE =
 	'Usage: pi -e <prospector>/src/index.ts --prospect "<command> [args]"\n' +
-	"  commands: sync | analyze [flags] | stats | proposals [status] [--full] | show <id> | verify | validate [flags] | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale]";
+	"  commands: sync | analyze [flags] | analyzers [list|validate <path>] | stats | proposals [status] [--full] | show <id> | verify | validate [flags] | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale]";
 
 /** Split a `--prospect` flag value into a command name and the remaining args. */
 export function splitProspectSpec(spec: string): { command: string; args: string } {

@@ -9,6 +9,10 @@ const DEFAULT_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "prospector.
 const DEFAULT_DB_PATH = path.join(os.homedir(), ".pi", "agent", "prospector.db");
 const DEFAULT_SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
 const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "projects");
+/** Where the Pi coding agent drops locally-authored custom analyzers. */
+const PI_AGENT_ANALYZERS_DIR = path.join(os.homedir(), ".pi", "agent", "prospector", "analyzers");
+/** Project-local convention dir, resolved against the current working directory. */
+const PROJECT_ANALYZERS_DIR = path.join(".prospector", "analyzers");
 
 /** Path to the JSON config, overridable via PROSPECTOR_CONFIG (used by tests). */
 function configPath(): string {
@@ -44,4 +48,30 @@ export function getModelTiers(config?: ProspectorConfig): ModelTierConfig {
 	const c = config ?? loadConfig();
 	if (c.modelTiers) return c.modelTiers;
 	return DEFAULT_MODEL_TIERS;
+}
+
+/**
+ * The Pi agent analyzers directory (~/.pi/agent/prospector/analyzers),
+ * overridable via PROSPECTOR_ANALYZERS_DIR for tests.
+ */
+export function getPiAgentAnalyzersDir(): string {
+	return process.env["PROSPECTOR_ANALYZERS_DIR"] ?? PI_AGENT_ANALYZERS_DIR;
+}
+
+/**
+ * Resolve every path custom analyzers are loaded from, in precedence order:
+ * explicit (CLI) → config `analyzerPaths` → project ./.prospector/analyzers →
+ * Pi agent dir. A leading ~ in config paths is expanded.
+ */
+export function getAnalyzerPaths(explicit: string[] = [], config?: ProspectorConfig): string[] {
+	const c = config ?? loadConfig();
+	const expanded = (c.analyzerPaths ?? []).map((p) => p.replace(/^~/, os.homedir()));
+	const ordered = [
+		...explicit,
+		...expanded,
+		path.resolve(process.cwd(), PROJECT_ANALYZERS_DIR),
+		getPiAgentAnalyzersDir(),
+	];
+	const seen = new Set<string>();
+	return ordered.filter((p) => (seen.has(p) ? false : (seen.add(p), true)));
 }

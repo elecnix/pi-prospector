@@ -2,9 +2,9 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { listSessionIdsWithOpenProposals, countOpenProposalsByValidationStatus } from "../db/queries.js";
-import { getDbPath, getModelTiers, loadConfig } from "../config.js";
+import { getAnalyzerPaths, getDbPath, getModelTiers, loadConfig } from "../config.js";
 import { AnalyzerFramework } from "../analyze/framework.js";
-import { registerDefaults } from "../analyze/defaults.js";
+import { registerAll } from "../analyze/defaults.js";
 import { proposalValidateAnalyzer, PROPOSAL_VALIDATE_DEF } from "../analyze/analyzers/proposal-validate/index.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
@@ -43,7 +43,9 @@ export async function prospectValidate(rawArgs: string, ctx: ExtensionCommandCon
 
 		const llm = makePiLLMCaller(ctx, { modelTiers });
 		const framework = new AnalyzerFramework({ db, llm, modelTiers });
-		registerDefaults(framework);
+		// Built-ins + custom analyzers, so a custom dependency of a custom validator
+		// (or a custom analyzer that emits proposals) is present during validation.
+		await registerAll(framework, { paths: getAnalyzerPaths([], config) });
 		framework.register(proposalValidateAnalyzer);
 
 		out(ctx, `Validating proposals in ${sessionIds.length} session(s) [${reach}]…`, "info");

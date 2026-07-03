@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getDbPath, getModelTiers, getSessionsDir, loadConfig } from "../../src/config.js";
+import { getAnalyzerPaths, getDbPath, getModelTiers, getPiAgentAnalyzersDir, getSessionsDir, loadConfig } from "../../src/config.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 
-const ENV_KEYS = ["PROSPECTOR_CONFIG", "PROSPECTOR_DB_PATH", "PROSPECTOR_SESSIONS_DIR"];
+const ENV_KEYS = ["PROSPECTOR_CONFIG", "PROSPECTOR_DB_PATH", "PROSPECTOR_SESSIONS_DIR", "PROSPECTOR_ANALYZERS_DIR"];
 
 afterEach(() => {
 	for (const k of ENV_KEYS) delete process.env[k];
@@ -49,5 +49,20 @@ describe("config", () => {
 		assert.deepEqual(getModelTiers({}), DEFAULT_MODEL_TIERS);
 		const custom = { cheap: "a/b", mid: "c/d", expensive: "e/f" };
 		assert.deepEqual(getModelTiers({ modelTiers: custom }), custom);
+	});
+
+	it("getPiAgentAnalyzersDir defaults under ~/.pi/agent and honours the env override", () => {
+		assert.equal(getPiAgentAnalyzersDir(), path.join(os.homedir(), ".pi", "agent", "prospector", "analyzers"));
+		process.env["PROSPECTOR_ANALYZERS_DIR"] = "/tmp/custom-analyzers";
+		assert.equal(getPiAgentAnalyzersDir(), "/tmp/custom-analyzers");
+	});
+
+	it("getAnalyzerPaths orders explicit → config → project → Pi agent dir and expands ~", () => {
+		process.env["PROSPECTOR_ANALYZERS_DIR"] = "/agent/dir";
+		const paths = getAnalyzerPaths(["/explicit/one.analyzer.ts"], { analyzerPaths: ["~/cfg"] });
+		assert.equal(paths[0], "/explicit/one.analyzer.ts");
+		assert.equal(paths[1], path.join(os.homedir(), "/cfg"));
+		assert.equal(paths[2], path.resolve(process.cwd(), ".prospector", "analyzers"));
+		assert.equal(paths[3], "/agent/dir");
 	});
 });
