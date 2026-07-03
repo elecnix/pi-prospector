@@ -57,7 +57,7 @@ export interface TurnPairCoreProperties {
 	high_signal: boolean;
 }
 
-function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairCoreProperties {
+export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairCoreProperties {
 	const isRepetition = detectRepetition(pair.userText, pair.priorUserText);
 	const correction = classifyCorrection(pair.userText, isRepetition);
 

@@ -15,6 +15,9 @@
  *   revises      node → analysis_node              version lineage: this node is a
  *                                                   newer-version alternative of the
  *                                                   target node (same logical unit)
+ *   contrasts_with node → session                   cross-session contrast: this node
+ *                                                   used the target (smooth sibling)
+ *                                                   session as a negative example
  */
 
 export const REF_KINDS = {
@@ -35,6 +38,7 @@ export const EDGE_KINDS = {
 	USES_CONFIG: "uses_config",
 	PRODUCES: "produces",
 	REVISES: "revises",
+	CONTRASTS_WITH: "contrasts_with",
 } as const;
 
 export type EdgeKind = (typeof EDGE_KINDS)[keyof typeof EDGE_KINDS];
@@ -50,6 +54,7 @@ const VALID_TARGETS: Record<EdgeKind, ReadonlySet<RefKind>> = {
 	[EDGE_KINDS.USES_CONFIG]: new Set([REF_KINDS.CONFIG_VERSION]),
 	[EDGE_KINDS.PRODUCES]: new Set([REF_KINDS.PROPOSAL]),
 	[EDGE_KINDS.REVISES]: new Set([REF_KINDS.ANALYSIS_NODE]),
+	[EDGE_KINDS.CONTRASTS_WITH]: new Set([REF_KINDS.SESSION]),
 };
 
 export function isRefKind(value: string): value is RefKind {
