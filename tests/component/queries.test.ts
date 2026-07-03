@@ -34,6 +34,28 @@ describe("proposal queries (v2)", () => {
 		}
 	});
 
+	it("filters by severity, and by status and severity together", () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s1");
+			insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", severity: "friction" });
+			insertProposalRow(db, { id: "p2", sessionId: "s1", title: "B", severity: "waste" });
+			insertProposalRow(db, { id: "p3", sessionId: "s1", title: "C", severity: "friction" });
+
+			assert.equal(listProposals(db, undefined, "friction").length, 2);
+			assert.equal(listProposals(db, undefined, "waste").length, 1);
+			assert.equal(listProposals(db, undefined, "reinforcement").length, 0);
+
+			assert.equal(rejectProposal(db, "p3"), true);
+			// status + severity are ANDed together.
+			assert.equal(listProposals(db, "open", "friction").length, 1);
+			assert.equal(listProposals(db, "rejected", "friction").length, 1);
+			assert.equal(listProposals(db, "open", "waste").length, 1);
+		} finally {
+			close();
+		}
+	});
+
 	it("accept/reject only affect open proposals", () => {
 		const { db, close } = tempDb();
 		try {
