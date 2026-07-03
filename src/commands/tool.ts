@@ -81,7 +81,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						const proposals = listProposals(db, params.status as string | undefined, params.severity as string | undefined, limit, offset);
 						if (proposals.length === 0) return text("No proposals found.", []);
 						const body = proposals
-							.map((p) => `[${p.status}] ${p.id.slice(0, 8)} | ${p.severity} | ${p.target_type}\n  ${p.title}`)
+							.map((p) => `[${p.status}] ${p.id} | ${p.severity} | ${p.target_type}\n  ${p.title}\n  ${p.summary}`)
 							.join("\n\n");
 						return text(body, proposals);
 					}
