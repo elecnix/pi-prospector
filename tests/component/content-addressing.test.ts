@@ -97,6 +97,40 @@ describe("content-addressed identities", () => {
 		}
 	});
 
+	it("edges that point at nodes reference output_key (content-addressed, portable)", async () => {
+		const a = tempDb();
+		const b = tempDb();
+		try {
+			seed(a.db, "s1");
+			seed(b.db, "s1");
+			await analyze(a.db, "s1");
+			await analyze(b.db, "s1");
+
+			const nodeEdges = (db: import("better-sqlite3").Database): Array<{ edge_kind: string; to_ref_id: string }> =>
+				db
+					.prepare("SELECT edge_kind, to_ref_id FROM analysis_edges WHERE to_ref_kind = 'analysis_node' ORDER BY edge_kind, to_ref_id")
+					.all() as Array<{ edge_kind: string; to_ref_id: string }>;
+			const outputKeysOf = (db: import("better-sqlite3").Database): Set<string> =>
+				new Set((db.prepare("SELECT output_key FROM analysis_nodes").all() as Array<{ output_key: string }>).map((r) => r.output_key));
+
+			const ea = nodeEdges(a.db);
+			assert.ok(ea.length > 0, "produced node-targeting edges");
+			const oka = outputKeysOf(a.db);
+			for (const e of ea) {
+				// A node-targeting edge must reference a content-addressed output_key
+				// (16 hex chars) that resolves to a real node — never a DB-local uuid.
+				assert.equal(e.to_ref_id.length, 16, `edge ${e.edge_kind} target is an output_key, not a uuid`);
+				assert.ok(oka.has(e.to_ref_id), `edge ${e.edge_kind} target ${e.to_ref_id} resolves to a node output_key`);
+			}
+			// Portable: the (edge_kind, target) multiset reproduces across independent DBs.
+			const canon = (rows: Array<{ edge_kind: string; to_ref_id: string }>): string[] => rows.map((r) => `${r.edge_kind}|${r.to_ref_id}`);
+			assert.deepEqual(canon(ea), canon(nodeEdges(b.db)), "node-targeting edges reproduce across DBs");
+		} finally {
+			a.close();
+			b.close();
+		}
+	});
+
 	it("verifyNodes confirms a clean graph and detects tampering", async () => {
 		const { db, close } = tempDb();
 		try {

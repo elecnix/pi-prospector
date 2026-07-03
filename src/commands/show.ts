@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { getProposal, listProposals, getSessionLabels, getLatestDecision } from "../db/queries.js";
-import { getNode, getEdgesFrom, getAnchoredMessageIds, getSessionNodes, getSessionMessageRows } from "../db/analysis-queries.js";
+import { getNode, getNodeByOutputKey, getEdgesFrom, getAnchoredMessageIds, getSessionNodes, getSessionMessageRows } from "../db/analysis-queries.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 import { buildTurnPairs, type TurnPair } from "../analyze/analyzers/turn-pair-core/build.js";
 import { sessionLabel, formatDecisionLine } from "./proposals.js";
@@ -206,7 +206,13 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 			(e) => e.edge_kind === EDGE_KINDS.CONSUMES && e.to_ref_kind === REF_KINDS.ANALYSIS_NODE,
 		);
 		const anchorIds = new Set<string>();
-		for (const edge of consumed) for (const mid of getAnchoredMessageIds(db, edge.to_ref_id)) anchorIds.add(mid);
+		// `consumes` edges reference the turn node's content-addressed output_key; resolve
+		// it back to the node to walk its `anchors` edges to messages.
+		for (const edge of consumed) {
+			const turnNode = getNodeByOutputKey(db, edge.to_ref_id);
+			if (!turnNode) continue;
+			for (const mid of getAnchoredMessageIds(db, turnNode.id)) anchorIds.add(mid);
+		}
 
 		if (anchorIds.size === 0) {
 			out(ctx, "\n(Source node consumed no turn-anchored evidence.)", "warning");

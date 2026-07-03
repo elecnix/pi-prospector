@@ -224,6 +224,18 @@ export function getNode(db: Database.Database, id: string): AnalysisNodeRow | un
 	return db.prepare("SELECT * FROM analysis_nodes WHERE id = ?").get(id) as AnalysisNodeRow | undefined;
 }
 
+/**
+ * Resolve a node by its content-addressed `output_key`. Node-targeting edges
+ * (`consumes`, `revises`) reference the target's `output_key` rather than its
+ * DB-local uuid, so the entire graph — nodes *and* edges — is content-addressed
+ * and reproduces across a wipe/rebuild. `output_key` is effectively unique
+ * (H(input_key | content) over a unique input_key), so this is a 1:1 lookup.
+ */
+export function getNodeByOutputKey(db: Database.Database, outputKey: string): AnalysisNodeRow | undefined {
+	if (!outputKey) return undefined;
+	return db.prepare("SELECT * FROM analysis_nodes WHERE output_key = ? LIMIT 1").get(outputKey) as AnalysisNodeRow | undefined;
+}
+
 /** Idempotency lookup: a node produced by an exact recipe over an exact source set. */
 export function findNodeByInputKey(db: Database.Database, inputKey: string): AnalysisNodeRow | undefined {
 	return db.prepare("SELECT * FROM analysis_nodes WHERE input_key = ?").get(inputKey) as AnalysisNodeRow | undefined;
@@ -337,14 +349,18 @@ export function getRevisedNode(db: Database.Database, nodeId: string): AnalysisN
 		.prepare("SELECT to_ref_id FROM analysis_edges WHERE from_node_id = ? AND edge_kind = ? LIMIT 1")
 		.get(nodeId, EDGE_KINDS.REVISES) as { to_ref_id: string } | undefined;
 	if (!edge) return undefined;
-	return getNode(db, edge.to_ref_id);
+	// `revises` edges reference the predecessor's content-addressed output_key.
+	return getNodeByOutputKey(db, edge.to_ref_id);
 }
 
 /** Nodes that revise `nodeId` (its newer-version successors), if any. */
 export function getRevisions(db: Database.Database, nodeId: string): AnalysisNodeRow[] {
+	// `revises` edges point at the predecessor's output_key, so match on that.
+	const node = getNode(db, nodeId);
+	if (!node || !node.output_key) return [];
 	const edges = db
 		.prepare("SELECT from_node_id FROM analysis_edges WHERE to_ref_id = ? AND edge_kind = ?")
-		.all(nodeId, EDGE_KINDS.REVISES) as Array<{ from_node_id: string }>;
+		.all(node.output_key, EDGE_KINDS.REVISES) as Array<{ from_node_id: string }>;
 	const out: AnalysisNodeRow[] = [];
 	for (const e of edges) {
 		const n = getNode(db, e.from_node_id);

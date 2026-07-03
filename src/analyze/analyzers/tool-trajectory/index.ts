@@ -240,7 +240,7 @@ export const toolTrajectoryAnalyzer: Analyzer = {
 		// Consume turn-pair-core nodes
 		const coreNodes = ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id);
 		for (const n of coreNodes) {
-			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.id, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
+			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.output_key, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
 		}
 
 		return {

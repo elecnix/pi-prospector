@@ -211,7 +211,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		];
 		let ordinal = 1;
 		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes]) {
-			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.id, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
+			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.output_key, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
 		}
 		for (const h of usedPromptHashes) {
 			edges.push({ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: h, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: ordinal++ });
