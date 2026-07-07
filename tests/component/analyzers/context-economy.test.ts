@@ -162,4 +162,55 @@ describe("context-economy analyzer", () => {
 			t.close();
 		}
 	});
+
+	it("caps carry at the next compaction boundary (compaction flushes context)", async () => {
+		const t: TempDb = tempDb();
+		try {
+			const sid = "s3";
+			insertSession(t.db, sid);
+			// A big read is loaded, then a compaction event flushes context, then more turns.
+			// charsPerToken 3.5 → 35000 chars = 10000 tokens, 35 chars = 10 tokens, 70 = 20.
+			//
+			// Billed turns: a1, a2, a3 (output 50 each). Compaction sits between r2 and a3.
+			//
+			// WITHOUT compaction awareness the big read (r1) would be credited with 2
+			// billed turns after it (a2, a3) = 20000 token-turns. WITH awareness its
+			// carry stops at the compaction, so only a2 counts = 10000 token-turns.
+			insertMessages(t.db, sid, [
+				{ id: "u0", role: "user", text: "do a thing" },
+				{ id: "a1", role: "assistant", text: "reading", toolCalls: [{ name: "read", arguments: { path: "/big.ts" } }] },
+				{ id: "r1", role: "toolResult", toolResults: [{ toolName: "read", isError: false, textLength: 35000 }] },
+				{ id: "a2", role: "assistant", text: "working", toolCalls: [{ name: "read", arguments: { path: "/small.ts" } }] },
+				{ id: "r2", role: "toolResult", toolResults: [{ toolName: "read", isError: false, textLength: 35 }] },
+				{ id: "cmp", role: "compaction", text: "[context compacted]" },
+				{ id: "a3", role: "assistant", text: "editing", toolCalls: [{ name: "edit", arguments: { path: "/big.ts" } }] },
+				{ id: "r3", role: "toolResult", toolResults: [{ toolName: "edit", isError: false, textLength: 70 }] },
+			]);
+			for (const id of ["a1", "a2", "a3"]) setUsage(t.db, id, 50);
+
+			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
+			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
+			const { errors } = await registerAll(fw, { builtins: [contextEconomyAnalyzer] });
+			assert.deepEqual(errors, [], JSON.stringify(errors));
+
+			const summary = await fw.run(sid, { analyzerIds: ["context-economy"] });
+			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
+
+			const row = t.db
+				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'context-economy'")
+				.get() as { content_json: string } | undefined;
+			assert.ok(row, "produced a node");
+			const c = JSON.parse(row!.content_json);
+
+			// big read r1: 10000 tok × 1 turn (a2 only, capped at compaction) = 10000
+			// small read r2: 10 tok × 0 turns (compaction is next event) = 0
+			// edit r3: 20 tok × 0 = 0
+			// → read total = 10000, not 20010.
+			assert.equal(c.carry.byTool.read, 10000, "read carry capped at compaction boundary");
+			assert.equal(c.carry.totalTokenTurns, 10000);
+			assert.equal(c.compactionCount, 1, "compaction event counted");
+		} finally {
+			t.close();
+		}
+	});
 });

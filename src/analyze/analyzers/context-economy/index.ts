@@ -14,6 +14,11 @@
  * tool, and flags the specific offenders (oversized results, high-carry results,
  * redundant re-reads of the same file).
  *
+ * Compaction-aware: a compaction event flushes context (cacheRead drops to ~0
+ * and rebuilds from a summary), so a result loaded before a compaction stops
+ * being billed at that boundary, not at session end. Carry is capped at the next
+ * compaction after each result.
+ *
  * It also tracks which skills are invoked (via the `Skill` tool) and correlates
  * skill presence with carry cost, so `/prospect-proposals` can recommend
  * skill-level improvements ("read narrower in /pr").
@@ -51,7 +56,7 @@ export const CONTEXT_ECONOMY_DEF: AnalyzerDef = {
 export const CONTEXT_ECONOMY_VERSION: AnalyzerVersion = {
 	analyzerId: CONTEXT_ECONOMY_DEF.id,
 	major: 1,
-	minor: 1,
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/context-economy/index.ts",
 };
@@ -145,11 +150,26 @@ export const contextEconomyAnalyzer: Analyzer = {
 			.all(ctx.sessionId) as DbRow[];
 
 		const n = rows.length;
-		const suffix = new Array(n + 1).fill(0);
-		for (let i = n - 1; i >= 0; i--) {
-			const billed = rows[i]!.role === "assistant" && rows[i]!.usage ? 1 : 0;
-			suffix[i] = suffix[i + 1] + billed;
+		// A compaction event flushes context: cacheRead drops to ~0 and rebuilds from
+		// a summary. So a tool result loaded before a compaction stops being billed at
+		// that boundary, not at session end. We cap each result's carry at the next
+		// compaction after it.
+		//   billedPrefix[k]      = billed assistant turns in rows[0..k-1]
+		//   nextCompaction[k]    = smallest ordinal >= k that is a compaction event (else n)
+		//   turnsAfter(i)        = billedPrefix[nextCompaction[i+1]] - billedPrefix[i+1]
+		const billedPrefix = new Array(n + 1).fill(0);
+		for (let i = 0; i < n; i++) {
+			const isBilled = rows[i]!.role === "assistant" && rows[i]!.usage ? 1 : 0;
+			billedPrefix[i + 1] = billedPrefix[i] + isBilled;
 		}
+		const nextCompaction = new Array(n + 1).fill(n);
+		let nc = n;
+		for (let i = n - 1; i >= 0; i--) {
+			if (rows[i]!.role === "compaction") nc = i;
+			nextCompaction[i] = nc;
+		}
+		let compactionCount = 0;
+		for (let i = 0; i < n; i++) if (rows[i]!.role === "compaction") compactionCount++;
 
 		const billed = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 		let turns = 0;
@@ -202,7 +222,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 					const textLen = trs.reduce((a, t) => a + (Number(t.textLength) || 0), 0);
 					const tool = (trs[0]?.toolName || "unknown").trim() || "unknown";
 					const tokens = textLen / charsPerToken;
-					const turnsAfter = suffix[i + 1]!;
+					const turnsAfter = billedPrefix[nextCompaction[i + 1]!]! - billedPrefix[i + 1]!;
 					const carry = tokens * turnsAfter;
 					carryByTool[tool] = (carryByTool[tool] ?? 0) + carry;
 					results.push({ tool, tokens, turnsAfter, carry, ordinal: i });
@@ -255,6 +275,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 		const meta = {
 			result: {
 				turns,
+				compactionCount,
 				billed,
 				carry: {
 					totalTokenTurns: Math.round(totalCarry),
