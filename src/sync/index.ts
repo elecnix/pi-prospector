@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { migrate } from "../db/schema.js";
 import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages } from "../db/queries.js";
 import { discoverSessions } from "./scanner.js";
-import { parseLine, parseClaudeSessionMeta } from "./parser.js";
+import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "./parser.js";
 import { resolveFork } from "./forks.js";
 import type { SyncResult, SessionSource } from "../types.js";
 
@@ -163,6 +163,12 @@ function syncClaudeSession(
 		branch_count: 0,
 	});
 
+	// Claude tool_result blocks carry only a tool_use_id; resolve the tool name
+	// from the matching tool_use in the preceding assistant message (issue #30).
+	// Built from ALL lines (not just the resume point) so a tool_use/tool_result
+	// pair that straddles the cursor still resolves on an incremental sync.
+	const toolNamesById = buildClaudeToolNameMap(lines);
+
 	// Parse messages from resume point
 	const resumeLine = cursor?.last_line ?? 0;
 	let msgCount = 0;
@@ -171,7 +177,7 @@ function syncClaudeSession(
 		const line = lines[i]?.trim();
 		if (!line) continue;
 
-		const parsed = parseLine(line, "claude");
+		const parsed = parseLine(line, "claude", toolNamesById);
 		if (!parsed || parsed.kind !== "message") continue;
 
 		const entry = parsed.entry;

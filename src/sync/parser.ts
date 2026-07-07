@@ -33,8 +33,8 @@ export interface ParsedMessage {
 
 export type ParsedLine = ParsedSession | ParsedMessage;
 
-export function parseLine(line: string, source?: SessionSource): ParsedLine | null {
-	if (source === "claude") return parseClaudeLine(line);
+export function parseLine(line: string, source?: SessionSource, toolNamesById?: Map<string, string>): ParsedLine | null {
+	if (source === "claude") return parseClaudeLine(line, toolNamesById);
 	return parsePiLine(line);
 }
 
@@ -181,8 +181,42 @@ function normalizeClaudeToolName(name: string): string {
 
 // ─── Claude line parser ───
 
+/**
+ * Build a `tool_use_id → toolName` map from every assistant message in a Claude
+ * session. Claude's `tool_result` blocks carry only a `tool_use_id`, so the tool
+ * name has to be resolved from the matching `tool_use` block in the preceding
+ * assistant message (issue #30). Names are normalized (Read → read) to match the
+ * assistant-side `tool_calls`. Cheap pre-pass; safe to run over all lines before
+ * the resume point so incremental syncs still resolve names for spanning pairs.
+ */
+export function buildClaudeToolNameMap(lines: string[]): Map<string, string> {
+	const map = new Map<string, string>();
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		let obj: Record<string, unknown>;
+		try {
+			obj = JSON.parse(trimmed) as Record<string, unknown>;
+		} catch {
+			continue;
+		}
+		if (obj.type !== "assistant") continue;
+		const msg = obj.message as Record<string, unknown> | undefined;
+		const content = msg?.content;
+		if (!Array.isArray(content)) continue;
+		for (const part of content) {
+			if (!part || typeof part !== "object") continue;
+			const p = part as Record<string, unknown>;
+			if (p.type === "tool_use" && typeof p.id === "string" && p.id) {
+				map.set(p.id, normalizeClaudeToolName(String(p.name ?? "")));
+			}
+		}
+	}
+	return map;
+}
+
 /** Parse a line from a Claude Code JSONL session file. */
-export function parseClaudeLine(line: string): ParsedLine | null {
+export function parseClaudeLine(line: string, toolNamesById?: Map<string, string>): ParsedLine | null {
 	if (!line.trim()) return null;
 
 	let obj: Record<string, unknown>;
@@ -240,9 +274,10 @@ export function parseClaudeLine(line: string): ParsedLine | null {
 							.map(c => String(c.text ?? ""))
 							.join("\n");
 					}
+					const toolUseId = String(p.tool_use_id ?? "");
 					results.push({
-						toolCallId: String(p.tool_use_id ?? ""),
-						toolName: "",
+						toolCallId: toolUseId,
+						toolName: toolNamesById?.get(toolUseId) ?? "",
 						isError: Boolean(p.is_error),
 						textLength: resultText.length,
 					});

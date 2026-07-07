@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseLine, parseClaudeSessionMeta } from "../../src/sync/parser.js";
+import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../../src/sync/parser.js";
 
 describe("parseLine (claude source)", () => {
 	it("parses a Claude user message with string content", () => {
@@ -48,6 +48,83 @@ describe("parseLine (claude source)", () => {
 			assert.equal(result.entry.tool_results![0]!.toolCallId, "toolu_01");
 			assert.equal(result.entry.tool_results![0]!.isError, false);
 		}
+	});
+
+	it("leaves tool_result toolName empty when no name map is supplied (backward compat)", () => {
+		const line = JSON.stringify({
+			type: "user",
+			uuid: "def-789",
+			message: {
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "toolu_01", is_error: false, content: "x" }],
+			},
+		});
+		const result = parseLine(line, "claude");
+		assert.ok(result && result.kind === "message");
+		assert.equal(result.entry.tool_results![0]!.toolName, "");
+	});
+
+	it("resolves tool_result toolName from a supplied tool_use_id → name map (issue #30)", () => {
+		const line = JSON.stringify({
+			type: "user",
+			uuid: "def-789",
+			message: {
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "toolu_42", is_error: false, content: "file contents" }],
+			},
+		});
+		const names = new Map<string, string>([["toolu_42", "read"]]);
+		const result = parseLine(line, "claude", names);
+		assert.ok(result && result.kind === "message");
+		assert.equal(result.entry.tool_results![0]!.toolName, "read");
+		assert.equal(result.entry.tool_results![0]!.toolCallId, "toolu_42");
+	});
+
+	it("buildClaudeToolNameMap maps tool_use ids to normalized names across lines", () => {
+		const lines = [
+			JSON.stringify({
+				type: "assistant",
+				uuid: "a1",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "tool_use", id: "toolu_a", name: "Read", input: { path: "/f" } },
+						{ type: "tool_use", id: "toolu_b", name: "Bash", input: { command: "ls" } },
+					],
+				},
+			}),
+			JSON.stringify({
+				type: "assistant",
+				uuid: "a2",
+				message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_c", name: "Grep", input: { pattern: "x" } }] },
+			}),
+			// non-assistant / non-tool lines are ignored
+			JSON.stringify({ type: "user", uuid: "u1", message: { role: "user", content: "hi" } }),
+		];
+		const map = buildClaudeToolNameMap(lines);
+		assert.equal(map.get("toolu_a"), "read");
+		assert.equal(map.get("toolu_b"), "bash");
+		assert.equal(map.get("toolu_c"), "grep");
+		assert.equal(map.size, 3);
+	});
+
+	it("end-to-end: a tool_result resolves to the name of its preceding tool_use", () => {
+		const lines = [
+			JSON.stringify({
+				type: "assistant",
+				uuid: "a1",
+				message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_x", name: "Read", input: { path: "/big.ts" } }] },
+			}),
+			JSON.stringify({
+				type: "user",
+				uuid: "u1",
+				message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_x", is_error: false, content: "..." }] },
+			}),
+		];
+		const map = buildClaudeToolNameMap(lines);
+		const parsed = parseLine(lines[1]!, "claude", map);
+		assert.ok(parsed && parsed.kind === "message");
+		assert.equal(parsed.entry.tool_results![0]!.toolName, "read");
 	});
 
 	it("parses a Claude user message with error tool_result", () => {
