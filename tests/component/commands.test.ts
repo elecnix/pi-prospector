@@ -90,6 +90,7 @@ describe("slash commands", () => {
 			"prospect-proposals",
 			"prospect-accept",
 			"prospect-reject",
+			"prospect-remediate",
 			"prospect-analyze",
 			"prospect-verify",
 		]) {
@@ -201,6 +202,37 @@ describe("slash commands", () => {
 		// The decision (durable memory) surfaces in the proposals view.
 		const listed = await run("prospect-proposals", "--full");
 		assert.match(listed, /decision: accepted \(done\) — already added the rule/);
+	});
+
+	it("prospect-remediate accepts many proposals under one shared remediation", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		insertProposalRow(db, { id: "cmd-r1", sessionId: session.id, title: "Remediate A", inputKey: "ik-cmd-r1" });
+		insertProposalRow(db, { id: "cmd-r2", sessionId: session.id, title: "Remediate B", inputKey: "ik-cmd-r2" });
+		db.close();
+
+		const out = await run("prospect-remediate", "cmd-r1 cmd-r2 --done consolidated polling guidance into AGENTS.md");
+		assert.match(out, /2 proposal/);
+
+		const db2 = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		const d1 = getLatestDecision(db2, "ik-cmd-r1")!;
+		const d2 = getLatestDecision(db2, "ik-cmd-r2")!;
+		db2.close();
+		assert.equal(d1.decision, "accepted");
+		assert.equal(d1.disposition, "done");
+		assert.match(d1.rationale!, /consolidated polling guidance/);
+		assert.ok(d1.remediation_id, "decision must link to the remediation");
+		assert.equal(d1.remediation_id, d2.remediation_id, "both decisions share one remediation");
+
+		// The shared remediation surfaces in the proposals view.
+		const listed = await run("prospect-proposals", "applied");
+		assert.ok(listed.includes(`remediation ${d1.remediation_id}`), `missing remediation ref; got:\n${listed}`);
+
+		const usage = await run("prospect-remediate", "");
+		assert.match(usage, /Usage/);
+		const noDescription = await run("prospect-remediate", "cmd-r1 cmd-r2");
+		assert.match(noDescription, /Usage/);
 	});
 
 	it("prospect-proposals reports empty state", async () => {
@@ -332,6 +364,45 @@ describe("prospect tool", () => {
 		assert.ok(slashOut.includes("/home/user/fmtA"), `slash missing fmtA label; got:\n${slashOut}`);
 		assert.ok(toolBody.includes("/home/user/fmtB"), `tool missing fmtB label; got:\n${toolBody}`);
 		assert.ok(slashOut.includes("/home/user/fmtB"), `slash missing fmtB label; got:\n${slashOut}`);
+	});
+
+	it("remediate accepts many proposals under one shared remediation", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		insertProposalRow(db, { id: "tool-r1-0000-0000-4000-8000-000000000001", sessionId: session.id, title: "Tool remediate A", inputKey: "ik-tool-r1" });
+		insertProposalRow(db, { id: "tool-r2-0000-0000-4000-8000-000000000002", sessionId: session.id, title: "Tool remediate B", inputKey: "ik-tool-r2" });
+		db.close();
+
+		const res = await toolExec(
+			"trem1",
+			{
+				action: "remediate",
+				proposal_ids: ["tool-r1-0000-0000-4000-8000-000000000001", "tool-r2-0000-0000-4000-8000-000000000002", "missing-id"],
+				description: "added one shared lint rule",
+				disposition: "done",
+			},
+			signal,
+			null,
+			ctx,
+		);
+		const body = res.content[0]!.text;
+		assert.match(body, /2/);
+		assert.match(body, /remediation/i);
+		assert.match(body, /missing-id/);
+
+		const db2 = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		const d1 = getLatestDecision(db2, "ik-tool-r1")!;
+		const d2 = getLatestDecision(db2, "ik-tool-r2")!;
+		db2.close();
+		assert.ok(d1.remediation_id);
+		assert.equal(d1.remediation_id, d2.remediation_id);
+		assert.equal(d1.disposition, "done");
+
+		const noIds = await toolExec("trem2", { action: "remediate", description: "x" }, signal, null, ctx);
+		assert.match(noIds.content[0]!.text, /required/);
+		const noDescription = await toolExec("trem3", { action: "remediate", proposal_ids: ["a"] }, signal, null, ctx);
+		assert.match(noDescription.content[0]!.text, /required/);
 	});
 
 	it("#22 accept/reject with unknown id suggests using the full ID from list_proposals", async () => {

@@ -11,6 +11,7 @@ import Database from "better-sqlite3";
  *   sessions, messages, messages_fts   — the read-only session index
  *   proposals                          — materialised, user-reviewable proposals
  *   proposal_decisions                 — append-only human accept/reject + rationale
+ *   remediations                       — one human action addressing many proposals
  *   analyzer_defs / _versions          — analyzer identity and code releases
  *   prompt_registry                    — content-addressed prompt store
  *   analyzer_configs                   — content-addressed config store
@@ -105,7 +106,19 @@ export function migrate(db: Database.Database): void {
 			rationale TEXT,               -- free-text human reasoning (nullable)
 			actual_change TEXT,           -- commit sha / path / note of what was actually done (nullable)
 			harness_ref TEXT,             -- marker of the active prompt/AGENTS.md at decision time (nullable)
+			remediation_id TEXT,          -- shared remediations.id when accepted as part of a batch (nullable)
 			decided_at TEXT NOT NULL
+		);
+
+		-- One remediation action addressing many proposals at once. Same durability
+		-- family as proposal_decisions (external human input, never wiped on
+		-- recompute): decision rows reference it via remediation_id, so a batch
+		-- accept records the shared action once instead of N duplicated rationales.
+		CREATE TABLE IF NOT EXISTS remediations (
+			id TEXT PRIMARY KEY,
+			description TEXT NOT NULL,     -- the remediation action, in the human's words
+			actual_change TEXT,            -- commit sha / path / note of what was actually done (nullable)
+			created_at TEXT NOT NULL
 		);
 
 		-- ──────────────────── analyzer identity & recipe ────────────────────
@@ -241,6 +254,7 @@ export function migrate(db: Database.Database): void {
 		CREATE INDEX IF NOT EXISTS idx_proposals_dedup ON proposals(input_key);
 
 		CREATE INDEX IF NOT EXISTS idx_decisions_input_key ON proposal_decisions(proposal_input_key);
+		CREATE INDEX IF NOT EXISTS idx_decisions_remediation ON proposal_decisions(remediation_id);
 
 		-- Group nodes into logical units (analyzer + source set) for the
 		-- version-alternative timeline, and look up by recipe identity.
@@ -325,6 +339,12 @@ function addMissingColumns(db: Database.Database): void {
 	if (!hasColumn("analysis_runs", "nodes_skipped")) {
 		db.exec("ALTER TABLE analysis_runs ADD COLUMN nodes_skipped INTEGER DEFAULT 0");
 		db.exec("UPDATE analysis_runs SET nodes_skipped = 0 WHERE nodes_skipped IS NULL");
+	}
+
+	// proposal_decisions: link decisions to a shared remediation (databases
+	// created before the remediations table existed)
+	if (!hasColumn("proposal_decisions", "remediation_id")) {
+		db.exec("ALTER TABLE proposal_decisions ADD COLUMN remediation_id TEXT");
 	}
 
 	// analysis_edges: add missing id and ordinal columns

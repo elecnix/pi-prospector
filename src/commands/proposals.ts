@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
-import { listProposals, acceptProposal, rejectProposal, getSessionLabels, getLatestDecision } from "../db/queries.js";
+import { listProposals, acceptProposal, rejectProposal, acceptProposalsWithRemediation, getSessionLabels, getLatestDecision } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { getNode } from "../db/analysis-queries.js";
 import { getDbPath } from "../config.js";
@@ -62,6 +62,48 @@ export function parseDecisionArgs(args: string): { id?: string; input: DecisionI
 	}
 	const rationale = rest.join(" ").trim();
 	return { id, input: { disposition, rationale: rationale.length > 0 ? rationale : null } };
+}
+
+/**
+ * A token counts as a proposal id when it is made of id characters AND carries
+ * at least one digit — every uuidv7 does, while the words a remediation
+ * description starts with ("added", "capped", …) almost never do. This is what
+ * lets `/prospect-remediate` take ids and free text without a separator.
+ */
+function looksLikeProposalId(token: string): boolean {
+	return /^[0-9a-z-]+$/i.test(token) && /\d/.test(token);
+}
+
+/**
+ * Parse `<id> <id>... [--planned|--done|--done-differently] <description...>`
+ * for the remediate command. Leading id-like tokens are the proposal ids; the
+ * first wordy token switches to description mode (all later tokens join it,
+ * id-like or not); the disposition flag is recognised anywhere, as in
+ * parseDecisionArgs.
+ */
+export function parseRemediateArgs(args: string): {
+	ids: string[];
+	disposition: DecisionInput["disposition"];
+	description: string | null;
+} {
+	const toks = (args ?? "").trim().split(/\s+/).filter(Boolean);
+	const ids: string[] = [];
+	let disposition: DecisionInput["disposition"] = null;
+	const rest: string[] = [];
+	let inDescription = false;
+	for (const tok of toks) {
+		const t = tok.toLowerCase();
+		if (t === "--planned") disposition = "planned";
+		else if (t === "--done") disposition = "done";
+		else if (t === "--done-differently" || t === "--done_differently") disposition = "done_differently";
+		else if (!inDescription && looksLikeProposalId(tok)) ids.push(tok);
+		else {
+			inDescription = true;
+			rest.push(tok);
+		}
+	}
+	const description = rest.join(" ").trim();
+	return { ids, disposition, description: description.length > 0 ? description : null };
 }
 
 function formatConfidence(confidence: number | null): string {
@@ -126,7 +168,10 @@ export function formatDecisionLine(d: ProposalDecision): string {
 	const disp = d.disposition ? ` (${d.disposition})` : "";
 	const why = d.rationale ? ` — ${d.rationale}` : "";
 	const change = d.actual_change ? ` [${d.actual_change}]` : "";
-	return `decision: ${d.decision}${disp}${why}${change}`;
+	// The shared remediation id groups this decision with the other proposals
+	// that were addressed by the same action.
+	const rem = d.remediation_id ? ` · remediation ${d.remediation_id}` : "";
+	return `decision: ${d.decision}${disp}${why}${change}${rem}`;
 }
 
 /** A one-line with/without replay summary, read from the validation node. */
@@ -242,6 +287,32 @@ export async function prospectReject(args: string, ctx: ExtensionCommandContext)
 	}
 }
 
+export async function prospectRemediate(args: string, ctx: ExtensionCommandContext): Promise<void> {
+	const { ids, disposition, description } = parseRemediateArgs(args);
+	if (ids.length === 0 || !description) {
+		output(
+			ctx,
+			"Usage: /prospect-remediate <id> <id>... [--planned|--done|--done-differently] <description of the one action that addresses them all>",
+			"warning",
+		);
+		return;
+	}
+	const db = new Database(getDbPath());
+	migrate(db);
+	try {
+		const res = acceptProposalsWithRemediation(db, ids, { description }, { disposition });
+		if (!res.remediationId) {
+			output(ctx, `No open proposal among: ${ids.join(", ")}. Nothing applied.`, "warning");
+			return;
+		}
+		const lines = [`Remediation ${res.remediationId} applied to ${res.accepted.length} proposal(s): ${res.accepted.join(", ")}`];
+		if (res.skipped.length > 0) lines.push(`Skipped (not found or not open): ${res.skipped.join(", ")}`);
+		output(ctx, lines.join("\n"));
+	} finally {
+		db.close();
+	}
+}
+
 export function registerProposalsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-proposals", {
 		description:
@@ -257,5 +328,10 @@ export function registerProposalsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-reject", {
 		description: "Reject a proposal by ID",
 		handler: prospectReject,
+	});
+
+	pi.registerCommand("prospect-remediate", {
+		description: "Accept many proposals at once under ONE shared remediation action: <id> <id>... [--planned|--done|--done-differently] <description>",
+		handler: prospectRemediate,
 	});
 }

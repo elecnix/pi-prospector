@@ -179,7 +179,23 @@ export interface ProposalDecision {
 	rationale: string | null;
 	actual_change: string | null;
 	harness_ref: string | null;
+	/** Shared remediation this decision was made under, if accepted as part of a batch. */
+	remediation_id: string | null;
 	decided_at: string;
+}
+
+/**
+ * One remediation action that addresses many proposals at once. Like decisions,
+ * remediations are EXTERNAL human input (not analysis nodes) and survive a wipe
+ * + recompute; decision rows link to it via `remediation_id`, so accepting N
+ * proposals under one action records the shared context once instead of
+ * duplicating the same rationale N times.
+ */
+export interface Remediation {
+	id: string;
+	description: string;
+	actual_change: string | null;
+	created_at: string;
 }
 
 // ─── Stats ───

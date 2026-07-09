@@ -148,6 +148,25 @@ Mark an open proposal as `rejected`, optionally with a rationale (for example
 *"my current harness already enforces this"*). The rationale is recorded as a
 durable decision exactly as for accept.
 
+### `/prospect-remediate <id> <id>... [--planned|--done|--done-differently] <description...>`
+
+Accept **many proposals at once under one shared remediation action** — for
+when a single fix addresses several proposals and accepting them one by one
+would duplicate the same rationale N times. One `remediation` record is
+created (the description, in your words), every open proposal in the list is
+marked `applied`, and each decision links back to the shared remediation via
+its id. Ids that are unknown or no longer open are skipped and reported.
+
+Example: `/prospect-remediate 0c9f 1a2b 3d4e --done consolidated all polling guidance into AGENTS.md`.
+
+Leading tokens that look like proposal ids (id characters with at least one
+digit — every proposal id qualifies) are the ids; the rest is the description.
+The description doubles as each decision's rationale, and the shared
+remediation id is shown next to the decision in `/prospect-proposals`, so you
+can see at a glance which proposals were resolved by the same action.
+Remediations live in the same durability family as decisions: they survive a
+wipe-and-recompute.
+
 ### `/prospect-verify`
 
 Recompute every analysis node's output key from its stored content and confirm it matches what is recorded. Because identities are content-addressed, any mismatch reveals out-of-band tampering or corruption of the database. Pure read; reports `ok` or lists the mismatching nodes. See [Verification](#design) in `DESIGN.md`.
@@ -169,6 +188,7 @@ When installed, pi-prospector registers a `prospect` tool the Pi coding agent ca
 | `list_proposals` | List proposals, optionally filtered by status |
 | `accept` | Mark a proposal as applied; optional `rationale`, `disposition` (planned/done/done_differently), `actual_change` record a durable decision |
 | `reject` | Mark a proposal as rejected; optional `rationale` records a durable decision |
+| `remediate` | Accept many proposals (`proposal_ids`) at once under ONE shared remediation (`description`) instead of N duplicated rationales |
 
 This lets you say things like "show me open proposals" or "sync my sessions and check stats" directly in a Pi conversation. (Analysis itself runs through `/prospect-analyze`, not the tool, because it can be long-running and cost money.)
 
@@ -289,7 +309,7 @@ pi -e ./src/index.ts --prospect proposals
 pi -e ./src/index.ts --prospect "accept <id>"
 ```
 
-The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status] [--full]`, `show <id>`, `verify`, `validate [flags]`, `accept <id> [--planned|--done|--done-differently] [rationale]`, `reject <id> [rationale]`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
+The value is `"<command> [args]"`; quote it when it contains spaces. Commands: `sync`, `analyze [flags]`, `stats`, `proposals [status] [--full]`, `show <id>`, `verify`, `validate [flags]`, `accept <id> [--planned|--done|--done-differently] [rationale]`, `reject <id> [rationale]`, `remediate <id> <id>... [--planned|--done|--done-differently] <description>`. When `--prospect` is absent the extension stays fully interactive. (`-ne` additionally skips discovery of other extensions, and `--no-session` keeps the run ephemeral.)
 
 To iterate on a small **private** subset rather than your whole history, copy a few session folders somewhere outside any repo and point the env overrides at them — the sessions directory is only ever read:
 

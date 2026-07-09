@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseProposalsArgs, parseDecisionArgs, rankProposals, sessionLabel, statusLabel } from "../../src/commands/proposals.js";
-import type { Proposal } from "../../src/types.js";
+import { parseProposalsArgs, parseDecisionArgs, parseRemediateArgs, formatDecisionLine, rankProposals, sessionLabel, statusLabel } from "../../src/commands/proposals.js";
+import type { Proposal, ProposalDecision } from "../../src/types.js";
 import { homedir } from "node:os";
 
 function makeProposal(overrides: Partial<Proposal>): Proposal {
@@ -139,4 +139,57 @@ test("parseDecisionArgs: done-differently alias and flag-anywhere", () => {
 
 test("parseDecisionArgs: empty args yields no id", () => {
 	assert.equal(parseDecisionArgs("").id, undefined);
+});
+
+test("parseRemediateArgs: leading id-like tokens, disposition flag, description", () => {
+	const r = parseRemediateArgs("p1 p2 --done consolidated the rules into AGENTS.md");
+	assert.deepEqual(r.ids, ["p1", "p2"]);
+	assert.equal(r.disposition, "done");
+	assert.equal(r.description, "consolidated the rules into AGENTS.md");
+});
+
+test("parseRemediateArgs: full uuid ids", () => {
+	const r = parseRemediateArgs(
+		"0190a1b2-0000-7000-8000-000000000001 0190a1b2-0000-7000-8000-000000000002 add a pre-commit hook",
+	);
+	assert.deepEqual(r.ids, ["0190a1b2-0000-7000-8000-000000000001", "0190a1b2-0000-7000-8000-000000000002"]);
+	assert.equal(r.description, "add a pre-commit hook");
+	assert.equal(r.disposition, null);
+});
+
+test("parseRemediateArgs: id collection stops at the first wordy token", () => {
+	// "added" carries no digit, so it starts the description even though later
+	// tokens ("2") would look id-like on their own.
+	const r = parseRemediateArgs("p1 added 2 retries");
+	assert.deepEqual(r.ids, ["p1"]);
+	assert.equal(r.description, "added 2 retries");
+});
+
+test("parseRemediateArgs: empty args and missing description", () => {
+	assert.deepEqual(parseRemediateArgs("").ids, []);
+	assert.equal(parseRemediateArgs("").description, null);
+	assert.equal(parseRemediateArgs("p1 p2").description, null);
+	assert.deepEqual(parseRemediateArgs("p1 p2").ids, ["p1", "p2"]);
+});
+
+function makeDecision(overrides: Partial<ProposalDecision>): ProposalDecision {
+	return {
+		id: "d1",
+		proposal_input_key: "ik",
+		decision: "accepted",
+		disposition: null,
+		rationale: null,
+		actual_change: null,
+		harness_ref: null,
+		remediation_id: null,
+		decided_at: "2026-01-01T00:00:00.000Z",
+		...overrides,
+	};
+}
+
+test("formatDecisionLine: shows the shared remediation id when present", () => {
+	const linked = makeDecision({ disposition: "done", rationale: "one fix", remediation_id: "rem-1" });
+	assert.match(formatDecisionLine(linked), /remediation rem-1/);
+	const solo = makeDecision({ rationale: "solo" });
+	assert.doesNotMatch(formatDecisionLine(solo), /remediation/);
 });
