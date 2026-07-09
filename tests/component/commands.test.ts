@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import registerExtension from "../../src/index.js";
-import { insertProposalRow } from "./helpers.js";
+import { insertProposalRow, insertSession } from "./helpers.js";
 import Database from "better-sqlite3";
 import { migrate } from "../../src/db/schema.js";
 import { getLatestDecision } from "../../src/db/queries.js";
@@ -235,5 +235,114 @@ describe("prospect tool", () => {
 
 		const unknown = await toolExec("t6", { action: "bogus" }, signal, null, ctx);
 		assert.match(unknown.content[0]!.text, /Unknown action/);
+	});
+
+	// ── Issues #18–#22: tool list_proposals / accept / reject improvements ──
+
+	it("#18 list_proposals shows the full 36-char proposal id, not a truncated prefix", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		const fullId = "11111111-2222-4333-8444-555555555555";
+		insertProposalRow(db, { id: fullId, sessionId: session.id, title: "Full-id proposal", inputKey: "ik-full-18" });
+		db.close();
+
+		const res = await toolExec("id18", { action: "list_proposals" }, signal, null, ctx);
+		const body = res.content[0]!.text;
+		assert.ok(body.includes(fullId), `full 36-char id must appear; got:\n${body}`);
+		// The conciseEntry id line carries the full id with its hyphens.
+		assert.match(body, /id: 11111111-2222-4333-8444-555555555555\s+·\s+prospect show 11111111-2222-4333-8444-555555555555/);
+	});
+
+	it("#19 list_proposals filters by the severity param", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		insertProposalRow(db, { id: "sev-friction-0001-0000-4000-8000-000000000001", sessionId: session.id, title: "Sev friction keep", severity: "friction", inputKey: "ik-sev-f" });
+		insertProposalRow(db, { id: "sev-waste-0002-0000-4000-8000-000000000002", sessionId: session.id, title: "Sev waste keep", severity: "waste", inputKey: "ik-sev-w" });
+		db.close();
+
+		const res = await toolExec("id19", { action: "list_proposals", severity: "waste" }, signal, null, ctx);
+		const body = res.content[0]!.text;
+		assert.match(body, /Sev waste keep/);
+		assert.doesNotMatch(body, /Sev friction keep/);
+	});
+
+	it("#20 list_proposals honours the limit param", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		for (let i = 0; i < 5; i++) {
+			insertProposalRow(db, { id: `lim-${i}-0000-0000-4000-8000-0000000000${i.toString().padStart(2, "0")}`, sessionId: session.id, title: `Limit item ${i}`, inputKey: `ik-lim-${i}` });
+		}
+		db.close();
+
+		const res = await toolExec("id20", { action: "list_proposals", limit: 2 }, signal, null, ctx);
+		const body = res.content[0]!.text;
+		const entries = body.match(/prospect show lim-/g) ?? [];
+		assert.equal(entries.length, 2, `limit=2 must cap at 2 entries; got:\n${body}`);
+	});
+
+	it("#21 list_proposals groups by session and reuses the conciseEntry format", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		insertSession(db, "sess-tool-a", "/tmp/a.jsonl", "/home/user/projA");
+		insertSession(db, "sess-tool-b", "/tmp/b.jsonl", "/home/user/projB");
+		insertProposalRow(db, { id: "grp-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-tool-a", title: "Group A proposal", inputKey: "ik-grp-a" });
+		insertProposalRow(db, { id: "grp-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-tool-b", title: "Group B proposal", inputKey: "ik-grp-b" });
+		db.close();
+
+		const res = await toolExec("id21", { action: "list_proposals" }, signal, null, ctx);
+		const body = res.content[0]!.text;
+		// Grouping by session produces one header per session (>=2 here, including
+		// the fixture session from earlier tests). What matters is that the two
+		// new proposals each land under their own session's header, with the
+		// slash-command header format and the conciseEntry id+show line.
+		assert.ok((body.match(/═══.*═══/g) ?? []).length >= 2, `expected >=2 session group headers; got:\n${body}`);
+		assert.ok(body.includes("═══ sess-too · /home/user/projA · 1 proposal(s) ═══"), `missing projA group header; got:\n${body}`);
+		assert.ok(body.includes("═══ sess-too · /home/user/projB · 1 proposal(s) ═══"), `missing projB group header; got:\n${body}`);
+		assert.match(body, /Group A proposal/);
+		assert.match(body, /Group B proposal/);
+		// The conciseEntry id+show line (matching the slash command) is present.
+		assert.match(body, /id: grp-a-00000001-0000-4000-8000-000000000001\s+·\s+prospect show grp-a-00000001-0000-4000-8000-000000000001/);
+	});
+
+	it("#21 tool list_proposals format matches the slash command output", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		insertSession(db, "sess-fmt-a", "/tmp/fa.jsonl", "/home/user/fmtA");
+		insertSession(db, "sess-fmt-b", "/tmp/fb.jsonl", "/home/user/fmtB");
+		insertProposalRow(db, { id: "fmt-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-fmt-a", title: "Fmt A proposal", severity: "friction", inputKey: "ik-fmt-a" });
+		insertProposalRow(db, { id: "fmt-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-fmt-b", title: "Fmt B proposal", severity: "reinforcement", inputKey: "ik-fmt-b" });
+		db.close();
+
+		const toolBody = (await toolExec("id21b", { action: "list_proposals" }, signal, null, ctx)).content[0]!.text;
+		const slashOut = await run("prospect-proposals");
+		// Every conciseEntry `prospect show <id>` line in the tool output must appear
+		// verbatim in the slash command output — proving format consistency.
+		const entryIds = toolBody.match(/prospect show \S+/g) ?? [];
+		assert.ok(entryIds.length >= 2, `expected >=2 entries; got:\n${toolBody}`);
+		for (const e of entryIds) {
+			assert.ok(slashOut.includes(e), `slash output missing concise line "${e}";\nslash:\n${slashOut}`);
+		}
+		// Both produce the same session-group headers for these sessions (the
+		// header truncates the session id to 8 chars, so assert on the cwd label
+		// which is rendered in full and identically by both).
+		assert.ok(toolBody.includes("/home/user/fmtA"), `tool missing fmtA label; got:\n${toolBody}`);
+		assert.ok(slashOut.includes("/home/user/fmtA"), `slash missing fmtA label; got:\n${slashOut}`);
+		assert.ok(toolBody.includes("/home/user/fmtB"), `tool missing fmtB label; got:\n${toolBody}`);
+		assert.ok(slashOut.includes("/home/user/fmtB"), `slash missing fmtB label; got:\n${slashOut}`);
+	});
+
+	it("#22 accept/reject with unknown id suggests using the full ID from list_proposals", async () => {
+		const accept = await toolExec("id22a", { action: "accept", proposal_id: "no-such-id" }, signal, null, ctx);
+		assert.match(accept.content[0]!.text, /not found or not open/i);
+		assert.match(accept.content[0]!.text, /full ID/i);
+		assert.match(accept.content[0]!.text, /list_proposals/i);
+
+		const reject = await toolExec("id22b", { action: "reject", proposal_id: "no-such-id" }, signal, null, ctx);
+		assert.match(reject.content[0]!.text, /not found or not open/i);
+		assert.match(reject.content[0]!.text, /full ID/i);
+		assert.match(reject.content[0]!.text, /list_proposals/i);
 	});
 });

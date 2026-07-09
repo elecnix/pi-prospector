@@ -112,7 +112,7 @@ function severityLabel(severity: string): string {
 	return severity;
 }
 
-function conciseEntry(p: Proposal, decision?: ProposalDecision): string {
+export function conciseEntry(p: Proposal, decision?: ProposalDecision): string {
 	const base = `  [${p.status}] ${statusLabel(p)} · ${severityLabel(p.severity)} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}\n    id: ${p.id}  ·  prospect show ${p.id}`;
 	return decision ? `${base}\n    ${formatDecisionLine(decision)}` : base;
 }

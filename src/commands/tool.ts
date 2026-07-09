@@ -3,9 +3,10 @@ import Database from "better-sqlite3";
 import { Type } from "typebox";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
-import { getStats, listProposals, acceptProposal, rejectProposal, getLatestDecision } from "../db/queries.js";
+import { getStats, listProposals, acceptProposal, rejectProposal, getLatestDecision, getSessionLabels } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
-import { statusLabel, formatDecisionLine } from "./proposals.js";
+import { rankProposals, conciseEntry, sessionLabel } from "./proposals.js";
+import type { Proposal } from "../types.js";
 import { getDbPath, getSessionsDir } from "../config.js";
 
 function text(body: string, details: unknown): ToolResult {
@@ -79,19 +80,30 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					case "list_proposals": {
 						const limit = params.limit !== undefined ? (params.limit as number) : 100;
 						const offset = params.offset as number | undefined;
-						const proposals = listProposals(db, params.status as string | undefined, params.severity as string | undefined, limit, offset);
-						if (proposals.length === 0) return text("No proposals found.", []);
-						const body = proposals
-							.map((p) => {
-								const target = p.target_path ? `${p.target_type}: ${p.target_path}` : p.target_type;
-								const sev = p.severity === "reinforcement" ? "reinforce" : p.severity;
-								const decision = getLatestDecision(db, p.input_key);
-								let line = `[${p.status}] ${statusLabel(p)} · ${sev} · ${target}\n  ${p.title}\n  ${p.summary}\n  id: ${p.id}  ·  prospect show ${p.id}`;
-								if (decision) line += `\n  ${formatDecisionLine(decision)}`;
-								return line;
-							})
-							.join("\n\n");
-						return text(body, proposals);
+						const status = params.status as string | undefined;
+						const severity = params.severity as string | undefined;
+						const proposals = listProposals(db, status, severity, limit, offset).sort(rankProposals);
+						const filterDesc = [status, severity].filter(Boolean).join(" ");
+						if (proposals.length === 0) {
+							return text(filterDesc ? `No ${filterDesc} proposals found.` : "No proposals found.", []);
+						}
+						// Group by session and reuse the slash-command conciseEntry formatter,
+						// so the tool and `/prospect-proposals` render identical entries (#21).
+						const labels = new Map(getSessionLabels(db).map((s) => [s.id, s]));
+						const groups = new Map<string, Proposal[]>();
+						for (const p of proposals) {
+							const bucket = groups.get(p.session_id);
+							if (bucket) bucket.push(p);
+							else groups.set(p.session_id, [p]);
+						}
+						const blocks: string[] = [];
+						for (const [sessionId, group] of groups) {
+							const label = sessionLabel(labels.get(sessionId), sessionId);
+							const header = `═══ ${sessionId.slice(0, 8)} · ${label} · ${group.length} proposal(s) ═══`;
+							blocks.push(`${header}\n${group.map((p) => conciseEntry(p, getLatestDecision(db, p.input_key))).join("\n\n")}`);
+						}
+						const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validated score then confidence:`;
+						return text(`${headline}\n\n${blocks.join("\n\n")}`, proposals);
 					}
 					case "accept": {
 						if (!params.proposal_id) return text("proposal_id required", {});
