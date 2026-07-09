@@ -43,6 +43,18 @@ reinforcement proposals for positive patterns worth preserving; use severity
 "reinforcement" for those. Overlapping proposals are fine — dedup happens
 downstream, not here.
 
+PROPOSAL QUALITY — prefer systemic fixes over verification bandaids. A proposal
+that adds a pre-check turn (e.g. run \`stat\` before every \`read\`, run \`ls\` before
+every \`edit\`) doubles the turn count without fixing the root cause. A systemic
+proposal replaces the wrong action with the right one — keep turn count the same.
+Examples:
+- BAD: "verify the file exists before reading it" → adds a turn
+- GOOD: "discover the file path with find -type f before reading, instead of guessing" → replaces guess with find, same turns
+- BAD: "verify the worktree doesn't exist before creating one" → adds a turn
+- GOOD: "list worktrees at session start so the agent never tries to create a duplicate" → changes timing, same turns
+When diagnosing a failure, ask: does the proposed change eliminate the wrong
+action, or just guard against it with an extra step?
+
 Return your analysis by calling the \`submit_session_analysis\` tool. Do NOT reply
 with prose or markdown. The tool takes exactly these fields:
 {
