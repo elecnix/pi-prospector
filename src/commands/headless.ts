@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import { prospectSync } from "./sync.js";
 import { prospectStats } from "./stats.js";
-import { prospectProposals, prospectAccept, prospectReject } from "./proposals.js";
+import { prospectProposals, prospectAccept, prospectReject, prospectRemediate } from "./proposals.js";
 import { prospectAnalyze } from "./analyze.js";
 import { prospectAnalyzers } from "./analyzers.js";
 import { prospectVerify } from "./verify.js";
@@ -23,11 +23,12 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 	validate: prospectValidate,
 	accept: prospectAccept,
 	reject: prospectReject,
+	remediate: prospectRemediate,
 };
 
 const USAGE =
 	'Usage: pi -e <prospector>/src/index.ts --prospect "<command> [args]"\n' +
-	"  commands: sync | analyze [flags] | analyzers [list|validate <path>] | stats | proposals [status] [--full] | show <id> | verify | validate [flags] | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale]";
+	"  commands: sync | analyze [flags] | analyzers [list|validate <path>] | stats | proposals [status] [--full] | show <id> | verify | validate [flags] | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale] | remediate <id> <id>... [--planned|--done|--done-differently] <description>";
 
 /** Split a `--prospect` flag value into a command name and the remaining args. */
 export function splitProspectSpec(spec: string): { command: string; args: string } {
@@ -69,7 +70,7 @@ export async function runProspectSpec(
 export function registerHeadlessFlag(pi: ExtensionAPI): void {
 	pi.registerFlag("prospect", {
 		description:
-			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | verify | validate | accept <id> [rationale] | reject <id> [rationale]',
+			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | verify | validate | accept <id> [rationale] | reject <id> [rationale] | remediate <id> <id>... <description>',
 		type: "string",
 	});
 

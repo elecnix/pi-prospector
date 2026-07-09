@@ -3,7 +3,7 @@ import Database from "better-sqlite3";
 import { Type } from "typebox";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
-import { getStats, listProposals, acceptProposal, rejectProposal, getLatestDecision, getSessionLabels } from "../db/queries.js";
+import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposalsWithRemediation, getLatestDecision, getSessionLabels } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionLabel } from "./proposals.js";
 import type { Proposal } from "../types.js";
@@ -27,9 +27,11 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		name: "prospect",
 		label: "Prospect",
 		description:
-			"Index sessions, check stats, list/accept/reject proposals. Actions: sync, stats, list_proposals, accept, reject. " +
+			"Index sessions, check stats, list/accept/reject proposals. Actions: sync, stats, list_proposals, accept, reject, remediate. " +
 			"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
-			"recommended action is planned, already done, or done_differently (the idea triggered a different action).",
+			"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
+			"Use remediate when ONE action addresses MANY proposals: pass proposal_ids and a description, and all of them " +
+			"are accepted linked to a single shared remediation record instead of N duplicated rationales.",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
@@ -37,6 +39,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				Type.Literal("list_proposals"),
 				Type.Literal("accept"),
 				Type.Literal("reject"),
+				Type.Literal("remediate"),
 			]),
 			status: Type.Optional(
 				Type.Union([
@@ -48,6 +51,8 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			),
 			severity: Type.Optional(Type.String({ description: "Filter by severity: friction, correction, waste, suggestion, reinforcement" })),
 			proposal_id: Type.Optional(Type.String()),
+			proposal_ids: Type.Optional(Type.Array(Type.String(), { description: "Proposal ids to accept together under one remediation (remediate action)." })),
+			description: Type.Optional(Type.String({ description: "The one remediation action that addresses all proposal_ids (remediate action)." })),
 			limit: Type.Optional(Type.Number({ description: "Maximum number of proposals to return (defaults to 100 if omitted)." })),
 			offset: Type.Optional(Type.Number({ description: "Number of proposals to skip before starting to return results." })),
 			rationale: Type.Optional(Type.String({ description: "Human reasoning behind the decision (stored as durable memory)." })),
@@ -109,6 +114,26 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						if (!params.proposal_id) return text("proposal_id required", {});
 						const ok = acceptProposal(db, params.proposal_id as string, decisionInputFrom(params));
 						return text(ok ? `Applied ${params.proposal_id}` : `Proposal "${params.proposal_id}" not found or not open. Use the full ID from the list_proposals output (e.g., prospect show <id>). Check that the proposal is still "open".`, { ok });
+					}
+					case "remediate": {
+						const ids = params.proposal_ids as string[] | undefined;
+						if (!ids || ids.length === 0) return text("proposal_ids required", {});
+						if (!params.description) return text("description required", {});
+						const res = acceptProposalsWithRemediation(
+							db,
+							ids,
+							{ description: params.description as string, actual_change: (params.actual_change as string | undefined) ?? null },
+							decisionInputFrom(params),
+						);
+						if (!res.remediationId) {
+							return text(
+								`No open proposal among: ${ids.join(", ")}. Use the full IDs from the list_proposals output and check they are still "open".`,
+								res,
+							);
+						}
+						const lines = [`Remediation ${res.remediationId} applied to ${res.accepted.length} proposal(s): ${res.accepted.join(", ")}`];
+						if (res.skipped.length > 0) lines.push(`Skipped (not found or not open): ${res.skipped.join(", ")}`);
+						return text(lines.join("\n"), res);
 					}
 					case "reject": {
 						if (!params.proposal_id) return text("proposal_id required", {});

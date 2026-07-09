@@ -6,6 +6,7 @@ import type {
 	ProposalDecision,
 	DecisionVerdict,
 	DecisionDisposition,
+	Remediation,
 } from "../types.js";
 import { getAnalysisStats } from "./analysis-queries.js";
 import { uuidv7 } from "../analyze/input-hash.js";
@@ -164,6 +165,7 @@ function decideProposal(
 	newStatus: ProposalStatus,
 	verdict: DecisionVerdict,
 	input?: DecisionInput,
+	remediationId?: string | null,
 ): boolean {
 	const row = db.prepare("SELECT input_key, status FROM proposals WHERE id = ?").get(id) as
 		| { input_key: string; status: string }
@@ -174,8 +176,8 @@ function decideProposal(
 		db.prepare("UPDATE proposals SET status = ?, updated_at = ? WHERE id = ?").run(newStatus, now, id);
 		db.prepare(
 			"INSERT INTO proposal_decisions " +
-				"(id, proposal_input_key, decision, disposition, rationale, actual_change, harness_ref, decided_at) " +
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				"(id, proposal_input_key, decision, disposition, rationale, actual_change, harness_ref, remediation_id, decided_at) " +
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		).run(
 			uuidv7(),
 			row.input_key,
@@ -184,6 +186,7 @@ function decideProposal(
 			input?.rationale ?? null,
 			input?.actual_change ?? null,
 			input?.harness_ref ?? null,
+			remediationId ?? null,
 			now,
 		);
 	});
@@ -191,13 +194,94 @@ function decideProposal(
 	return true;
 }
 
+/** The verdict an accept records: done_differently means the idea was applied in a modified form. */
+function acceptVerdict(input?: DecisionInput): DecisionVerdict {
+	return input?.disposition === "done_differently" ? "accepted_modified" : "accepted";
+}
+
 export function acceptProposal(db: Database.Database, id: string, input?: DecisionInput): boolean {
-	const verdict: DecisionVerdict = input?.disposition === "done_differently" ? "accepted_modified" : "accepted";
-	return decideProposal(db, id, "applied", verdict, input);
+	return decideProposal(db, id, "applied", acceptVerdict(input), input);
 }
 
 export function rejectProposal(db: Database.Database, id: string, input?: DecisionInput): boolean {
 	return decideProposal(db, id, "rejected", "rejected", input);
+}
+
+// ── Remediations (one action addressing many proposals) ──
+
+/** The shared remediation action recorded with a batch accept. */
+export interface RemediationInput {
+	description: string;
+	actual_change?: string | null;
+}
+
+export interface RemediateResult {
+	/** Null when no proposal was accepted (no remediation row is created). */
+	remediationId: string | null;
+	accepted: string[];
+	skipped: string[];
+}
+
+/**
+ * Accept many proposals under ONE shared remediation: a single transaction
+ * inserts one remediations row and appends a decision per open proposal, each
+ * linked via remediation_id — instead of N accepts duplicating the same
+ * rationale. Non-open or unknown ids are skipped and reported; the remediation
+ * row is only created when at least one proposal is actually accepted. The
+ * description doubles as the default rationale so each decision row stays
+ * self-contained for the meta-analyzer corpus.
+ */
+export function acceptProposalsWithRemediation(
+	db: Database.Database,
+	proposalIds: string[],
+	remediation: RemediationInput,
+	input?: DecisionInput,
+): RemediateResult {
+	const decision: DecisionInput = {
+		...input,
+		rationale: input?.rationale ?? remediation.description,
+		actual_change: input?.actual_change ?? remediation.actual_change ?? null,
+	};
+	const accepted: string[] = [];
+	const skipped: string[] = [];
+	let remediationId: string | null = null;
+	const tx = db.transaction(() => {
+		const open = new Set(
+			proposalIds.filter((id) => {
+				const row = db.prepare("SELECT status FROM proposals WHERE id = ?").get(id) as { status: string } | undefined;
+				return row?.status === "open";
+			}),
+		);
+		if (open.size > 0) {
+			remediationId = uuidv7();
+			db.prepare("INSERT INTO remediations (id, description, actual_change, created_at) VALUES (?, ?, ?, ?)").run(
+				remediationId,
+				remediation.description,
+				remediation.actual_change ?? null,
+				new Date().toISOString(),
+			);
+		}
+		for (const id of proposalIds) {
+			if (open.has(id) && decideProposal(db, id, "applied", acceptVerdict(decision), decision, remediationId)) {
+				accepted.push(id);
+			} else {
+				skipped.push(id);
+			}
+		}
+	});
+	tx();
+	return { remediationId, accepted, skipped };
+}
+
+export function getRemediation(db: Database.Database, id: string): Remediation | undefined {
+	return db.prepare("SELECT * FROM remediations WHERE id = ?").get(id) as Remediation | undefined;
+}
+
+/** Every decision made under one remediation, oldest first. */
+export function getDecisionsForRemediation(db: Database.Database, remediationId: string): ProposalDecision[] {
+	return db
+		.prepare("SELECT * FROM proposal_decisions WHERE remediation_id = ? ORDER BY decided_at ASC, rowid ASC")
+		.all(remediationId) as ProposalDecision[];
 }
 
 // ── Proposal decisions (append-only human feedback) ──
