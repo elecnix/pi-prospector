@@ -44,8 +44,8 @@ reinforcement proposals for positive patterns worth preserving; use severity
 downstream, not here.
 
 PROPOSAL QUALITY — prefer systemic fixes over verification bandaids. A proposal
-that adds a pre-check turn (e.g. run `stat` before every `read`, run `ls` before
-every `edit`) doubles the turn count without fixing the root cause. A systemic
+that adds a pre-check turn (e.g. run \`stat\` before every \`read\`, run \`ls\` before
+every \`edit\`) doubles the turn count without fixing the root cause. A systemic
 proposal replaces the wrong action with the right one — keep turn count the same.
 Examples:
 - BAD: "verify the file exists before reading it" → adds a turn
