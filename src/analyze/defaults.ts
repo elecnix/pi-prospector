@@ -12,12 +12,30 @@ import { turnPairLLMAnalyzer } from "./analyzers/turn-pair-llm/index.js";
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
+import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.js";
+import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
+import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 
-export const DEFAULT_ANALYZER_IDS = ["turn-pair-core", "turn-pair-llm", "tool-trajectory", "context-economy", "session-overview"] as const;
+export const DEFAULT_ANALYZER_IDS = [
+	"turn-pair-core",
+	"lexicon-candidates",
+	"frustration-lexicon",
+	"turn-frustration",
+	"turn-pair-llm",
+	"tool-trajectory",
+	"context-economy",
+	"session-overview",
+] as const;
 
 /** The built-in analyzers registered by a plain analyze run, in dependency order. */
 export const BUILTIN_ANALYZERS: Analyzer[] = [
 	turnPairCoreAnalyzer,
+	// The learned frustration lexicon: nominate vocabulary, judge each unseen word
+	// once for the whole corpus, then match turns against it. Ordered before
+	// turn-pair-llm because a lexicon hit can promote a turn into enrichment.
+	lexiconCandidatesAnalyzer,
+	frustrationLexiconAnalyzer,
+	turnFrustrationAnalyzer,
 	turnPairLLMAnalyzer,
 	toolTrajectoryAnalyzer,
 	contextEconomyAnalyzer,

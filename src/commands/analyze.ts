@@ -18,6 +18,8 @@ import type { ReviseReason, LLMCaller } from "../analyze/types.js";
 
 interface AnalyzeArgs {
 	revise: ReviseReason[];
+	/** Plain-fill every session, not just the not-yet-analysed ones. */
+	all?: boolean;
 	limit?: number;
 	session?: string;
 	analyzer?: string;
@@ -39,13 +41,21 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 
 	const db = new Database(getDbPath(config));
 	migrate(db);
+	const startedAt = new Date().toISOString();
 
 	try {
 		// A plain fill focuses on not-yet-analysed sessions; any revise reason
 		// re-scans every session so stale nodes can be picked up.
+		//
+		// `--all` is the back-fill path for the learned frustration lexicon. When a
+		// session teaches the corpus a new frustration word, turns in *earlier*
+		// sessions that contain that word have genuinely missing units — but those
+		// sessions were retired from the unanalysed queue, so a plain fill never looks
+		// at them again. `--all` re-scans everything while staying frugal: scanning is
+		// cheap, and only the genuinely missing units are computed.
 		const sessions = args.session
 			? [{ id: args.session, file_path: "", started_at: "" }]
-			: reviseActive
+			: reviseActive || args.all
 				? getAllSessions(db, args.limit)
 				: getUnanalyzedSessions(db, args.limit);
 
@@ -77,7 +87,13 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		// Session fan-out: a run that touches an LLM analyzer is paced by the LLM
 		// gate (so the fan-out matches the LLM budget); a deterministic-only run has
 		// no provider to protect and uses the wider deterministic limit.
-		const selected = framework.list().filter((a) => !analyzerIds || analyzerIds.includes(a.def.id));
+		// Expand through dependencies before asking whether the run touches a model:
+		// `--analyzer turn-frustration` is deterministic itself but pulls in
+		// frustration-lexicon, which is not. Judging by the requested ids alone would
+		// fan sessions out at the wide deterministic limit with no LLM gate in front
+		// of a run that really does call a provider.
+		const effectiveIds = new Set(framework.topologicalSort(analyzerIds));
+		const selected = framework.list().filter((a) => effectiveIds.has(a.def.id));
 		const runHasLLM = selected.some((a) => a.version.implementationKind !== "deterministic");
 		const sessionConcurrency = runHasLLM ? llmConcurrency : analyzerConcurrency;
 
@@ -114,12 +130,19 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			}
 		});
 
+		const newTerms = countNewLexiconTerms(db, startedAt);
 		const lines = [
 			`Done [${reach}]. ${sessions.length} session(s) scanned.`,
 			`  Nodes produced: ${nodesProduced} (revised: ${nodesRevised})`,
 			`  Proposals created: ${proposals}`,
 			`  Estimated cost: $${cost.toFixed(4)}`,
 		];
+		if (newTerms > 0 && !args.all && !args.session) {
+			lines.push(
+				`  Frustration lexicon: learned ${newTerms} new term(s).`,
+				`    Sessions analysed earlier may use them — run '/prospect-analyze --all' to back-fill.`,
+			);
+		}
 		if (errors.length > 0) {
 			lines.push(`  Errors: ${errors.length}`);
 			for (const e of errors.slice(0, 5)) lines.push(`    ${e}`);
@@ -133,9 +156,23 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		handler: prospectAnalyze,
 	});
+}
+
+/**
+ * How many frustration-lexicon verdicts this run added. A non-zero count means
+ * the corpus now knows words it did not know before, so sessions analysed
+ * earlier may be carrying friction that is newly visible.
+ */
+function countNewLexiconTerms(db: Database.Database, since: string): number {
+	const row = db
+		.prepare(
+			"SELECT COUNT(*) AS n FROM analysis_nodes WHERE analyzer_id = 'frustration-lexicon' AND node_kind = 'classification' AND created_at >= ?",
+		)
+		.get(since) as { n: number } | undefined;
+	return row?.n ?? 0;
 }
 
 function out(ctx: ExtensionCommandContext, text: string, level: string): void {
@@ -155,7 +192,8 @@ function parseArgs(raw: string): AnalyzeArgs {
 		} else if (p === "--limit" && parts[i + 1]) {
 			const n = parseInt(parts[++i]!, 10);
 			if (!Number.isNaN(n)) result.limit = n;
-		} else if (p === "--session" && parts[i + 1]) result.session = parts[++i];
+		} else if (p === "--all") result.all = true;
+		else if (p === "--session" && parts[i + 1]) result.session = parts[++i];
 		else if (p === "--analyzer" && parts[i + 1]) result.analyzer = parts[++i];
 		else if (p === "--analyzer-path" && parts[i + 1]) result.analyzerPaths.push(parts[++i]!);
 		else if (p === "--model" && parts[i + 1]) result.model = parts[++i];

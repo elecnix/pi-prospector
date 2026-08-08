@@ -271,6 +271,73 @@ contribute to the session's friction score and surface in the digest.
   branch). Pre-flight gaps signal that the agent acted without checking or
   establishing prerequisites.
 
+### Learned frustration lexicon (corpus-scoped)
+
+Friction is often stated in words, and the shipped correction patterns are
+English. A user writing `putain, c'est encore faux`, `не то`, or `🤬` produces no
+verbal signal at all, so their friction is invisible unless it happens to leave a
+non-verbal trace. Rather than ship more languages — an unbounded, always-partial
+list — the system **learns the vocabulary from the corpus**.
+
+- **Lexicon term** — one normalised word or emoji, judged once for the entire
+  corpus. A term's verdict carries a **polarity** (*frustration*, *praise*, or
+  *neutral*), a **category** (profanity, negation, correction, repetition,
+  urgency, confusion, dissatisfaction, praise), a language, a confidence, and a
+  rationale. Praise is collected alongside frustration because it feeds
+  reinforcement proposals.
+- **Frustration lexicon** — the body of those verdicts. It is **derived analysis,
+  not configuration**: config is what the *user* sets, and a learned vocabulary is
+  something the system concludes. Keeping it in nodes is what makes it traceable
+  (a proposal can be walked back to the word and the turn that justified it),
+  versionable (improving the judgement is an ordinary version bump, with the old
+  verdict preserved beside the new one by a *revises* edge), and free of side
+  state.
+- **Term source ref** — a source of kind `term` whose id is the word itself
+  rather than a row id. This is what makes the lexicon corpus-scoped: identity
+  folds in the analyzer, its version, its config, and its source set, so the same
+  word yields the same **input key** in every session.
+- **The graph is the cache.** Because `input_key` is unique across the whole
+  analysis graph, an already-judged word is classified `current` by the ordinary
+  scan and skipped. The first session to nominate a word pays one cheap model
+  call; every later session in the corpus reuses that verdict for nothing. There
+  is no dictionary table, no cursor, and no state outside the graph — the
+  existing content-addressed identity *is* the cache, and it required no new
+  machinery to become one.
+- **Corpus-scoped analyzer** — an analyzer whose subject belongs to the corpus
+  rather than to one session, and which therefore reads a declared dependency's
+  nodes across all sessions. Dependency-scoped visibility still holds: only the
+  *session* scope is lifted, never the dependency scope.
+- **Nomination** — the deterministic first stage: tokenise a session's user
+  messages and put forward the distinct terms worth judging, ranked by frequency
+  and capped per session. Nomination is language-blind by design — no stopword
+  list, no stemming, since either would quietly privilege the languages we
+  happened to think of. Only *shape* is filtered: code, paths, URLs, and
+  identifiers are not vocabulary.
+- **Hit** — one (turn, signal) pair: a node recording that a turn's user text
+  carried a particular signal. Identity is the turn plus that one signal, which
+  makes growth **purely additive** — learning a new word adds nodes to the turns
+  containing it and disturbs nothing else in the corpus. A node holding *all* of a
+  turn's matches would instead rewrite its own source set every time a word was
+  learned, stranding its predecessor as neither revised nor superseded.
+- **Paralinguistic marker** — frustration carried by *form* rather than
+  vocabulary: shouting, repeated punctuation, a held-down letter. These need
+  neither a lexicon nor a language, and they exist so that a user whose words the
+  lexicon has never seen is still legible.
+
+**The lexicon widens recall; it must never gate it.** Every path that detected
+friction before it existed — tool failures, re-asking, empty replies, wasted
+output, trajectory signals, the verbatim user-text snippet carried on *every*
+digest line — keeps working untouched. A change that made any of them conditional
+on lexicon coverage would be a recall regression, not a refinement.
+
+Back-filling is explicit. When a session teaches the corpus a new word, turns in
+*earlier* sessions containing that word have genuinely missing units — but those
+sessions have been retired from the unanalysed queue, so an ordinary fill never
+revisits them. Rather than mutate that queue as a side effect of analysis, a run
+reports how many terms it learned and the user asks for a full plain fill. The
+back-fill stays frugal: scanning is cheap, and only the turns that actually
+contain the new word have anything to compute.
+
 ### Language-model access
 
 - **Model tier** — an abstract quality/cost band (**cheap**, **mid**,
@@ -618,7 +685,10 @@ wrong.
 - Improving an analyzer means a new version and new nodes; existing nodes for the
   old version remain and stay reachable through lineage.
 - An analyzer reads only the conversation, its own nodes, and the nodes of its
-  declared dependencies.
+  declared dependencies. A corpus-scoped analyzer may read those dependency nodes
+  across every session, but never a dependency it did not declare.
+- The learned lexicon only ever *widens* detection. No pre-existing path to
+  friction may be made conditional on a word being in it.
 - Sessions are read-only; the system never writes to the conversation record.
 - A proposal can always be traced, via edges, back to the conversation evidence
   that justifies it.

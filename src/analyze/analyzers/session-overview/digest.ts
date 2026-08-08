@@ -11,6 +11,7 @@ import type { AnalysisNodeRow, MessageRow } from "../../types.js";
 import type { TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import type { TurnPairLLMProperties } from "../turn-pair-llm/prompt.js";
 import type { ToolTrajectoryProperties } from "../tool-trajectory/index.js";
+import type { TurnFrustrationProperties } from "../turn-frustration/index.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
 
 export interface DigestSegment {
@@ -31,6 +32,10 @@ export interface SessionDigest {
 	correctionCount: number;
 	toolFailureCount: number;
 	trajectorySignalCount: number;
+	/** Turns carrying at least one learned-lexicon or lexicon-free frustration signal. */
+	frustrationSignalCount: number;
+	/** Distinct languages the learned lexicon matched in this session. */
+	frustrationLanguages: string[];
 	/** True when the session had at least one correction followed by a clean (no-friction) pair — a "good pivot". */
 	cleanRecovery: boolean;
 	/** True when the session completed all turns without any correction or high-signal friction. */
@@ -45,6 +50,7 @@ export interface BuildDigestInput {
 	coreNodes: AnalysisNodeRow[];
 	llmNodes: AnalysisNodeRow[];
 	trajectoryNodes: AnalysisNodeRow[];
+	frustrationNodes?: AnalysisNodeRow[];
 }
 
 function safeParse<T>(json: string): T | null {
@@ -114,6 +120,16 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		pairByUser.set(pair.userMessageId, pair);
 	}
 
+	// Group learned-lexicon and lexicon-free hits by the turn they landed on.
+	const frustrationByUser = new Map<string, TurnFrustrationProperties[]>();
+	for (const node of input.frustrationNodes ?? []) {
+		const props = safeParse<TurnFrustrationProperties>(node.content_json);
+		if (!props?.user_message_id) continue;
+		const list = frustrationByUser.get(props.user_message_id) ?? [];
+		list.push(props);
+		frustrationByUser.set(props.user_message_id, list);
+	}
+
 	// Parse trajectory signal nodes.
 	const trajectory = input.trajectoryNodes
 		.map((n) => safeParse<ToolTrajectoryProperties>(n.content_json))
@@ -128,6 +144,17 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	const correctionCount = core.filter((p) => p.correction_detected).length;
 	const toolFailureCount = core.reduce((sum, p) => sum + p.tool_failure_count, 0);
 	const trajectorySignalCount = trajectory.reduce((sum, t) => sum + (t.signals?.length ?? 0), 0);
+	const frustrationSignalCount = [...frustrationByUser.values()].filter((hits) =>
+		hits.some((h) => h.polarity === "frustration"),
+	).length;
+	const frustrationLanguages = [
+		...new Set(
+			[...frustrationByUser.values()]
+				.flat()
+				.filter((h) => h.signal_source === "lexicon" && h.polarity === "frustration" && h.language !== "und")
+				.map((h) => h.language),
+		),
+	].sort();
 
 	// ── Positive signals ──────────────────────────────────────────────────
 	// task-completed-without-correction: zero corrections across all pairs.
@@ -165,6 +192,17 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		];
 		if (llm) bits.push(`sentiment=${llm.sentiment}`, `type=${llm.friction_type}`, `sev=${llm.severity}`);
 		if (p.correction_text) bits.push(`note="${p.correction_text.slice(0, 120)}"`);
+		// Learned-lexicon and lexicon-free signals. These are what let the synthesiser
+		// see frustration the shipped English regex cannot express — a French user's
+		// wording, or a turn that only shouts.
+		const frustration = frustrationByUser.get(p.user_message_id);
+		if (frustration && frustration.length > 0) {
+			const rendered = [...frustration]
+				.sort((a, b) => (a.signal < b.signal ? -1 : a.signal > b.signal ? 1 : 0))
+				.map((h) => `${h.signal}:${h.category}${h.language !== "und" ? `/${h.language}` : ""}`)
+				.join(",");
+			bits.push(`frustration=[${rendered}]`);
+		}
 		// Tool evidence for failing / high-signal pairs: lets the reduce phase attribute
 		// the root cause to a specific command instead of paraphrasing user wording.
 		if (p.high_signal || p.tool_failure_count > 0) {
@@ -228,6 +266,8 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		correctionCount,
 		toolFailureCount,
 		trajectorySignalCount,
+		frustrationSignalCount,
+		frustrationLanguages,
 		cleanRecovery,
 		taskCompletedWithoutCorrection,
 		lowToolFailureDensity,

@@ -96,7 +96,21 @@ export type AnalyzerConfig = Static<typeof AnalyzerConfig>;
 // ─────────────────────────── planning shapes ───────────────────────────
 
 export const SourceRef = Type.Object({
-	kind: Type.Union([Type.Literal("message"), Type.Literal("analysis_node"), Type.Literal("session")]),
+	/**
+	 * What kind of thing this input is. Most sources are conversation entities or
+	 * upstream nodes. `term` is the *corpus-scoped* kind: its id is a normalised
+	 * word rather than a row, so a unit keyed on a term has the same identity in
+	 * every session. Combined with the table-wide uniqueness of `input_key`, that
+	 * makes the analysis graph itself the corpus-wide cache for per-word analysis —
+	 * the first session to nominate a word pays for it, every later session finds
+	 * the work already `current`.
+	 */
+	kind: Type.Union([
+		Type.Literal("message"),
+		Type.Literal("analysis_node"),
+		Type.Literal("session"),
+		Type.Literal("term"),
+	]),
 	id: Type.String(),
 });
 export type SourceRef = Static<typeof SourceRef>;
@@ -272,6 +286,17 @@ export interface AnalyzerPlanContext {
 	ownNodes: AnalysisNodeRow[];
 	/** Dependency nodes keyed by analyzer id (only declared dependencies). */
 	dependencyNodes: Record<string, AnalysisNodeRow[]>;
+	/**
+	 * A declared dependency's newest node per logical unit, across *every* session.
+	 *
+	 * For corpus-wide subjects — a lexicon term belongs to the corpus, not to the
+	 * session that first surfaced it — the session-scoped `dependencyNodes` is not
+	 * enough. Dependency-scoped visibility still holds: this throws for an
+	 * undeclared dependency exactly like `getDependencyNodes`. Only the session
+	 * scope is lifted, and the read is lazy, so analyzers that do not need it pay
+	 * nothing.
+	 */
+	getGlobalDependencyNodes: (analyzerId: string) => AnalysisNodeRow[];
 	/** The resolved config JSON for this analyzer, so plan() can honour cost guards. */
 	config: Record<string, unknown>;
 	db: Database.Database;
@@ -284,6 +309,11 @@ export interface AnalyzerRunContext {
 	getNode: (id: string) => AnalysisNodeRow | undefined;
 	/** Nodes from a declared dependency. Throws if the dependency was not declared. */
 	getDependencyNodes: (analyzerId: string) => AnalysisNodeRow[];
+	/**
+	 * A declared dependency's newest node per logical unit, across every session —
+	 * the corpus-scoped read. See {@link AnalyzerPlanContext.getGlobalDependencyNodes}.
+	 */
+	getGlobalDependencyNodes: (analyzerId: string) => AnalysisNodeRow[];
 	getSessionMessages: (sessionId: string) => MessageRow[];
 	llm: LLMCaller;
 	config: AnalyzerConfig;
