@@ -7,7 +7,7 @@ import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposal
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionLabel } from "./proposals.js";
 import type { Proposal } from "../types.js";
-import { getDbPath, getSessionsDir } from "../config.js";
+import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
 function text(body: string, details: unknown): ToolResult {
 	return { content: [{ type: "text", text: body }], details };
@@ -77,7 +77,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			try {
 				switch (params.action) {
 					case "sync": {
-						const result = runSync(db, getSessionsDir());
+						const result = runSync(db, getSessionsDir(), getClaudeSessionsDir());
 						return text(JSON.stringify(result), result);
 					}
 					case "stats": {

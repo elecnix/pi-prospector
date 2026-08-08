@@ -6,6 +6,16 @@ import { migrate } from "../../src/db/schema.js";
 
 export const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 
+/**
+ * The Claude sessions root to pass when a test has no Claude fixtures of its own.
+ *
+ * `discoverSessions`/`runSync` require both roots precisely so a test cannot fall
+ * back to the developer's real `~/.claude/projects`. Naming the absent directory
+ * makes that intent explicit at each call site, rather than leaving a bare
+ * `"/nonexistent"` to be misread as an accident.
+ */
+export const NO_CLAUDE_DIR = path.join(os.tmpdir(), "prospect-tests-no-claude-sessions");
+
 export interface TempDb {
 	db: Database.Database;
 	close: () => void;

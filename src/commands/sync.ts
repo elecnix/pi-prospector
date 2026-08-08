@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
-import { getDbPath, getSessionsDir } from "../config.js";
+import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
 export async function prospectSync(_args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const dbPath = getDbPath();
@@ -10,7 +10,7 @@ export async function prospectSync(_args: string, ctx: ExtensionCommandContext):
 	migrate(db);
 
 	try {
-		const result = runSync(db, getSessionsDir());
+		const result = runSync(db, getSessionsDir(), getClaudeSessionsDir());
 		const lines = [
 			"⛏️ Prospect sync complete",
 			`  Sessions processed: ${result.sessionsProcessed}`,

@@ -78,7 +78,7 @@ console.log("══════════════════════�
 console.log("Setup: syncing fixtures…");
 const db = new Database(dbPath);
 migrate(db);
-const sync = runSync(db, fixtureDir);
+const sync = runSync(db, fixtureDir, path.join(tmpDir, "no-claude-sessions"));
 console.log(`  Synced: ${sync.sessionsProcessed} sessions, ${sync.messagesInserted} messages`);
 
 console.log("\nStats (pre-analysis):");

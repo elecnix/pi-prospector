@@ -18,9 +18,9 @@ function tempDb(): { db: Database.Database; close: () => void } {
 /**
  * Create a temp directory structure that mimics the real layout:
  *   <tmpRoot>/.pi/agent/sessions/    ← Pi sessions dir (passed to runSync)
- *   <tmpRoot>/.claude/projects/       ← Claude sessions dir (set via PROSPECTOR_CLAUDE_SESSIONS_DIR)
+ *   <tmpRoot>/.claude/projects/       ← Claude sessions dir (passed to runSync)
  *
- * Returns { piRoot, claudeRoot } — the caller must set PROSPECTOR_CLAUDE_SESSIONS_DIR.
+ * Returns { piRoot, claudeRoot } — the caller passes both to runSync.
  */
 function createMixedFixture(
 	piSessions: Array<{ projectDir: string; fileName: string; lines: string[] }>,
@@ -53,18 +53,6 @@ function cleanupFixture(piRoot: string): void {
 	fs.rmSync(home, { recursive: true, force: true });
 }
 
-/** Set PROSPECTOR_CLAUDE_SESSIONS_DIR and restore it on cleanup. */
-function withClaudeDir(claudeRoot: string, fn: () => void): void {
-	const prev = process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR;
-	try {
-		process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR = claudeRoot;
-		fn();
-	} finally {
-		if (prev === undefined) delete process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR;
-		else process.env.PROSPECTOR_CLAUDE_SESSIONS_DIR = prev;
-	}
-}
-
 describe("Claude session sync", () => {
 	it("syncs a Claude session into database", () => {
 		const { db, close } = tempDb();
@@ -85,26 +73,24 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				withClaudeDir(claudeRoot, () => {
-					const result = runSync(db, piRoot);
-					assert.ok(result.sessionsProcessed >= 1, `expected >=1 session, got ${result.sessionsProcessed}`);
+				const result = runSync(db, piRoot, claudeRoot);
+				assert.ok(result.sessionsProcessed >= 1, `expected >=1 session, got ${result.sessionsProcessed}`);
 
-					// Verify session row
-					const session = db.prepare("SELECT * FROM sessions WHERE source = 'claude'").get() as Record<string, unknown>;
-					assert.ok(session);
-					assert.equal(session.id, "claude-sess-001");
-					assert.equal(session.source, "claude");
+				// Verify session row
+				const session = db.prepare("SELECT * FROM sessions WHERE source = 'claude'").get() as Record<string, unknown>;
+				assert.ok(session);
+				assert.equal(session.id, "claude-sess-001");
+				assert.equal(session.source, "claude");
 
-					// Verify messages: ai-title is not inserted as a message
-					const messages = db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all("claude-sess-001") as Array<{ role: string; source: string }>;
-					assert.equal(messages.length, 2);
-					assert.equal(messages[0]!.role, "user");
-					assert.equal(messages[1]!.role, "assistant");
-					for (const m of messages) assert.equal(m.source, "claude");
+				// Verify messages: ai-title is not inserted as a message
+				const messages = db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all("claude-sess-001") as Array<{ role: string; source: string }>;
+				assert.equal(messages.length, 2);
+				assert.equal(messages[0]!.role, "user");
+				assert.equal(messages[1]!.role, "assistant");
+				for (const m of messages) assert.equal(m.source, "claude");
 
-					const stats = getStats(db);
-					assert.equal(stats.claudeSessions, 1);
-				});
+				const stats = getStats(db);
+				assert.equal(stats.claudeSessions, 1);
 			} finally {
 				cleanupFixture(piRoot);
 			}
@@ -129,14 +115,12 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				withClaudeDir(claudeRoot, () => {
-					const r1 = runSync(db, piRoot);
-					assert.equal(r1.sessionsProcessed, 1);
+				const r1 = runSync(db, piRoot, claudeRoot);
+				assert.equal(r1.sessionsProcessed, 1);
 
-					const r2 = runSync(db, piRoot);
-					assert.equal(r2.sessionsSkipped, 1);
-					assert.equal(r2.messagesInserted, 0);
-				});
+				const r2 = runSync(db, piRoot, claudeRoot);
+				assert.equal(r2.sessionsSkipped, 1);
+				assert.equal(r2.messagesInserted, 0);
 			} finally {
 				cleanupFixture(piRoot);
 			}
@@ -170,14 +154,12 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				withClaudeDir(claudeRoot, () => {
-					const result = runSync(db, piRoot);
-					assert.ok(result.sessionsProcessed >= 2, `expected >=2 sessions, got ${result.sessionsProcessed}`);
+				const result = runSync(db, piRoot, claudeRoot);
+				assert.ok(result.sessionsProcessed >= 2, `expected >=2 sessions, got ${result.sessionsProcessed}`);
 
-					const stats = getStats(db);
-					assert.ok(stats.piSessions >= 1);
-					assert.ok(stats.claudeSessions >= 1);
-				});
+				const stats = getStats(db);
+				assert.ok(stats.piSessions >= 1);
+				assert.ok(stats.claudeSessions >= 1);
 			} finally {
 				cleanupFixture(piRoot);
 			}
