@@ -1,22 +1,33 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { DiscoveredSession, SessionSource } from "../types.js";
-import { getClaudeSessionsDir } from "../config.js";
 
 /**
- * Walk session directories (Pi: ~/.pi/agent/sessions/, Claude: ~/.claude/projects/)
- * and discover all .jsonl files. Groups by project directory name.
+ * Walk both session directories (Pi: `~/.pi/agent/sessions/`, Claude:
+ * `~/.claude/projects/`) and discover all .jsonl files, grouped by project
+ * directory name.
  *
- * Pi dir is passed explicitly (overridable via PROSPECTOR_SESSIONS_DIR).
- * Claude dir is resolved via getClaudeSessionsDir() (overridable via PROSPECTOR_CLAUDE_SESSIONS_DIR).
+ * **Both directories are required parameters, and nothing here reads ambient
+ * config.** They used to be asymmetric — the Pi dir was passed in while the
+ * Claude dir was resolved from the environment — so a caller that supplied an
+ * explicit fixture path still ingested the developer's real session history. The
+ * damage was quiet: with no `~/.claude/projects` present (CI) everything looked
+ * fine, while locally two suites failed for reasons unrelated to the change under
+ * test, and two others had independently discovered the hazard and were juggling
+ * `PROSPECTOR_CLAUDE_SESSIONS_DIR` around every call to defend themselves.
+ *
+ * Required rather than defaulted is the whole point: a caller can no longer
+ * *forget* the Claude directory, so the failure mode cannot quietly return.
+ * Resolving defaults belongs to the composition root — `getSessionsDir()` and
+ * `getClaudeSessionsDir()` in `src/config.ts`, called from the command layer.
  */
 export function discoverSessions(
 	sessionsDir: string,
+	claudeSessionsDir: string,
 ): DiscoveredSession[] {
-	const claudeDir = getClaudeSessionsDir();
 	return [
 		...discoverPiSessions(sessionsDir),
-		...discoverClaudeSessions(claudeDir),
+		...discoverClaudeSessions(claudeSessionsDir),
 	];
 }
 
