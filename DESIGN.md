@@ -279,8 +279,8 @@ verbal signal at all, so their friction is invisible unless it happens to leave 
 non-verbal trace. Rather than ship more languages — an unbounded, always-partial
 list — the system **learns the vocabulary from the corpus**.
 
-- **Lexicon term** — one normalised word or emoji, judged once for the entire
-  corpus. A term's verdict carries a **polarity** (*frustration*, *praise*, or
+- **Lexicon term** — one normalised word, emoji, **or short phrase**, judged once
+  for the entire corpus. A term's verdict carries a **polarity** (*frustration*, *praise*, or
   *neutral*), a **category** (profanity, negation, correction, repetition,
   urgency, confusion, dissatisfaction, praise), a language, a confidence, and a
   rationale. Praise is collected alongside frustration because it feeds
@@ -307,9 +307,19 @@ list — the system **learns the vocabulary from the corpus**.
   rather than to one session, and which therefore reads a declared dependency's
   nodes across all sessions. Dependency-scoped visibility still holds: only the
   *session* scope is lifted, never the dependency scope.
+- **Phrase** — a lexicon term of more than one word. Frustration frequently lives
+  in a bigram whose parts are each genuinely neutral — `laisse tomber`, `never
+  mind`, `trop lent`, `not again` — so no verdict on any single token can reach
+  it. A phrase is the *same kind of subject* as a word: its source ref is still
+  `term`-kind (the words joined by a space), so it inherits the corpus-wide cache
+  and the same lineage with no new machinery. Phrases are built only within a
+  sentence, never across one — a bigram spanning a full stop is the seam between
+  two sentences, not something anyone said.
 - **Nomination** — the deterministic first stage: tokenise a session's user
-  messages and put forward the distinct terms worth judging, ranked by frequency
-  and capped per session. Nomination is language-blind by design — no stopword
+  messages and put forward the distinct terms and phrases worth judging, ranked by
+  frequency and capped per session. Phrases carry their own budget, since bigrams
+  vastly outnumber unigrams and would otherwise crowd out vocabulary that is
+  meaningful on its own. Nomination is language-blind by design — no stopword
   list, no stemming, since either would quietly privilege the languages we
   happened to think of. Only *shape* is filtered: code, paths, URLs, and
   identifiers are not vocabulary.

@@ -47,7 +47,7 @@ export const FRUSTRATION_LEXICON_DEF: AnalyzerDef = {
 	id: "frustration-lexicon",
 	label: "Frustration Lexicon (LLM, corpus-wide)",
 	description:
-		"Judges each previously unseen term nominated by a session — in any language — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the term alone, so a word is adjudicated once for the entire corpus and reused by every later session for free.",
+		"Judges each previously unseen term or two-word phrase nominated by a session — in any language — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the term alone, so a word is adjudicated once for the entire corpus and reused by every later session for free.",
 	anchorSpan: "full_session",
 	dependencies: [LEXICON_CANDIDATES_DEF.id],
 };
@@ -55,7 +55,11 @@ export const FRUSTRATION_LEXICON_DEF: AnalyzerDef = {
 export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	analyzerId: FRUSTRATION_LEXICON_DEF.id,
 	major: 1,
-	minor: 0,
+	// 1.1: the prompt now also covers two-word phrases (issue #40), judged as a
+	// unit rather than as their parts. Existing single-word verdicts stay valid and
+	// are only re-judged by an explicit `--revise minor`; nothing is invalidated by
+	// simply upgrading.
+	minor: 1,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };
@@ -97,6 +101,9 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 		// Collect this session's nominations. Terms already judged anywhere in the
 		// corpus resolve to an existing input_key and the framework classifies them
 		// `current` — no cross-session query is needed to get the cache.
+		// Words and phrases are the same kind of subject — a corpus-wide string — so
+		// they share one planning path and one cache. A phrase's id is simply its
+		// words joined by a space.
 		const terms = new Set<string>();
 		for (const node of candidateNodes) {
 			let props: LexiconCandidatesProperties;
@@ -106,6 +113,7 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 				continue;
 			}
 			for (const t of props.terms ?? []) terms.add(t.term);
+			for (const p of props.phrases ?? []) terms.add(p.term);
 		}
 
 		// Sorted so the order of planned units is reproducible.

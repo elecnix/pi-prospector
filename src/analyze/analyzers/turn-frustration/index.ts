@@ -39,7 +39,7 @@ import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { buildTurnPairs } from "../turn-pair-core/build.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
-import { detectParalinguistic, tokenize } from "../lexicon-candidates/tokenize.js";
+import { detectParalinguistic, matchPhrases, tokenize } from "../lexicon-candidates/tokenize.js";
 import {
 	FRUSTRATION_LEXICON_DEF,
 	type FrustrationLexiconProperties,
@@ -50,7 +50,7 @@ export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 	id: "turn-frustration",
 	label: "Per-Turn Frustration Signals (deterministic)",
 	description:
-		"Matches each turn's user text against the corpus-wide learned lexicon and against lexicon-free markers (shouting, repeated punctuation, elongation), emitting one node per (turn, signal). No LLM. Detects verbal frustration in any language, including from users whose vocabulary the lexicon has never seen.",
+		"Matches each turn's user text against the corpus-wide learned lexicon — single terms and two-word phrases — and against lexicon-free markers (shouting, repeated punctuation, elongation), emitting one node per (turn, signal). No LLM. Detects verbal frustration in any language, including from users whose vocabulary the lexicon has never seen.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id, FRUSTRATION_LEXICON_DEF.id],
 };
@@ -58,19 +58,22 @@ export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	analyzerId: TURN_FRUSTRATION_DEF.id,
 	major: 1,
-	minor: 0,
+	// 1.1: also match learned two-word phrases (issue #40). Purely additive — phrase
+	// hits are new (turn, signal) subjects, so every existing hit node keeps its
+	// identity and nothing is recomputed.
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
 
 /** Where a hit came from. */
-export type SignalSource = "lexicon" | "paralinguistic";
+export type SignalSource = "lexicon" | "lexicon_phrase" | "paralinguistic";
 
 export interface TurnFrustrationProperties {
 	user_message_id: string;
 	pair_index: number;
 	signal_source: SignalSource;
-	/** The matched term, or the marker name for a paralinguistic hit. */
+	/** The matched term or phrase, or the marker name for a paralinguistic hit. */
 	signal: string;
 	polarity: string;
 	category: string;
@@ -143,7 +146,9 @@ export const turnFrustrationAnalyzer: Analyzer = {
 			// never fires on `north`.
 			const counts = new Map<string, number>();
 			for (const token of tokenize(pair.userText)) {
-				if (lexicon.has(token)) counts.set(token, (counts.get(token) ?? 0) + 1);
+				// A phrase entry contains a space and can never equal a single token, but
+				// checking keeps the two matching paths obviously disjoint.
+				if (!token.includes(" ") && lexicon.has(token)) counts.set(token, (counts.get(token) ?? 0) + 1);
 			}
 
 			for (const term of [...counts.keys()].sort()) {
@@ -159,6 +164,29 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						language: entry.props.language,
 						count: counts.get(term) ?? 1,
 						weight: config.lexiconHitWeight,
+						termOutputKey: entry.outputKey,
+					}),
+				);
+			}
+
+			// Phrase hits. A phrase and its component words are separate subjects with
+			// separate verdicts, so both may fire on the same turn — each is a real,
+			// independently-judged signal and each gets its own node, which is what keeps
+			// growth additive.
+			const knownPhrases = new Set([...lexicon.keys()].filter((k) => k.includes(" ")));
+			for (const { phrase, count } of matchPhrases(pair.userText, knownPhrases)) {
+				const entry = lexicon.get(phrase)!;
+				units.push(
+					hitUnit(pair.index, pair.userMessageId, {
+						user_message_id: pair.userMessageId,
+						pair_index: pair.index,
+						signal_source: "lexicon_phrase",
+						signal: phrase,
+						polarity: entry.props.polarity,
+						category: entry.props.category,
+						language: entry.props.language,
+						count,
+						weight: config.phraseHitWeight,
 						termOutputKey: entry.outputKey,
 					}),
 				);

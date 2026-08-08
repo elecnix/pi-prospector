@@ -13,9 +13,18 @@ export const LexiconCandidatesConfig = Type.Object({
 	 * lexicon converge faster at proportionally higher one-time cost.
 	 */
 	maxTermsPerSession: Type.Number(),
+	/**
+	 * How many distinct two-word phrases a session may nominate.
+	 *
+	 * Deliberately smaller than the term budget and separately accounted: bigrams
+	 * vastly outnumber unigrams and most are junk, so sharing one budget would let
+	 * them crowd out vocabulary that carries signal on its own.
+	 */
+	maxPhrasesPerSession: Type.Number(),
 });
 export type LexiconCandidatesConfig = Static<typeof LexiconCandidatesConfig>;
 
 export const DEFAULT_LEXICON_CANDIDATES_CONFIG: LexiconCandidatesConfig = {
 	maxTermsPerSession: 40,
+	maxPhrasesPerSession: 20,
 };
