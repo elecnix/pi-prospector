@@ -51,9 +51,14 @@ function frameworkFor(db: Parameters<typeof getNodesByAnalyzer>[0], llm: ReturnT
 	return framework;
 }
 
-/** How many times the model was asked to adjudicate a given term. */
+/**
+ * How many times the model was asked to adjudicate exactly this entry.
+ *
+ * Matched exactly, not by substring: now that phrases are judged too, a
+ * `TERM: putain c'est` call would otherwise also count as a call for `putain`.
+ */
 function classifyCallsFor(llm: ReturnType<typeof lexiconMock>, term: string): number {
-	return llm.calls.filter((c) => c.tool?.name === "classify_term" && c.user.includes(`TERM: ${term}`)).length;
+	return llm.calls.filter((c) => c.tool?.name === "classify_term" && c.user === `TERM: ${term}`).length;
 }
 
 describe("lexicon-candidates", () => {

@@ -11,6 +11,9 @@ import type { LLMRequest } from "../../src/analyze/types.js";
 
 /** Deterministic mock: every LLM step returns fixed structured output. */
 function respond(req: LLMRequest): import("../../src/analyze/mock-llm.js").MockLLMReply {
+	if (req.tool?.name === "classify_term") {
+		return { text: "x", structured: { polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" } };
+	}
 	if (req.tool?.name === "classify_turn") {
 		return {
 			text: "x",

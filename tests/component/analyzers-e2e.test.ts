@@ -12,6 +12,9 @@ import { listProposals } from "../../src/db/queries.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
 function respond(req: LLMRequest): string {
+	if (req.tool?.name === "classify_term") {
+		return JSON.stringify({ polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" });
+	}
 	const sys = req.system ?? "";
 	if (sys.includes("classify a single turn")) {
 		return JSON.stringify({
@@ -46,6 +49,9 @@ function respond(req: LLMRequest): string {
 }
 
 function respondStructuredToolCalls(req: LLMRequest): MockLLMReply {
+	if (req.tool?.name === "classify_term") {
+		return { text: "x", structured: { polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" } };
+	}
 	if (req.tool?.name === "classify_turn") {
 		return {
 			text: "this text is deliberately not JSON",
@@ -86,6 +92,9 @@ function respondStructuredToolCalls(req: LLMRequest): MockLLMReply {
 }
 
 function respondCleanRecovery(req: LLMRequest): string {
+	if (req.tool?.name === "classify_term") {
+		return JSON.stringify({ polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" });
+	}
 	const sys = req.system ?? "";
 	// turn-pair-llm for the high-signal corrected turn
 	if (sys.includes("classify a single turn")) {
@@ -123,6 +132,9 @@ function respondCleanRecovery(req: LLMRequest): string {
 }
 
 function respondCleanSession(req: LLMRequest): string {
+	if (req.tool?.name === "classify_term") {
+		return JSON.stringify({ polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" });
+	}
 	const sys = req.system ?? "";
 	if (sys.includes("classify a single turn")) {
 		// shouldn't be called for a clean session (no high_signal pairs)

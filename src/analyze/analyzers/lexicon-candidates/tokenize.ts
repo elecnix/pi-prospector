@@ -133,6 +133,90 @@ export function tokenSet(text: string): Set<string> {
 	return new Set(tokenize(text));
 }
 
+/**
+ * Strong sentence boundaries. Commas are deliberately *not* included: a phrase
+ * may legitimately span one (`putain, c'est faux`), whereas a phrase spanning a
+ * full stop is an artefact of two unrelated sentences sitting side by side.
+ */
+const SEGMENT_SPLIT_RE = /[.!?;:\n\r]+/;
+
+/**
+ * The token stream split at sentence boundaries.
+ *
+ * Phrase extraction needs this. Without it `fix it. laisse tomber` yields the
+ * bigram `it laisse`, which nobody said — it is the seam between two sentences.
+ * Every phrase produced or matched here is built within a single segment.
+ */
+export function tokenizeSegments(text: string): string[][] {
+	if (!text) return [];
+	return text
+		.split(SEGMENT_SPLIT_RE)
+		.map((segment) => tokenize(segment))
+		.filter((tokens) => tokens.length > 0);
+}
+
+/** Words per phrase. Bigrams only for now; trigrams multiply the noise. */
+const PHRASE_LENGTH = 2;
+
+/** The phrase separator, and the canonical form of a phrase's term id. */
+const PHRASE_JOINER = " ";
+
+/** Every adjacent n-gram within each segment, in order of appearance. */
+function phrasesOf(text: string): string[] {
+	const out: string[] = [];
+	for (const segment of tokenizeSegments(text)) {
+		for (let i = 0; i + PHRASE_LENGTH <= segment.length; i++) {
+			out.push(segment.slice(i, i + PHRASE_LENGTH).join(PHRASE_JOINER));
+		}
+	}
+	return out;
+}
+
+/**
+ * Distinct phrases across several texts, ranked and capped exactly like
+ * {@link rankTerms}.
+ *
+ * Phrases get their own budget rather than sharing the term budget. There are
+ * far more bigrams than unigrams and most are junk, so letting them compete for
+ * the same slots would crowd out vocabulary that is meaningful on its own.
+ */
+export function rankPhrases(texts: readonly string[], limit: number): TermCount[] {
+	const counts = new Map<string, number>();
+	for (const text of texts) {
+		for (const phrase of phrasesOf(text)) {
+			counts.set(phrase, (counts.get(phrase) ?? 0) + 1);
+		}
+	}
+	return [...counts.entries()]
+		.map(([term, count]) => ({ term, count }))
+		.sort((a, b) => b.count - a.count || compareCodeUnits(a.term, b.term))
+		.slice(0, Math.max(0, limit));
+}
+
+export interface PhraseMatch {
+	phrase: string;
+	count: number;
+}
+
+/**
+ * Which of the `known` phrases occur in a turn's text, with occurrence counts.
+ *
+ * Matching runs over the tokenised segments, so it inherits the same guarantees
+ * as token matching — Unicode-correct, substring-proof, and unable to bridge a
+ * sentence boundary. Results are sorted so a hit's identity does not depend on
+ * where in the message the phrase happened to fall.
+ */
+export function matchPhrases(text: string, known: ReadonlySet<string>): PhraseMatch[] {
+	if (known.size === 0) return [];
+	const counts = new Map<string, number>();
+	for (const phrase of phrasesOf(text)) {
+		if (known.has(phrase)) counts.set(phrase, (counts.get(phrase) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.map(([phrase, count]) => ({ phrase, count }))
+		.sort((a, b) => compareCodeUnits(a.phrase, b.phrase));
+}
+
 export interface TermCount {
 	term: string;
 	count: number;

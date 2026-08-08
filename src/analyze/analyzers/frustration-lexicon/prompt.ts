@@ -15,14 +15,22 @@
  */
 
 import { shortHash } from "../../input-hash.js";
+import { extractJsonObject } from "../turn-pair-llm/prompt.js";
 import { Type } from "typebox";
 
 export const CLASSIFY_TERM_PROMPT = `You judge single words for a multilingual lexicon used to detect
 user frustration in coding-agent conversations.
 
-You will be given one token — a word, an abbreviation, or an emoji, in any
-language. Judge how that token is *habitually* used when a person addresses a
-software assistant. Do not guess at a specific conversation; there is none.
+You will be given one entry — a single word, an abbreviation, an emoji, or a
+short two-word phrase, in any language. Judge how that entry is *habitually* used
+when a person addresses a software assistant. Do not guess at a specific
+conversation; there is none.
+
+For a two-word phrase, judge the phrase as a unit. Many frustration expressions
+are exactly this: the individual words are ordinary, and only together do they
+express disengagement or annoyance — "laisse tomber", "never mind", "forget it",
+"trop lent", "come on", "not again". Judge such a phrase on what it means as a
+whole, not on its parts.
 
 Return your judgement by calling the \`classify_term\` tool with exactly these fields:
 {
@@ -39,9 +47,10 @@ Guidance:
   and angry emoji.
 - "praise" covers thanks, approval, and celebratory emoji — these are just as
   useful, because they mark what the assistant did right.
-- Be strict. The great majority of words are ordinary vocabulary: if a token only
-  signals frustration in a particular sentence rather than by its own character,
-  it is "neutral" with category "none".
+- Be strict. The great majority of entries are ordinary vocabulary: if an entry
+  only signals frustration in a particular sentence rather than by its own
+  character, it is "neutral" with category "none". Most two-word phrases are just
+  two ordinary words next to each other — say so.
 - A word that is merely negative in subject matter ("bug", "error", "fail") is
   NOT a frustration signal — it describes the work, not the user's feeling.
 
@@ -72,7 +81,11 @@ export const CLASSIFY_TERM_TOOL = {
 	}),
 };
 
-/** The user-channel content for one term. Kept minimal — the term is the whole input. */
+/**
+ * The user-channel content for one entry. Kept minimal — the entry is the whole
+ * input. A phrase uses the same envelope as a word, because it is the same kind
+ * of subject: a corpus-wide string whose verdict is cached under its own identity.
+ */
 export function buildClassifyTermPrompt(term: string): string {
 	return `TERM: ${term}`;
 }
@@ -117,4 +130,30 @@ export function parseClassifyTermObject(obj: Record<string, unknown>): ClassifyT
 
 function pickString(value: unknown, allowed: Set<string>, fallback: string): string {
 	return typeof value === "string" && allowed.has(value) ? value : fallback;
+}
+
+/**
+ * Pull a usable verdict out of a model reply, or `null` if there is none.
+ *
+ * Prefers the forced tool call, falls back to JSON in the text channel (some
+ * providers answer that way), and requires the result to actually *look* like a
+ * verdict. The shape check matters: a well-formed object of some other kind would
+ * otherwise parse into all-default fields and be cached, corpus-wide and
+ * permanently, as "neutral" — indistinguishable from a real judgement.
+ */
+export function extractVerdict(structured: unknown, text: string): Record<string, unknown> | null {
+	const candidates: unknown[] = [];
+	if (structured && typeof structured === "object") candidates.push(structured);
+	if (text) {
+		try {
+			candidates.push(extractJsonObject(text));
+		} catch {
+			/* no JSON in the text channel */
+		}
+	}
+	for (const candidate of candidates) {
+		const obj = candidate as Record<string, unknown>;
+		if (typeof obj["polarity"] === "string" && VALID_POLARITY.has(obj["polarity"] as string)) return obj;
+	}
+	return null;
 }

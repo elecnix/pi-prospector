@@ -3,8 +3,23 @@
 import { Type, type Static } from "typebox";
 
 export const FrustrationLexiconConfig = Type.Object({
-	/** Model tier used to judge a term. One small call per previously unseen word. */
-	tier: Type.Union([Type.Literal("cheap"), Type.Literal("mid"), Type.Literal("expensive")]),
+	/**
+	 * Which model judges a term: a tier name (`cheap`/`mid`/`expensive`) or an
+	 * explicit `provider/model` spec, which `resolveModelSpec` passes through
+	 * unchanged.
+	 *
+	 * Allowing a concrete model here — rather than only a tier — is what lets this
+	 * analyzer run somewhere much cheaper than the rest of the pipeline. Judging one
+	 * word is the simplest classification in the system and happens hundreds of
+	 * thousands of times, so a small local or free model is a good trade, e.g.
+	 * `ollama/gemma4:31b-mlx` or `openrouter/google/gemma-4-31b-it:free`. Set it via
+	 * `analyzers["frustration-lexicon"].tier` in prospector.json.
+	 *
+	 * The model must support forced tool calls: a verdict is cached corpus-wide and
+	 * permanently, so `analyze` fails loudly rather than inventing one if the model
+	 * returns no structured output.
+	 */
+	tier: Type.String(),
 	/** Sampling temperature. */
 	temperature: Type.Number(),
 	/**

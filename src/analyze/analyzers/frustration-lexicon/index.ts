@@ -39,6 +39,7 @@ import {
 	CLASSIFY_TERM_TOOL,
 	buildClassifyTermPrompt,
 	parseClassifyTermObject,
+	extractVerdict,
 	type ClassifyTermResult,
 } from "./prompt.js";
 import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, type FrustrationLexiconConfig } from "./config.js";
@@ -47,7 +48,7 @@ export const FRUSTRATION_LEXICON_DEF: AnalyzerDef = {
 	id: "frustration-lexicon",
 	label: "Frustration Lexicon (LLM, corpus-wide)",
 	description:
-		"Judges each previously unseen term nominated by a session — in any language — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the term alone, so a word is adjudicated once for the entire corpus and reused by every later session for free.",
+		"Judges each previously unseen term or two-word phrase nominated by a session — in any language — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the term alone, so a word is adjudicated once for the entire corpus and reused by every later session for free.",
 	anchorSpan: "full_session",
 	dependencies: [LEXICON_CANDIDATES_DEF.id],
 };
@@ -55,7 +56,11 @@ export const FRUSTRATION_LEXICON_DEF: AnalyzerDef = {
 export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	analyzerId: FRUSTRATION_LEXICON_DEF.id,
 	major: 1,
-	minor: 0,
+	// 1.1: the prompt now also covers two-word phrases (issue #40), judged as a
+	// unit rather than as their parts. Existing single-word verdicts stay valid and
+	// are re-judged only by an explicit `--revise minor`; nothing is invalidated by
+	// simply upgrading.
+	minor: 1,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };
@@ -92,12 +97,17 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 	},
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
-		const candidateNodes = ctx.dependencyNodes[LEXICON_CANDIDATES_DEF.id] ?? [];
-
-		// Collect this session's nominations. Terms already judged anywhere in the
-		// corpus resolve to an existing input_key and the framework classifies them
-		// `current` — no cross-session query is needed to get the cache.
-		const terms = new Set<string>();
+		// This session's nominations, kept in the frequency order nomination chose.
+		// Words and phrases are the same kind of subject — a corpus-wide string — so
+		// they share one planning path and one cache; a phrase's id is simply its
+		// words joined by a space. Nodes are read in a fixed order and a duplicate
+		// keeps its first position, so this list is reproducible.
+		const nominatedTerms: string[] = [];
+		const nominatedPhrases: string[] = [];
+		const seen = new Set<string>();
+		const candidateNodes = [...(ctx.dependencyNodes[LEXICON_CANDIDATES_DEF.id] ?? [])].sort((a, b) =>
+			a.output_key < b.output_key ? -1 : a.output_key > b.output_key ? 1 : 0,
+		);
 		for (const node of candidateNodes) {
 			let props: LexiconCandidatesProperties;
 			try {
@@ -105,11 +115,33 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			} catch {
 				continue;
 			}
-			for (const t of props.terms ?? []) terms.add(t.term);
+			for (const t of props.terms ?? []) {
+				if (!seen.has(t.term)) { seen.add(t.term); nominatedTerms.push(t.term); }
+			}
+			for (const p of props.phrases ?? []) {
+				if (!seen.has(p.term)) { seen.add(p.term); nominatedPhrases.push(p.term); }
+			}
 		}
 
-		// Sorted so the order of planned units is reproducible.
-		return [...terms].sort().map((term): AnalysisUnit => {
+		// Every nominated entry is planned, with no per-session budget applied here.
+		//
+		// A budget over *unjudged* entries is the tempting design — it would let each
+		// session's allowance reach vocabulary the corpus has never seen, instead of
+		// being consumed by the same common words every time. It is also wrong: it
+		// makes planning a function of graph state, so each re-run frees the slots the
+		// previous run filled and buys another batch. Measured, a single session kept
+		// judging 60 more entries on every pass, forever — a direct violation of "re-
+		// running without changing version, config, or inputs produces no new nodes".
+		//
+		// No budget is needed, because the cost it was guarding against self-limits.
+		// An entry the corpus has already judged is free — the scan classifies it
+		// `current` and skips it — so a session only ever pays for vocabulary no
+		// earlier session used. The total spend across the whole corpus is therefore
+		// bounded by the corpus's distinct vocabulary, once, no matter how the caps
+		// are set. The ceilings in lexicon-candidates bound node size, not spend.
+		const planned = [...nominatedTerms, ...nominatedPhrases];
+
+		return planned.map((term): AnalysisUnit => {
 			const sources: SourceRef[] = [{ kind: "term", id: term }];
 			return {
 				sources,
@@ -134,10 +166,28 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			tool: CLASSIFY_TERM_TOOL,
 		});
 
-		const properties: FrustrationLexiconProperties = {
-			...parseClassifyTermObject((response.structured as Record<string, unknown> | undefined) ?? {}),
-			term,
-		};
+		// A verdict is cached *permanently* and corpus-wide, so an invented one is far
+		// worse here than a failure. Quietly defaulting an unusable reply to "neutral"
+		// would let a model that cannot do structured output mark every word in the
+		// corpus as ordinary vocabulary: the feature would appear to run and do
+		// nothing, with no way to tell from the outside. Failing instead records an
+		// error node, leaves the unit missing, and self-heals on the next run.
+		//
+		// The tool call is preferred; JSON in the text channel is accepted, since some
+		// providers answer that way. What is rejected is a reply that carries no
+		// verdict at all — this checks for the shape, not merely for parseable JSON,
+		// because a well-formed object of the wrong kind would otherwise degrade
+		// silently into the same all-neutral lexicon.
+		const verdict = extractVerdict(response.structured, response.text);
+		if (!verdict) {
+			throw new Error(
+				`Model '${response.model}' returned no usable classify_term verdict for '${term}'. ` +
+				`A lexicon verdict is cached corpus-wide and permanently, so it is never guessed. ` +
+				`Use a model that supports forced tool calls.`,
+			);
+		}
+
+		const properties: FrustrationLexiconProperties = { ...parseClassifyTermObject(verdict), term };
 
 		return {
 			nodeKind: "classification",

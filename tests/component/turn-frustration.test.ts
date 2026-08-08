@@ -153,7 +153,9 @@ describe("turn-frustration", () => {
 			// Code-unit order, matching the analyzer's locale-independent sort.
 			assert.deepEqual(hits(db, "s2").map((h) => h.signal).sort(), ["putain", "pénible"]);
 			// `putain` was judged during s1; s2 reuses that verdict without re-asking.
-			const putainCalls = llm.calls.filter((c) => c.user.includes("TERM: putain")).length;
+			// Exact match: a phrase entry such as `TERM: putain encore` must not be
+			// counted as another adjudication of the single word.
+			const putainCalls = llm.calls.filter((c) => c.user === "TERM: putain").length;
 			assert.equal(putainCalls, 1);
 			assert.ok(llm.calls.length > callsAfterS1, "s2's genuinely new words were still judged");
 		} finally {
