@@ -64,13 +64,33 @@ const DOTTED_RE = /[\p{L}\p{N}_]+(?:\.[\p{L}\p{N}_]+)+/gu;
 const IDENTIFIER_RE = /[@\p{L}\p{N}]*[_@][\p{L}\p{N}_@]*/gu;
 
 /**
- * Strip everything that is code or reference rather than language, replacing it
- * with a space so surrounding tokens stay separated.
+ * Machine-generated envelopes that ride *inside* user-role messages: harness
+ * task notifications, captured bash output, system reminders, slash-command
+ * echoes. The transcript files them under `user` because that is where they were
+ * injected, but they are not the user's words, and nominating vocabulary from
+ * them permanently caches junk verdicts.
+ *
+ * Matched as balanced `<tag>…</tag>` pairs with lowercase-hyphen names, then any
+ * leftover standalone tag. The name pattern is deliberately narrow so ordinary
+ * prose comparisons (`if x < 3 and y > 4`) are untouched.
  */
-function stripNonProse(text: string): string {
+const MACHINE_BLOCK_RE = /<([a-z][a-z0-9-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1\s*>/g;
+const STANDALONE_TAG_RE = /<\/?[a-z][a-z0-9-]*(?:\s[^>]*)?\/?>/g;
+
+/**
+ * Strip everything that is code, reference, or machine output rather than the
+ * user's own language, replacing it with a space so surrounding tokens stay
+ * separated.
+ */
+export function stripNonProse(text: string): string {
 	return text
 		.replace(FENCED_CODE_RE, " ")
 		.replace(INLINE_CODE_RE, " ")
+		// Machine blocks first: their contents must not survive as prose. Repeated
+		// until stable so nested envelopes collapse fully.
+		.replace(MACHINE_BLOCK_RE, " ")
+		.replace(MACHINE_BLOCK_RE, " ")
+		.replace(STANDALONE_TAG_RE, " ")
 		.replace(URL_RE, " ")
 		.replace(PATH_RE, " ")
 		.replace(DOTTED_RE, " ")
@@ -173,26 +193,48 @@ const REPEATED_PUNCT_RE = /[?!]{2,}/;
 /** The same letter three or more times in a row, in any script. */
 const ELONGATION_RE = /(\p{L})\1{2,}/u;
 
-/** A capitalised alphabetic run of two or more characters. */
-const CAPS_WORD_RE = /\p{Lu}{2,}/gu;
+/** Word-ish runs, case preserved, for reading emphasis off the raw text. */
+const CASED_WORD_RE = /[\p{L}\p{M}']+/gu;
 
-/** A capitalised word pressed directly with `?` or `!` — `WHY?`, `STOP!!`. */
-const PRESSED_CAPS_RE = /\p{Lu}{2,}[^\p{L}]*[?!]/u;
+/** A capitalised word pressed directly with `?` or `!` — `WHY?`, `WTF!!`. */
+const PRESSED_CAPS_RE = /\p{Lu}{3,}[^\p{L}]*[?!]/u;
+
+/** Shortest capitalised run that reads as a shouted *word* rather than an abbreviation. */
+const SHOUTED_WORD_MIN_LENGTH = 5;
 
 /**
  * Shouting, distinguished from an ordinary acronym.
  *
- * A lone `JSON` or `PR` in a calm sentence is vocabulary, not affect. Capitals
- * read as emphasis in exactly two situations: they are *sustained* across two or
- * more words (`STOP DOING THAT`), or a single one is *pressed* with `?`/`!`
- * (`WHY?`). Requiring the punctuation to follow the capitals with no intervening
- * letters is what keeps `Could you update the README when you get a chance?`
- * from reading as a shout.
+ * This is harder than it looks in a technical corpus, which is dense with
+ * capitals that carry no affect at all: `CLI`, `AI`, `MCP SSE`, `HTTP GET`, `JSON
+ * API`. Counting capitalised words — even requiring two of them — labels most of
+ * a developer's ordinary prose as shouting; measured against a real corpus that
+ * heuristic was wrong far more often than it was right.
+ *
+ * Two things separate emphasis from abbreviation. Shouting is **sustained**:
+ * the capitals run across *adjacent* words, where scattered acronyms do not. And
+ * it contains a **word**: acronyms are short and stay short, while a shouted word
+ * is long enough to be one. So we require adjacent capitalised words with at
+ * least one of real word length — or, for the short-and-angry case, a single
+ * capitalised word pressed directly against `?`/`!` (`WHY?`, `WTF!`).
  */
 function isShouting(text: string): boolean {
-	const capsWordCount = [...text.matchAll(CAPS_WORD_RE)].length;
-	if (capsWordCount === 0) return false;
-	if (capsWordCount >= 2) return true;
+	let runLength = 0;
+	let runLongestWord = 0;
+
+	for (const match of text.matchAll(CASED_WORD_RE)) {
+		const word = match[0];
+		const isCaps = word.length >= 2 && /\p{Lu}/u.test(word) && !/\p{Ll}/u.test(word);
+		if (!isCaps) {
+			runLength = 0;
+			runLongestWord = 0;
+			continue;
+		}
+		runLength++;
+		runLongestWord = Math.max(runLongestWord, word.length);
+		if (runLength >= 2 && runLongestWord >= SHOUTED_WORD_MIN_LENGTH) return true;
+	}
+
 	return PRESSED_CAPS_RE.test(text);
 }
 
@@ -202,9 +244,15 @@ function isShouting(text: string): boolean {
  */
 export function detectParalinguistic(text: string): ParalinguisticMarker[] {
 	if (!text) return [];
+	// Read affect off the user's own prose only. Captured bash output and harness
+	// notifications are full of capitals and punctuation that mean nothing about
+	// how the person feels.
+	const prose = stripNonProse(text.normalize("NFKC"));
+	if (!prose.trim()) return [];
+
 	const out: ParalinguisticMarker[] = [];
-	if (isShouting(text)) out.push(PARALINGUISTIC_MARKERS.SHOUTING);
-	if (REPEATED_PUNCT_RE.test(text)) out.push(PARALINGUISTIC_MARKERS.REPEATED_PUNCTUATION);
-	if (ELONGATION_RE.test(text)) out.push(PARALINGUISTIC_MARKERS.ELONGATION);
+	if (isShouting(prose)) out.push(PARALINGUISTIC_MARKERS.SHOUTING);
+	if (REPEATED_PUNCT_RE.test(prose)) out.push(PARALINGUISTIC_MARKERS.REPEATED_PUNCTUATION);
+	if (ELONGATION_RE.test(prose)) out.push(PARALINGUISTIC_MARKERS.ELONGATION);
 	return out;
 }

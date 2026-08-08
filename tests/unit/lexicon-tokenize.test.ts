@@ -39,6 +39,25 @@ describe("tokenize", () => {
 		assert.deepEqual(tokenize("open C:\\tmp\\x.txt again"), ["open", "again"]);
 	});
 
+	it("drops machine-generated envelopes that ride inside user messages", () => {
+		// Harness output is stored under the `user` role but is not the user's words.
+		// Nominating from it permanently caches junk verdicts, so it must never reach
+		// the tokeniser.
+		assert.deepEqual(
+			tokenize("<task-notification><task-id>b84x</task-id></task-notification> fix it"),
+			["fix", "it"],
+		);
+		assert.deepEqual(tokenize("<bash-stdout>Checking MCP server health</bash-stdout> broken"), ["broken"]);
+		assert.deepEqual(tokenize("<system-reminder>Some NOTE here</system-reminder> ok"), ["ok"]);
+		// Envelopes carry attributes too — these leaked in the first corpus run.
+		assert.deepEqual(
+			tokenize('<skill name="linear-ticket" location="/x/y">stop doing this</skill> hello'),
+			["hello"],
+		);
+		// Ordinary prose containing comparisons is untouched.
+		assert.deepEqual(tokenize("check if x < 3 and y > 4"), ["check", "if", "and"]);
+	});
+
 	it("rejects tokens that are too short, too long, or carry digits", () => {
 		// `node22` is dropped whole rather than salvaged as `node`: a token carrying a
 		// digit is an identifier or a version, and half of one is not vocabulary.
@@ -102,6 +121,19 @@ describe("detectParalinguistic", () => {
 		// A lone acronym in ordinary prose is not shouting.
 		assert.deepEqual(detectParalinguistic("please return JSON here"), []);
 		assert.deepEqual(detectParalinguistic("open the PR now"), []);
+	});
+
+	it("does not read a technical corpus's acronyms as shouting", () => {
+		// Every one of these came from real corpus turns the first draft mislabelled.
+		// Shouting is *sustained emphasis*: adjacent capitals, at least one of them a
+		// word rather than an abbreviation. Acronyms are short and stay short.
+		assert.deepEqual(detectParalinguistic("search the web for CLI tools that an AI agent can use"), []);
+		assert.deepEqual(detectParalinguistic("add the MCP SSE server"), []);
+		assert.deepEqual(detectParalinguistic("send an HTTP GET to the JSON API"), []);
+		assert.deepEqual(detectParalinguistic("symlink .pi/agent/appendsystemprompt to my CLAUDE.md"), []);
+		assert.deepEqual(detectParalinguistic("<bash-stdout>Checking MCP SERVER HEALTH</bash-stdout>"), []);
+		// But genuine sustained emphasis still lands.
+		assert.deepEqual(detectParalinguistic("THIS IS STILL BROKEN"), [PARALINGUISTIC_MARKERS.SHOUTING]);
 	});
 
 	it("returns markers in a stable, deduplicated order", () => {

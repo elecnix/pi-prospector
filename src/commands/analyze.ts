@@ -87,7 +87,13 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		// Session fan-out: a run that touches an LLM analyzer is paced by the LLM
 		// gate (so the fan-out matches the LLM budget); a deterministic-only run has
 		// no provider to protect and uses the wider deterministic limit.
-		const selected = framework.list().filter((a) => !analyzerIds || analyzerIds.includes(a.def.id));
+		// Expand through dependencies before asking whether the run touches a model:
+		// `--analyzer turn-frustration` is deterministic itself but pulls in
+		// frustration-lexicon, which is not. Judging by the requested ids alone would
+		// fan sessions out at the wide deterministic limit with no LLM gate in front
+		// of a run that really does call a provider.
+		const effectiveIds = new Set(framework.topologicalSort(analyzerIds));
+		const selected = framework.list().filter((a) => effectiveIds.has(a.def.id));
 		const runHasLLM = selected.some((a) => a.version.implementationKind !== "deterministic");
 		const sessionConcurrency = runHasLLM ? llmConcurrency : analyzerConcurrency;
 
