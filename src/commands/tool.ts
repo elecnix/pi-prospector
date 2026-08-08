@@ -3,7 +3,7 @@ import Database from "better-sqlite3";
 import { Type } from "typebox";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
-import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposalsWithRemediation, getLatestDecision, getSessionLabels } from "../db/queries.js";
+import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposalsBulk, rejectProposalsBulk, acceptProposalsWithRemediation, getLatestDecision, getSessionLabels } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionLabel } from "./proposals.js";
 import type { Proposal } from "../types.js";
@@ -27,9 +27,10 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		name: "prospect",
 		label: "Prospect",
 		description:
-			"Index sessions, check stats, list/accept/reject proposals. Actions: sync, stats, list_proposals, accept, reject, remediate. " +
+			"Index sessions, check stats, list/accept/reject proposals. Actions: sync, stats, list_proposals, accept, reject, remediate, help. " +
 			"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 			"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
+			"Use proposal_ids (string array) on accept/reject for bulk operations with a shared rationale. " +
 			"Use remediate when ONE action addresses MANY proposals: pass proposal_ids and a description, and all of them " +
 			"are accepted linked to a single shared remediation record instead of N duplicated rationales.",
 		parameters: Type.Object({
@@ -40,6 +41,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				Type.Literal("accept"),
 				Type.Literal("reject"),
 				Type.Literal("remediate"),
+				Type.Literal("help"),
 			]),
 			status: Type.Optional(
 				Type.Union([
@@ -51,7 +53,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			),
 			severity: Type.Optional(Type.String({ description: "Filter by severity: friction, correction, waste, suggestion, reinforcement" })),
 			proposal_id: Type.Optional(Type.String()),
-			proposal_ids: Type.Optional(Type.Array(Type.String(), { description: "Proposal ids to accept together under one remediation (remediate action)." })),
+			proposal_ids: Type.Optional(Type.Array(Type.String(), { description: "Proposal ids to accept/reject together (accept/reject/remediate actions)." })),
 			description: Type.Optional(Type.String({ description: "The one remediation action that addresses all proposal_ids (remediate action)." })),
 			limit: Type.Optional(Type.Number({ description: "Maximum number of proposals to return (defaults to 100 if omitted)." })),
 			offset: Type.Optional(Type.Number({ description: "Number of proposals to skip before starting to return results." })),
@@ -111,8 +113,18 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						return text(`${headline}\n\n${blocks.join("\n\n")}`, proposals);
 					}
 					case "accept": {
-						if (!params.proposal_id) return text("proposal_id required", {});
-						const ok = acceptProposal(db, params.proposal_id as string, decisionInputFrom(params));
+						const decision = decisionInputFrom(params);
+						// Bulk path: proposal_ids array
+						if (params.proposal_ids && Array.isArray(params.proposal_ids) && (params.proposal_ids as string[]).length > 0) {
+							const ids = params.proposal_ids as string[];
+							const res = acceptProposalsBulk(db, ids, decision);
+							const lines = [`Accepted ${res.accepted.length} proposal(s): ${res.accepted.join(", ")}`];
+							if (res.skipped.length > 0) lines.push(`Skipped (not found or not open): ${res.skipped.join(", ")}`);
+							return text(lines.join("\n"), res);
+						}
+						// Single path
+						if (!params.proposal_id) return text("proposal_id or proposal_ids required", {});
+						const ok = acceptProposal(db, params.proposal_id as string, decision);
 						return text(ok ? `Applied ${params.proposal_id}` : `Proposal "${params.proposal_id}" not found or not open. Use the full ID from the list_proposals output (e.g., prospect show <id>). Check that the proposal is still "open".`, { ok });
 					}
 					case "remediate": {
@@ -136,12 +148,47 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						return text(lines.join("\n"), res);
 					}
 					case "reject": {
-						if (!params.proposal_id) return text("proposal_id required", {});
-						const ok = rejectProposal(db, params.proposal_id as string, decisionInputFrom(params));
+						const decision = decisionInputFrom(params);
+						// Bulk path: proposal_ids array
+						if (params.proposal_ids && Array.isArray(params.proposal_ids) && (params.proposal_ids as string[]).length > 0) {
+							const ids = params.proposal_ids as string[];
+							const res = rejectProposalsBulk(db, ids, decision);
+							const lines = [`Rejected ${res.rejected.length} proposal(s): ${res.rejected.join(", ")}`];
+							if (res.skipped.length > 0) lines.push(`Skipped (not found or not open): ${res.skipped.join(", ")}`);
+							return text(lines.join("\n"), res);
+						}
+						// Single path
+						if (!params.proposal_id) return text("proposal_id or proposal_ids required", {});
+						const ok = rejectProposal(db, params.proposal_id as string, decision);
 						return text(ok ? `Rejected ${params.proposal_id}` : `Proposal "${params.proposal_id}" not found or not open. Use the full ID from the list_proposals output (e.g., prospect show <id>). Check that the proposal is still "open".`, { ok });
 					}
-					default:
+					case "help": {
+						return text(`=== prospect tool ===
+
+Workflow:
+  1. sync   — index new sessions from disk
+  2. stats  — see proposal counts, token ratios, analysis depth
+  3. list_proposals [status] [severity] [limit] [offset] — ranked by confidence
+  4. accept/reject — decide proposals singly or in bulk (proposal_ids array)
+  5. remediate — accept many proposals under one shared remediation record
+
+Bulk operations:
+  - accept/reject accept proposal_ids (string array) for bulk decisions
+    with a shared rationale. Skipped ids (not found or not open) are reported.
+  - remediate is for ONE action addressing MANY proposals — one remediation
+    row, one description, N decision rows.
+
+Custom analyzers:
+  Place a TypeScript module in ~/.pi/agent/prospector/analyzers/<id>/
+  with index.ts (register function), config.ts, and a prompt.ts.
+  The register function takes an AnalyzerFramework and returns void.
+  Use pi --prospect "analyzers" to list registered analyzers.
+  Use pi --prospect "analyze --analyzer <id>" to run a specific one.
+  See DESIGN.md for the full architecture.`, {});
+					}
+					default: {
 						return text(`Unknown action: ${String(params.action)}`, {});
+					}
 				}
 			} finally {
 				db.close();
