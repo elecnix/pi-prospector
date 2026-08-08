@@ -242,7 +242,8 @@ export class AnalyzerFramework {
 
 		const runCtx = this.buildRunContext(analyzer, config, sessionId);
 
-		for (const item of todo) {
+		for (let index = 0; index < todo.length; index++) {
+			const item = todo[index]!;
 			try {
 				const analysis = await analyzer.analyze(item.unit, runCtx);
 				// Cost is booked whether or not the node lands: the call was made.
@@ -266,6 +267,23 @@ export class AnalyzerFramework {
 				result.status = "partial";
 				summary.errors.push(`${analyzer.def.id}: ${message}`);
 				this.persistErrorNode(resolved, runId, sessionId, item, message);
+				// A misconfiguration is not a per-unit failure. Every remaining unit will
+				// fail identically for one root cause that was knowable before the first
+				// one ran, so continuing turns a single typo into an error node per unit —
+				// a mis-specified model spec once produced 113,992 of them in five
+				// seconds. Stop this analyzer and report once. The units stay missing, so
+				// they are simply picked up again once the configuration is fixed.
+				if (isConfigurationFault(err)) {
+					const abandoned = todo.length - index - 1;
+					if (abandoned > 0) {
+						summary.errors.push(
+							`${analyzer.def.id}: stopped early — this looks like a configuration problem that ` +
+							`would hit the remaining ${abandoned} unit(s) identically. Fix it and re-run; ` +
+							`they are still missing, so nothing is lost.`,
+						);
+					}
+					break;
+				}
 			}
 		}
 
@@ -614,6 +632,30 @@ export class AnalyzerFramework {
 		}
 		return out;
 	}
+}
+
+/**
+ * Is this failure about how the run is *configured* rather than about the unit?
+ *
+ * The distinction matters because the two want opposite handling. A unit-level
+ * failure — a rate limit, a truncated response, one malformed reply — should be
+ * recorded and stepped over, so the rest of the work still happens. A
+ * configuration failure will recur identically on every remaining unit, so
+ * stepping over it just multiplies one mistake into thousands of error nodes.
+ *
+ * Matched on message text because these arrive as plain `Error`s from the model
+ * registry and credential layers, which have no error codes to key on. The list
+ * is deliberately narrow: anything unrecognised is treated as unit-level, which
+ * is the safe default — it keeps working rather than stopping early.
+ */
+function isConfigurationFault(err: unknown): boolean {
+	if (!(err instanceof Error)) return false;
+	return (
+		err.message.includes("Model not found in Pi registry") ||
+		err.message.includes("No credentials for") ||
+		err.message.startsWith("Invalid model spec") ||
+		err.message.includes("without declaring it")
+	);
 }
 
 /**
