@@ -22,6 +22,25 @@ export interface ProspectorConfig {
 	 * project-local ./.prospector/analyzers. A leading ~ is expanded.
 	 */
 	analyzerPaths?: string[];
+	/**
+	 * Per-analyzer config overrides, keyed by analyzer id. Merged over the
+	 * analyzer's shipped defaults.
+	 *
+	 * The tier→model mapping is global, but analyzers do not all warrant the same
+	 * model. Judging a single lexicon term is about the simplest classification in
+	 * the pipeline and runs hundreds of thousands of times, so it is the obvious
+	 * place to spend a small local or free model, while per-turn classification
+	 * keeps a stronger one. Without this, both share the `cheap` tier.
+	 *
+	 * Whatever is set here is part of the analyzer's config identity, so a change
+	 * marks existing nodes stale for the `config` reason — picked up only by a run
+	 * that asks for it, never silently.
+	 *
+	 * ```json
+	 * { "analyzers": { "frustration-lexicon": { "tier": "ollama/gemma4:31b-mlx" } } }
+	 * ```
+	 */
+	analyzers?: Record<string, Record<string, unknown>>;
 }
 
 // ─── Session ───

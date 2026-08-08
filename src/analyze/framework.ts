@@ -90,6 +90,13 @@ export interface FrameworkDeps {
 	db: Database.Database;
 	llm: LLMCaller;
 	modelTiers: ModelTierConfig;
+	/**
+	 * Per-analyzer config overrides keyed by analyzer id, merged over each
+	 * analyzer's shipped defaults. Everything the user sets is `config`, so an
+	 * override changes the config fingerprint and marks affected nodes stale for
+	 * the (ungraded) `config` reason rather than silently reusing them.
+	 */
+	configOverrides?: Record<string, Record<string, unknown>>;
 }
 
 interface ResolvedAnalyzer {
@@ -546,9 +553,16 @@ export class AnalyzerFramework {
 	private resolve(analyzerId: string): ResolvedAnalyzer {
 		const analyzer = this.analyzers.get(analyzerId);
 		if (!analyzer) throw new Error(`Analyzer not registered: ${analyzerId}`);
+		// Shipped defaults first, then the user's overrides for this analyzer. A
+		// shallow merge is deliberate: analyzer configs are flat parameter bags, and
+		// a deep merge would make it ambiguous which keys the user actually set.
+		const override = this.deps.configOverrides?.[analyzer.def.id];
+		const configJson = override
+			? { ...analyzer.defaultConfig.configJson, ...override }
+			: analyzer.defaultConfig.configJson;
 		const config = resolveConfig(this.deps.db, {
 			analyzerId: analyzer.def.id,
-			configJson: analyzer.defaultConfig.configJson,
+			configJson,
 			label: analyzer.defaultConfig.label,
 		});
 		const promptBundleHash = computePromptBundleHash(Object.values(analyzer.prompts).map((p) => p.hash));

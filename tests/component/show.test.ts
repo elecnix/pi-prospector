@@ -16,6 +16,9 @@ import type { LLMRequest } from "../../src/analyze/types.js";
 import type { ExtensionCommandContext } from "../../src/pi-stubs.js";
 
 function respond(req: LLMRequest): string {
+	if (req.tool?.name === "classify_term") {
+		return JSON.stringify({ polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" });
+	}
 	const sys = req.system ?? "";
 	if (sys.includes("classify a single turn")) {
 		return JSON.stringify({ sentiment: "frustrated", friction_type: "wrong_approach", is_genuine_correction: true, severity: "high", rationale: "corrected" });

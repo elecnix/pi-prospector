@@ -24,6 +24,9 @@ import type { LLMRequest } from "../../src/analyze/types.js";
 
 /** The forced-tool-call classification returned for any classify request. */
 function respond(req: LLMRequest): string {
+	if (req.tool?.name === "classify_term") {
+		return JSON.stringify({ polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" });
+	}
 	const sys = req.system ?? "";
 	if (sys.includes("classify a single turn")) {
 		return JSON.stringify({

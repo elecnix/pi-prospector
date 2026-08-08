@@ -39,6 +39,7 @@ import {
 	CLASSIFY_TERM_TOOL,
 	buildClassifyTermPrompt,
 	parseClassifyTermObject,
+	extractVerdict,
 	type ClassifyTermResult,
 } from "./prompt.js";
 import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, type FrustrationLexiconConfig } from "./config.js";
@@ -165,10 +166,28 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			tool: CLASSIFY_TERM_TOOL,
 		});
 
-		const properties: FrustrationLexiconProperties = {
-			...parseClassifyTermObject((response.structured as Record<string, unknown> | undefined) ?? {}),
-			term,
-		};
+		// A verdict is cached *permanently* and corpus-wide, so an invented one is far
+		// worse here than a failure. Quietly defaulting an unusable reply to "neutral"
+		// would let a model that cannot do structured output mark every word in the
+		// corpus as ordinary vocabulary: the feature would appear to run and do
+		// nothing, with no way to tell from the outside. Failing instead records an
+		// error node, leaves the unit missing, and self-heals on the next run.
+		//
+		// The tool call is preferred; JSON in the text channel is accepted, since some
+		// providers answer that way. What is rejected is a reply that carries no
+		// verdict at all — this checks for the shape, not merely for parseable JSON,
+		// because a well-formed object of the wrong kind would otherwise degrade
+		// silently into the same all-neutral lexicon.
+		const verdict = extractVerdict(response.structured, response.text);
+		if (!verdict) {
+			throw new Error(
+				`Model '${response.model}' returned no usable classify_term verdict for '${term}'. ` +
+				`A lexicon verdict is cached corpus-wide and permanently, so it is never guessed. ` +
+				`Use a model that supports forced tool calls.`,
+			);
+		}
+
+		const properties: FrustrationLexiconProperties = { ...parseClassifyTermObject(verdict), term };
 
 		return {
 			nodeKind: "classification",

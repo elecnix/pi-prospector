@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { getAllSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
-import { getAnalyzerPaths, getDbPath, getModelTiers, loadConfig } from "../config.js";
+import { getAnalyzerConfigOverrides, getAnalyzerPaths, getDbPath, getModelTiers, loadConfig } from "../config.js";
 import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerAll } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
@@ -71,7 +71,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const analyzerConcurrency = args.analyzerConcurrency ?? DEFAULT_DETERMINISTIC_CONCURRENCY;
 		const llmGate = createSemaphore(llmConcurrency);
 		const llm: LLMCaller = (request) => llmGate(() => baseLlm(request));
-		const framework = new AnalyzerFramework({ db, llm, modelTiers });
+		const framework = new AnalyzerFramework({ db, llm, modelTiers, configOverrides: getAnalyzerConfigOverrides(config) });
 		// Register built-ins plus any locally-authored custom analyzers discovered
 		// on the analyzer paths (explicit --analyzer-path, config, project dir, Pi
 		// agent dir). A malformed custom analyzer is skipped and reported, not fatal.

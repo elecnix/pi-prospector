@@ -43,6 +43,15 @@ export function getClaudeSessionsDir(): string {
 	return process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] ?? CLAUDE_SESSIONS_DIR;
 }
 
+/**
+ * Per-analyzer config overrides from `~/.pi/agent/prospector.json`, keyed by
+ * analyzer id. Merged over each analyzer's shipped defaults by the framework.
+ */
+export function getAnalyzerConfigOverrides(config?: ProspectorConfig): Record<string, Record<string, unknown>> {
+	const c = config ?? loadConfig();
+	return c.analyzers ?? {};
+}
+
 /** Resolve the model-tier mapping, falling back to defaults. */
 export function getModelTiers(config?: ProspectorConfig): ModelTierConfig {
 	const c = config ?? loadConfig();

@@ -11,6 +11,9 @@ import type { LLMRequest, ModelTierConfig } from "../../src/analyze/types.js";
 
 // turn-pair-llm only ever sends a classify prompt; return a fixed classification.
 function respond(_req: LLMRequest): string {
+	if (_req.tool?.name === "classify_term") {
+		return JSON.stringify({ polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" });
+	}
 	return JSON.stringify({
 		sentiment: "frustrated",
 		friction_type: "wrong_approach",

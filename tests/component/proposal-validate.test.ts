@@ -21,6 +21,9 @@ const WRONG_TITLE = "Verify the git push target";
  * only when the GOOD rule is the injected standing instruction.
  */
 function respond(req: LLMRequest): string {
+	if (req.tool?.name === "classify_term") {
+		return JSON.stringify({ polarity: "neutral", category: "none", language: "und", confidence: 0.9, rationale: "ordinary vocabulary" });
+	}
 	const sys = req.system ?? "";
 	const user = req.user ?? "";
 

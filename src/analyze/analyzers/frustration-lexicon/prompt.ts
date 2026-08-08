@@ -15,6 +15,7 @@
  */
 
 import { shortHash } from "../../input-hash.js";
+import { extractJsonObject } from "../turn-pair-llm/prompt.js";
 import { Type } from "typebox";
 
 export const CLASSIFY_TERM_PROMPT = `You judge single words for a multilingual lexicon used to detect
@@ -129,4 +130,30 @@ export function parseClassifyTermObject(obj: Record<string, unknown>): ClassifyT
 
 function pickString(value: unknown, allowed: Set<string>, fallback: string): string {
 	return typeof value === "string" && allowed.has(value) ? value : fallback;
+}
+
+/**
+ * Pull a usable verdict out of a model reply, or `null` if there is none.
+ *
+ * Prefers the forced tool call, falls back to JSON in the text channel (some
+ * providers answer that way), and requires the result to actually *look* like a
+ * verdict. The shape check matters: a well-formed object of some other kind would
+ * otherwise parse into all-default fields and be cached, corpus-wide and
+ * permanently, as "neutral" — indistinguishable from a real judgement.
+ */
+export function extractVerdict(structured: unknown, text: string): Record<string, unknown> | null {
+	const candidates: unknown[] = [];
+	if (structured && typeof structured === "object") candidates.push(structured);
+	if (text) {
+		try {
+			candidates.push(extractJsonObject(text));
+		} catch {
+			/* no JSON in the text channel */
+		}
+	}
+	for (const candidate of candidates) {
+		const obj = candidate as Record<string, unknown>;
+		if (typeof obj["polarity"] === "string" && VALID_POLARITY.has(obj["polarity"] as string)) return obj;
+	}
+	return null;
 }
