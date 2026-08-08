@@ -17,6 +17,7 @@
 
 import type { LLMCaller, LLMRequest, LLMResponse, ModelTierConfig } from "./types.js";
 import { resolveModelSpec, splitModelSpec } from "./model-tiers.js";
+import { canonicalJson, shortHash } from "./input-hash.js";
 import type {
 	ExtensionContext,
 	PiAiModule,
@@ -37,6 +38,20 @@ function loadPiAi(): Promise<PiAiModule> {
 
 export interface PiLLMCallerOptions {
 	modelTiers: ModelTierConfig;
+}
+
+/**
+ * A stable grouping key for requests that share a cacheable prefix.
+ *
+ * The cacheable part of a request is its system prompt plus its tool schema —
+ * never the per-call user content, which is what varies. Hashing exactly that
+ * prefix means every call from one analyzer shares a key while different
+ * analyzers stay separate, so a provider routing on this key sends the whole
+ * lexicon run to a replica that already holds its 725-token prefix.
+ */
+function cacheKeyFor(request: LLMRequest): string {
+	const toolSignature = request.tool ? `${request.tool.name}:${canonicalJson(request.tool.parameters)}` : "";
+	return `prospector-${shortHash(`${request.system ?? ""}|${toolSignature}`)}`;
 }
 
 /**
@@ -80,6 +95,15 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			// Let pi-ai ride out transient rate limits (e.g. provider 429s) instead
 			// of failing a whole analysis run on the first throttled call.
 			maxRetries: 4,
+			// Prompt caching. Every analyzer sends a fixed system prompt and a fixed
+			// tool schema, so across a run that prefix is byte-identical thousands of
+			// times while only a few tokens of user content change. For the lexicon it
+			// is extreme — a ~725-token prefix against ~5 tokens of payload — so
+			// without caching well over 90% of input spend is re-sending the same
+			// text. `sessionId` groups requests that share a prefix, which is what
+			// lets a provider route them to a replica already holding the cache.
+			cacheRetention: "long",
+			sessionId: cacheKeyFor(request),
 			signal: ctx.signal,
 		});
 

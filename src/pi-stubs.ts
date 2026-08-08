@@ -165,6 +165,16 @@ export interface PiCompleteOptions {
 	maxTokens?: number;
 	/** Max client-side retries for transient failures (e.g. provider 429s). */
 	maxRetries?: number;
+	/**
+	 * Prompt-cache retention preference; providers map it to their own values.
+	 * pi-ai defaults to "short".
+	 */
+	cacheRetention?: "none" | "short" | "long";
+	/**
+	 * Session identifier used by providers for prompt-cache routing, so repeated
+	 * requests carrying the same prefix land on a replica that already holds it.
+	 */
+	sessionId?: string;
 	signal?: AbortSignal;
 }
 
