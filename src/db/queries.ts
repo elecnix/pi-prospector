@@ -207,6 +207,51 @@ export function rejectProposal(db: Database.Database, id: string, input?: Decisi
 	return decideProposal(db, id, "rejected", "rejected", input);
 }
 
+// ── Bulk accept / reject ──
+
+export interface BulkResult {
+	accepted: string[];
+	rejected: string[];
+	skipped: string[];
+}
+
+/** Accept multiple proposals with the same decision input (no remediation row). */
+export function acceptProposalsBulk(
+	db: Database.Database,
+	proposalIds: string[],
+	input?: DecisionInput,
+): BulkResult {
+	const accepted: string[] = [];
+	const skipped: string[] = [];
+	const verdict = acceptVerdict(input);
+	const tx = db.transaction(() => {
+		for (const id of proposalIds) {
+			if (decideProposal(db, id, "applied", verdict, input)) accepted.push(id);
+			else skipped.push(id);
+		}
+	});
+	tx();
+	return { accepted, rejected: [], skipped };
+}
+
+/** Reject multiple proposals with the same decision input. */
+export function rejectProposalsBulk(
+	db: Database.Database,
+	proposalIds: string[],
+	input?: DecisionInput,
+): BulkResult {
+	const rejected: string[] = [];
+	const skipped: string[] = [];
+	const tx = db.transaction(() => {
+		for (const id of proposalIds) {
+			if (decideProposal(db, id, "rejected", "rejected", input)) rejected.push(id);
+			else skipped.push(id);
+		}
+	});
+	tx();
+	return { accepted: [], rejected, skipped };
+}
+
 // ── Remediations (one action addressing many proposals) ──
 
 /** The shared remediation action recorded with a batch accept. */
