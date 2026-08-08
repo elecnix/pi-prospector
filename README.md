@@ -220,6 +220,29 @@ For *only* the high-signal pairs, a cheap model labels the friction: sentiment, 
 
 Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.ts) · classifier prompt + evidence formatting in [`prompt.ts`](./src/analyze/analyzers/turn-pair-llm/prompt.ts) · tier + enrichment cap in [`config.ts`](./src/analyze/analyzers/turn-pair-llm/config.ts).
 
+### lexicon-candidates / frustration-lexicon / turn-frustration — the learned frustration lexicon
+
+The correction patterns in `turn-pair-core` are English regexes. Write `putain, c'est encore faux` or `не то` and they see nothing. Instead of shipping more languages — an unbounded list that is always partial — these three analyzers **learn the vocabulary from your own corpus**.
+
+1. **lexicon-candidates** (deterministic) tokenises your messages and nominates the distinct terms worth judging, ranked by frequency and capped per session. It is language-blind on purpose: no stopwords, no stemming, just a shape filter that drops code, paths, and identifiers.
+2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it.
+3. **turn-frustration** (deterministic) matches each turn against the learned lexicon, emitting one node per (turn, signal). A hit promotes the turn into `turn-pair-llm` enrichment even when the deterministic score missed it, and lands in the `session-overview` digest as `frustration=[term:category/lang]`.
+
+Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
+
+**The lexicon widens detection; it never gates it.** Everything that worked before — tool failures, re-asking, empty replies, wasted output, trajectory signals — is untouched. `turn-frustration` also detects frustration carried with *no vocabulary at all*: shouting, repeated punctuation (`???`), and elongation (`nooooo`), which need neither a lexicon nor a language.
+
+When a run learns new words it says so, because earlier sessions may use them:
+
+```
+Frustration lexicon: learned 12 new term(s).
+  Sessions analysed earlier may use them — run '/prospect-analyze --all' to back-fill.
+```
+
+`--all` plain-fills every session rather than only unanalysed ones. It stays cheap: scanning is fingerprint lookups, and only turns that actually contain a newly learned word have anything to compute.
+
+Source: [`lexicon-candidates/index.ts`](./src/analyze/analyzers/lexicon-candidates/index.ts) · tokeniser + paralinguistic markers in [`tokenize.ts`](./src/analyze/analyzers/lexicon-candidates/tokenize.ts) · [`frustration-lexicon/index.ts`](./src/analyze/analyzers/frustration-lexicon/index.ts) · term prompt in [`prompt.ts`](./src/analyze/analyzers/frustration-lexicon/prompt.ts) · [`turn-frustration/index.ts`](./src/analyze/analyzers/turn-frustration/index.ts).
+
 ### tool-trajectory — tool-call patterns (deterministic)
 
 Looks at the ordered stream of tool calls across the whole session and flags four shapes of wasted motion: **stuck-loops** (the same failing action repeated), **polling-loops** (re-checking the same state over and over), **oscillation** (doing and undoing), and **pre-flight gaps** (acting without the check that should precede it). No model — pure pattern detection that complements the text-based signals.

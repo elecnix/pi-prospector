@@ -13,7 +13,7 @@ import { getAllSessions, getStats, listProposals, acceptProposal, rejectProposal
 import { runSync } from "../../src/sync/index.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { registerDefaults } from "../../src/analyze/defaults.js";
-import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import { createMockLLM, type MockLLMReply } from "../../src/analyze/mock-llm.js";
 import { getNodeVersions, getRevisedNode } from "../../src/db/analysis-queries.js";
 import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
@@ -35,8 +35,26 @@ function assert(condition: boolean, label: string, detail?: string): void {
 	}
 }
 
-function respond(req: LLMRequest): string {
+/** Terms this stub judges to carry frustration; everything else is ordinary vocabulary. */
+const INTEGRATION_FRUSTRATION_TERMS = new Set(["putain", "faux", "encore", "pénible"]);
+
+function respond(req: LLMRequest): MockLLMReply {
 	const sys = req.system ?? "";
+	// The learned lexicon judges one word per call, via a forced tool call.
+	if (req.tool?.name === "classify_term") {
+		const term = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
+		const frustrated = INTEGRATION_FRUSTRATION_TERMS.has(term);
+		return {
+			text: "x",
+			structured: {
+				polarity: frustrated ? "frustration" : "neutral",
+				category: frustrated ? "dissatisfaction" : "none",
+				language: frustrated ? "fr" : "und",
+				confidence: 0.9,
+				rationale: "stub",
+			},
+		};
+	}
 	if (sys.includes("classify a single turn")) {
 		return JSON.stringify({ sentiment: "neutral", friction_type: "none", is_genuine_correction: false, severity: "low", rationale: "ok" });
 	}

@@ -26,6 +26,7 @@ import { extractJsonObject } from "../turn-pair-llm/prompt.js";
 import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import { TURN_PAIR_LLM_DEF } from "../turn-pair-llm/index.js";
 import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
+import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
 import { MAP_PROMPT, MAP_PROMPT_HASH, MAP_TOOL, buildMapPrompt, parseMapResponse, parseMapObject, type MapSummary } from "./prompt-map.js";
 import {
@@ -50,7 +51,7 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	description:
 		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, and tool-trajectory nodes; always emits a node, even for clean sessions.",
 	anchorSpan: "full_session",
-	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id],
+	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id, TURN_FRUSTRATION_DEF.id],
 };
 
 export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
@@ -76,7 +77,12 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// examples. Identity stays reproducible: the siblings are part of the source set,
 	// derived deterministically from ingested content. Minor: additive contrast
 	// context; the per-session synthesis contract is unchanged.
-	minor: 4,
+	// 1.5: learned frustration lexicon — the digest now carries per-turn
+	// `frustration=[term:category/lang]` fragments and session counts, from
+	// turn-frustration. This is what lets the synthesiser see friction expressed in
+	// a language the shipped regex has no patterns for, or with no words at all.
+	// Sessions with no such signal keep an unchanged source set and are untouched.
+	minor: 5,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -108,11 +114,13 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		if (core.length === 0) return [];
 		const llm = (ctx.dependencyNodes[TURN_PAIR_LLM_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		const traj = (ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
+		const frustration = (ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 
 		const sources: SourceRef[] = [
 			...core.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...llm.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...traj.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+			...frustration.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 		];
 
 		// Cross-session contrast (issue #10): deterministically fold up to N smooth
@@ -140,9 +148,10 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const coreNodes = ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id);
 		const llmNodes = ctx.getDependencyNodes(TURN_PAIR_LLM_DEF.id);
 		const trajectoryNodes = ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id);
+		const frustrationNodes = ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id);
 		const messages = ctx.getSessionMessages(ctx.sessionId);
 
-		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes });
+		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes, frustrationNodes });
 		const statsText = JSON.stringify(
 			{
 				pairs: digest.pairCount,
@@ -150,6 +159,8 @@ export const sessionOverviewAnalyzer: Analyzer = {
 				corrections: digest.correctionCount,
 				tool_failures: digest.toolFailureCount,
 				trajectory_signals: digest.trajectorySignalCount,
+				frustration_signals: digest.frustrationSignalCount,
+				frustration_languages: digest.frustrationLanguages,
 				compactions: digest.compactionCount,
 				positive_signals: digest.positiveSignals,
 			},
@@ -242,7 +253,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 		];
 		let ordinal = 1;
-		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes]) {
+		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes, ...frustrationNodes]) {
 			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.output_key, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
 		}
 		for (const h of usedPromptHashes) {

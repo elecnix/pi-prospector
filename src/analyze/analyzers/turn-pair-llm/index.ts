@@ -26,6 +26,7 @@ import {
 	type PairToolResult,
 } from "../turn-pair-core/build.js";
 import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
+import { TURN_FRUSTRATION_DEF, type TurnFrustrationProperties } from "../turn-frustration/index.js";
 import {
 	CLASSIFY_PROMPT,
 	CLASSIFY_PROMPT_HASH,
@@ -45,7 +46,7 @@ export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 	description:
 		"Classifies sentiment and friction type for high-signal turn pairs with a cheap model, given the user/assistant text plus the turn's actual tool calls and error heads so attribution lands on the command at fault.",
 	anchorSpan: "pair",
-	dependencies: [TURN_PAIR_CORE_DEF.id],
+	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_FRUSTRATION_DEF.id],
 };
 
 export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
@@ -58,7 +59,12 @@ export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	// turn's tool calls (name + truncated args) and failed-result error heads,
 	// bounded to MAX_TOOL_EVIDENCE_PER_TURN. The prompt input changed, so the
 	// input_key (and hence node version) changes; recomputed on the next run.
-	minor: 3,
+	// 1.4: learned frustration lexicon — a turn carrying a lexicon or lexicon-free
+	// frustration signal is now enriched even when the deterministic score alone
+	// would not have selected it, which is how a non-English correction reaches the
+	// classifier at all. Selection only: a unit's source set is unchanged, so every
+	// already-enriched turn keeps its identity and nothing is recomputed.
+	minor: 4,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };
@@ -99,8 +105,25 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		const pairByUserId = new Map(pairs.map((p) => [p.userMessageId, p]));
 		const config = (ctx.config as unknown as TurnPairLLMConfig) ?? DEFAULT_TURN_PAIR_LLM_CONFIG;
 
-		// Collect every high-signal pair that still maps to a turn in the transcript.
-		const candidates: { node: typeof coreNodes[number]; props: TurnPairCoreProperties }[] = [];
+		// Frustration signal per turn, from the learned lexicon and the lexicon-free
+		// markers. This *widens* selection: a turn whose only evidence is a French
+		// correction or a row of question marks scores near zero deterministically,
+		// and would never otherwise reach the classifier that can name its friction type.
+		const frustrationBoost = new Map<string, number>();
+		for (const node of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
+			let hit: TurnFrustrationProperties;
+			try {
+				hit = JSON.parse(node.content_json) as TurnFrustrationProperties;
+			} catch {
+				continue;
+			}
+			if (hit.polarity !== "frustration" || !hit.user_message_id) continue;
+			frustrationBoost.set(hit.user_message_id, (frustrationBoost.get(hit.user_message_id) ?? 0) + hit.weight);
+		}
+
+		// Collect every pair the deterministic pass flagged, plus every pair the
+		// lexicon flagged, that still maps to a turn in the transcript.
+		const candidates: { node: typeof coreNodes[number]; props: TurnPairCoreProperties; rank: number }[] = [];
 		for (const node of coreNodes) {
 			let props: TurnPairCoreProperties;
 			try {
@@ -108,14 +131,15 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			} catch {
 				continue;
 			}
-			if (!props.high_signal) continue;
+			const boost = frustrationBoost.get(props.user_message_id) ?? 0;
+			if (!props.high_signal && boost === 0) continue;
 			if (!pairByUserId.has(props.user_message_id)) continue;
-			candidates.push({ node, props });
+			candidates.push({ node, props, rank: props.friction_score + boost });
 		}
 
 		// Cost guard: enrich up to a length-aware cap (minPairFraction * total, clamped to ceiling),
 		// highest friction first (ties broken by pair order so selection is deterministic across runs).
-		candidates.sort((a, b) => b.props.friction_score - a.props.friction_score || a.props.pair_index - b.props.pair_index);
+		candidates.sort((a, b) => b.rank - a.rank || a.props.pair_index - b.props.pair_index);
 		const cap = computeEnrichCap(candidates.length, config);
 		const selected = candidates.slice(0, cap);
 

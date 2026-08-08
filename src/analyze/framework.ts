@@ -71,6 +71,7 @@ import {
 	finishRun,
 	findLatestNodeBySourceSet,
 	findNodeByInputKey,
+	getLatestNodesByAnalyzerAcrossSessions,
 	getAnchoredMessageIds,
 	getMessage,
 	getNode,
@@ -237,11 +238,21 @@ export class AnalyzerFramework {
 		for (const item of todo) {
 			try {
 				const analysis = await analyzer.analyze(item.unit, runCtx);
-				const created = this.persistNode(resolved, runId, sessionId, item, analysis);
-				result.nodesProduced++;
-				if (item.status === "stale" && item.priorNodeId) result.nodesRevised++;
+				// Cost is booked whether or not the node lands: the call was made.
 				result.costUsd += analysis.costUsd ?? 0;
 				result.tokensUsed += analysis.tokensUsed ?? 0;
+				const created = this.persistNode(resolved, runId, sessionId, item, analysis);
+				if (created === null) {
+					// A peer run produced this exact recipe first. Identity *is* the recipe,
+					// so the work is done — that is idempotency, not a failure. This only
+					// became reachable once units could be corpus-keyed (a lexicon term
+					// nominated by two sessions that are being analysed concurrently)
+					// rather than always scoped to a single session.
+					result.nodesSkipped++;
+					continue;
+				}
+				result.nodesProduced++;
+				if (item.status === "stale" && item.priorNodeId) result.nodesRevised++;
 				summary.proposalsCreated += created.proposalsCreated;
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -316,13 +327,18 @@ export class AnalyzerFramework {
 
 	// ───────────────────────── persistence ─────────────────────────
 
+	/**
+	 * Write a finished analysis into the graph. Returns `null` when a concurrent
+	 * run already wrote a node for this exact recipe — see the caller for why that
+	 * is a skip rather than an error.
+	 */
 	private persistNode(
 		resolved: ResolvedAnalyzer,
 		runId: string,
 		sessionId: string,
 		item: ClassifiedUnit,
 		analysis: AnalysisResult,
-	): { nodeId: string; proposalsCreated: number } {
+	): { nodeId: string; proposalsCreated: number } | null {
 		const { analyzer, config } = resolved;
 		const nodeId = uuidv7();
 		const now = new Date().toISOString();
@@ -332,25 +348,30 @@ export class AnalyzerFramework {
 		// input_key. Reproducible from (input_key, content) on any machine.
 		const outputKey = computeOutputKey(item.inputKey, analysis.contentJson);
 
-		insertNode(this.deps.db, {
-			id: nodeId,
-			sessionId,
-			analyzerId: analyzer.def.id,
-			analyzerVersionId: versionIdOf(analyzer.version),
-			configId: config.id,
-			runId,
-			nodeKind: analysis.nodeKind,
-			contentJson,
-			sourceSetHash: item.unit.sourceSetHash,
-			inputKey: item.inputKey,
-			outputKey,
-			configFingerprint: resolved.configFingerprint,
-			modelUsed: analysis.modelUsed ?? null,
-			costUsd: analysis.costUsd ?? null,
-			tokensUsed: analysis.tokensUsed ?? null,
-			durationMs: analysis.durationMs ?? null,
-			createdAt: now,
-		});
+		try {
+			insertNode(this.deps.db, {
+				id: nodeId,
+				sessionId,
+				analyzerId: analyzer.def.id,
+				analyzerVersionId: versionIdOf(analyzer.version),
+				configId: config.id,
+				runId,
+				nodeKind: analysis.nodeKind,
+				contentJson,
+				sourceSetHash: item.unit.sourceSetHash,
+				inputKey: item.inputKey,
+				outputKey,
+				configFingerprint: resolved.configFingerprint,
+				modelUsed: analysis.modelUsed ?? null,
+				costUsd: analysis.costUsd ?? null,
+				tokensUsed: analysis.tokensUsed ?? null,
+				durationMs: analysis.durationMs ?? null,
+				createdAt: now,
+			});
+		} catch (err) {
+			if (isDuplicateInputKey(err)) return null;
+			throw err;
+		}
 
 		this.persistEdges(nodeId, config, analysis);
 
@@ -462,7 +483,31 @@ export class AnalyzerFramework {
 		for (const depId of analyzer.def.dependencies) {
 			dependencyNodes[depId] = allNodes.filter((n) => n.analyzer_id === depId);
 		}
-		return { sessionId, messages, allNodes, ownNodes, dependencyNodes, config: config.configJson, db: this.deps.db };
+		return {
+			sessionId,
+			messages,
+			allNodes,
+			ownNodes,
+			dependencyNodes,
+			getGlobalDependencyNodes: (depId) => this.globalDependencyNodes(analyzer, depId),
+			config: config.configJson,
+			db: this.deps.db,
+		};
+	}
+
+	/**
+	 * Corpus-scoped dependency read, shared by the plan and run contexts. Enforces
+	 * the same declared-dependency rule as the session-scoped reads — only the
+	 * session scope is lifted, never the dependency scope.
+	 */
+	private globalDependencyNodes(analyzer: Analyzer, depId: string): AnalysisNodeRow[] {
+		if (!analyzer.def.dependencies.includes(depId)) {
+			throw new Error(
+				`Analyzer '${analyzer.def.id}' read dependency '${depId}' without declaring it. ` +
+				`Add '${depId}' to def.dependencies.`,
+			);
+		}
+		return getLatestNodesByAnalyzerAcrossSessions(this.deps.db, depId);
 	}
 
 	private buildRunContext(analyzer: Analyzer, config: AnalyzerConfig, sessionId: string): AnalyzerRunContext {
@@ -483,6 +528,7 @@ export class AnalyzerFramework {
 				}
 				return getNodesByAnalyzer(db, depId, sessionId);
 			},
+			getGlobalDependencyNodes: (depId) => this.globalDependencyNodes(analyzer, depId),
 			getSessionMessages: (sid) => this.loadMessages(sid),
 			llm: this.deps.llm,
 			config,
@@ -554,6 +600,17 @@ export class AnalyzerFramework {
 		}
 		return out;
 	}
+}
+
+/**
+ * Did this insert lose a race to a node with the same recipe? A unique violation
+ * on `input_key` means a peer produced the identical recipe first, which under
+ * the framework's identity contract is the *same* work — not a failure.
+ */
+function isDuplicateInputKey(err: unknown): boolean {
+	if (!(err instanceof Error)) return false;
+	const code = (err as { code?: string }).code;
+	return code === "SQLITE_CONSTRAINT_UNIQUE" && err.message.includes("analysis_nodes.input_key");
 }
 
 function db_loadMessages(db: Database.Database, sessionId: string): MessageRow[] {

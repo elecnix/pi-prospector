@@ -283,6 +283,36 @@ export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, se
 		.all(analyzerId, sessionId) as AnalysisNodeRow[];
 }
 
+/**
+ * The newest node for every logical unit of an analyzer, across *all* sessions —
+ * the corpus-scoped read.
+ *
+ * Almost all analysis is session-scoped, but some subjects are corpus-wide: a
+ * lexicon term belongs to the corpus, not to whichever session first surfaced it.
+ * Such an analyzer needs to see the whole body of its dependency's conclusions,
+ * so this lifts the session scope while keeping the "latest version wins" rule
+ * that `findLatestNodeBySourceSet` applies per unit: one row per
+ * `source_set_hash`, newest first, errors excluded.
+ */
+export function getLatestNodesByAnalyzerAcrossSessions(db: Database.Database, analyzerId: string): AnalysisNodeRow[] {
+	return db
+		.prepare(
+			`SELECT * FROM analysis_nodes n
+			 WHERE n.analyzer_id = ?
+			   AND n.node_kind != 'error'
+			   AND n.rowid = (
+			     SELECT m.rowid FROM analysis_nodes m
+			     WHERE m.analyzer_id = n.analyzer_id
+			       AND m.source_set_hash = n.source_set_hash
+			       AND m.node_kind != 'error'
+			     ORDER BY m.created_at DESC, m.rowid DESC
+			     LIMIT 1
+			   )
+			 ORDER BY n.created_at ASC, n.rowid ASC`,
+		)
+		.all(analyzerId) as AnalysisNodeRow[];
+}
+
 // ───────────────────────── edges ─────────────────────────
 
 export function insertEdge(
