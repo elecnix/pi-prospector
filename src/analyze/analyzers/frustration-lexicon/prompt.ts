@@ -41,6 +41,10 @@ Return your judgement by calling the \`classify_term\` tool with exactly these f
   "rationale": "one short sentence"
 }
 
+THE TEST: does this entry express how the person FEELS about the interaction? If
+it names a thing, a tool, a status, or a topic, it is "neutral" — however
+negative that thing may be.
+
 Guidance:
 - "frustration" covers profanity, negation and correction markers ("no", "wrong",
   "nope", "faux"), repetition markers ("again", "encore", "still"), impatience,
@@ -51,8 +55,16 @@ Guidance:
   only signals frustration in a particular sentence rather than by its own
   character, it is "neutral" with category "none". Most two-word phrases are just
   two ordinary words next to each other — say so.
-- A word that is merely negative in subject matter ("bug", "error", "fail") is
-  NOT a frustration signal — it describes the work, not the user's feeling.
+- A word that is merely negative in subject matter ("bug", "error", "fail",
+  "failing", "broken", "conflict") is NOT a frustration signal — it describes the
+  work, not the user's feeling.
+- Names of tools, commands, flags, and file types are NEVER signals — they name
+  things, not feelings. "ci", "pr", "gh", "sh", "npm", "json", "git", "diff" are
+  all neutral, including when the work around them is going badly.
+- Separate emoji that report STATUS from emoji that carry FEELING. Status and UI
+  icons — ✅ ❌ 🔀 📝 ⚠️ 🚀 — are neutral: they label an outcome, and in practice
+  most arrive from tooling rather than from a person. Only affective emoji count:
+  🤬 😤 😡 for frustration, 🎉 👍 ❤️ for praise.
 
 Always respond by calling the classify_term tool — never answer in prose.`;
 

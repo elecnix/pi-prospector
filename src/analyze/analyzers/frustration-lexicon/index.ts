@@ -57,10 +57,14 @@ export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	analyzerId: FRUSTRATION_LEXICON_DEF.id,
 	major: 1,
 	// 1.1: the prompt now also covers two-word phrases (issue #40), judged as a
-	// unit rather than as their parts. Existing single-word verdicts stay valid and
-	// are re-judged only by an explicit `--revise minor`; nothing is invalidated by
-	// simply upgrading.
-	minor: 1,
+	// unit rather than as their parts.
+	// 1.2: precision. Measured against a real corpus, cheap models flagged `ci`,
+	// `pr`, `gh`, `sh` and 🔀 as frustration — 10.7% of vocabulary called
+	// non-neutral against a 3.8% reference. Two unrelated cheap models failing the
+	// same way pointed at the prompt, not the model: it never said that naming a
+	// tool or reporting a status is not a feeling. Existing verdicts stay valid and
+	// are re-judged only by an explicit `--revise minor`.
+	minor: 2,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };
@@ -163,6 +167,7 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			user: buildClassifyTermPrompt(term),
 			temperature: config.temperature,
 			maxTokens: 300,
+			reasoning: config.reasoning,
 			tool: CLASSIFY_TERM_TOOL,
 		});
 

@@ -239,6 +239,24 @@ export const LLMRequest = Type.Object({
 	temperature: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	/**
+	 * How much the model should think before answering.
+	 *
+	 * This belongs to the *analyzer*, not to the run: judging a single lexicon
+	 * word needs none, while a session synthesis may want plenty, and both happen
+	 * in the same run. Reasoning tokens are billed as output, so "off" on a
+	 * high-volume trivial task is a direct saving as well as a latency one.
+	 * Providers that cannot vary it ignore the field.
+	 */
+	reasoning: Type.Optional(
+		Type.Union([
+			Type.Literal("off"),
+			Type.Literal("minimal"),
+			Type.Literal("low"),
+			Type.Literal("medium"),
+			Type.Literal("high"),
+		]),
+	),
+	/**
 	 * Request structured output via a forced tool call. When set, the caller
 	 * offers this single tool to the model and returns its parsed call arguments
 	 * in `LLMResponse.structured`. `parameters` is a TypeBox schema (TSchema).

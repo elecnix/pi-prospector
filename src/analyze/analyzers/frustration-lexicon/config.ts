@@ -30,6 +30,20 @@ export const FrustrationLexiconConfig = Type.Object({
 	 * entries are *used*, not which words have been paid for.
 	 */
 	minConfidence: Type.Number(),
+	/**
+	 * Thinking level for the judgement.
+	 *
+	 * "off" by default, deliberately: deciding whether a single word expresses
+	 * frustration is recognition, not reasoning, and reasoning tokens are billed
+	 * as output on a call that runs once per distinct word in the whole corpus.
+	 */
+	reasoning: Type.Union([
+		Type.Literal("off"),
+		Type.Literal("minimal"),
+		Type.Literal("low"),
+		Type.Literal("medium"),
+		Type.Literal("high"),
+	]),
 });
 export type FrustrationLexiconConfig = Static<typeof FrustrationLexiconConfig>;
 
@@ -37,4 +51,5 @@ export const DEFAULT_FRUSTRATION_LEXICON_CONFIG: FrustrationLexiconConfig = {
 	tier: "cheap",
 	temperature: 0,
 	minConfidence: 0.5,
+	reasoning: "off",
 };
