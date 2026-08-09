@@ -24,12 +24,21 @@ const MIN_TERM_LENGTH = 2;
 const MAX_TERM_LENGTH = 32;
 
 /**
- * A word token: letters and marks, with internal apostrophes kept so elisions
- * and contractions survive as one unit (`don't`, `c'est`). Digits are matched
- * here only so the shape filter can reject the token wholesale — a token with a
- * digit in it is a version, an identifier, or a filename, never vocabulary.
+ * A word token: letters and marks, with internal apostrophes *and hyphens* kept
+ * so elisions, contractions, and compounds survive as one unit — `don't`,
+ * `c'est`, `re-check`, `non-blocking`, `well-known`.
+ *
+ * The hyphen matters as much as the apostrophe. Splitting on it left bare
+ * prefixes to be judged as standalone vocabulary, and over a real corpus the
+ * lexicon duly called them frustration: `re` fired 616 times and `non` 494,
+ * entirely from `re-check` and `non-blocking`. Requiring letters on both sides
+ * keeps a dash used as punctuation ("this — that", "wait - stop") out of tokens.
+ *
+ * Digits are matched here only so the shape filter can reject the token
+ * wholesale — a token containing a digit is a version, an identifier, or a
+ * filename, never vocabulary.
  */
-const WORD_RE = /[\p{L}\p{M}\p{N}]+(?:['’][\p{L}\p{M}]+)*/gu;
+const WORD_RE = /[\p{L}\p{M}\p{N}]+(?:['’\-][\p{L}\p{M}\p{N}]+)*/gu;
 
 /**
  * An emoji token: a pictographic base plus any variation selectors, skin-tone

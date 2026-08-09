@@ -60,7 +60,9 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	major: 1,
 	// 1.1: also matched learned two-word phrases (issue #40).
 	// 1.2: phrase matching removed — see #40. Word and paralinguistic signals stay.
-	minor: 2,
+	// 1.3: matching inherits the tokeniser's hyphen fix, so `re-check` no longer
+	// yields a `re` token for a stale lexicon entry to match on.
+	minor: 3,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
