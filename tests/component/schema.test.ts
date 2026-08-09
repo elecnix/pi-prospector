@@ -127,4 +127,50 @@ describe("schema migration", () => {
 			close();
 		}
 	});
+
+	it("messages table carries model and cost_usd as nullable columns (issue #65)", () => {
+		const { db, close } = tempDb();
+		try {
+			const cols = tableColumns(db, "messages");
+			assert.ok(cols.has("model"), "messages missing model");
+			assert.ok(cols.has("cost_usd"), "messages missing cost_usd");
+		} finally {
+			close();
+		}
+	});
+
+	it("adds model and cost_usd to a pre-existing messages table, leaving history as null (issue #65)", () => {
+		// Simulate a DB created before issue #65: messages has neither column.
+		// migrate must add both in place; existing rows keep NULL (not a guessed
+		// cost) until a full re-sync rebuilds the index from transcripts.
+		const db = new Database(":memory:");
+		try {
+			db.exec(`CREATE TABLE messages (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				source TEXT,
+				parent_id TEXT,
+				timestamp TEXT,
+				role TEXT NOT NULL,
+				content_text TEXT,
+				content_thinking TEXT,
+				tool_calls TEXT,
+				tool_results TEXT,
+				usage TEXT,
+				content_hash TEXT
+			)`);
+			db.prepare(
+				"INSERT INTO messages (id, session_id, role) VALUES ('old1', 's', 'assistant')",
+			).run();
+			migrate(db);
+			const cols = tableColumns(db, "messages");
+			assert.ok(cols.has("model"));
+			assert.ok(cols.has("cost_usd"));
+			const row = db.prepare("SELECT model, cost_usd FROM messages WHERE id = 'old1'").get() as { model: string | null; cost_usd: number | null };
+			assert.equal(row.model, null);
+			assert.equal(row.cost_usd, null);
+		} finally {
+			db.close();
+		}
+	});
 });

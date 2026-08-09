@@ -49,4 +49,31 @@ describe("end-to-end sync", () => {
 			close();
 		}
 	});
+
+	it("carries model and billed cost through into the message index (issue #65)", () => {
+		const { db, close } = tempDb();
+		try {
+			runSync(db, FIXTURES, NO_CLAUDE_DIR);
+
+			// simple.jsonl's Pi assistant messages record a model and a cost total.
+			const assistant = db
+				.prepare("SELECT model, cost_usd FROM messages WHERE session_id = 'aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee' AND role = 'assistant' ORDER BY rowid")
+				.all() as Array<{ model: string | null; cost_usd: number | null }>;
+
+			assert.equal(assistant.length, 2);
+			assert.equal(assistant[0]!.model, "claude-sonnet-4-5");
+			assert.equal(assistant[0]!.cost_usd, 0.003);
+			assert.equal(assistant[1]!.model, "claude-sonnet-4-5");
+			assert.equal(assistant[1]!.cost_usd, 0.007);
+
+			// Non-assistant rows carry neither field (NULL, never a guessed 0).
+			const user = db
+				.prepare("SELECT model, cost_usd FROM messages WHERE session_id = 'aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee' AND role = 'user'")
+				.get() as { model: string | null; cost_usd: number | null };
+			assert.equal(user.model, null);
+			assert.equal(user.cost_usd, null);
+		} finally {
+			close();
+		}
+	});
 });

@@ -104,6 +104,10 @@ export interface MessageEntry {
 	toolCalls: ToolCallInfo[] | null;
 	toolResults: ToolResultInfo[] | null;
 	usage: UsageInfo | null;
+	/** The serving model that produced this assistant message, if recorded. */
+	model: string | null;
+	/** The billed dollar cost of this assistant message, or null when unrecorded. */
+	costUsd: number | null;
 }
 
 export interface ParsedLine {

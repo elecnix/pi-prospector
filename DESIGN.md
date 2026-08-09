@@ -52,6 +52,12 @@ roughly the order concepts build on one another.
 - **Message** — a single entry within a session: something the user said, one of
   the agent's replies, the agent's private reasoning, or the result of a tool the
   agent ran. Messages carry metadata (timing, model, token usage, error flags).
+- **Billed cost** — the dollar amount the host platform recorded for a single
+  assistant message (`usage.cost.total` for Pi; Claude Code records none). It is
+  money and is never inferred: a message whose transcript recorded no cost — or
+  whose cost total is zero, which Pi writes when it has not priced a message —
+  carries **null**, never a synthetic 0, because a silent zero reads as
+  "this was free" to every downstream consumer.
 - **Turn** — the natural unit of one round of work, and where most friction is
   visible. A turn begins at a user message (the turn boundary) and spans
   *everything* the agent does in response — every assistant reply, its private

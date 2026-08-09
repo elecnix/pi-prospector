@@ -99,6 +99,51 @@ describe("Claude session sync", () => {
 		}
 	});
 
+	it("records the serving model on indexed Claude messages, with no cost (issue #65)", () => {
+		const { db, close } = tempDb();
+		try {
+			const { piRoot, claudeRoot } = createMixedFixture(
+				[],
+				[
+					{
+						projectDir: "-Users-testuser",
+						fileName: "claude-cost.jsonl",
+						lines: [
+							JSON.stringify({ type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "Hello" } }),
+							JSON.stringify({
+								type: "assistant",
+								uuid: "a1",
+								parentUuid: "u1",
+								timestamp: "2026-01-15T10:30:05Z",
+								message: {
+									role: "assistant",
+									model: "claude-opus-5",
+									usage: { input_tokens: 100, output_tokens: 50 },
+									content: [{ type: "text", text: "Hi there!" }],
+								},
+							}),
+						],
+					},
+				],
+			);
+			try {
+				runSync(db, piRoot, claudeRoot);
+				const assistant = db
+					.prepare("SELECT role, model, cost_usd, usage FROM messages WHERE role = 'assistant'")
+					.get() as { role: string; model: string | null; cost_usd: number | null; usage: string | null };
+				assert.equal(assistant.model, "claude-opus-5");
+				assert.equal(assistant.cost_usd, null);
+				assert.ok(assistant.usage);
+				// Claude's token usage is still indexed even though no dollar cost is.
+				assert.equal(JSON.parse(assistant.usage!).input, 100);
+			} finally {
+				cleanupFixture(piRoot);
+			}
+		} finally {
+			close();
+		}
+	});
+
 	it("handles incremental re-sync of Claude sessions", () => {
 		const { db, close } = tempDb();
 		try {
