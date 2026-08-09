@@ -799,7 +799,11 @@ To keep the system focused, the following are explicitly *not* part of it:
 - **No automatic editing of steering artifacts.** The system surfaces proposals;
   acting on them is a human decision.
 - **No eager deletion of superseded analysis.** Old versions are kept for
-  comparison; reclaiming space, if ever needed, is a separate, deliberate act.
+  comparison; reclaiming space, if ever needed, is a separate, deliberate act
+  (`prospect gc` is that deliberate act — a single supported inverse for a run
+  or an analyzer that removes the nodes, both edge directions, and the
+  proposals materialised from them, in one transaction, while never touching
+  human decisions).
 - **No bespoke model or credential management.** Model access is delegated to the
   host platform; tiers abstract concrete models.
 - **No cross-session meta-analysis as a first concern.** The unit of analysis is a

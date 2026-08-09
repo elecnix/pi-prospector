@@ -9,6 +9,7 @@ import { registerValidateCommand } from "./commands/validate.js";
 import { registerShowCommand } from "./commands/show.js";
 import { registerDiffCommand } from "./commands/diff.js";
 import { registerRunsCommand } from "./commands/runs.js";
+import { registerGcCommand } from "./commands/gc.js";
 import { registerProspectTool } from "./commands/tool.js";
 import { registerHeadlessFlag } from "./commands/headless.js";
 import { registerMutesCommand } from "./commands/mutes.js";
@@ -25,6 +26,7 @@ export default function (pi: ExtensionAPI) {
 	registerShowCommand(pi);
 	registerDiffCommand(pi);
 	registerRunsCommand(pi);
+	registerGcCommand(pi);
 	registerProspectTool(pi);
 	registerHeadlessFlag(pi);
 	registerMutesCommand(pi);
