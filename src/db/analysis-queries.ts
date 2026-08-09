@@ -170,6 +170,73 @@ export function getRun(db: Database.Database, runId: string): AnalysisRunRow | u
 	return prep(db, "SELECT * FROM analysis_runs WHERE id = ?").get(runId) as AnalysisRunRow | undefined;
 }
 
+// ───────────────────────── analyze invocations (run batches) ─────────────────────────
+
+/**
+ * Begin a whole-run completion record. Status starts as 'running'; if the process
+ * is interrupted before {@link finalizeAnalyzeRun}, the row still records that a
+ * run began and how many sessions it set out to analyse.
+ */
+export function createAnalyzeRun(
+	db: Database.Database,
+	params: { id: string; mode: string; sessionAttempted: number },
+): void {
+	prep(
+		db,
+		"INSERT INTO analyze_runs (id, mode, session_attempted, status, started_at) VALUES (?, ?, ?, 'running', ?)",
+	).run(params.id, params.mode, params.sessionAttempted, new Date().toISOString());
+}
+
+/** Close out a whole-run completion record with the real tallies. */
+export function finalizeAnalyzeRun(
+	db: Database.Database,
+	runId: string,
+	fields: {
+		status: "ok" | "partial";
+		sessionCompleted: number;
+		sessionFailed: number;
+		nodesProduced: number;
+		nodesRevised: number;
+		proposalsCreated: number;
+		costUsd: number;
+		tokensUsed: number;
+		errorCount: number;
+		errorExamples: string[];
+	},
+): void {
+	prep(
+		db,
+		`UPDATE analyze_runs SET
+			status = ?, session_completed = ?, session_failed = ?,
+			nodes_produced = ?, nodes_revised = ?, proposals_created = ?,
+			cost_usd = ?, tokens_used = ?, error_count = ?, error_examples = ?, finished_at = ?
+		WHERE id = ?`,
+	).run(
+		fields.status,
+		fields.sessionCompleted,
+		fields.sessionFailed,
+		fields.nodesProduced,
+		fields.nodesRevised,
+		fields.proposalsCreated,
+		fields.costUsd,
+		fields.tokensUsed,
+		fields.errorCount,
+		JSON.stringify(fields.errorExamples),
+		new Date().toISOString(),
+		runId,
+	);
+}
+
+/** The most recent whole-run records, newest first — e.g. for a status command. */
+export function getLatestAnalyzeRuns(
+	db: Database.Database,
+	limit = 20,
+): Array<Record<string, unknown>> {
+	return prep(db, "SELECT * FROM analyze_runs ORDER BY started_at DESC LIMIT ?").all(limit) as Array<
+		Record<string, unknown>
+	>;
+}
+
 // ───────────────────────── nodes ─────────────────────────
 
 export function insertNode(

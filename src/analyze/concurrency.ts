@@ -21,6 +21,36 @@ export const DEFAULT_LLM_CONCURRENCY = 10;
 export const DEFAULT_DETERMINISTIC_CONCURRENCY = 20;
 
 /**
+ * Bound a promise to `ms` milliseconds of wall-clock time. If `promise` has not
+ * settled by then, reject with `onTimeout()` so the caller can turn a stalled
+ * dependency — a provider call that neither resolves nor rejects — into a real
+ * terminal error instead of hanging forever.
+ *
+ * The winner invalidates the loser: a settled promise clears the timer, and a
+ * fired timer rejects only once. This is the load-bearing piece of the analyzer's
+ * terminal-state contract: a hung LLM call otherwise holds a semaphore slot
+ * forever, which is how an overlay could stall part-way through a run and leave a
+ * partial result indistinguishable from a complete one.
+ */
+export async function withTimeout<T>(
+	promise: Promise<T>,
+	ms: number,
+	onTimeout: () => Error,
+): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(onTimeout()), ms);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
+/**
  * Map `fn` over `items` with at most `limit` invocations in flight at once.
  * Results are returned in input order regardless of completion order, so
  * callers that assign ordinals by index stay deterministic. `limit` is clamped

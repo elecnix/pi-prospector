@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getAnalyzerPaths, getDbPath, getModelTiers, getPiAgentAnalyzersDir, getSessionsDir, loadConfig } from "../../src/config.js";
+import { getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, getPiAgentAnalyzersDir, getSessionsDir, loadConfig } from "../../src/config.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 
-const ENV_KEYS = ["PROSPECTOR_CONFIG", "PROSPECTOR_DB_PATH", "PROSPECTOR_SESSIONS_DIR", "PROSPECTOR_ANALYZERS_DIR"];
+const ENV_KEYS = ["PROSPECTOR_CONFIG", "PROSPECTOR_DB_PATH", "PROSPECTOR_SESSIONS_DIR", "PROSPECTOR_ANALYZERS_DIR", "PROSPECTOR_LLM_TIMEOUT_MS"];
 
 afterEach(() => {
 	for (const k of ENV_KEYS) delete process.env[k];
@@ -64,5 +64,24 @@ describe("config", () => {
 		assert.equal(paths[1], path.join(os.homedir(), "/cfg"));
 		assert.equal(paths[2], path.resolve(process.cwd(), ".prospector", "analyzers"));
 		assert.equal(paths[3], "/agent/dir");
+	});
+
+	it("getLlmTimeoutMs defaults when unset", () => {
+		delete process.env["PROSPECTOR_LLM_TIMEOUT_MS"];
+		assert.equal(getLlmTimeoutMs({}), 120_000);
+	});
+
+	it("getLlmTimeoutMs honours the config field", () => {
+		delete process.env["PROSPECTOR_LLM_TIMEOUT_MS"];
+		assert.equal(getLlmTimeoutMs({ llmTimeoutMs: 5000 }), 5000);
+	});
+
+	it("getLlmTimeoutMs env wins over config and falls back for invalid values", () => {
+		process.env["PROSPECTOR_LLM_TIMEOUT_MS"] = "9000";
+		assert.equal(getLlmTimeoutMs({ llmTimeoutMs: 5000 }), 9000);
+		process.env["PROSPECTOR_LLM_TIMEOUT_MS"] = "not-a-number";
+		assert.equal(getLlmTimeoutMs({ llmTimeoutMs: 5000 }), 5000);
+		process.env["PROSPECTOR_LLM_TIMEOUT_MS"] = "0";
+		assert.equal(getLlmTimeoutMs({}), 120_000);
 	});
 });
