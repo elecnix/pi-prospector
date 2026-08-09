@@ -26,14 +26,14 @@ import type {
 } from "../../types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { rankPhrases, rankTerms, tokenize, type TermCount } from "./tokenize.js";
+import { rankTerms, tokenize, type TermCount } from "./tokenize.js";
 import { DEFAULT_LEXICON_CANDIDATES_CONFIG, type LexiconCandidatesConfig } from "./config.js";
 
 export const LEXICON_CANDIDATES_DEF: AnalyzerDef = {
 	id: "lexicon-candidates",
 	label: "Lexicon Candidates (deterministic)",
 	description:
-		"Tokenises a session's user messages and nominates the distinct terms and two-word phrases worth adjudicating for the frustration lexicon, ranked by frequency and capped per session. Language-blind: no stopwords, no stemming, only a shape filter that drops code, paths, and identifiers. No LLM.",
+		"Tokenises a session's user messages and nominates the distinct terms worth adjudicating for the frustration lexicon, ranked by frequency and capped per session. Language-blind: no stopwords, no stemming, only a shape filter that drops code, paths, and identifiers. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [],
 };
@@ -41,10 +41,11 @@ export const LEXICON_CANDIDATES_DEF: AnalyzerDef = {
 export const LEXICON_CANDIDATES_VERSION: AnalyzerVersion = {
 	analyzerId: LEXICON_CANDIDATES_DEF.id,
 	major: 1,
-	// 1.1: also nominate two-word phrases (issue #40). Frustration frequently lives
-	// in a bigram whose component words are each genuinely neutral, so no amount of
-	// single-token judgement can reach it.
-	minor: 1,
+	// 1.1: also nominated two-word phrases (issue #40).
+	// 1.2: phrases removed. Measured over the real corpus they were 84% of all
+	// adjudications and 75% of all hits while being overwhelmingly noise — adjacent
+	// words in running prose are simply not idioms. See #40.
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/lexicon-candidates/index.ts",
 };
@@ -52,12 +53,6 @@ export const LEXICON_CANDIDATES_VERSION: AnalyzerVersion = {
 export interface LexiconCandidatesProperties {
 	/** Nominated single terms, most frequent first. */
 	terms: TermCount[];
-	/**
-	 * Nominated two-word phrases, most frequent first. Frustration often lives in
-	 * a bigram whose parts are each neutral — `laisse tomber`, `never mind`,
-	 * `trop lent` — which single-token judgement structurally cannot see.
-	 */
-	phrases: TermCount[];
 	/** How many user messages were read. */
 	user_message_count: number;
 	/** Distinct tokens seen before the cap was applied. */
@@ -111,7 +106,6 @@ export const lexiconCandidatesAnalyzer: Analyzer = {
 		const allTokens = texts.flatMap((t) => tokenize(t));
 		const properties: LexiconCandidatesProperties = {
 				terms: rankTerms(texts, config.maxTermsPerSession),
-			phrases: rankPhrases(texts, config.maxPhrasesPerSession),
 			user_message_count: texts.length,
 			distinct_token_count: new Set(allTokens).size,
 			total_token_count: allTokens.length,
