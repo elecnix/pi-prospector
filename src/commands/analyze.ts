@@ -71,7 +71,17 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const analyzerConcurrency = args.analyzerConcurrency ?? DEFAULT_DETERMINISTIC_CONCURRENCY;
 		const llmGate = createSemaphore(llmConcurrency);
 		const llm: LLMCaller = (request) => llmGate(() => baseLlm(request));
-		const framework = new AnalyzerFramework({ db, llm, modelTiers, configOverrides: getAnalyzerConfigOverrides(config) });
+		// Let one session reach the LLM gate on its own. Without this, fan-out is
+		// bounded by how many sessions happen to be issuing calls at the same moment,
+		// and a single-session run can never exceed concurrency 1. The semaphore above
+		// still caps what the provider actually sees.
+		const framework = new AnalyzerFramework({
+			db,
+			llm,
+			modelTiers,
+			configOverrides: getAnalyzerConfigOverrides(config),
+			unitConcurrency: llmConcurrency,
+		});
 		// Register built-ins plus any locally-authored custom analyzers discovered
 		// on the analyzer paths (explicit --analyzer-path, config, project dir, Pi
 		// agent dir). A malformed custom analyzer is skipped and reported, not fatal.
@@ -156,7 +166,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		handler: prospectAnalyze,
 	});
 }

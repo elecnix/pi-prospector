@@ -85,6 +85,7 @@ import {
 	upsertAnalyzerVersion,
 } from "../db/analysis-queries.js";
 import { materializeProposalsFromNode, applyValidationFromNode } from "./proposal-materializer.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 export interface FrameworkDeps {
 	db: Database.Database;
@@ -97,6 +98,17 @@ export interface FrameworkDeps {
 	 * the (ungraded) `config` reason rather than silently reusing them.
 	 */
 	configOverrides?: Record<string, Record<string, unknown>>;
+	/**
+	 * How many of one analyzer's units may be in flight at once. Defaults to 1,
+	 * preserving the previous sequential behaviour unless a caller opts in.
+	 *
+	 * This is not a second provider limit — the semaphore around the LLM caller
+	 * remains the only cap on provider load. It exists so that a *single* session
+	 * can reach that cap: without it, fan-out is bounded by how many sessions
+	 * happen to be doing LLM work at the same moment, which left the gate ~30%
+	 * utilised on a real corpus and pinned `--session X` runs to concurrency 1.
+	 */
+	unitConcurrency?: number;
 }
 
 interface ResolvedAnalyzer {
@@ -242,8 +254,31 @@ export class AnalyzerFramework {
 
 		const runCtx = this.buildRunContext(analyzer, config, sessionId);
 
-		for (let index = 0; index < todo.length; index++) {
-			const item = todo[index]!;
+		// Units of one analyzer run concurrently, bounded by `unitConcurrency`.
+		//
+		// Sessions used to be the only axis of fan-out, so a session could never have
+		// more than one call in flight however the limits were set. Measured over a
+		// real corpus at 40-way session concurrency that left the LLM gate about 30%
+		// utilised — many lanes were doing deterministic work and issuing no calls at
+		// all — and `--session X` alone ran at concurrency 1 regardless of flags.
+		//
+		// This is safe to add underneath the existing limits rather than instead of
+		// them: the global semaphore around the LLM caller is still the only thing
+		// that decides how much load a provider sees, and better-sqlite3 is
+		// synchronous, so persistence cannot interleave mid-write.
+		//
+		// Defaults to 1 so behaviour is unchanged unless a caller opts in.
+		let stopDispatching = false;
+		let abandoned = 0;
+		await mapWithConcurrency(todo, this.deps.unitConcurrency ?? 1, async (item) => {
+			// A configuration fault has already been seen: every remaining unit would
+			// fail the same way, so skip without calling the analyzer. Units already
+			// in flight still finish, which bounds the damage at the concurrency width
+			// rather than at zero.
+			if (stopDispatching) {
+				abandoned++;
+				return;
+			}
 			try {
 				const analysis = await analyzer.analyze(item.unit, runCtx);
 				// Cost is booked whether or not the node lands: the call was made.
@@ -252,12 +287,10 @@ export class AnalyzerFramework {
 				const created = this.persistNode(resolved, runId, sessionId, item, analysis);
 				if (created === null) {
 					// A peer run produced this exact recipe first. Identity *is* the recipe,
-					// so the work is done — that is idempotency, not a failure. This only
-					// became reachable once units could be corpus-keyed (a lexicon term
-					// nominated by two sessions that are being analysed concurrently)
-					// rather than always scoped to a single session.
+					// so the work is done — that is idempotency, not a failure. Reachable
+					// both across concurrent sessions and, now, within one analyzer.
 					result.nodesSkipped++;
-					continue;
+					return;
 				}
 				result.nodesProduced++;
 				if (item.status === "stale" && item.priorNodeId) result.nodesRevised++;
@@ -271,20 +304,17 @@ export class AnalyzerFramework {
 				// fail identically for one root cause that was knowable before the first
 				// one ran, so continuing turns a single typo into an error node per unit —
 				// a mis-specified model spec once produced 113,992 of them in five
-				// seconds. Stop this analyzer and report once. The units stay missing, so
+				// seconds. Stop dispatching and report once. The units stay missing, so
 				// they are simply picked up again once the configuration is fixed.
-				if (isConfigurationFault(err)) {
-					const abandoned = todo.length - index - 1;
-					if (abandoned > 0) {
-						summary.errors.push(
-							`${analyzer.def.id}: stopped early — this looks like a configuration problem that ` +
-							`would hit the remaining ${abandoned} unit(s) identically. Fix it and re-run; ` +
-							`they are still missing, so nothing is lost.`,
-						);
-					}
-					break;
-				}
+				if (isConfigurationFault(err)) stopDispatching = true;
 			}
+		});
+		if (abandoned > 0) {
+			summary.errors.push(
+				`${analyzer.def.id}: stopped early — this looks like a configuration problem that ` +
+				`would hit the remaining ${abandoned} unit(s) identically. Fix it and re-run; ` +
+				`they are still missing, so nothing is lost.`,
+			);
 		}
 
 		finishRun(this.deps.db, runId, {
