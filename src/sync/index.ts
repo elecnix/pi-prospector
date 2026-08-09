@@ -86,54 +86,63 @@ function syncPiSession(
 		}
 	}
 
-	// Upsert session
-	upsertSession(db, {
-		id: sessionId,
-		file_path: disc.filePath,
-		project: disc.project,
-		source: disc.source,
-		cwd,
-		parent_session: parentSession,
-		started_at: startedAt,
-		last_line: cursor?.last_line ?? 0,
-		last_modified: disc.mtime,
-		analyzed_at: null,
-		message_count: 0,
-		branch_count: branchCount,
-	});
-
-	// Parse messages from resume point
+	// Every DB write for this session commits as one unit. The insert loop, the
+	// cursor advance and the message count are deliberately inside the same
+	// transaction: if anything here fails partway, SQLite rolls the whole session
+	// back atomically — no partial rows *and* no advanced `last_line` — so a
+	// resync reprocesses the file from the old cursor instead of skipping rows
+	// that were never committed (issue #59).
 	const resumeLine = cursor?.last_line ?? 0;
 	let msgCount = 0;
 
-	for (let i = resumeLine; i < lines.length; i++) {
-		const line = lines[i]?.trim();
-		if (!line) continue;
-
-		const parsed = parseLine(line);
-		if (!parsed || parsed.kind === "session") continue;
-
-		const entry = parsed.entry;
-		insertMessage(db, {
-			id: entry.id,
-			session_id: sessionId,
+	const syncSession = db.transaction(() => {
+		// Upsert session
+		upsertSession(db, {
+			id: sessionId,
+			file_path: disc.filePath,
+			project: disc.project,
 			source: disc.source,
-			parent_id: entry.parentId,
-			timestamp: entry.timestamp,
-			role: entry.role,
-			content_text: entry.text,
-			content_thinking: entry.thinking,
-			tool_calls: entry.tool_calls ? JSON.stringify(entry.tool_calls) : null,
-			tool_results: entry.tool_results ? JSON.stringify(entry.tool_results) : null,
-			usage: entry.usage ? JSON.stringify(entry.usage) : null,
+			cwd,
+			parent_session: parentSession,
+			started_at: startedAt,
+			last_line: cursor?.last_line ?? 0,
+			last_modified: disc.mtime,
+			analyzed_at: null,
+			message_count: 0,
+			branch_count: branchCount,
 		});
-		msgCount++;
-	}
 
-	// Update cursor and message count
-	updateCursor(db, sessionId, lines.length, disc.mtime);
-	const total = countMessages(db, sessionId);
-	updateMessageCount(db, sessionId, total);
+		// Parse messages from resume point
+		for (let i = resumeLine; i < lines.length; i++) {
+			const line = lines[i]?.trim();
+			if (!line) continue;
+
+			const parsed = parseLine(line);
+			if (!parsed || parsed.kind === "session") continue;
+
+			const entry = parsed.entry;
+			insertMessage(db, {
+				id: entry.id,
+				session_id: sessionId,
+				source: disc.source,
+				parent_id: entry.parentId,
+				timestamp: entry.timestamp,
+				role: entry.role,
+				content_text: entry.text,
+				content_thinking: entry.thinking,
+				tool_calls: entry.tool_calls ? JSON.stringify(entry.tool_calls) : null,
+				tool_results: entry.tool_results ? JSON.stringify(entry.tool_results) : null,
+				usage: entry.usage ? JSON.stringify(entry.usage) : null,
+			});
+			msgCount++;
+		}
+
+		// Update cursor and message count
+		updateCursor(db, sessionId, lines.length, disc.mtime);
+		const total = countMessages(db, sessionId);
+		updateMessageCount(db, sessionId, total);
+	});
+	syncSession();
 
 	result.sessionsProcessed++;
 	result.messagesInserted += msgCount;
@@ -153,60 +162,65 @@ function syncClaudeSession(
 	const startedAt = meta?.timestamp ?? null;
 	const cwd = (meta?.cwd ?? disc.project) || "";
 
-	// Upsert session
-	upsertSession(db, {
-		id: sessionId,
-		file_path: disc.filePath,
-		project: disc.project,
-		source: disc.source,
-		cwd,
-		parent_session: null,
-		started_at: startedAt ?? "",
-		last_line: cursor?.last_line ?? 0,
-		last_modified: disc.mtime,
-		analyzed_at: null,
-		message_count: 0,
-		branch_count: 0,
-	});
-
 	// Claude tool_result blocks carry only a tool_use_id; resolve the tool name
 	// from the matching tool_use in the preceding assistant message (issue #30).
 	// Built from ALL lines (not just the resume point) so a tool_use/tool_result
 	// pair that straddles the cursor still resolves on an incremental sync.
 	const toolNamesById = buildClaudeToolNameMap(lines);
 
-	// Parse messages from resume point
+	// Every DB write for this session commits as one unit, with the cursor
+	// advance inside the same transaction (see syncPiSession, issue #59).
 	const resumeLine = cursor?.last_line ?? 0;
 	let msgCount = 0;
 
-	for (let i = resumeLine; i < lines.length; i++) {
-		const line = lines[i]?.trim();
-		if (!line) continue;
-
-		const parsed = parseLine(line, "claude", toolNamesById);
-		if (!parsed || parsed.kind !== "message") continue;
-
-		const entry = parsed.entry;
-		insertMessage(db, {
-			id: entry.id,
-			session_id: sessionId,
+	const syncSession = db.transaction(() => {
+		// Upsert session
+		upsertSession(db, {
+			id: sessionId,
+			file_path: disc.filePath,
+			project: disc.project,
 			source: disc.source,
-			parent_id: entry.parentId,
-			timestamp: entry.timestamp,
-			role: entry.role,
-			content_text: entry.text,
-			content_thinking: entry.thinking,
-			tool_calls: entry.tool_calls ? JSON.stringify(entry.tool_calls) : null,
-			tool_results: entry.tool_results ? JSON.stringify(entry.tool_results) : null,
-			usage: entry.usage ? JSON.stringify(entry.usage) : null,
+			cwd,
+			parent_session: null,
+			started_at: startedAt ?? "",
+			last_line: cursor?.last_line ?? 0,
+			last_modified: disc.mtime,
+			analyzed_at: null,
+			message_count: 0,
+			branch_count: 0,
 		});
-		msgCount++;
-	}
 
-	// Update cursor and message count
-	updateCursor(db, sessionId, lines.length, disc.mtime);
-	const total = countMessages(db, sessionId);
-	updateMessageCount(db, sessionId, total);
+		// Parse messages from resume point
+		for (let i = resumeLine; i < lines.length; i++) {
+			const line = lines[i]?.trim();
+			if (!line) continue;
+
+			const parsed = parseLine(line, "claude", toolNamesById);
+			if (!parsed || parsed.kind !== "message") continue;
+
+			const entry = parsed.entry;
+			insertMessage(db, {
+				id: entry.id,
+				session_id: sessionId,
+				source: disc.source,
+				parent_id: entry.parentId,
+				timestamp: entry.timestamp,
+				role: entry.role,
+				content_text: entry.text,
+				content_thinking: entry.thinking,
+				tool_calls: entry.tool_calls ? JSON.stringify(entry.tool_calls) : null,
+				tool_results: entry.tool_results ? JSON.stringify(entry.tool_results) : null,
+				usage: entry.usage ? JSON.stringify(entry.usage) : null,
+			});
+			msgCount++;
+		}
+
+		// Update cursor and message count
+		updateCursor(db, sessionId, lines.length, disc.mtime);
+		const total = countMessages(db, sessionId);
+		updateMessageCount(db, sessionId, total);
+	});
+	syncSession();
 
 	result.sessionsProcessed++;
 	result.messagesInserted += msgCount;
