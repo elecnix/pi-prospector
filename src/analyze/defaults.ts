@@ -12,6 +12,7 @@ import { turnPairLLMAnalyzer } from "./analyzers/turn-pair-llm/index.js";
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
+import { cacheEconomyAnalyzer } from "./analyzers/cache-economy/index.js";
 import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.js";
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
@@ -24,6 +25,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-llm",
 	"tool-trajectory",
 	"context-economy",
+	"cache-economy",
 	"session-overview",
 ] as const;
 
@@ -39,6 +41,7 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	turnPairLLMAnalyzer,
 	toolTrajectoryAnalyzer,
 	contextEconomyAnalyzer,
+	cacheEconomyAnalyzer,
 	sessionOverviewAnalyzer,
 ];
 
