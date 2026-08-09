@@ -268,8 +268,8 @@ export function getAllAnalysisNodes(db: Database.Database): AnalysisNodeRow[] {
 
 /** A session's messages in stream order — for reconstructing turns verbatim. */
 export function getSessionMessageRows(db: Database.Database, sessionId: string): MessageRow[] {
-	return prep(db, 
-			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results " +
+	return prep(db,
+			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, cost_usd " +
 				"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
 		)
 		.all(sessionId) as MessageRow[];
@@ -341,10 +341,49 @@ export function getAnchoredMessageIds(db: Database.Database, nodeId: string): st
 }
 
 export function getMessage(db: Database.Database, id: string): MessageRow | undefined {
-	return prep(db, 
-			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results FROM messages WHERE id = ?",
+	return prep(db,
+			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, cost_usd FROM messages WHERE id = ?",
 		)
 		.get(id) as MessageRow | undefined;
+}
+
+/**
+ * Sum the billed dollar cost of the assistant turns headed by the given user
+ * messages (issue #71). A turn is the span from one user message up to (but
+ * excluding) the next user message; assistant replies and tool results inside it
+ * belong to that turn. Used to price a proposal from its high-signal source
+ * turns. Returns null when none of the turns has a recorded cost — money is
+ * never guessed, and a sum of 0 reads as "no amount" (see extractCostUsd).
+ */
+export function sumSourceTurnCost(
+	db: Database.Database,
+	sessionId: string,
+	userMessageIds: readonly string[],
+): number | null {
+	if (userMessageIds.length === 0) return null;
+	const rows = prep(db, "SELECT id, role, cost_usd FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(sessionId) as Array<{
+		id: string;
+		role: string;
+		cost_usd: number | null;
+	}>;
+	const indexById = new Map<string, number>();
+	for (let i = 0; i < rows.length; i++) indexById.set(rows[i]!.id, i);
+
+	let sum = 0;
+	let any = false;
+	for (const uid of new Set(userMessageIds)) {
+		const start = indexById.get(uid);
+		if (start === undefined) continue;
+		for (let i = start + 1; i < rows.length; i++) {
+			const r = rows[i]!;
+			if (r.role === "user") break; // next turn's boundary
+			if (r.role === "assistant" && typeof r.cost_usd === "number" && Number.isFinite(r.cost_usd)) {
+				sum += r.cost_usd;
+				any = true;
+			}
+		}
+	}
+	return any && sum > 0 ? sum : null;
 }
 
 // ───────────────────────── lineage navigation ─────────────────────────

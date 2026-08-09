@@ -20,6 +20,7 @@ function makeProposal(overrides: Partial<Proposal>): Proposal {
 		detail: null,
 		evidence: null,
 		confidence: null,
+		cost_usd: null,
 		status: "open",
 		input_key: "k",
 		source_message_ids: null,
@@ -90,6 +91,43 @@ test("rankProposals: supported > unvalidated > unsupported, regardless of model 
 	const unsupported = makeProposal({ id: "uns", validation_status: "unsupported", validated_score: 0, confidence: 0.95 });
 	const sorted = [unsupported, unvalidated, supported].sort(rankProposals).map((p) => p.id);
 	assert.deepEqual(sorted, ["sup", "unv", "uns"]);
+});
+
+// ── pricing as a within-tier tie-breaker (issue #71) ──
+
+test("rankProposals: within a tier, the pricier proposal sorts first", () => {
+	const pricey = makeProposal({ id: "pricey", confidence: 0.5, cost_usd: 12.5 });
+	const cheap = makeProposal({ id: "cheap", confidence: 0.5, cost_usd: 0.04 });
+	const sorted = [cheap, pricey].sort(rankProposals).map((p) => p.id);
+	assert.deepEqual(sorted, ["pricey", "cheap"]);
+});
+
+test("rankProposals: cost outranks confidence within a tier, but not across tiers", () => {
+	// The expensive unvalidated finding must rank above a cheaper unvalidated one
+	// even at lower model confidence — but it still cannot beat a (cheap)
+	// replay-supported finding, because a replay-validated result is better
+	// evidence than an expensive unvalidated one.
+	const expensiveLowConf = makeProposal({ id: "exp", confidence: 0.4, cost_usd: 87.0 });
+	const cheapHighConf = makeProposal({ id: "cheap", confidence: 0.9, cost_usd: 0.05 });
+	const supportedCheap = makeProposal({ id: "sup", validation_status: "supported", validated_score: 1, cost_usd: 0.01 });
+	const withinTier = [cheapHighConf, expensiveLowConf].sort(rankProposals).map((p) => p.id);
+	assert.deepEqual(withinTier, ["exp", "cheap"]);
+	const acrossTier = [cheapHighConf, expensiveLowConf, supportedCheap].sort(rankProposals).map((p) => p.id);
+	assert.deepEqual(acrossTier, ["sup", "exp", "cheap"]);
+});
+
+test("rankProposals: unpriced proposals rank below priced ones in the same tier", () => {
+	const priced = makeProposal({ id: "priced", confidence: 0.4, cost_usd: 0.5 });
+	const unpriced = makeProposal({ id: "unpriced", confidence: 0.4, cost_usd: null });
+	const sorted = [unpriced, priced].sort(rankProposals).map((p) => p.id);
+	assert.deepEqual(sorted, ["priced", "unpriced"]);
+});
+
+test("rankProposals: equal cost within a tier falls back to confidence then newest", () => {
+	const older = makeProposal({ id: "old", confidence: 0.8, cost_usd: 1, created_at: "2026-01-01T00:00:00.000Z" });
+	const newer = makeProposal({ id: "new", confidence: 0.8, cost_usd: 1, created_at: "2026-02-01T00:00:00.000Z" });
+	const sorted = [older, newer].sort(rankProposals).map((p) => p.id);
+	assert.deepEqual(sorted, ["new", "old"]);
 });
 
 test("rankProposals: supported proposals order by validated score", () => {

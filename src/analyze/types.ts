@@ -157,6 +157,7 @@ export const MessageRow = Type.Object({
 	content_thinking: Type.Union([Type.String(), Type.Null()]),
 	tool_calls: Type.Union([Type.String(), Type.Null()]),
 	tool_results: Type.Union([Type.String(), Type.Null()]),
+	cost_usd: Type.Union([Type.Number(), Type.Null()]),
 });
 export type MessageRow = Static<typeof MessageRow>;
 

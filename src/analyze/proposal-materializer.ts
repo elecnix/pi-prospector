@@ -9,7 +9,7 @@
 
 import type Database from "better-sqlite3";
 import { shortHash, uuidv7 } from "./input-hash.js";
-import { insertEdge } from "../db/analysis-queries.js";
+import { insertEdge, sumSourceTurnCost } from "../db/analysis-queries.js";
 import { EDGE_KINDS, REF_KINDS } from "./edge-kinds.js";
 
 export interface RawProposal {
@@ -69,6 +69,14 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 		const proposal = normalizeProposal(candidate);
 		if (!proposal) continue;
 
+		// Price the proposal from its high-signal source turns (issue #71): the
+		// billed dollars of the assistant work those turns cost. Null when the
+		// proposal carries no source turns or none of them is priced — never a
+		// synthetic 0, since a silent zero would read as "this was free".
+		const costUsd = proposal.source_message_ids && proposal.source_message_ids.length > 0
+			? sumSourceTurnCost(db, params.sessionId, proposal.source_message_ids)
+			: null;
+
 		const inputKey = computeProposalInputKey({ sourceOutputKey: params.sourceOutputKey, ordinal });
 		const existing = db
 			.prepare("SELECT id FROM proposals WHERE input_key = ? LIMIT 1")
@@ -79,8 +87,8 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 		db.prepare(`
 			INSERT INTO proposals
 				(id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path,
-				 title, severity, summary, detail, evidence, confidence, status, input_key, source_message_ids)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+				 title, severity, summary, detail, evidence, confidence, cost_usd, status, input_key, source_message_ids)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
 		`).run(
 			proposalId,
 			params.now,
@@ -96,6 +104,7 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 			proposal.detail ?? null,
 			proposal.evidence ?? null,
 			proposal.confidence ?? null,
+			costUsd,
 			inputKey,
 			proposal.source_message_ids && proposal.source_message_ids.length > 0
 				? JSON.stringify(proposal.source_message_ids)

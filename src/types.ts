@@ -164,6 +164,8 @@ export interface Proposal {
 	detail: string | null;
 	evidence: string | null;
 	confidence: number | null;
+	/** The billed dollar cost of the proposal's source turns; null when unpriced (issue #71). */
+	cost_usd: number | null;
 	status: ProposalStatus;
 	input_key: string;
 	/** JSON array (text) of the originating high-signal user-message ids; null until set. */

@@ -40,8 +40,14 @@ export const TOOL_TRAJECTORY_DEF: AnalyzerDef = {
 
 export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	analyzerId: TOOL_TRAJECTORY_DEF.id,
+	// 1.1 (issue #71): each signal now prices itself — `cost_usd` carries the
+	// billed dollar sum of the participating assistant turns, and the node adds a
+	// `trajectory_cost_usd` aggregate. Minor: output gains fields; the detection
+	// semantics are unchanged. This is what lets a loop read as "$0.34" instead
+	// of "repeated 9×" in proposal evidence, and it also enriches the digest the
+	// synthesizer sees (riding the recompute the shape change already forces).
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
 };
@@ -53,6 +59,11 @@ export interface ToolTrajectoryProperties {
 	signals: TrajectorySignal[];
 	/** Aggregate friction contribution from trajectory signals. */
 	trajectory_friction_score: number;
+	/**
+	 * The total billed dollar cost of this session's trajectory signals (the sum
+	 * of each signal's cost_usd), or null when none of them is priced (issue #71).
+	 */
+	trajectory_cost_usd: number | null;
 	/** Counts per pattern. */
 	pattern_counts: Record<string, number>;
 	/** Total number of tool calls analysed. */
@@ -138,6 +149,14 @@ function extractToolCalls(messages: MessageRow[]): ToolCallWithResult[] {
 		allResults.push(...results);
 	}
 
+	// The billed dollar cost of each call's assistant turn, so every detected
+	// signal can be priced (issue #71). Unrecorded/zero costs stay absent; money
+	// is never invented.
+	const costByMsgId = new Map<string, number>();
+	for (const m of messages) {
+		if (typeof m.cost_usd === "number" && m.cost_usd > 0) costByMsgId.set(m.id, m.cost_usd);
+	}
+
 	const withResults: ToolCallWithResult[] = normalized.map((nc, i) => {
 		// Each call should have a corresponding result; if not, assume success
 		const result = allResults[resultIdx];
@@ -146,6 +165,7 @@ function extractToolCalls(messages: MessageRow[]): ToolCallWithResult[] {
 			call: nc,
 			isError: result?.isError ?? false,
 			resultMessageId: "",
+			costUsd: costByMsgId.get(nc.messageId) ?? null,
 		};
 	});
 
@@ -232,10 +252,27 @@ export const toolTrajectoryAnalyzer: Analyzer = {
 			patternCounts[s.pattern] = (patternCounts[s.pattern] ?? 0) + 1;
 		}
 
+		// Aggregate billed cost across signals: a session whose loops burned money
+		// is worth surfacing even when each individual signal is modest. Null when
+		// no signal is priced (never a synthetic 0).
+		let trajectoryCostUsd: number | null = null;
+		{
+			let sum = 0;
+			let any = false;
+			for (const s of signals) {
+				if (typeof s.cost_usd === "number" && Number.isFinite(s.cost_usd)) {
+					sum += s.cost_usd;
+					any = true;
+				}
+			}
+			if (any && sum > 0) trajectoryCostUsd = sum;
+		}
+
 		const properties: ToolTrajectoryProperties = {
 			session_id: ctx.sessionId,
 			signals,
 			trajectory_friction_score: trajectoryFriction,
+			trajectory_cost_usd: trajectoryCostUsd,
 			pattern_counts: patternCounts,
 			tool_call_count: toolCalls.length,
 		};

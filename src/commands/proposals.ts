@@ -110,6 +110,11 @@ function formatConfidence(confidence: number | null): string {
 	return confidence == null ? "n/a" : `${Math.round(confidence * 100)}%`;
 }
 
+/** Format a billed dollar amount compactly: two decimals, sub-cent at precision 2. */
+export function formatUsd(usd: number): string {
+	return `$${usd < 0.01 ? usd.toPrecision(2) : usd.toFixed(2)}`;
+}
+
 function formatTarget(p: Proposal): string {
 	return p.target_path ? `${p.target_type}: ${p.target_path}` : p.target_type;
 }
@@ -121,11 +126,18 @@ function formatTarget(p: Proposal): string {
  * two are never confused.
  */
 export function statusLabel(p: Proposal): string {
+	let label: string;
 	if (p.validation_status === "supported" || p.validation_status === "unsupported") {
 		const pct = p.validated_score == null ? "n/a" : `${Math.round(p.validated_score * 100)}%`;
-		return `replay-validated:${p.validation_status} ${pct}`;
+		label = `replay-validated:${p.validation_status} ${pct}`;
+	} else {
+		label = `model-rated ${formatConfidence(p.confidence)}`;
 	}
-	return `model-rated ${formatConfidence(p.confidence)}`;
+	// Money is a headline signal (issue #71): surface the billed cost of the
+	// proposal's source turns when one is recorded, so a user can see at a glance
+	// what a finding cost.
+	if (p.cost_usd != null) label += ` · ${formatUsd(p.cost_usd)}`;
+	return label;
 }
 
 /**
@@ -133,18 +145,36 @@ export function statusLabel(p: Proposal): string {
  *   supported (by validated score)  >  unvalidated (by model confidence)  >
  *   unsupported (by validated score).
  * A replay-validated failure therefore sinks below an untested proposal, and a
- * replay-validated success rises above everything. Ties broken by newest.
+ * replay-validated success rises above everything.
+ *
+ * Within a tier (issue #71), money is the tie-breaker: a replay-validated
+ * finding is still better evidence than an expensive unvalidated one, so the
+ * trust tier stays authoritative — but once two proposals share a tier, the
+ * pricier one sorts first. A stuck loop stops being "repeated 9×" and becomes
+ * an amount. Unpriced proposals (null) rank below priced ones in their tier.
+ * Final ties broken by newest.
  */
-function rankKey(p: Proposal): number {
-	if (p.validation_status === "supported") return 2 + (p.validated_score ?? 0);
-	if (p.validation_status === "unsupported") return p.validated_score ?? 0;
-	return 1 + (p.confidence ?? 0);
+function rankTier(p: Proposal): number {
+	if (p.validation_status === "supported") return 2;
+	if (p.validation_status === "unsupported") return 0;
+	return 1;
+}
+function scoreKey(p: Proposal): number {
+	if (p.validation_status === "supported" || p.validation_status === "unsupported") return p.validated_score ?? 0;
+	return p.confidence ?? 0;
 }
 
 export function rankProposals(a: Proposal, b: Proposal): number {
-	const ka = rankKey(a);
-	const kb = rankKey(b);
-	if (kb !== ka) return kb - ka;
+	const ta = rankTier(a);
+	const tb = rankTier(b);
+	if (tb !== ta) return tb - ta;
+	// Trust tier equal → money is the tie-breaker: pricier first, unpriced last.
+	const ca = a.cost_usd ?? -1;
+	const cb = b.cost_usd ?? -1;
+	if (cb !== ca) return cb - ca;
+	const sa = scoreKey(a);
+	const sb = scoreKey(b);
+	if (sb !== sa) return sb - sa;
 	if (a.created_at === b.created_at) return 0;
 	return a.created_at < b.created_at ? 1 : -1;
 }
@@ -248,7 +278,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			blocks.push(`${header}\n${group.map(format).join("\n\n")}`);
 		}
 
-		const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validated score then confidence:`;
+		const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validation, then cost, then confidence:`;
 		output(ctx, `${headline}\n\n${blocks.join("\n\n")}`);
 	} finally {
 		db.close();
@@ -316,7 +346,7 @@ export async function prospectRemediate(args: string, ctx: ExtensionCommandConte
 export function registerProposalsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-proposals", {
 		description:
-			"List proposals, ranked by confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, and --full for evidence/source.",
+			"List proposals, ranked by trust tier (replay-validated) then billed cost, then confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, and --full for evidence/source.",
 		handler: prospectProposals,
 	});
 

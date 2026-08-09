@@ -137,3 +137,89 @@ describe("materializeProposalsFromNode", () => {
 		}
 	});
 });
+
+describe("proposal pricing (issue #71)", () => {
+	// Session stream: u0 → a1($0.2) a2($0.3) → u1 → a3($0.1). Turn costs are the
+	// sum of assistant billing from a user message up to the next one.
+	function seedPaidSession(db: import("better-sqlite3").Database): void {
+		insertSession(db, "s1");
+		const insert = db.prepare(
+			"INSERT INTO messages (id, session_id, role, cost_usd) VALUES (?, 's1', ?, ?)",
+		);
+		insert.run("u0", "user", null);
+		insert.run("a1", "assistant", 0.2);
+		insert.run("a2", "assistant", 0.3);
+		insert.run("u1", "user", null);
+		insert.run("a3", "assistant", 0.1);
+	}
+
+	function materializeWith(db: import("better-sqlite3").Database, sourceIds: string[] | undefined): number | null {
+		seedNode(db, "n1");
+		const created = materializeProposalsFromNode(db, {
+			sessionId: "s1",
+			analyzerId: "session-overview",
+			sourceNodeId: "n1",
+			sourceOutputKey: "ok-n1",
+			now: new Date().toISOString(),
+			contentJson: {
+				improvement_proposals: [{ target_type: "prompt", title: "T", summary: "s", source_message_ids: sourceIds }],
+			},
+		});
+		assert.equal(created, 1);
+		return listProposals(db)[0]!.cost_usd;
+	}
+
+	it("prices a proposal as the billed cost of its source turns", () => {
+		const { db, close } = tempDb();
+		try {
+			seedPaidSession(db);
+			assert.equal(materializeWith(db, ["u1"]), 0.1);
+		} finally {
+			close();
+		}
+	});
+
+	it("sums all assistant turns in a multi-step source turn", () => {
+		const { db, close } = tempDb();
+		try {
+			seedPaidSession(db);
+			assert.equal(materializeWith(db, ["u0"]), 0.5); // a1 + a2, stops at the next user
+		} finally {
+			close();
+		}
+	});
+
+	it("leaves a proposal unpriced (null) when it carries no source turns", () => {
+		const { db, close } = tempDb();
+		try {
+			seedPaidSession(db);
+			assert.equal(materializeWith(db, undefined), null);
+		} finally {
+			close();
+		}
+	});
+
+	it("leaves a proposal unpriced (null) when its source turns have no recorded cost", () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s1"); // seedNode's node session
+			insertSession(db, "s2");
+			const stmt = db.prepare("INSERT INTO messages (id, session_id, role) VALUES (?, 's2', ?)");
+			stmt.run("u0", "user");
+			stmt.run("a1", "assistant");
+			seedNode(db, "n2");
+			const created = materializeProposalsFromNode(db, {
+				sessionId: "s2",
+				analyzerId: "session-overview",
+				sourceNodeId: "n2",
+				sourceOutputKey: "ok-n2",
+				now: new Date().toISOString(),
+				contentJson: { improvement_proposals: [{ target_type: "prompt", title: "T", summary: "s", source_message_ids: ["u0"] }] },
+			});
+			assert.equal(created, 1);
+			assert.equal(listProposals(db)[0]!.cost_usd, null);
+		} finally {
+			close();
+		}
+	});
+});

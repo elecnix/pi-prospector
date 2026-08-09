@@ -21,6 +21,13 @@ export interface TrajectorySignal {
 	count: number;
 	/** Message ids of the participating tool calls. */
 	messageIds: string[];
+	/**
+	 * The billed dollar cost of the participating assistant turns, summed
+	 * (issue #71). Null when none of the participants has a recorded cost — a
+	 * missing cost is never invented, and a total of 0 reads as "no amount"
+	 * (see src/sync/parser.ts extractCostUsd).
+	 */
+	cost_usd: number | null;
 	/** Human-readable description. */
 	description: string;
 }
@@ -31,6 +38,29 @@ export interface ToolCallWithResult {
 	isError: boolean;
 	/** The role of the message carrying the tool result. */
 	resultMessageId: string;
+	/**
+	 * The billed dollar cost of this assistant turn (the message that made the
+	 * call), or null when the transcript recorded none. Money is never inferred.
+	 */
+	costUsd: number | null;
+}
+
+/**
+ * Sum the billed cost over a run's participating calls. A participant with no
+ * recorded cost is skipped; the run prices as null only when NOTHING recorded a
+ * cost (or the sum is 0) — a silent zero must not read as "this was free".
+ */
+function signalCost(participants: ToolCallWithResult[]): number | null {
+	let sum = 0;
+	let any = false;
+	for (const p of participants) {
+		const c = p.costUsd;
+		if (typeof c === "number" && Number.isFinite(c)) {
+			sum += c;
+			any = true;
+		}
+	}
+	return any && sum > 0 ? sum : null;
 }
 
 /**
@@ -67,6 +97,7 @@ export function detectStuckLoops(
 				normalizedArgs: current.call.normalizedArgs,
 				count: runLength,
 				messageIds: participants.map((p) => p.call.messageId),
+				cost_usd: signalCost(participants),
 				description: `${current.call.tool} called ${runLength}× with near-identical args without success: ${current.call.normalizedArgs}`,
 			});
 		}
@@ -107,6 +138,7 @@ export function detectPollingLoops(
 				normalizedArgs: current.call.normalizedArgs,
 				count: runLength,
 				messageIds: participants.map((p) => p.call.messageId),
+				cost_usd: signalCost(participants),
 				description: `Read-only ${current.call.tool} called ${runLength}× polling for state: ${current.call.normalizedArgs}`,
 			});
 		}
@@ -156,6 +188,7 @@ export function detectOscillation(
 								normalizedArgs: `git checkout ${current.target} → ${later.target} → ${current.target}`,
 								count: 3,
 								messageIds: [current.messageId, later.messageId, returnCall.messageId],
+								cost_usd: signalCost([calls[i]!, calls[j]!, calls[k]!]),
 								description: `Checkout oscillation: ${current.target} → ${later.target} → ${current.target}`,
 							});
 							break;
@@ -173,6 +206,7 @@ export function detectOscillation(
 						normalizedArgs: `${current.normalizedArgs} ↔ ${later.normalizedArgs}`,
 						count: 2,
 						messageIds: [current.messageId, later.messageId],
+						cost_usd: signalCost([calls[i]!, calls[j]!]),
 						description: `Oscillation: ${current.normalizedArgs} then reversed by ${later.normalizedArgs}`,
 					});
 				}
@@ -239,6 +273,7 @@ export function detectPreFlightGaps(
 						normalizedArgs: call.normalizedArgs,
 						count: 1,
 						messageIds: [call.messageId],
+						cost_usd: signalCost([entry]),
 						description: `Pre-flight gap: ${parsed.base} into non-existent directory '${destDir}' (no prior mkdir)`,
 					});
 				}
@@ -254,6 +289,7 @@ export function detectPreFlightGaps(
 					normalizedArgs: call.normalizedArgs,
 					count: 1,
 					messageIds: [call.messageId],
+					cost_usd: signalCost([entry]),
 					description: `Pre-flight gap: git push of branch '${call.target}' without --set-upstream`,
 				});
 			}
@@ -269,6 +305,7 @@ export function detectPreFlightGaps(
 					normalizedArgs: call.normalizedArgs,
 					count: 1,
 					messageIds: [call.messageId],
+					cost_usd: signalCost([entry]),
 					description: `Pre-flight gap: ${call.tool} to non-existent parent directory '${parentDir}'`,
 				});
 			}
