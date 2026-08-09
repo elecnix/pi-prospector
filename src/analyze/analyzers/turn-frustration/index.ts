@@ -37,7 +37,6 @@ import type {
 } from "../../types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { buildTurnPairs } from "../turn-pair-core/build.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { detectParalinguistic, tokenize } from "../lexicon-candidates/tokenize.js";
 import {
@@ -153,7 +152,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 		const muted = new Set(await getMutedTerms(ctx.db));
 
 		const units: AnalysisUnit[] = [];
-		for (const pair of buildTurnPairs(ctx.messages)) {
+		for (const pair of await ctx.getTurnPairs(ctx.sessionId)) {
 			if (!pair.userText.trim()) continue;
 
 			// Lexicon hits. Matching runs over the tokenised text rather than a regex,

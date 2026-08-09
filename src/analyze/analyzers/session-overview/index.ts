@@ -147,7 +147,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		// and reproducible. Derived from sibling RAW messages (present after ingest),
 		// never from their analysis nodes — so it is order-independent and acyclic.
 		const cfg = (ctx.config as unknown as SessionOverviewConfig) ?? DEFAULT_SESSION_OVERVIEW_CONFIG;
-		const contrast = await selectCrossSessionContrast(ctx.db, ctx.sessionId, cfg);
+		const contrast = await selectCrossSessionContrast(ctx.db, ctx.sessionId, cfg, (sid) => ctx.getTurnPairs(sid));
 		sources.push(...contrast.sourceRefs);
 
 		return [
@@ -171,7 +171,17 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const replyActsNodes = await ctx.getDependencyNodes("user-reply-acts");
 		const messages = await ctx.getSessionMessages(ctx.sessionId);
 
-		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes, failureNodes, frustrationNodes, replyActsNodes });
+		const digest = buildDigest({
+			sessionId: ctx.sessionId,
+			messages,
+			turnPairs: await ctx.getTurnPairs(ctx.sessionId),
+			coreNodes,
+			llmNodes,
+			trajectoryNodes,
+			failureNodes,
+			frustrationNodes,
+			replyActsNodes,
+		});
 		const statsText = JSON.stringify(
 			{
 				pairs: digest.pairCount,

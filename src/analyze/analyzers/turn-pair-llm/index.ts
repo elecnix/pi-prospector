@@ -21,7 +21,6 @@ import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { resolveModelSpec } from "../../model-tiers.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import {
-	buildTurnPairs,
 	type PairToolCall,
 	type PairToolResult,
 } from "../turn-pair-core/build.js";
@@ -100,9 +99,9 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		return [resolveModelSpec(cfg.tier, modelTiers)];
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const coreNodes = ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? [];
-		const pairs = buildTurnPairs(ctx.messages);
+		const pairs = await ctx.getTurnPairs(ctx.sessionId);
 		const pairByUserId = new Map(pairs.map((p) => [p.userMessageId, p]));
 		const config = (ctx.config as unknown as TurnPairLLMConfig) ?? DEFAULT_TURN_PAIR_LLM_CONFIG;
 

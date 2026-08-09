@@ -75,6 +75,12 @@ export interface SessionDigest {
 export interface BuildDigestInput {
 	sessionId: string;
 	messages: MessageRow[];
+	/**
+	 * The session's turn pairs, built once by the framework and shared. Optional so
+	 * callers that construct the digest directly fall back to building pairs from
+	 * messages; the framework consumer always passes the shared array.
+	 */
+	turnPairs?: TurnPair[];
 	coreNodes: AnalysisNodeRow[];
 	llmNodes: AnalysisNodeRow[];
 	trajectoryNodes: AnalysisNodeRow[];
@@ -148,7 +154,7 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	// Map user_message_id → turn pair, so high-signal / failing pairs can carry a
 	// tool-evidence fragment (tool names + truncated args + failed-result error heads).
 	const pairByUser = new Map<string, TurnPair>();
-	for (const pair of buildTurnPairs(input.messages)) {
+	for (const pair of input.turnPairs ?? buildTurnPairs(input.messages)) {
 		pairByUser.set(pair.userMessageId, pair);
 	}
 
