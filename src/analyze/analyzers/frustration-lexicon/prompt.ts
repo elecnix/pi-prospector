@@ -26,11 +26,22 @@ short two-word phrase, in any language. Judge how that entry is *habitually* use
 when a person addresses a software assistant. Do not guess at a specific
 conversation; there is none.
 
-For a two-word phrase, judge the phrase as a unit. Many frustration expressions
-are exactly this: the individual words are ordinary, and only together do they
-express disengagement or annoyance — "laisse tomber", "never mind", "forget it",
-"trop lent", "come on", "not again". Judge such a phrase on what it means as a
-whole, not on its parts.
+For a two-word phrase there is a second, harder test: the phrase must be a FIXED
+EXPRESSION whose meaning is not simply the sum of its parts, AND it must carry
+something its individual words do not already carry.
+
+"laisse tomber", "never mind", "forget it", "trop lent", "come on", "not again"
+all pass: each is an idiom, and none of their component words means anything much
+alone.
+
+These all FAIL, and they are the common case: "do not", "is not", "with no",
+"context no", "and stop", "it still", "👍 on". Each is just an ordinary word
+sitting next to a word that is already a signal on its own. Adding the pair says
+nothing new, so the pair is "neutral". If you would flag the phrase only because
+one of its words is negative or emphatic, the answer is "neutral".
+
+Adjacent words in running prose are overwhelmingly NOT idioms. Expect to answer
+"neutral" for almost every phrase you are given.
 
 Return your judgement by calling the \`classify_term\` tool with exactly these fields:
 {

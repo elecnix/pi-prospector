@@ -58,10 +58,12 @@ export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	analyzerId: TURN_FRUSTRATION_DEF.id,
 	major: 1,
-	// 1.1: also match learned two-word phrases (issue #40). Purely additive — phrase
-	// hits are new (turn, signal) subjects, so every existing hit node keeps its
-	// identity and nothing is recomputed.
-	minor: 1,
+	// 1.1: also match learned two-word phrases (issue #40).
+	// 1.2: a phrase hit is suppressed when one of its component words already fired
+	// on the same turn. Measured over a real corpus, phrases produced 28,179 hits
+	// against the word lexicon's 9,350, nearly all of them restating a word that had
+	// already signalled. Fewer hits by design.
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
@@ -169,12 +171,25 @@ export const turnFrustrationAnalyzer: Analyzer = {
 				);
 			}
 
-			// Phrase hits. A phrase and its component words are separate subjects with
-			// separate verdicts, so both may fire on the same turn — each is a real,
-			// independently-judged signal and each gets its own node, which is what keeps
-			// growth additive.
+			// Phrase hits, but only where the phrase contributes something its component
+			// words do not already contribute by themselves.
+			//
+			// Without this rule the feature drowns in redundancy. Over a real corpus it
+			// produced 28,179 phrase hits against the word lexicon's 9,350, and the top
+			// entries were all restatements of a word that had already fired: `do not`
+			// ×563, `is not` ×475, `with no` ×247 — and most plainly `👍 on` ×285 and
+			// `with 👍` ×285, which are a praise emoji plus whichever word happened to
+			// sit beside it.
+			//
+			// The test is contribution, not novelty of spelling: if a component word is
+			// itself a signal that fired on this same turn, the phrase says nothing new
+			// and is dropped. That is exactly what preserves `laisse tomber` — both
+			// parts neutral, the meaning living only in the pair — while discarding
+			// `do not`. Deterministic, so it holds whichever model judged the phrase.
+			const firedWords = new Set(counts.keys());
 			const knownPhrases = new Set([...lexicon.keys()].filter((k) => k.includes(" ")));
 			for (const { phrase, count } of matchPhrases(pair.userText, knownPhrases)) {
+				if (phrase.split(" ").some((word) => firedWords.has(word))) continue;
 				const entry = lexicon.get(phrase)!;
 				units.push(
 					hitUnit(pair.index, pair.userMessageId, {

@@ -58,13 +58,19 @@ export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	major: 1,
 	// 1.1: the prompt now also covers two-word phrases (issue #40), judged as a
 	// unit rather than as their parts.
+	// 1.3: phrase precision. At corpus scale, phrases were 84% of adjudications and
+	// 75% of all hits, and were overwhelmingly redundant — `do not`, `is not`,
+	// `with no`, `👍 on` — each an ordinary word beside one that already signals on
+	// its own. The prompt now demands a phrase be a fixed expression carrying
+	// something its parts do not, and says outright that almost every adjacent pair
+	// is neutral. Paired with a deterministic guard in turn-frustration.
 	// 1.2: precision. Measured against a real corpus, cheap models flagged `ci`,
 	// `pr`, `gh`, `sh` and 🔀 as frustration — 10.7% of vocabulary called
 	// non-neutral against a 3.8% reference. Two unrelated cheap models failing the
 	// same way pointed at the prompt, not the model: it never said that naming a
 	// tool or reporting a status is not a feeling. Existing verdicts stay valid and
 	// are re-judged only by an explicit `--revise minor`.
-	minor: 2,
+	minor: 3,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };
