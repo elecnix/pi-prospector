@@ -189,8 +189,13 @@ roughly the order concepts build on one another.
   duplicate work and no changed results, because identity is the recipe. Re-running
   is always safe and usually a no-op.
 - **Verification** — recomputing every node's output key from its stored content
-  and confirming it matches. Because identities are content-addressed, any drift
-  reveals out-of-band tampering or corruption. (`prospect verify`.)
+  and confirming it matches, **and** validating every edge's referential
+  integrity (each `consumes`/`revises` target resolves to a real output key, each
+  `anchors`/`uses_*`/produces/contrasts_with target resolves to a real entity).
+  Because identities are content-addressed, any drift reveals out-of-band
+  tampering or corruption; because relationships live only in typed edges, a
+  dangling edge is the one damage that content hashing cannot see — so it is
+  checked here, or a broken evidence trail would certify clean. (`prospect verify`.)
 
 ### Running analysis
 
