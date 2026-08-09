@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { initializeStatementCache } from "./statement-cache.js";
 
 /**
  * Schema for pi-prospector.
@@ -267,6 +268,11 @@ export function migrate(db: Database.Database): void {
 		CREATE INDEX IF NOT EXISTS idx_edges_to ON analysis_edges(to_ref_id, edge_kind);
 		CREATE INDEX IF NOT EXISTS idx_edges_kind ON analysis_edges(edge_kind);
 	`);
+
+	// Everything above is migration. Only now that the final schema is in place
+	// may statements be cached; a cached statement could otherwise reference
+	// pre-migration schema (a dropped table or renamed column).
+	initializeStatementCache(db);
 }
 
 /**

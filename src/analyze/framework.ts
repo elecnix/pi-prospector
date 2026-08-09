@@ -84,6 +84,7 @@ import {
 	upsertAnalyzerDef,
 	upsertAnalyzerVersion,
 } from "../db/analysis-queries.js";
+import { prepare } from "../db/statement-cache.js";
 import { materializeProposalsFromNode, applyValidationFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
 
@@ -731,10 +732,9 @@ function isDuplicateInputKey(err: unknown): boolean {
 }
 
 function db_loadMessages(db: Database.Database, sessionId: string): MessageRow[] {
-	return db
-		.prepare(
-			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results " +
+	return prepare(
+		db,
+		"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results " +
 			"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
-		)
-		.all(sessionId) as MessageRow[];
+	).all(sessionId) as MessageRow[];
 }
