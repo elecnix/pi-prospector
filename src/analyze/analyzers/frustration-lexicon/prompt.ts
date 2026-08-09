@@ -55,6 +55,17 @@ Guidance:
 - Names of tools, commands, flags, and file types are NEVER signals — they name
   things, not feelings. "ci", "pr", "gh", "sh", "npm", "json", "git", "diff" are
   all neutral, including when the work around them is going badly.
+- Ordinary grammar is NEVER a signal. Conjunctions, prepositions, quantifiers and
+  comparatives — "but", "without", "already", "same", "over", "non", "re" — carry
+  no feeling on their own, however often they appear near friction.
+- A verb that merely reports what happened is NOT frustration. "pushed",
+  "stopped", "cancels", "interrupted", "retracting", "buried", "canned" describe
+  an action or a state; they say nothing about how the person feels about it.
+  Compare "stop" (an instruction, impatient) with "stopped" (a report) — the
+  first can be a signal, the second is not.
+- Praise means approval directed at the assistant, not a report that something
+  worked. "successfully", "accepted", "positive", "solved", "treat" are neutral;
+  "thanks", "perfect", "brilliant", "awesome" are praise.
 - Separate emoji that report STATUS from emoji that carry FEELING. Status and UI
   icons — ✅ ❌ 🔀 📝 ⚠️ 🚀 — are neutral: they label an outcome, and in practice
   most arrive from tooling rather than from a person. Only affective emoji count:

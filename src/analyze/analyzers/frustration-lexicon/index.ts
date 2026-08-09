@@ -67,7 +67,13 @@ export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	// same way pointed at the prompt, not the model: it never said that naming a
 	// tool or reporting a status is not a feeling. Existing verdicts stay valid and
 	// are re-judged only by an explicit `--revise minor`.
-	minor: 3,
+	// 1.4: precision, round two. Weighted by hits rather than sampled, the top
+	// signals over a real corpus were ~38% noise: `but` x1270, `pushed` x887,
+	// `already` x849, `same` x787, `without` x723, `false` x687, `stopped` x452 —
+	// ordinary grammar and reporting verbs. The prompt now separates instructions
+	// from reports ("stop" vs "stopped") and approval from outcome ("thanks" vs
+	// "successfully"), which the earlier tool-name rule did not reach.
+	minor: 4,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };

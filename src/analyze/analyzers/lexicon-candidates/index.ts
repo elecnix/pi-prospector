@@ -45,7 +45,10 @@ export const LEXICON_CANDIDATES_VERSION: AnalyzerVersion = {
 	// 1.2: phrases removed. Measured over the real corpus they were 84% of all
 	// adjudications and 75% of all hits while being overwhelmingly noise — adjacent
 	// words in running prose are simply not idioms. See #40.
-	minor: 2,
+	// 1.3: hyphenated compounds are kept whole. Splitting them nominated bare
+	// prefixes, and `re` and `non` were duly judged as frustration and fired 1,110
+	// times between them over a real corpus.
+	minor: 3,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/lexicon-candidates/index.ts",
 };

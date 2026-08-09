@@ -149,3 +149,27 @@ describe("detectParalinguistic", () => {
 		assert.deepEqual(detectParalinguistic("Could you update the README when you get a chance?"), []);
 	});
 });
+
+describe("hyphenated compounds", () => {
+	it("keeps an internal hyphen so prefixes are not judged as words", () => {
+		// Splitting on the hyphen produced bare prefixes that the lexicon then judged
+		// on their own: `re` fired 616 times and `non` 494 times over a real corpus,
+		// both as "frustration", from `re-check` and `non-blocking`.
+		assert.deepEqual(tokenize("re-check the non-blocking path"), ["re-check", "the", "non-blocking", "path"]);
+		assert.deepEqual(tokenize("pre-existing well-known"), ["pre-existing", "well-known"]);
+		assert.deepEqual(tokenize("e-mail"), ["e-mail"]);
+	});
+
+	it("does not treat a dash between words as part of a token", () => {
+		// An em dash is punctuation, not a compound, and a trailing hyphen is a stray.
+		assert.deepEqual(tokenize("this — that"), ["this", "that"]);
+		assert.deepEqual(tokenize("wait - stop"), ["wait", "stop"]);
+		assert.deepEqual(tokenize("trailing- word"), ["trailing", "word"]);
+	});
+
+	it("matches a hyphenated term as one unit", () => {
+		const set = tokenSet("run the re-check now");
+		assert.equal(set.has("re-check"), true);
+		assert.equal(set.has("re"), false, "the bare prefix must not be matchable");
+	});
+});
