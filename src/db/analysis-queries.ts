@@ -303,42 +303,50 @@ export function getNodeByOutputKey(db: Database.Database, outputKey: string): An
 	return prep(db, "SELECT * FROM analysis_nodes WHERE output_key = ? LIMIT 1").get(outputKey) as AnalysisNodeRow | undefined;
 }
 
-/** Idempotency lookup: a node produced by an exact recipe over an exact source set. */
+/** Idempotency lookup: a node produced by an exact recipe over an exact source set. Live only (a retracted node is absent). */
 export function findNodeByInputKey(db: Database.Database, inputKey: string): AnalysisNodeRow | undefined {
-	return prep(db, "SELECT * FROM analysis_nodes WHERE input_key = ?").get(inputKey) as AnalysisNodeRow | undefined;
+	return prep(db, "SELECT * FROM live_nodes WHERE input_key = ?").get(inputKey) as AnalysisNodeRow | undefined;
 }
 
 /**
  * The newest node for a logical unit = (analyzer, source set), regardless of
  * version/config. Used to detect `stale` units (a node exists, but from an
- * older recipe) and to wire the `revises` lineage edge.
+ * older recipe) and to wire the `revises` lineage edge. Live only — a retracted
+ * node is treated as absent so its unit classifies `missing` and is recomputed.
  */
 export function findLatestNodeBySourceSet(
 	db: Database.Database,
 	analyzerId: string,
 	sourceSetHash: string,
 ): AnalysisNodeRow | undefined {
-	return prep(db, 
-			"SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND node_kind != 'error' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+	return prep(db,
+			"SELECT * FROM live_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND node_kind != 'error' ORDER BY created_at DESC, id DESC LIMIT 1",
 		)
 		.get(analyzerId, sourceSetHash) as AnalysisNodeRow | undefined;
 }
 
 export function getSessionNodes(db: Database.Database, sessionId: string, asOf?: string): AnalysisNodeRow[] {
 	if (asOf) {
-		return prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? AND created_at <= ? ORDER BY created_at ASC, rowid ASC")
-			.all(sessionId, asOf) as AnalysisNodeRow[];
+		return prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? AND created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
+			.all(sessionId, asOf, asOf) as AnalysisNodeRow[];
 	}
-	return prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? ORDER BY created_at ASC, rowid ASC").all(sessionId) as AnalysisNodeRow[];
+	return prep(db, "SELECT * FROM live_nodes WHERE session_id = ? ORDER BY created_at ASC, id ASC").all(sessionId) as AnalysisNodeRow[];
 }
 
-/** Every analysis node, for integrity verification. */
-export function getAllAnalysisNodes(db: Database.Database, asOf?: string): AnalysisNodeRow[] {
-	if (asOf) {
-		return prep(db, "SELECT * FROM analysis_nodes WHERE created_at <= ? ORDER BY created_at ASC, rowid ASC")
-			.all(asOf) as AnalysisNodeRow[];
+/**
+ * Every analysis node, for integrity verification. Retracted nodes are still
+ * nodes and their content must still hash correctly, so pass `includeRetracted`
+ * to see all of them; live/current reads leave it false (the live view).
+ */
+export function getAllAnalysisNodes(db: Database.Database, asOf?: string, includeRetracted = false): AnalysisNodeRow[] {
+	if (includeRetracted && !asOf) {
+		return prep(db, "SELECT * FROM analysis_nodes ORDER BY created_at ASC, id ASC").all() as AnalysisNodeRow[];
 	}
-	return prep(db, "SELECT * FROM analysis_nodes ORDER BY created_at ASC, rowid ASC").all() as AnalysisNodeRow[];
+	if (asOf) {
+		return prep(db, "SELECT * FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
+			.all(asOf, asOf) as AnalysisNodeRow[];
+	}
+	return prep(db, "SELECT * FROM live_nodes ORDER BY created_at ASC, id ASC").all() as AnalysisNodeRow[];
 }
 
 /** A session's messages in stream order — for reconstructing turns verbatim. */
@@ -352,10 +360,10 @@ export function getSessionMessageRows(db: Database.Database, sessionId: string):
 
 export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, sessionId: string, asOf?: string): AnalysisNodeRow[] {
 	if (asOf) {
-		return prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND session_id = ? AND created_at <= ? ORDER BY created_at ASC, rowid ASC")
-			.all(analyzerId, sessionId, asOf) as AnalysisNodeRow[];
+		return prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND session_id = ? AND created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
+			.all(analyzerId, sessionId, asOf, asOf) as AnalysisNodeRow[];
 	}
-	return prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND session_id = ? ORDER BY created_at ASC, rowid ASC")
+	return prep(db, "SELECT * FROM live_nodes WHERE analyzer_id = ? AND session_id = ? ORDER BY created_at ASC, id ASC")
 		.all(analyzerId, sessionId) as AnalysisNodeRow[];
 }
 
@@ -377,32 +385,34 @@ export function getLatestNodesByAnalyzerAcrossSessions(db: Database.Database, an
 			 WHERE n.analyzer_id = ?
 			   AND n.node_kind != 'error'
 			   AND n.created_at <= ?
-			   AND n.rowid = (
-			     SELECT m.rowid FROM analysis_nodes m
+			   AND (n.retracted_at IS NULL OR n.retracted_at > ?)
+			   AND n.id = (
+			     SELECT m.id FROM analysis_nodes m
 			     WHERE m.analyzer_id = n.analyzer_id
 			       AND m.source_set_hash = n.source_set_hash
 			       AND m.node_kind != 'error'
 			       AND m.created_at <= ?
-			     ORDER BY m.created_at DESC, m.rowid DESC
+			       AND (m.retracted_at IS NULL OR m.retracted_at > ?)
+			     ORDER BY m.created_at DESC, m.id DESC
 			     LIMIT 1
 			   )
-			 ORDER BY n.created_at ASC, n.rowid ASC`,
+			 ORDER BY n.created_at ASC, n.id ASC`,
 			)
-			.all(analyzerId, asOf, asOf) as AnalysisNodeRow[];
+			.all(analyzerId, asOf, asOf, asOf, asOf) as AnalysisNodeRow[];
 	}
 	return prep(db, 
-			`SELECT * FROM analysis_nodes n
+			`SELECT * FROM live_nodes n
 			 WHERE n.analyzer_id = ?
 			   AND n.node_kind != 'error'
-			   AND n.rowid = (
-			     SELECT m.rowid FROM analysis_nodes m
+			   AND n.id = (
+			     SELECT m.id FROM live_nodes m
 			     WHERE m.analyzer_id = n.analyzer_id
 			       AND m.source_set_hash = n.source_set_hash
 			       AND m.node_kind != 'error'
-			     ORDER BY m.created_at DESC, m.rowid DESC
+			     ORDER BY m.created_at DESC, m.id DESC
 			     LIMIT 1
 			   )
-			 ORDER BY n.created_at ASC, n.rowid ASC`,
+			 ORDER BY n.created_at ASC, n.id ASC`,
 		)
 		.all(analyzerId) as AnalysisNodeRow[];
 }
@@ -500,11 +510,11 @@ export function getNodeVersions(
 	if (asOf) {
 		return prep(
 				db,
-				"SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND created_at <= ? ORDER BY created_at ASC, rowid ASC",
+				"SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC",
 			)
-			.all(analyzerId, sourceSetHash, asOf) as AnalysisNodeRow[];
+			.all(analyzerId, sourceSetHash, asOf, asOf) as AnalysisNodeRow[];
 	}
-	return prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? ORDER BY created_at ASC, rowid ASC")
+	return prep(db, "SELECT * FROM live_nodes WHERE analyzer_id = ? AND source_set_hash = ? ORDER BY created_at ASC, id ASC")
 		.all(analyzerId, sourceSetHash) as AnalysisNodeRow[];
 }
 
@@ -543,24 +553,24 @@ export interface AnalysisStats {
 
 export function getAnalysisStats(db: Database.Database, asOf?: string): AnalysisStats {
 	const nodes = asOf
-		? (prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ?").get(asOf) as { c: number }).c
-		: (prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes").get() as { c: number }).c;
+		? (prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?)").get(asOf, asOf) as { c: number }).c
+		: (prep(db, "SELECT COUNT(*) AS c FROM live_nodes").get() as { c: number }).c;
 	// Edges have no timestamp of their own; they are bounded by their source node,
 	// so an as-of edge count counts edges whose source node exists at T.
 	const edges = asOf
 		? (prep(
 					db,
-					"SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON n.id = e.from_node_id WHERE n.created_at <= ?",
+					"SELECT COUNT(*) AS c FROM analysis_edges e JOIN live_nodes n ON n.id = e.from_node_id WHERE n.created_at <= ? AND (n.retracted_at IS NULL OR n.retracted_at > ?)",
 				)
-				.get(asOf) as { c: number }).c
-		: (prep(db, "SELECT COUNT(*) AS c FROM analysis_edges").get() as { c: number }).c;
+				.get(asOf, asOf) as { c: number }).c
+		: (prep(db, "SELECT COUNT(*) AS c FROM analysis_edges e JOIN live_nodes n ON n.id = e.from_node_id").get() as { c: number }).c;
 	const runs = (prep(db, "SELECT COUNT(*) AS c FROM analysis_runs").get() as { c: number }).c;
 	const kindRows = asOf
-		? (prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? GROUP BY node_kind").all(asOf) as Array<{
+		? (prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) GROUP BY node_kind").all(asOf, asOf) as Array<{
 				node_kind: string;
 				c: number;
 			}>)
-		: (prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes GROUP BY node_kind").all() as Array<{
+		: (prep(db, "SELECT node_kind, COUNT(*) AS c FROM live_nodes GROUP BY node_kind").all() as Array<{
 				node_kind: string;
 				c: number;
 			}>);

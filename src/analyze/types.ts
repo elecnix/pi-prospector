@@ -182,6 +182,10 @@ export const AnalysisNodeRow = Type.Object({
 	tokens_used: Type.Union([Type.Number(), Type.Null()]),
 	duration_ms: Type.Union([Type.Number(), Type.Null()]),
 	created_at: Type.String(),
+	/** Retraction tombstone: NULL = live; an ISO instant hides it from live reads. */
+	retracted_at: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	/** Provenance of the retraction (the gc operation id). */
+	retracted_by_run: Type.Optional(Type.Union([Type.String(), Type.Null()])),
 });
 export type AnalysisNodeRow = Static<typeof AnalysisNodeRow>;
 

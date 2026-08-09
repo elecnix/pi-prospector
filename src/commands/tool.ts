@@ -216,6 +216,8 @@ Analysis-graph & point-in-time commands (slash commands):
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)
   - /prospect-diff --unit <analyzer> <sset> | --runs <A> <B> | --as-of <T1> <T2> [--full]
+  - /prospect-gc --run <id> | --analyzer <id> | --since <ts> [--apply] — retract output (dry run by default)
+  - /prospect-retract --list | --undo <gcId> | --purge --retracted-before <ts>
   - /prospect-verify — now also validates every edge's referential integrity
 
 Bulk operations:

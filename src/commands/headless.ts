@@ -10,6 +10,7 @@ import { prospectShow } from "./show.js";
 import { prospectDiff } from "./diff.js";
 import { prospectRuns } from "./runs.js";
 import { prospectGc } from "./gc.js";
+import { prospectRetract } from "./retract.js";
 import { prospectMute, prospectUnmute, prospectMutes } from "./mutes.js";
 
 /** A command runnable both as a slash command and via the `--prospect` flag. */
@@ -26,6 +27,7 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 	diff: prospectDiff,
 	runs: prospectRuns,
 	gc: prospectGc,
+	retract: prospectRetract,
 	verify: prospectVerify,
 	validate: prospectValidate,
 	accept: prospectAccept,
@@ -38,7 +40,7 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 
 const USAGE =
 	'Usage: pi -e <prospector>/src/index.ts --prospect "<command> [args]"\n' +
-	"  commands: sync | analyze [flags] | analyzers [list|validate <path>] | stats [--as-of <ts>] | proposals [status] [--full] [--as-of <ts>] | show <id> | verify | validate [flags] | runs | diff --unit <a> <sset> | diff --runs <A> <B> | diff --as-of <T1> <T2> | gc --run <id> | gc --analyzer <id> | gc --since <ts> [--apply] | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale] | remediate <id> <id>... [--planned|--done|--done-differently] <description> | mute <term> [--reason \"why\"] | unmute <term> | mutes";
+	"  commands: sync | analyze [flags] | analyzers [list|validate <path>] | stats [--as-of <ts>] | proposals [status] [--full] [--as-of <ts>] | show <id> | verify | validate [flags] | runs | diff --unit <a> <sset> | diff --runs <A> <B> | diff --as-of <T1> <T2> | gc --run <id> | gc --analyzer <id> | gc --since <ts> [--apply] | retract --list | retract --undo <id> | retract --purge --retracted-before <ts> | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale] | remediate <id> <id>... [--planned|--done|--done-differently] <description> | mute <term> [--reason \"why\"] | unmute <term> | mutes";
 
 /** Split a `--prospect` flag value into a command name and the remaining args. */
 export function splitProspectSpec(spec: string): { command: string; args: string } {
@@ -80,7 +82,7 @@ export async function runProspectSpec(
 export function registerHeadlessFlag(pi: ExtensionAPI): void {
 	pi.registerFlag("prospect", {
 		description:
-			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | verify | validate | runs | diff | gc | accept <id> [rationale] | reject <id> [rationale] | remediate <id> <id>... <description> | mute <term> [--reason "why"] | unmute <term> | mutes',
+			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | verify | validate | runs | diff | gc | retract | accept <id> [rationale] | reject <id> [rationale] | remediate <id> <id>... <description> | mute <term> [--reason "why"] | unmute <term> | mutes',
 		type: "string",
 	});
 
