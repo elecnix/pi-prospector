@@ -58,13 +58,17 @@ export interface TestMessage {
 	toolCalls?: Array<{ name: string; arguments?: Record<string, unknown> }>;
 	toolResults?: Array<{ toolName: string; isError: boolean; textLength: number }>;
 	id?: string;
+	/** The serving model for an assistant message. */
+	model?: string | null;
+	/** The billed dollar cost of an assistant message. */
+	costUsd?: number | null;
 }
 
 /** Insert messages for a session in order, returning the inserted ids. */
 export function insertMessages(db: Database.Database, sessionId: string, messages: TestMessage[]): string[] {
 	const stmt = db.prepare(
-		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results) " +
-			"VALUES (?, ?, 'pi', ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd) " +
+			"VALUES (?, ?, 'pi', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 	);
 	const ids: string[] = [];
 	let parent: string | null = null;
@@ -80,6 +84,8 @@ export function insertMessages(db: Database.Database, sessionId: string, message
 			m.thinking ?? null,
 			m.toolCalls ? JSON.stringify(m.toolCalls) : null,
 			m.toolResults ? JSON.stringify(m.toolResults) : null,
+			m.model ?? null,
+			m.costUsd ?? null,
 		);
 		ids.push(id);
 		parent = id;

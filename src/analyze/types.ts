@@ -157,6 +157,9 @@ export const MessageRow = Type.Object({
 	content_thinking: Type.Union([Type.String(), Type.Null()]),
 	tool_calls: Type.Union([Type.String(), Type.Null()]),
 	tool_results: Type.Union([Type.String(), Type.Null()]),
+	/** The serving model that produced this assistant message, or null when unrecorded. */
+	model: Type.Union([Type.String(), Type.Null()]),
+	/** The billed dollar cost of this assistant message, or null when unrecorded. */
 	cost_usd: Type.Union([Type.Number(), Type.Null()]),
 });
 export type MessageRow = Static<typeof MessageRow>;
