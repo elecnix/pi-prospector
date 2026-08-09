@@ -20,8 +20,13 @@ import {
 	mapWithConcurrency,
 	createSemaphore,
 	withTimeout,
+	callWithRetry,
+	classifyRetryable,
+	DEFAULT_RETRY_POLICY,
 	DEFAULT_LLM_CONCURRENCY,
 	DEFAULT_DETERMINISTIC_CONCURRENCY,
+	type RetryPolicy,
+	type RetryStats,
 } from "../analyze/concurrency.js";
 import type { ReviseReason, LLMCaller } from "../analyze/types.js";
 
@@ -80,17 +85,30 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const analyzerConcurrency = args.analyzerConcurrency ?? DEFAULT_DETERMINISTIC_CONCURRENCY;
 		const llmTimeoutMs = getLlmTimeoutMs(config);
 		const llmGate = createSemaphore(llmConcurrency);
+		// Retry 429/5xx throttles our own, inside the gate, so a backed-off call
+		// holds its slot and the in-flight provider load *drops* while the shared
+		// pool is throttled — adapting concurrency to what the provider can take
+		// rather than blindly re-firing at the cap. Bounded (DEFAULT_RETRY_POLICY)
+		// so a run degrades in duration instead of hanging; a call still failing
+		// after the budget is terminal and frees its slot so the run continues.
+		const retryPolicy: RetryPolicy = { ...DEFAULT_RETRY_POLICY, isRetryable: classifyRetryable };
+		const retryStats: RetryStats = { retries: 0 };
 		const llm: LLMCaller = (request) =>
 			llmGate(() =>
-				withTimeout(
-					baseLlm(request),
-					llmTimeoutMs,
+				callWithRetry(
 					() =>
-						new Error(
-							`LLM call to ${request.model ?? "mid"} exceeded ${llmTimeoutMs}ms and was ` +
-							`aborted so the run can keep moving. The session is marked failed; re-run it ` +
-							`once the provider recovers, or raise the timeout (PROSPECTOR_LLM_TIMEOUT_MS).`,
+						withTimeout(
+							baseLlm(request),
+							llmTimeoutMs,
+							() =>
+								new Error(
+									`LLM call to ${request.model ?? "mid"} exceeded ${llmTimeoutMs}ms and was ` +
+									`aborted so the run can keep moving. The session is marked failed; re-run it ` +
+									`once the provider recovers, or raise the timeout (PROSPECTOR_LLM_TIMEOUT_MS).`,
+								),
 						),
+					retryPolicy,
+					retryStats,
 				),
 			);
 		// Let one session reach the LLM gate on its own. Without this, fan-out is
@@ -194,7 +212,9 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 				out(
 					ctx,
 					`  ${accounting.attempted}/${sessions.length} session(s) analysed — ` +
-						`${accounting.completed} completed, ${accounting.failed} failed…`,
+						`${accounting.completed} completed, ${accounting.failed} failed` +
+						(retryStats.retries > 0 ? `, ${retryStats.retries} retried` : "") +
+						"…",
 					"info",
 				);
 			}
@@ -206,6 +226,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			status: runStatus(accounting),
 			sessionCompleted: accounting.completed,
 			sessionFailed: accounting.failed,
+			retried: retryStats.retries,
 			nodesProduced: accounting.nodesProduced,
 			nodesRevised: accounting.nodesRevised,
 			proposalsCreated: accounting.proposalsCreated,
@@ -223,6 +244,9 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			`  Proposals created: ${accounting.proposalsCreated}`,
 			`  Estimated cost: $${accounting.costUsd.toFixed(4)}`,
 		];
+		if (retryStats.retries > 0) {
+			lines.push(`  LLM throttling: ${retryStats.retries} call(s) retried after 429/5xx and absorbed.`);
+		}
 		if (newTerms > 0 && !args.all && !args.session) {
 			lines.push(
 				`  Frustration lexicon: learned ${newTerms} new term(s).`,
