@@ -13,7 +13,10 @@ import type { Statement } from "better-sqlite3";
  *
  * Population is lazy and every caller runs after `migrate()`, so the cache is
  * only ever filled once the schema is final — a cached statement can never
- * capture a pre-migration query plan.
+ * capture a pre-migration query plan. There is deliberately no
+ * `initializeStatementCache(db)` hook to call after migration: because the map
+ * fills on first use, there is simply nothing for a new connection path to
+ * forget, and no init call that could be omitted.
  */
 const statementCache = new WeakMap<Database.Database, Map<string, Statement>>();
 
