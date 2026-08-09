@@ -76,11 +76,13 @@ async function syncPiSession(
 	let parentSession: string | null = null;
 	let cwd = "";
 	let startedAt = "";
+	let parsedHeader: import("../types.js").SessionHeader | null = null;
 
 	for (const line of lines) {
 		if (!line.trim()) continue;
 		const parsed = parseLine(line);
 		if (parsed && parsed.kind === "session") {
+			parsedHeader = parsed.header;
 			sessionId = parsed.header.id;
 			parentSession = parsed.header.parentSession ?? null;
 			cwd = parsed.header.cwd ?? "";
@@ -134,6 +136,7 @@ async function syncPiSession(
 			message_count: 0,
 			branch_count: branchCount,
 			name,
+			tool_inventory: buildToolInventory(parsedHeader),
 		});
 
 		// Parse messages from resume point
@@ -220,6 +223,7 @@ async function syncClaudeSession(
 			// Claude Code records no session name; its AI-generated title is the
 			// nearest equivalent identity marker, when one was written.
 			name: meta?.title ?? null,
+			tool_inventory: null, // Claude transcripts carry no tool manifest; UNKNOWN.
 		});
 
 		// Parse messages from resume point
@@ -264,3 +268,21 @@ async function syncClaudeSession(
 }
 
 export { runSync as sync };
+
+/**
+ * Serialize a session's active tool manifest into the persisted ToolInventory
+ * JSON, or null when the session carried no manifest (UNKNOWN).
+ *
+ * Presence semantics are load-bearing (the data is not backfillable):
+ *   - no `tools` key on the header  -> null (UNKNOWN; never treat as "no tools")
+ *   - `tools: []`                  -> '{"tools":[]}' (captured AND empty)
+ *   - `tools: [...]`               -> populated inventory with per-tool sizing
+ */
+function buildToolInventory(header: import("../types.js").SessionHeader | null): string | null {
+	if (!header || header.tools === undefined) return null;
+	const inventory = {
+		source: "pi-session-header",
+		tools: header.tools.map((t) => ({ name: t.name, definitionChars: t.definitionChars ?? null })),
+	};
+	return JSON.stringify(inventory);
+}

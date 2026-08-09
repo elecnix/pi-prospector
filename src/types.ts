@@ -60,6 +60,15 @@ export interface SessionHeader {
 	timestamp?: string;
 	cwd?: string;
 	parentSession?: string;
+	/**
+	 * The active tool manifest recorded at session start, if the host persists
+	 * one (forward-compatible extension of the Pi session header; absent today).
+	 * Absence means the inventory is UNKNOWN — analytics must never treat a
+	 * missing manifest as "no tools available". Each entry may carry the
+	 * character length of the tool's serialized definition (`definitionChars`),
+	 * which is what makes the never-invoked tool priceable.
+	 */
+	tools?: Array<{ name: string; definitionChars?: number }>;
 }
 
 // ─── Claude-specific types ───
@@ -99,6 +108,47 @@ export interface UsageInfo {
 	cacheRead: number;
 	cacheWrite: number;
 	totalTokens: number;
+	/**
+	 * Billed dollar cost broken down per bucket, when the host reports it.
+	 * (Pi's `usage.cost` sub-object.) NULL when the source carries no cost.
+	 * Kept separate from token buckets so cache-economy can be priced in dollars.
+	 */
+	cost: CostInfo | null;
+}
+
+/** Billed dollar cost per usage bucket, as reported by the host. */
+export interface CostInfo {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	total: number;
+}
+
+/** One tool the session had available, with its definition's serialized size. */
+export interface ToolInventoryEntry {
+	name: string;
+	/** Character length of the tool's serialized definition (the slice that sits
+	 *  in the request prefix on every turn). NULL when the host supplied no size. */
+	definitionChars: number | null;
+}
+
+/**
+ * The set of tools a session had available, as distinct from the tool_calls it
+ * actually invoked. This data is NOT backfillable: sessions recorded before the
+ * host began persisting a manifest are UNKNOWN forever. Presence semantics are
+ * therefore load-bearing and live in the storage, not a convention:
+ *
+ *   - never captured            -> sessions.tool_inventory IS NULL   (UNKNOWN)
+ *   - captured, no tools        -> sessions.tool_inventory = '{"tools":[]}'
+ *   - captured, tools available -> sessions.tool_inventory = populated
+ *
+ * A consumer must SKIP the UNKNOWN case; it must never read it as "no tools".
+ */
+export interface ToolInventory {
+	/** Where the manifest came from (e.g. "pi-session-header"). */
+	source: string;
+	tools: ToolInventoryEntry[];
 }
 
 export interface MessageEntry {

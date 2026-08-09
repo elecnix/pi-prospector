@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { runSync } from "../../src/sync/index.js";
 import { getStats } from "../../src/db/queries.js";
 import { tempDb, NO_CLAUDE_DIR } from "./helpers.js";
@@ -113,7 +114,119 @@ describe("end-to-end sync", () => {
 			await close();
 		}
 	});
-});
+
+	describe("active tool inventory capture (UNKNOWN vs captured)", () => {
+		function writePiFixture(dir: string, sessionFile: string, lines: string[]): void {
+			const sessDir = path.join(dir, "--Users-testuser--proj");
+			fs.mkdirSync(sessDir, { recursive: true });
+			fs.writeFileSync(path.join(sessDir, sessionFile), lines.join("\n") + "\n");
+		}
+
+		const header = (extra: string) =>
+			JSON.stringify({ type: "session", version: 3, id: "sess-tools", timestamp: "2026-01-15T10:00:00Z", cwd: "/home/user/proj", ...(extra ? JSON.parse(extra) : {}) });
+
+		async function syncOne(db: AsyncDatabase, root: string, lines: string[]): Promise<void> {
+			writePiFixture(root, "t.jsonl", lines);
+			await runSync(db, root, NO_CLAUDE_DIR);
+		}
+
+		async function getInventory(db: AsyncDatabase): Promise<{ tool_inventory: string | null }> {
+			const row = (await db.prepare("SELECT tool_inventory FROM sessions WHERE id = 'sess-tools'").get()) as { tool_inventory: string | null };
+			assert.ok(row);
+			return row;
+		}
+
+		it("no manifest -> tool_inventory is NULL (UNKNOWN), never an empty list", async () => {
+			const { db, close } = await tempDb();
+			try {
+				const root = fs.mkdtempSync(path.join(os.tmpdir(), "ppd-tools-"));
+				try {
+					await syncOne(db, root, [header(""), JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: "hi" } })]);
+					assert.equal((await getInventory(db)).tool_inventory, null);
+				} finally {
+					fs.rmSync(root, { recursive: true, force: true });
+				}
+			} finally {
+				await close();
+			}
+		});
+
+		it("explicit empty manifest -> captured and empty (distinct from UNKNOWN)", async () => {
+			const { db, close } = await tempDb();
+			try {
+				const root = fs.mkdtempSync(path.join(os.tmpdir(), "ppd-tools-"));
+				try {
+					await syncOne(db, root, [header('{"tools":[]}'), JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: "hi" } })]);
+					const inv = (await getInventory(db)).tool_inventory;
+					assert.ok(inv !== null, "captured-and-empty must not be NULL");
+					assert.deepEqual(JSON.parse(inv!), { source: "pi-session-header", tools: [] });
+				} finally {
+					fs.rmSync(root, { recursive: true, force: true });
+				}
+			} finally {
+				await close();
+			}
+		});
+
+		it("populated manifest -> inventory with per-tool sizing persisted", async () => {
+			const { db, close } = await tempDb();
+			try {
+				const root = fs.mkdtempSync(path.join(os.tmpdir(), "ppd-tools-"));
+				try {
+					await syncOne(db, root, [
+						header(JSON.stringify({ tools: [{ name: "bash", definitionChars: 512 }, { name: "read", definitionChars: 300 }, { name: "webSearch" }] })),
+						JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: "hi" } }),
+					]);
+					const parsed = JSON.parse((await getInventory(db)).tool_inventory!);
+					assert.equal(parsed.source, "pi-session-header");
+					assert.deepEqual(parsed.tools, [
+						{ name: "bash", definitionChars: 512 },
+						{ name: "read", definitionChars: 300 },
+						{ name: "webSearch", definitionChars: null },
+					]);
+				} finally {
+					fs.rmSync(root, { recursive: true, force: true });
+				}
+			} finally {
+				await close();
+			}
+		});
+	});
+
+	describe("per-bucket cost capture in the message index", () => {
+		it("persists the cost breakdown inside the usage JSON for Pi assistant turns", async () => {
+			const { db, close } = await tempDb();
+			try {
+				const root = fs.mkdtempSync(path.join(os.tmpdir(), "ppd-cost-"));
+				try {
+					const sessDir = path.join(root, "--Users-testuser--proj");
+					fs.mkdirSync(sessDir, { recursive: true });
+					const lines = [
+						JSON.stringify({ type: "session", version: 3, id: "sess-cost", timestamp: "2026-01-15T10:00:00Z", cwd: "/x" }),
+						JSON.stringify({
+							type: "message",
+							id: "m1",
+							message: {
+								role: "assistant",
+								content: [{ type: "text", text: "ok" }],
+								usage: { input: 100, output: 50, cacheRead: 900, cacheWrite: 0, totalTokens: 1050, cost: { input: 0.01, output: 0.005, cacheRead: 0.09, cacheWrite: 0, total: 0.105 } },
+							},
+						}),
+					];
+					fs.writeFileSync(path.join(sessDir, "c.jsonl"), lines.join("\n") + "\n");
+					await runSync(db, root, NO_CLAUDE_DIR);
+					const usage = (await db.prepare("SELECT usage FROM messages WHERE session_id = 'sess-cost'").get()) as { usage: string };
+					assert.ok(usage);
+					const parsed = JSON.parse(usage.usage);
+					assert.deepEqual(parsed.cost, { input: 0.01, output: 0.005, cacheRead: 0.09, cacheWrite: 0, total: 0.105 });
+				} finally {
+					fs.rmSync(root, { recursive: true, force: true });
+				}
+			} finally {
+				await close();
+			}
+		});
+	});
 
 	it("captures the session name from session_info records (issue #207)", async () => {
 		const { db, close } = await tempDb();
@@ -135,3 +248,4 @@ describe("end-to-end sync", () => {
 			await close();
 		}
 	});
+});

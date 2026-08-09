@@ -47,7 +47,11 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			last_modified REAL NOT NULL DEFAULT 0,
 			analyzed_at TEXT,
 			message_count INTEGER NOT NULL DEFAULT 0,
-			branch_count INTEGER NOT NULL DEFAULT 0
+			branch_count INTEGER NOT NULL DEFAULT 0,
+			-- Active tool set carried by the session (NOT backfillable — see
+			-- DESIGN). NULL = UNKNOWN (never captured); '[]' = captured & empty;
+			-- otherwise a JSON ToolInventory. Never infer "no tools" from NULL.
+			tool_inventory TEXT
 		);
 
 		CREATE TABLE IF NOT EXISTS messages (
@@ -478,6 +482,11 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 	// existing rows are backfilled only by a full re-sync from transcripts.
 	if (!await hasColumn("sessions", "name")) {
 		await db.exec("ALTER TABLE sessions ADD COLUMN name TEXT");
+	}
+
+	// sessions: tool_inventory (active tool set capture; NULL = UNKNOWN)
+	if (!(await hasColumn("sessions", "tool_inventory"))) {
+		await db.exec("ALTER TABLE sessions ADD COLUMN tool_inventory TEXT");
 	}
 
 	// messages: add source column if missing
