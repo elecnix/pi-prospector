@@ -19,11 +19,14 @@ describe("edge kinds", () => {
 		assert.doesNotThrow(() => validateEdge(EDGE_KINDS.USES_CONFIG, REF_KINDS.CONFIG_VERSION));
 		assert.doesNotThrow(() => validateEdge(EDGE_KINDS.PRODUCES, REF_KINDS.PROPOSAL));
 		assert.doesNotThrow(() => validateEdge(EDGE_KINDS.REVISES, REF_KINDS.ANALYSIS_NODE));
+		assert.doesNotThrow(() => validateEdge(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION));
 	});
 
 	it("rejects disallowed edge → ref combinations", () => {
 		assert.throws(() => validateEdge(EDGE_KINDS.ANCHORS, REF_KINDS.PROPOSAL), /cannot target/);
 		assert.throws(() => validateEdge(EDGE_KINDS.CONSUMES, REF_KINDS.SESSION), /cannot target/);
+		assert.throws(() => validateEdge(EDGE_KINDS.MUTES, REF_KINDS.SESSION), /cannot target/);
+		assert.throws(() => validateEdge(EDGE_KINDS.ANCHORS, REF_KINDS.ASSERTION), /cannot target/);
 	});
 
 	it("rejects unknown kinds", () => {

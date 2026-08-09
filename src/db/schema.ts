@@ -124,6 +124,37 @@ export function migrate(db: Database.Database): void {
 			created_at TEXT NOT NULL
 		);
 
+		-- ──────────────────── human assertions (append-only lifecycle) ────────────────────
+		-- A generic, content-addressed record of operator feedback: "surface it, let the
+		-- operator say 'not that one', and mute it." This is EXTERNAL human input (same
+		-- category as conversation messages and proposal decisions), NOT derived analysis:
+		-- it is never an analysis_node and never participates in node identity directly.
+		-- Its contribution to identity is via the *config fingerprint*: an analyzer that
+		-- consults assertions of a subject kind folds a hash of the active assertion set
+		-- into its config fingerprint, so muting marks affected nodes stale/config.
+		--
+		-- Keyed by CONTENT (subject_kind + subject_key), exactly like decisions are keyed
+		-- by the proposal's input_key, so mutes survive a wipe-and-recompute: re-judge the
+		-- whole corpus and the mutes still apply because they key on the term, not a row.
+		-- The verdict is the kind of judgement; muting is verdict='muted'. Adding the next
+		-- kind of operator feedback (accepted/rejected, …) is a new verdict value, not new
+		-- schema.
+		--
+		-- One logical assertion per (subject_kind, subject_key, verdict), content-addressed
+		-- so edges to it survive a recompute. Its lifecycle (active until superseded) is
+		-- mutable but never deleted: superseded_at is set on unmute, so what was muted
+		-- and when stays inspectable.
+		CREATE TABLE IF NOT EXISTS assertions (
+			id            TEXT PRIMARY KEY, -- content-addressed: H(subject_kind|subject_key|verdict)
+			subject_kind  TEXT NOT NULL,    -- 'term' | (later) 'node' | 'proposal' | 'analyzer'
+			subject_key   TEXT NOT NULL,    -- content-addressed: the term, an input_key, …
+			verdict       TEXT NOT NULL,    -- 'muted' | (later) 'accepted' | 'rejected' | …
+			reason        TEXT,             -- operator's free-text rationale (nullable)
+			asserted_at   TEXT NOT NULL,
+			asserted_by   TEXT,             -- 'operator' | 'agent' (nullable)
+			superseded_at TEXT              -- NULL = active; set on unmute (NULLable)
+		);
+
 		-- ──────────────────── analyzer identity & recipe ────────────────────
 
 		CREATE TABLE IF NOT EXISTS analyzer_defs (
@@ -258,6 +289,9 @@ export function migrate(db: Database.Database): void {
 
 		CREATE INDEX IF NOT EXISTS idx_decisions_input_key ON proposal_decisions(proposal_input_key);
 		CREATE INDEX IF NOT EXISTS idx_decisions_remediation ON proposal_decisions(remediation_id);
+
+		CREATE INDEX IF NOT EXISTS idx_assertions_active ON assertions(subject_kind, subject_key);
+		CREATE INDEX IF NOT EXISTS idx_assertions_lookup ON assertions(subject_kind, verdict, superseded_at);
 
 		-- Group nodes into logical units (analyzer + source set) for the
 		-- version-alternative timeline, and look up by recipe identity.

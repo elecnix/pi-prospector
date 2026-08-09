@@ -66,6 +66,7 @@ import {
 	versionIdOf,
 } from "./version.js";
 import { EDGE_KINDS, REF_KINDS, validateEdge } from "./edge-kinds.js";
+import { getActiveAssertionsForKinds, computeAssertionFingerprint } from "../db/assertions.js";
 import {
 	createRun,
 	finishRun,
@@ -657,6 +658,16 @@ export class AnalyzerFramework {
 		// reason and a re-run recomputes them — no manual version bump while authoring.
 		// Built-in analyzers leave `contentHash` undefined and are unaffected.
 		const extra = analyzer.contentHash ? [`code:${analyzer.contentHash}`] : [];
+		// The active assertion set (operator mutes) is `config` too: an analyzer that
+		// consults a subject kind folds a hash of the currently-active assertions for
+		// those kinds into its config fingerprint. Mutating marks its nodes stale for
+		// the `config` reason, a plain fill leaves them untouched, and unmuting
+		// reverts to the prior fingerprint so the old nodes classify `current` again.
+		// Content-addressed, so the fingerprint survives a wipe/recompute.
+		if (analyzer.consultsAssertions?.length) {
+			const active = getActiveAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
+			extra.push(`assertions:${computeAssertionFingerprint(active)}`);
+		}
 		const configFingerprint = computeConfigFingerprint(config.configHash, models, extra);
 		return { analyzer, config, promptBundleHash, configFingerprint };
 	}

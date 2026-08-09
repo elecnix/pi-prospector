@@ -9,6 +9,7 @@ import { registerValidateCommand } from "./commands/validate.js";
 import { registerShowCommand } from "./commands/show.js";
 import { registerProspectTool } from "./commands/tool.js";
 import { registerHeadlessFlag } from "./commands/headless.js";
+import { registerMutesCommand } from "./commands/mutes.js";
 
 export default function (pi: ExtensionAPI) {
 	registerSyncCommand(pi);
@@ -21,4 +22,5 @@ export default function (pi: ExtensionAPI) {
 	registerShowCommand(pi);
 	registerProspectTool(pi);
 	registerHeadlessFlag(pi);
+	registerMutesCommand(pi);
 }

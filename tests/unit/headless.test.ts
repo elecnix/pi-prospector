@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { splitProspectSpec, runProspectSpec, type ProspectAction } from "../../src/commands/headless.js";
+import { splitProspectSpec, runProspectSpec, PROSPECT_ACTIONS, type ProspectAction } from "../../src/commands/headless.js";
 import type { ExtensionCommandContext } from "../../src/pi-stubs.js";
 
 const ctx = {} as ExtensionCommandContext;
@@ -16,6 +16,14 @@ describe("splitProspectSpec", () => {
 
 	it("trims surrounding whitespace and lowercases the command", () => {
 		assert.deepEqual(splitProspectSpec("  ACCEPT   019abc  "), { command: "accept", args: "019abc" });
+	});
+});
+
+describe("PROSPECT_ACTIONS", () => {
+	it("exposes the mute/unmute/mutes lifecycle commands", () => {
+		assert.equal(typeof PROSPECT_ACTIONS["mute"], "function");
+		assert.equal(typeof PROSPECT_ACTIONS["unmute"], "function");
+		assert.equal(typeof PROSPECT_ACTIONS["mutes"], "function");
 	});
 });
 
