@@ -121,6 +121,19 @@ interface ResolvedAnalyzer {
 export class AnalyzerFramework {
 	private readonly analyzers = new Map<string, Analyzer>();
 
+	/**
+	 * Corpus-wide dependency reads, cached for this framework's lifetime.
+	 *
+	 * `turn-frustration.plan()` loads and parses the entire lexicon once per
+	 * session. Measured at 13,436 terms that is 42ms — 34ms of SQL and 8ms of
+	 * JSON.parse — repeated for all 1,533 sessions, and it grows linearly with the
+	 * lexicon, so it gets worse for as long as the corpus keeps learning.
+	 *
+	 * Invalidated whenever that analyzer writes a node, so a term judged during a
+	 * run is still visible to sessions analysed later in the same run.
+	 */
+	private readonly globalNodeCache = new Map<string, AnalysisNodeRow[]>();
+
 	constructor(private readonly deps: FrameworkDeps) {}
 
 	/** Register an analyzer and persist its def, version, prompts, and default config. */
@@ -403,7 +416,15 @@ export class AnalyzerFramework {
 		// input_key. Reproducible from (input_key, content) on any machine.
 		const outputKey = computeOutputKey(item.inputKey, analysis.contentJson);
 
-		try {
+		// The node and every edge it declares go in as one transaction.
+		//
+		// Two reasons. Measured, statements sharing a transaction cost 0.029ms per
+		// node against 0.16ms when each pays its own fsync — a 5.7x cut on the write
+		// path. And correctness: an edge that fails validation used to leave the node
+		// already inserted with no edges, producing a node that exists but can never
+		// be traced back to anything. That silently violates "a proposal can always be
+		// traced, via edges, back to the conversation evidence that justifies it".
+		const writeNodeAndEdges = this.deps.db.transaction(() => {
 			insertNode(this.deps.db, {
 				id: nodeId,
 				sessionId,
@@ -423,12 +444,15 @@ export class AnalyzerFramework {
 				durationMs: analysis.durationMs ?? null,
 				createdAt: now,
 			});
+			this.persistEdges(nodeId, config, analysis);
+		});
+
+		try {
+			writeNodeAndEdges();
 		} catch (err) {
 			if (isDuplicateInputKey(err)) return null;
 			throw err;
 		}
-
-		this.persistEdges(nodeId, config, analysis);
 
 		// Version lineage: a re-analysed stale unit revises its predecessor. The edge
 		// references the predecessor's content-addressed output_key (not its uuid), so
@@ -442,6 +466,9 @@ export class AnalyzerFramework {
 				ordinal: 0,
 			});
 		}
+
+		// This analyzer's corpus-wide view just changed, so any cached copy is stale.
+		this.globalNodeCache.delete(analyzer.def.id);
 
 		let proposalsCreated = 0;
 		if (analysis.nodeKind === "summary" || analysis.nodeKind === "proposal") {
@@ -562,7 +589,11 @@ export class AnalyzerFramework {
 				`Add '${depId}' to def.dependencies.`,
 			);
 		}
-		return getLatestNodesByAnalyzerAcrossSessions(this.deps.db, depId);
+		const cached = this.globalNodeCache.get(depId);
+		if (cached) return cached;
+		const rows = getLatestNodesByAnalyzerAcrossSessions(this.deps.db, depId);
+		this.globalNodeCache.set(depId, rows);
+		return rows;
 	}
 
 	private buildRunContext(analyzer: Analyzer, config: AnalyzerConfig, sessionId: string): AnalyzerRunContext {
