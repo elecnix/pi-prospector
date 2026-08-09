@@ -2,15 +2,24 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { getAllSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
-import { getAnalyzerConfigOverrides, getAnalyzerPaths, getDbPath, getModelTiers, loadConfig } from "../config.js";
+import { getAnalyzerConfigOverrides, getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, loadConfig } from "../config.js";
 import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerAll } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
 import { parseReviseArg, reachLabel } from "../analyze/version.js";
+import { createAnalyzeRun, finalizeAnalyzeRun } from "../db/analysis-queries.js";
+import { uuidv7 } from "../analyze/input-hash.js";
+import {
+	emptyAccounting,
+	accountOne,
+	runStatus,
+	type SessionRunOutcome,
+} from "../analyze/run-accounting.js";
 import {
 	mapWithConcurrency,
 	createSemaphore,
+	withTimeout,
 	DEFAULT_LLM_CONCURRENCY,
 	DEFAULT_DETERMINISTIC_CONCURRENCY,
 } from "../analyze/concurrency.js";
@@ -69,8 +78,21 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		// the limit holds regardless of how sessions are dispatched above it.
 		const llmConcurrency = args.llmConcurrency ?? DEFAULT_LLM_CONCURRENCY;
 		const analyzerConcurrency = args.analyzerConcurrency ?? DEFAULT_DETERMINISTIC_CONCURRENCY;
+		const llmTimeoutMs = getLlmTimeoutMs(config);
 		const llmGate = createSemaphore(llmConcurrency);
-		const llm: LLMCaller = (request) => llmGate(() => baseLlm(request));
+		const llm: LLMCaller = (request) =>
+			llmGate(() =>
+				withTimeout(
+					baseLlm(request),
+					llmTimeoutMs,
+					() =>
+						new Error(
+							`LLM call to ${request.model ?? "mid"} exceeded ${llmTimeoutMs}ms and was ` +
+							`aborted so the run can keep moving. The session is marked failed; re-run it ` +
+							`once the provider recovers, or raise the timeout (PROSPECTOR_LLM_TIMEOUT_MS).`,
+						),
+				),
+			);
 		// Let one session reach the LLM gate on its own. Without this, fan-out is
 		// bounded by how many sessions happen to be issuing calls at the same moment,
 		// and a single-session run can never exceed concurrency 1. The semaphore above
@@ -114,38 +136,92 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			"info",
 		);
 
-		let nodesProduced = 0;
-		let nodesRevised = 0;
-		let proposals = 0;
-		let cost = 0;
-		const errors: string[] = [];
+		// A whole-run completion record so a partial overlay is legible: created as
+		// 'running' before any session runs (so even an interrupted run leaves
+		// evidence), then finalized with the real tallies when the invocation
+		// returns. This is what makes "10 of 320 sessions, run continued" a visible,
+		// queryable fact instead of something indistinguishable from "little to say".
+		const runId = uuidv7();
+		createAnalyzeRun(db, { id: runId, mode: reach, sessionAttempted: sessions.length });
+
+		let accounting = emptyAccounting();
+		let lastProgressAt = 0;
 
 		await mapWithConcurrency(sessions, sessionConcurrency, async (session) => {
+			let outcome: SessionRunOutcome;
 			try {
-				const summary = await framework.run(session.id, { revise: args.revise, analyzerIds, modelSpec: args.model });
-				nodesProduced += summary.nodesProduced;
-				nodesRevised += summary.nodesRevised;
-				proposals += summary.proposalsCreated;
-				cost += summary.costUsd;
-				errors.push(...summary.errors);
-				// Bare-fill self-healing: only retire the session from the unanalysed
-				// queue when it completed cleanly. If any unit failed, leave
-				// `analyzed_at` NULL so the next plain fill re-scans it and recomputes
-				// the still-missing units (the failures left no result behind).
-				if (summary.errors.length === 0) {
-					markAnalyzed(db, session.id);
-				}
+				const summary = await framework.run(session.id, {
+					revise: args.revise,
+					analyzerIds,
+					modelSpec: args.model,
+				});
+				outcome = {
+					ok: summary.errors.length === 0,
+					nodesProduced: summary.nodesProduced,
+					nodesRevised: summary.nodesRevised,
+					proposalsCreated: summary.proposalsCreated,
+					costUsd: summary.costUsd,
+					tokensUsed: summary.tokensUsed,
+					errors: summary.errors,
+				};
 			} catch (err) {
-				errors.push(`${session.id}: ${err instanceof Error ? err.message : String(err)}`);
+				// A thrown run (as opposed to per-unit errors reported inside the summary)
+				// is still one failed session; surface one example and keep going.
+				outcome = {
+					ok: false,
+					nodesProduced: 0,
+					nodesRevised: 0,
+					proposalsCreated: 0,
+					costUsd: 0,
+					tokensUsed: 0,
+					errors: [`${session.id}: ${err instanceof Error ? err.message : String(err)}`],
+				};
 			}
+			accounting = accountOne(accounting, outcome);
+			// Bare-fill self-healing: only retire the session from the unanalysed
+			// queue when it completed cleanly. If any unit failed, leave `analyzed_at`
+			// NULL so the next plain fill re-scans it and recomputes the still-missing
+			// units (the failures left no result behind).
+			if (outcome.ok) {
+				markAnalyzed(db, session.id);
+			}
+
+			// Throttled progress so a slow run is distinguishable from a stuck one
+			// (the per-call timeout guarantees the run itself terminates).
+			const now = Date.now();
+			if (now - lastProgressAt >= 30_000 && accounting.attempted < sessions.length) {
+				lastProgressAt = now;
+				out(
+					ctx,
+					`  ${accounting.attempted}/${sessions.length} session(s) analysed — ` +
+						`${accounting.completed} completed, ${accounting.failed} failed…`,
+					"info",
+				);
+			}
+		});
+
+		// The terminal state of the whole run: persisted locally so it survives the
+		// process, and surfaced to the operator with the failure examples.
+		finalizeAnalyzeRun(db, runId, {
+			status: runStatus(accounting),
+			sessionCompleted: accounting.completed,
+			sessionFailed: accounting.failed,
+			nodesProduced: accounting.nodesProduced,
+			nodesRevised: accounting.nodesRevised,
+			proposalsCreated: accounting.proposalsCreated,
+			costUsd: accounting.costUsd,
+			tokensUsed: accounting.tokensUsed,
+			errorCount: accounting.errorCount,
+			errorExamples: accounting.errorExamples,
 		});
 
 		const newTerms = countNewLexiconTerms(db, startedAt);
 		const lines = [
-			`Done [${reach}]. ${sessions.length} session(s) scanned.`,
-			`  Nodes produced: ${nodesProduced} (revised: ${nodesRevised})`,
-			`  Proposals created: ${proposals}`,
-			`  Estimated cost: $${cost.toFixed(4)}`,
+			`Done [${reach}]. ${accounting.attempted} session(s) scanned — ` +
+				`${accounting.completed} completed, ${accounting.failed} failed.`,
+			`  Nodes produced: ${accounting.nodesProduced} (revised: ${accounting.nodesRevised})`,
+			`  Proposals created: ${accounting.proposalsCreated}`,
+			`  Estimated cost: $${accounting.costUsd.toFixed(4)}`,
 		];
 		if (newTerms > 0 && !args.all && !args.session) {
 			lines.push(
@@ -153,11 +229,15 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 				`    Sessions analysed earlier may use them — run '/prospect-analyze --all' to back-fill.`,
 			);
 		}
-		if (errors.length > 0) {
-			lines.push(`  Errors: ${errors.length}`);
-			for (const e of errors.slice(0, 5)) lines.push(`    ${e}`);
+		if (accounting.failed > 0) {
+			lines.push(
+				`  ⚠ Partial run: ${accounting.failed}/${accounting.attempted} session(s) had errors ` +
+					`(${accounting.errorCount} total). A session listed as failed was NOT fully analysed; ` +
+					`a plain re-run will pick it up.`,
+			);
+			for (const e of accounting.errorExamples.slice(0, 5)) lines.push(`    ${e}`);
 		}
-		out(ctx, lines.join("\n"), errors.length > 0 ? "warning" : "info");
+		out(ctx, lines.join("\n"), accounting.failed > 0 ? "warning" : "info");
 	} finally {
 		db.close();
 	}

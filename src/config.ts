@@ -68,6 +68,38 @@ export function getPiAgentAnalyzersDir(): string {
 }
 
 /**
+ * Default maximum wall-clock for a single LLM call in an analyze run. A call that
+ * exceeds this is treated as stalled and fails the unit rather than holding a
+ * concurrency slot forever and stalling the whole overlay. 120s is generous enough
+ * for deliberate reasoning-model calls while still converting a hung provider into
+ * a real, terminal per-session failure. Overridable via `PROSPECTOR_LLM_TIMEOUT_MS`
+ * or the `llmTimeoutMs` config field.
+ */
+const DEFAULT_LLM_TIMEOUT_MS = 120_000;
+
+/**
+ * Resolve the per-LLM-call timeout in milliseconds. Precedence: the
+ * `PROSPECTOR_LLM_TIMEOUT_MS` env var, then the `llmTimeoutMs` config field, then
+ * the default. Non-positive or non-numeric values fall back to the default.
+ */
+export function getLlmTimeoutMs(config?: ProspectorConfig): number {
+	const c = config ?? loadConfig();
+	const fromEnv = parseMs(process.env["PROSPECTOR_LLM_TIMEOUT_MS"]);
+	if (fromEnv !== undefined) return fromEnv;
+	if (typeof c.llmTimeoutMs === "number" && Number.isFinite(c.llmTimeoutMs) && c.llmTimeoutMs > 0) {
+		return c.llmTimeoutMs;
+	}
+	return DEFAULT_LLM_TIMEOUT_MS;
+}
+
+/** Parse a positive millisecond count, or undefined for anything unusable. */
+function parseMs(raw: string | undefined): number | undefined {
+	if (raw === undefined) return undefined;
+	const n = Number.parseInt(raw, 10);
+	return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
  * Resolve every path custom analyzers are loaded from, in precedence order:
  * explicit (CLI) → config `analyzerPaths` → project ./.prospector/analyzers →
  * Pi agent dir. A leading ~ in config paths is expanded.

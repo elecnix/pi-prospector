@@ -1,8 +1,9 @@
-import { test } from "node:test";
+import { test, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
 	mapWithConcurrency,
 	createSemaphore,
+	withTimeout,
 	DEFAULT_LLM_CONCURRENCY,
 	DEFAULT_DETERMINISTIC_CONCURRENCY,
 } from "../../src/analyze/concurrency.js";
@@ -102,4 +103,27 @@ test("createSemaphore serializes with limit 1 (FIFO)", async () => {
 		),
 	);
 	assert.deepEqual(order, [1, 2, 3]);
+});
+
+describe("withTimeout", () => {
+	it("returns the result when the promise settles first", async () => {
+		assert.equal(await withTimeout(Promise.resolve(7), 500, () => new Error("timeout")), 7);
+	});
+
+	it("rejects with the timeout error when the promise never settles", async () => {
+		const never = new Promise<never>(() => {}); // never resolves nor rejects
+		await assert.rejects(() => withTimeout(never, 20, () => new Error("stalled call")), /stalled call/);
+	});
+
+	it("does not throw a spurious timeout when the promise rejects first", async () => {
+		const slow = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("real boom")), 5));
+		await assert.rejects(() => withTimeout(slow, 500, () => new Error("timeout")), /real boom/);
+	});
+
+	it("releases the caller promptly even for a hung promise (terminal state)", async () => {
+		const start = Date.now();
+		const never = new Promise<never>(() => {});
+		await assert.rejects(() => withTimeout(never, 15, () => new Error("hang")), /hang/);
+		assert.ok(Date.now() - start < 500, "should not wait out the hung promise's full lifetime");
+	});
 });

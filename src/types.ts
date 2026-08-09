@@ -23,6 +23,13 @@ export interface ProspectorConfig {
 	 */
 	analyzerPaths?: string[];
 	/**
+	 * Per-LLM-call timeout in milliseconds for an analyze run. A call that exceeds
+	 * this is treated as stalled: it fails the unit, marks the session failed, and
+	 * the run continues rather than hanging with no terminal state. Default 120000;
+	 * also configurable via `PROSPECTOR_LLM_TIMEOUT_MS`.
+	 */
+	llmTimeoutMs?: number;
+	/**
 	 * Per-analyzer config overrides, keyed by analyzer id. Merged over the
 	 * analyzer's shipped defaults.
 	 *

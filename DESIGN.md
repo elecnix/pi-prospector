@@ -219,6 +219,13 @@ roughly the order concepts build on one another.
 - **Run** — one execution of an analyzer over a session. A run records its own
   provenance (status, cost, tokens, how many nodes it produced, skipped, or
   revised) so that execution history is itself auditable.
+- **Analyze invocation** — one full `analyze` over many sessions. It keeps a
+  completion record (`analyze_runs`): how many sessions it attempted, completed,
+  and failed, plus node/proposal/cost tallies and representative errors. This is
+  what makes a partial overlay legible — a run that stalled part-way is
+  distinguishable from a corpus that genuinely had little to say. The record is
+  created as `running` up front and finalized with real counts when the run
+  returns.
 - **Revise reasons** — what a run is allowed to recompute, beyond always filling
   *missing* work. A run with no reasons is frugal: it fills missing analysis and
   touches nothing that already has a node. The reasons widen that reach to

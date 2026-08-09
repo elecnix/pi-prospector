@@ -225,6 +225,31 @@ export function migrate(db: Database.Database): void {
 			error_message TEXT
 		);
 
+		-- One record per full analyze invocation (a run over many sessions). This is
+		-- how a partial overlay stays legible: it records how many sessions were
+		-- attempted, completed, and failed, so a run that stalled part-way is
+		-- distinguishable from a corpus that genuinely had little to say. Append-only
+		-- execution provenance, like analysis_runs; created as 'running' so even an
+		-- interrupted run leaves evidence, and finalized with the real counts when
+		-- the invocation returns.
+		CREATE TABLE IF NOT EXISTS analyze_runs (
+			id TEXT PRIMARY KEY,
+			mode TEXT NOT NULL DEFAULT 'fill',
+			session_attempted INTEGER NOT NULL DEFAULT 0,
+			session_completed INTEGER NOT NULL DEFAULT 0,
+			session_failed INTEGER NOT NULL DEFAULT 0,
+			nodes_produced INTEGER NOT NULL DEFAULT 0,
+			nodes_revised INTEGER NOT NULL DEFAULT 0,
+			proposals_created INTEGER NOT NULL DEFAULT 0,
+			cost_usd REAL NOT NULL DEFAULT 0,
+			tokens_used INTEGER NOT NULL DEFAULT 0,
+			error_count INTEGER NOT NULL DEFAULT 0,
+			error_examples TEXT NOT NULL DEFAULT '[]',
+			status TEXT NOT NULL DEFAULT 'running',
+			started_at TEXT NOT NULL,
+			finished_at TEXT
+		);
+
 		CREATE TABLE IF NOT EXISTS analysis_nodes (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
