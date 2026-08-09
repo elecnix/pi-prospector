@@ -15,7 +15,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { parseFlags, parseTimestamp } from "../timepoint.js";
-import { computeDeletionSet, applyDeletionSet, type GcCatalog, type GcTarget } from "../db/gc.js";
+import { computeDeletionSet, retractNodes, newGcRunId, type GcCatalog, type GcTarget } from "../db/gc.js";
 import { getDbPath } from "../config.js";
 
 function output(ctx: ExtensionCommandContext, text: string, level: "info" | "warning" | "error" = "info"): void {
@@ -34,7 +34,6 @@ function renderCatalog(catalog: GcCatalog): string[] {
 		for (const k of kinds) byKind[k.nodeKind] = (byKind[k.nodeKind] ?? 0) + 1;
 		lines.push(`        ${Object.entries(byKind).map(([k, v]) => `${k}: ${v}`).join(", ")}`);
 	}
-	lines.push(`  edges: ${catalog.edgeIds.length}`);
 	lines.push(`  proposals: ${catalog.proposalIds.length}`);
 	return lines;
 }
@@ -67,7 +66,7 @@ export async function prospectGc(rawArgs: string, ctx: ExtensionCommandContext):
 		const catalog = computeDeletionSet(db, target);
 
 		const describe = `${target.kind === "run" ? `run ${target.runId.slice(0, 8)}` : target.kind === "analyzer" ? `analyzer ${target.analyzerId}` : `everything after ${target.since}`}`;
-		if (catalog.nodes.length === 0 && catalog.edgeIds.length === 0) {
+		if (catalog.nodes.length === 0 && catalog.proposalIds.length === 0) {
 			output(ctx, `gc ${describe}: nothing to remove.`);
 			return;
 		}
@@ -84,14 +83,14 @@ export async function prospectGc(rawArgs: string, ctx: ExtensionCommandContext):
 			return;
 		}
 
-		const result = applyDeletionSet(db, catalog);
+		const result = retractNodes(db, catalog, newGcRunId(), new Date().toISOString());
 		output(
 			ctx,
 			[
-				`gc ${describe} applied.`,
-				`  removed ${result.removedNodes} node(s), ${result.removedEdges} edge(s), ${result.removedProposals} proposal(s)${result.removedRuns ? `, ${result.removedRuns} run(s)` : ""}.`,
+				`gc ${describe} applied (via retraction).`,
+				`  retracted ${result.retractedNodes} node(s), removed ${result.removedProposals} proposal(s).`,
 				"  Human decisions and remediations were left untouched.",
-				"  Run /prospect-verify to confirm the graph is still referentially intact.",
+				"  Use /prospect-retract undo <gcId> to reverse, /prospect-retract purge --retracted-before <ts> to reclaim space.",
 			].join("\n"),
 		);
 	} finally {

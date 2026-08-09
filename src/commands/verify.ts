@@ -35,7 +35,10 @@ export interface VerifyResult {
  * that only need the content check.
  */
 export function verifyNodes(db: Database.Database): { total: number; mismatches: VerifyMismatch[] } {
-	const nodes = getAllAnalysisNodes(db);
+	// Include retracted nodes: a retracted node is still a node and its content
+	// must still hash correctly (issue #52). Only physically purged-and-gone nodes
+	// are absent from verification, and those cannot be checked.
+	const nodes = getAllAnalysisNodes(db, undefined, true);
 	const mismatches: VerifyMismatch[] = [];
 	for (const n of nodes) {
 		let content: unknown;

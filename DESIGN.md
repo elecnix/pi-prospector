@@ -762,7 +762,16 @@ set explain *why* the recipe moved.
 These statements must always hold. If a change would violate one, the change is
 wrong.
 
-- A node, once written, is never modified or deleted.
+- A node, once written, is never modified or deleted. **Retraction** is how the
+  invariant is enforced rather than merely expected: `prospect gc` sets a
+  `retracted_at` tombstone (with a `retracted_by_run` provenance) instead of
+  issuing a `DELETE`, so the node and its history remain and as-of reads still
+  see it before its retraction. Ordinary reads go through the `live_nodes` view
+  (`retracted_at IS NULL`); a retracted node is absent from live reads and from
+  scanning, so its unit classifies `missing` and is recomputed. Retraction is
+  reversible (`retract --undo` clears the column) and only a deliberate
+  `purge --retracted-before <ts>` physically reclaims the space. A retracted
+  node is still verified — its content must still hash correctly.
 - Every relationship is an edge with a valid kind and a valid target type; no
   relationships are stored anywhere else.
 - A node's identity equals its recipe fingerprint — analyzer, version, config,

@@ -96,6 +96,7 @@ describe("slash commands", () => {
 			"prospect-runs",
 			"prospect-diff",
 			"prospect-gc",
+			"prospect-retract",
 		]) {
 			assert.ok(commands.has(name), `missing command ${name}`);
 		}

@@ -311,6 +311,13 @@ export function migrate(db: Database.Database): void {
 	cleanupPartialMigrations(db);
 	addMissingColumns(db);
 
+	// Live-view for retraction: the append-only invariant is enforced by never
+	// deleting analysis nodes — retraction hides them from ordinary reads by
+	// setting retracted_at, and the live_nodes view is the sanctioned read path
+	// for everything that treats a retracted node as absent (scanning, live gaps).
+	db.exec("DROP VIEW IF EXISTS live_nodes");
+	db.exec("CREATE VIEW live_nodes AS SELECT * FROM analysis_nodes WHERE retracted_at IS NULL");
+
 	// Create indexes after schema evolution (they may reference new columns)
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -448,6 +455,16 @@ function addMissingColumns(db: Database.Database): void {
 	if (!hasColumn("analysis_edges", "ordinal")) {
 		db.exec("ALTER TABLE analysis_edges ADD COLUMN ordinal INTEGER DEFAULT 0");
 		db.exec("UPDATE analysis_edges SET ordinal = 0 WHERE ordinal IS NULL");
+	}
+
+	// Retraction tombstones: NULL = live. Never physically delete an analysis node;
+	// set retracted_at (and the gc provenance) instead so the graph stays append-only
+	// and as-of reads can still see the node before its retraction.
+	if (!hasColumn("analysis_nodes", "retracted_at")) {
+		db.exec("ALTER TABLE analysis_nodes ADD COLUMN retracted_at TEXT");
+	}
+	if (!hasColumn("analysis_nodes", "retracted_by_run")) {
+		db.exec("ALTER TABLE analysis_nodes ADD COLUMN retracted_by_run TEXT");
 	}
 
 	// proposals: billed dollar cost of the source work (issue #71). Nullable — a
