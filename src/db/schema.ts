@@ -56,6 +56,8 @@ export function migrate(db: Database.Database): void {
 			tool_results TEXT,
 			usage TEXT,
 			content_hash TEXT,
+			model TEXT,
+			cost_usd REAL,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
@@ -304,6 +306,18 @@ function addMissingColumns(db: Database.Database): void {
 	if (!hasColumn("messages", "source")) {
 		db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'pi'");
 		db.exec("UPDATE messages SET source = 'pi' WHERE source IS NULL");
+	}
+
+	// messages: model and billed cost (issue #65). Both are nullable — a message
+	// whose transcript recorded no model/cost keeps NULL rather than a guessed
+	// value (cost is money; a silent 0 reads as "this was free"). Existing rows
+	// are filled only by a full re-sync that rebuilds the index from transcripts;
+	// incremental sync fills them for newly appended messages.
+	if (!hasColumn("messages", "model")) {
+		db.exec("ALTER TABLE messages ADD COLUMN model TEXT");
+	}
+	if (!hasColumn("messages", "cost_usd")) {
+		db.exec("ALTER TABLE messages ADD COLUMN cost_usd REAL");
 	}
 
 	// proposals v2: check if it has v1 schema (has "target" instead of "title")

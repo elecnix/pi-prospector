@@ -311,6 +311,59 @@ describe("parseLine (claude source)", () => {
 			assert.equal(result.entry.tool_calls![0]!.name, "CustomPlugin");
 		}
 	});
+
+	// ── model & billed cost (issue #65) ──
+
+	it("extracts the serving model from a Claude assistant message", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			uuid: "asst-cost",
+			parentUuid: "u1",
+			sessionId: "sess-1",
+			timestamp: "2026-01-15T10:32:00.000Z",
+			message: {
+				role: "assistant",
+				model: "claude-opus-5",
+				usage: { input_tokens: 100, output_tokens: 50 },
+				content: [{ type: "text", text: "I can help!" }],
+			},
+		});
+		const result = parseLine(line, "claude");
+		assert.ok(result);
+		if (result.kind === "message") {
+			// Claude Code records no per-message dollar cost, so cost stays null.
+			assert.equal(result.entry.model, "claude-opus-5");
+			assert.equal(result.entry.costUsd, null);
+		}
+	});
+
+	it("leaves model and cost null on a Claude assistant message that records neither", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			uuid: "asst-none",
+			parentUuid: "u1",
+			sessionId: "sess-1",
+			message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+		});
+		const result = parseLine(line, "claude");
+		assert.ok(result && result.kind === "message");
+		assert.equal(result.entry.model, null);
+		assert.equal(result.entry.costUsd, null);
+	});
+
+	it("leaves model and cost null on non-assistant Claude messages", () => {
+		const line = JSON.stringify({
+			type: "user",
+			uuid: "user-cost",
+			parentUuid: null,
+			sessionId: "sess-1",
+			message: { role: "user", content: "hello", model: "ignored" },
+		});
+		const result = parseLine(line, "claude");
+		assert.ok(result && result.kind === "message");
+		assert.equal(result.entry.model, null);
+		assert.equal(result.entry.costUsd, null);
+	});
 });
 
 describe("parseClaudeSessionMeta", () => {

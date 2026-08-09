@@ -28,6 +28,8 @@ export interface ParsedMessage {
 		tool_calls: Array<{ name: string; arguments: Record<string, unknown> }> | null;
 		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number }> | null;
 		usage: UsageData | null;
+		model: string | null;
+		costUsd: number | null;
 	};
 }
 
@@ -119,10 +121,12 @@ function parsePiLine(line: string): ParsedLine | null {
 		}
 
 		const usage = role === "assistant" ? extractUsage(msg, "pi") : null;
+		const model = role === "assistant" ? extractModel(msg) : null;
+		const costUsd = role === "assistant" ? extractCostUsd(msg.usage as Record<string, unknown> | undefined) : null;
 
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, usage },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, usage, model, costUsd },
 		};
 	}
 
@@ -147,7 +151,7 @@ function parsePiLine(line: string): ParsedLine | null {
 
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, usage: null },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, usage: null, model: null, costUsd: null },
 		};
 	}
 
@@ -294,7 +298,7 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 
 		return {
 			kind: "message",
-			entry: { id: uuid, parentId: parentUuid, timestamp, role, text, thinking: null, tool_calls: null, tool_results, usage: null },
+			entry: { id: uuid, parentId: parentUuid, timestamp, role, text, thinking: null, tool_calls: null, tool_results, usage: null, model: null, costUsd: null },
 		};
 	}
 
@@ -342,10 +346,13 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 		}
 
 		const usage = extractUsage(msg, "claude");
+		const model = extractModel(msg);
+		// Claude Code records no per-message dollar cost, so billed cost stays null.
+		const costUsd = null;
 
 		return {
 			kind: "message",
-			entry: { id: uuid, parentId: parentUuid, timestamp, role: "assistant", text, thinking, tool_calls, tool_results: null, usage },
+			entry: { id: uuid, parentId: parentUuid, timestamp, role: "assistant", text, thinking, tool_calls, tool_results: null, usage, model, costUsd },
 		};
 	}
 
@@ -429,4 +436,33 @@ export function extractUsage(msg: Record<string, unknown>, source: SessionSource
 
 function safeNum(v: unknown): number {
 	return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Extract the serving model from an assistant message.
+ *
+ * Pi writes it at `message.model` (falling back to `message.responseModel`);
+ * Claude Code writes it at `message.model`. Omitted or empty → null.
+ */
+function extractModel(msg: Record<string, unknown>): string | null {
+	const raw = msg.model ?? msg.responseModel;
+	return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+/**
+ * Extract the billed dollar cost from an assistant message's usage, or null.
+ *
+ * Pi records a per-message cost breakdown at `usage.cost` with a `total` value
+ * in dollars; Claude Code records no dollar cost at all. Cost is money and must
+ * never be guessed, so an unrecorded amount stays null.
+ *
+ * A recorded `total` of exactly 0 is collapsed to null too: Pi defaults every
+ * cost bucket to 0 when it has not priced a message, so a zero is
+ * indistinguishable from "no cost recorded" — and a silent 0 would read as
+ * "this was free" to every downstream consumer (#71 ranks by cost). Only a
+ * strictly positive recorded amount is treated as real money.
+ */
+function extractCostUsd(usage: Record<string, unknown> | undefined): number | null {
+	const total = (usage?.cost as Record<string, unknown> | undefined)?.total;
+	return typeof total === "number" && Number.isFinite(total) && total > 0 ? total : null;
 }

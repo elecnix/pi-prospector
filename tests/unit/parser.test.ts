@@ -100,4 +100,95 @@ describe("parseLine", () => {
 	it("returns null for JSON without type", () => {
 		assert.equal(parseLine(JSON.stringify({ id: "x" })), null);
 	});
+
+	// ── model & billed cost (issue #65) ──
+
+	it("extracts model and billed cost from a Pi assistant message", () => {
+		const line = JSON.stringify({
+			type: "message",
+			id: "m-cost",
+			parentId: null,
+			timestamp: "2026-01-15T10:33:00Z",
+			message: {
+				role: "assistant",
+				content: "Sure!",
+				model: "deepseek-v4-pro",
+				usage: {
+					input: 100,
+					output: 50,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 150,
+					cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+				},
+			},
+		});
+		const result = parseLine(line);
+		assert.ok(result);
+		assert.equal(result.kind, "message");
+		if (result.kind === "message") {
+			assert.equal(result.entry.model, "deepseek-v4-pro");
+			assert.equal(result.entry.costUsd, 0.003);
+			assert.ok(result.entry.usage);
+			assert.equal(result.entry.usage!.input, 100);
+		}
+	});
+
+	it("reads the Pi serving model from responseModel when model is absent", () => {
+		const line = JSON.stringify({
+			type: "message",
+			id: "m-rsp",
+			parentId: null,
+			timestamp: "2026-01-15T10:33:00Z",
+			message: { role: "assistant", content: "ok", responseModel: "gpt-5", usage: { input: 1, output: 1 } },
+		});
+		const result = parseLine(line);
+		assert.ok(result && result.kind === "message");
+		assert.equal(result.entry.model, "gpt-5");
+	});
+
+	it("collapses a zero Pi cost to null rather than a silent free (issue #65)", () => {
+		// Pi defaults every cost bucket to 0 when a message is not priced, so a
+		// recorded total of 0 must not read as "this was free".
+		const line = JSON.stringify({
+			type: "message",
+			id: "m-zero",
+			parentId: null,
+			timestamp: "2026-01-15T10:33:00Z",
+			message: { role: "assistant", content: "x", model: "m", usage: { input: 1, output: 1, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } },
+		});
+		const result = parseLine(line);
+		assert.ok(result && result.kind === "message");
+		assert.equal(result.entry.costUsd, null);
+		assert.equal(result.entry.model, "m");
+	});
+
+	it("leaves model and cost null on a Pi assistant message that records neither", () => {
+		const line = JSON.stringify({
+			type: "message",
+			id: "m-none",
+			parentId: null,
+			timestamp: "2026-01-15T10:33:00Z",
+			message: { role: "assistant", content: "x", usage: { input: 1, output: 1 } },
+		});
+		const result = parseLine(line);
+		assert.ok(result && result.kind === "message");
+		assert.equal(result.entry.model, null);
+		assert.equal(result.entry.costUsd, null);
+	});
+
+	it("leaves model and cost null on non-assistant Pi messages", () => {
+		const line = JSON.stringify({
+			type: "message",
+			id: "m-user",
+			parentId: null,
+			timestamp: "2026-01-15T10:33:00Z",
+			message: { role: "user", content: "hi", model: "should-not-leak", usage: { input: 9 } },
+		});
+		const result = parseLine(line);
+		assert.ok(result && result.kind === "message");
+		assert.equal(result.entry.model, null);
+		assert.equal(result.entry.costUsd, null);
+		assert.equal(result.entry.usage, null);
+	});
 });
