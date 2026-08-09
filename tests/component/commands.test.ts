@@ -126,7 +126,7 @@ describe("slash commands", () => {
 		await run("prospect-sync");
 		await run("prospect-analyze", "--analyzer turn-pair-core");
 		const ok = await run("prospect-verify");
-		assert.match(ok, /verified|No analysis nodes/);
+		assert.match(ok, /every reference resolves/);
 
 		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
 		try {
@@ -140,7 +140,38 @@ describe("slash commands", () => {
 			db.close();
 		}
 		const bad = await run("prospect-verify");
-		assert.match(bad, /failed verification/);
+		assert.match(bad, /integrity problem\(s\) found/);
+	});
+
+	it("prospect-verify flags a broken evidence trail (dangling edge #49)", async () => {
+		const trailDb = path.join(tmpDir, "trail.db");
+		process.env["PROSPECTOR_DB_PATH"] = trailDb;
+		try {
+			await run("prospect-sync");
+			await run("prospect-analyze", "--analyzer turn-pair-core");
+			const ok = await run("prospect-verify");
+			assert.match(ok, /edge\(s\): every reference resolves/);
+
+			const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+			try {
+				// An edge references its target by id (message/session), so out-of-band SQL
+				// can point it at an id that no longer exists. Break one to emulate the #49
+				// incident: a dangling trail that content-hash verify misses. (turn-pair-core
+				// produces `anchors`→message edges but no `consumes` edges — those are
+				// added by the session-overview step.)
+				const edge = db.prepare("SELECT id FROM analysis_edges WHERE edge_kind = 'anchors' AND to_ref_kind = 'message' LIMIT 1").get() as { id: string } | undefined;
+				assert.ok(edge, "expected an anchors→message edge to break");
+				db.prepare("UPDATE analysis_edges SET to_ref_id = 'ghost-message-id' WHERE id = ?").run(edge!.id);
+			} finally {
+				db.close();
+			}
+			const bad = await run("prospect-verify");
+			assert.match(bad, /dangling reference\(s\)/);
+			assert.match(bad, /anchors → message/);
+			assert.match(bad, /messages.id/);
+		} finally {
+			process.env["PROSPECTOR_DB_PATH"] = path.join(tmpDir, "cmd.db");
+		}
 	});
 
 	it("prospect-analyze reports when there is nothing to do", async () => {
