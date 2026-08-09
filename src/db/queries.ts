@@ -157,6 +157,66 @@ export function getProposal(db: Database.Database, id: string): Proposal | undef
 	return prep(db, "SELECT * FROM proposals WHERE id = ?").get(id) as Proposal | undefined;
 }
 
+/**
+ * The latest decision recorded at or before T for each proposal, keyed by
+ * `proposal_input_key`. The decision log is the event source that makes the
+ * mutable `proposals.status` projection reconstructible at a point in time.
+ */
+function latestDecisionsAsOf(db: Database.Database, at: string): Map<string, ProposalDecision> {
+	const rows = db
+		.prepare("SELECT * FROM proposal_decisions WHERE decided_at <= ? ORDER BY decided_at ASC, rowid ASC")
+		.all(at) as ProposalDecision[];
+	const latest = new Map<string, ProposalDecision>();
+	for (const d of rows) {
+		const cur = latest.get(d.proposal_input_key);
+		if (!cur || d.decided_at > cur.decided_at || (d.decided_at === cur.decided_at && d.id > cur.id)) {
+			latest.set(d.proposal_input_key, d);
+		}
+	}
+	return latest;
+}
+
+/**
+ * Proposals as they existed at time `at`: only those created by then, with their
+ * status derived by replaying decisions recorded up to T (latest per input_key).
+ * This is the reconstructible, immutable projection of the mutable status column.
+ */
+export function listProposalsAsOf(db: Database.Database, at: string): Proposal[] {
+	const proposals = db
+		.prepare("SELECT * FROM proposals WHERE created_at <= ? ORDER BY created_at DESC")
+		.all(at) as Proposal[];
+	const latest = latestDecisionsAsOf(db, at);
+	for (const p of proposals) {
+		const d = latest.get(p.input_key);
+		// A proposal starts life "open" and only transitions by a recorded decision,
+		// so with no decision by T it was open at T — never fall back to the mutable
+		// stored column, which may reflect a decision that happened after T.
+		p.status = d ? (d.decision === "rejected" ? "rejected" : "applied") : "open";
+	}
+	return proposals;
+}
+
+/** Status counts for proposals as of `at` (undefined = live/current). */
+function proposalStatusCountsAt(db: Database.Database, at?: string): Record<ProposalStatus, number> {
+	const counts: Record<ProposalStatus, number> = { open: 0, applied: 0, rejected: 0, duplicate: 0 };
+	if (at === undefined) {
+		const rows = db.prepare("SELECT status, COUNT(*) AS c FROM proposals GROUP BY status").all() as Array<{
+			status: string;
+			c: number;
+		}>
+		for (const r of rows) {
+			if (r.status === "open" || r.status === "applied" || r.status === "rejected" || r.status === "duplicate") {
+				counts[r.status as ProposalStatus] = r.c;
+			}
+		}
+		return counts;
+	}
+	for (const p of listProposalsAsOf(db, at)) {
+		counts[p.status]++;
+	}
+	return counts;
+}
+
 /** Optional human feedback recorded alongside an accept/reject. */
 export interface DecisionInput {
 	disposition?: DecisionDisposition | null;
@@ -442,23 +502,24 @@ export function countOpenProposalsByValidationStatus(db: Database.Database): Rec
 
 // ── Stats ──
 
-export function getStats(db: Database.Database): Stats {
-	const totalSessions = (prep(db, "SELECT COUNT(*) as c FROM sessions").get() as { c: number }).c;
-	const piSessions = (prep(db, "SELECT COUNT(*) as c FROM sessions WHERE source = 'pi'").get() as { c: number }).c;
-	const claudeSessions = (prep(db, "SELECT COUNT(*) as c FROM sessions WHERE source = 'claude'").get() as { c: number }).c;
-	const totalMessages = (prep(db, "SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant')").get() as { c: number }).c;
-	const piMessages = (prep(db, "SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'pi'").get() as { c: number }).c;
-	const claudeMessages = (prep(db, "SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'claude'").get() as { c: number }).c;
-	const totalToolResults = (prep(db, "SELECT COUNT(*) as c FROM messages WHERE role = 'toolResult'").get() as { c: number }).c;
-	const sessionsAnalyzed = (prep(db, "SELECT COUNT(*) as c FROM sessions WHERE analyzed_at IS NOT NULL").get() as { c: number }).c;
+export function getStats(db: Database.Database, asOf?: string): Stats {
+	const at = asOf;
+	const sessionWhere = at ? " WHERE started_at <= ?" : "";
+	const sessionParams = at ? [at] : [];
+	const totalSessions = (prep(db, `SELECT COUNT(*) as c FROM sessions${sessionWhere}`).get(...sessionParams) as { c: number }).c;
+	const piSessions = (prep(db, `SELECT COUNT(*) as c FROM sessions WHERE source = 'pi'${at ? " AND started_at <= ?" : ""}`).get(...(at ? [at] : [])) as { c: number }).c;
+	const claudeSessions = (prep(db, `SELECT COUNT(*) as c FROM sessions WHERE source = 'claude'${at ? " AND started_at <= ?" : ""}`).get(...(at ? [at] : [])) as { c: number }).c;
 
-	const statusRows = prep(db, "SELECT status, COUNT(*) as c FROM proposals GROUP BY status").all() as Array<{ status: string; c: number }>;
-	const proposalsByStatus: Record<ProposalStatus, number> = { open: 0, applied: 0, rejected: 0, duplicate: 0 };
-	for (const r of statusRows) {
-		if (r.status === "open" || r.status === "applied" || r.status === "rejected" || r.status === "duplicate") {
-			proposalsByStatus[r.status] = r.c;
-		}
-	}
+	const msgWhere = at ? ` AND timestamp <= ?` : "";
+	const msgParams = at ? [at] : [];
+	const totalMessages = (prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant')${msgWhere}`).get(...msgParams) as { c: number }).c;
+	const piMessages = (prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'pi'${msgWhere}`).get(...msgParams) as { c: number }).c;
+	const claudeMessages = (prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'claude'${msgWhere}`).get(...msgParams) as { c: number }).c;
+	const totalToolResults = (prep(db, `SELECT COUNT(*) as c FROM messages WHERE role = 'toolResult'${msgWhere}`).get(...msgParams) as { c: number }).c;
+	const sessionsAnalyzed = (prep(db, `SELECT COUNT(*) as c FROM sessions WHERE analyzed_at IS NOT NULL${at ? " AND analyzed_at <= ?" : ""}`).get(...(at ? [at] : [])) as { c: number }).c;
+
+	const proposalsByStatus = proposalStatusCountsAt(db, at);
+
 
 	return {
 		totalSessions,
@@ -470,7 +531,7 @@ export function getStats(db: Database.Database): Stats {
 		totalToolResults,
 		sessionsAnalyzed,
 		proposalsByStatus,
-		analysis: getAnalysisStats(db),
+		analysis: getAnalysisStats(db, at),
 		tokens: getTokenStats(db),
 	};
 }

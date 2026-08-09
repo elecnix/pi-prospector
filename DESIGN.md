@@ -725,6 +725,31 @@ as a source (folding the decisions into *its* identity, exactly as a turn-pair
 analyzer folds in messages) and proposes changes to analyzer prompts, config, or
 standing instructions so that future proposals are higher quality.
 
+The decision log is more than durable memory: it is the **event source** that
+makes the one mutable thing in the system — `proposals.status` — reconstructible
+at a point in time. Replaying `proposal_decisions WHERE decided_at <= T` and
+taking the latest per `proposal_input_key` yields every proposal's status as of
+`T`; a proposal with no decision by `T` was `open` at `T`. This is what makes an
+`--as-of` view of proposals honest rather than a leak of the current state into
+the past.
+
+### Point-in-time (`--as-of`) reads
+
+Because the graph is append-only, **"the graph as of T" is simply the nodes with
+`created_at <= T`** — no snapshots, no history table. Read commands accept
+`--as-of <timestamp>` (an ISO instant or a relative duration like `7d`) and,
+for an exact and unambiguous alternative, `--as-of-run <id>` (the run's recorded
+`finished_at` boundary, preferred because nodes written concurrently within a
+run can interleave and a mid-run instant yields a partial view). An as-of view
+is always labelled as a *view*, never presented as current state.
+
+`prospect diff` builds on these reads to compare nodes across versions (`--unit`),
+runs (`--runs`), and points in time (`--as-of`). Because identities are
+content-addressed, a diff is attributable: same `input_key` with a different
+`output_key` means the identical recipe produced a different conclusion, while a
+different `input_key` lets the analyzer version, config fingerprint, or source
+set explain *why* the recipe moved.
+
 ---
 
 ## 4. Invariants

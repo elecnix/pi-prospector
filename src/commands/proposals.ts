@@ -1,10 +1,11 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
-import { listProposals, acceptProposal, rejectProposal, acceptProposalsWithRemediation, getSessionLabels, getLatestDecision } from "../db/queries.js";
+import { listProposals, listProposalsAsOf, acceptProposal, rejectProposal, acceptProposalsWithRemediation, getSessionLabels, getLatestDecision } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { getNode } from "../db/analysis-queries.js";
 import { getDbPath } from "../config.js";
+import { parseFlags, resolveTimepoint } from "../timepoint.js";
 import type { Proposal, ProposalDecision } from "../types.js";
 import { homedir } from "node:os";
 
@@ -248,7 +249,18 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 	migrate(db);
 	try {
 		const { status, severity, full } = parseProposalsArgs(args);
-		const proposals = listProposals(db, status, severity).sort(rankProposals);
+		const { flags } = parseFlags(args ?? "");
+		let asOfLabel: string | undefined;
+		let proposals: Proposal[] = [];
+		const tp = resolveTimepoint(db, flags);
+		if (tp) {
+			asOfLabel = tp.source;
+			const all = listProposalsAsOf(db, tp.at);
+			proposals = all.filter((p) => (!status || p.status === status) && (!severity || p.severity === severity));
+		} else {
+			proposals = listProposals(db, status, severity);
+		}
+		proposals = proposals.sort(rankProposals);
 		const filterDesc = [status, severity].filter(Boolean).join(" ");
 
 		if (proposals.length === 0) {
@@ -278,7 +290,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			blocks.push(`${header}\n${group.map(format).join("\n\n")}`);
 		}
 
-		const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validation, then cost, then confidence:`;
+		const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validation, then cost, then confidence:${asOfLabel ? `\n  (VIEW ${asOfLabel} — status reconstructed from decisions, not current state)` : ""}`;
 		output(ctx, `${headline}\n\n${blocks.join("\n\n")}`);
 	} finally {
 		db.close();
