@@ -116,6 +116,15 @@ describe("schema migration", () => {
 		}
 	});
 
+	it("proposals carry a nullable cost_usd column and migration backfills it as null (issue #71)", () => {
+		const { db, close } = tempDb();
+		try {
+			assert.ok(tableColumns(db, "proposals").has("cost_usd"), "proposals missing cost_usd");
+		} finally {
+			close();
+		}
+	});
+
 	it("is idempotent (re-running migrate is safe)", () => {
 		const { db, close } = tempDb();
 		try {

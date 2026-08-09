@@ -78,6 +78,7 @@ export function migrate(db: Database.Database): void {
 			detail TEXT,
 			evidence TEXT,
 			confidence REAL,
+			cost_usd REAL,
 			status TEXT NOT NULL DEFAULT 'open',
 			input_key TEXT NOT NULL, -- content-addressed: H(source output_key | ordinal)
 			-- replay validation (issue #6): the originating high-signal turn ids the
@@ -369,6 +370,14 @@ function addMissingColumns(db: Database.Database): void {
 		db.exec("ALTER TABLE analysis_edges ADD COLUMN ordinal INTEGER DEFAULT 0");
 		db.exec("UPDATE analysis_edges SET ordinal = 0 WHERE ordinal IS NULL");
 	}
+
+	// proposals: billed dollar cost of the source work (issue #71). Nullable — a
+	// proposal with no priced source turns keeps NULL, never a synthetic 0.
+	// Existing proposals get NULL too (unbackfilled by design); a fresh analyse
+	// run repopulates them, since the proposals table is rebuilt from nodes.
+	if (!hasColumn("proposals", "cost_usd")) {
+		db.exec("ALTER TABLE proposals ADD COLUMN cost_usd REAL");
+	}
 }
 
 /**
@@ -395,6 +404,7 @@ function migrateProposalsToV2(db: Database.Database): void {
 		detail TEXT,
 		evidence TEXT,
 		confidence REAL,
+		cost_usd REAL,
 		status TEXT NOT NULL DEFAULT 'open',
 		input_key TEXT NOT NULL,
 		source_message_ids TEXT,

@@ -221,11 +221,16 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		return bits.join(" ");
 	});
 
-	// Build trajectory signal lines.
+	// Build trajectory signal lines. When a signal is priced, the dollar amount
+	// is embedded in the digest line so the synthesizer can cite it verbatim in
+	// proposal evidence (issue #71) — a loop reads as "$0.34" not "9×".
 	const trajectoryLines = trajectory.flatMap((t) =>
-		(t.signals ?? []).map((s) =>
-			`trajectory:${s.pattern} tool=${s.tool} count=${s.count} ${s.description}`,
-		),
+		(t.signals ?? []).map((s) => {
+			const cost = typeof s.cost_usd === "number"
+				? ` cost=$${roundUsd(s.cost_usd)}`
+				: "";
+			return `trajectory:${s.pattern} tool=${s.tool} count=${s.count}${cost} ${s.description}`;
+		}),
 	);
 
 	const headerLines = [
@@ -278,6 +283,15 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 function truncateLine(s: string, maxLen: number): string {
 	const flat = s.replace(/\n/g, " ");
 	return flat.length > maxLen ? `${flat.slice(0, maxLen)}…` : flat;
+}
+
+/**
+ * Format a dollar amount compactly for the digest: two decimals for whole-ish
+ * amounts, two significant digits for sub-cent charges (a small read can cost
+ * fractions of a cent, and $0.00 would read as free).
+ */
+function roundUsd(usd: number): string {
+	return usd < 0.01 ? usd.toPrecision(2) : usd.toFixed(2);
 }
 
 /**

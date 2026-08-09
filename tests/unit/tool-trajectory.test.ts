@@ -11,14 +11,14 @@ import { detectStuckLoops, detectPollingLoops, detectOscillation, detectPreFligh
 
 // ──────────────────── helpers ────────────────────
 
-function makeBashCall(command: string, messageId: string, isError = false): ToolCallWithResult {
+function makeBashCall(command: string, messageId: string, isError = false, costUsd: number | null = null): ToolCallWithResult {
 	const call = normalizeToolCall({ name: "bash", args: { command }, messageId });
-	return { call, isError, resultMessageId: `${messageId}-result` };
+	return { call, isError, resultMessageId: `${messageId}-result`, costUsd };
 }
 
-function makeToolCall(name: string, args: Record<string, unknown>, messageId: string, isError = false): ToolCallWithResult {
+function makeToolCall(name: string, args: Record<string, unknown>, messageId: string, isError = false, costUsd: number | null = null): ToolCallWithResult {
 	const call = normalizeToolCall({ name, args, messageId });
-	return { call, isError, resultMessageId: `${messageId}-result` };
+	return { call, isError, resultMessageId: `${messageId}-result`, costUsd };
 }
 
 // ──────────────────── arg-parser tests ────────────────────
@@ -158,6 +158,50 @@ describe("detectStuckLoops", () => {
 		// Stuck-loop with threshold 3 won't trigger because they all succeed (no error)
 		const stuckSignals = detectStuckLoops(calls, 3);
 		assert.equal(stuckSignals.length, 0);
+	});
+
+	// ── pricing (issue #71) ──
+
+	it("prices a stuck-loop as the sum of its participating turns' billed cost", () => {
+		const calls: ToolCallWithResult[] = [
+			makeBashCall("npm install", "m1", true, 0.2),
+			makeBashCall("npm install", "m2", true, 0.3),
+			makeBashCall("npm install", "m3", true, 0.5),
+		];
+		const signals = detectStuckLoops(calls, 3);
+		assert.equal(signals.length, 1);
+		assert.equal(signals[0]!.cost_usd, 1);
+	});
+
+	it("leaves a signal unpriced (null) when no participant has a recorded cost", () => {
+		const calls: ToolCallWithResult[] = [
+			makeBashCall("npm install", "m1", true),
+			makeBashCall("npm install", "m2", true),
+			makeBashCall("npm install", "m3", true),
+		];
+		const signals = detectStuckLoops(calls, 3);
+		assert.equal(signals.length, 1);
+		assert.equal(signals[0]!.cost_usd, null);
+	});
+
+	it("treats a zero-priced signal as unpriced, never a silent free", () => {
+		const calls: ToolCallWithResult[] = [
+			makeBashCall("npm install", "m1", true, 0),
+			makeBashCall("npm install", "m2", true, 0),
+			makeBashCall("npm install", "m3", true, 0),
+		];
+		const signals = detectStuckLoops(calls, 3);
+		assert.equal(signals[0]!.cost_usd, null);
+	});
+
+	it("skips unpriced participants when pricing a partly-priced run", () => {
+		const calls: ToolCallWithResult[] = [
+			makeBashCall("npm install", "m1", true, 0.25),
+			makeBashCall("npm install", "m2", true), // no recorded cost
+			makeBashCall("npm install", "m3", true, 0.15),
+		];
+		const signals = detectStuckLoops(calls, 3);
+		assert.equal(signals[0]!.cost_usd, 0.4);
 	});
 });
 
