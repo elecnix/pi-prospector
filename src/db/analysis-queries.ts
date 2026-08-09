@@ -324,12 +324,20 @@ export function findLatestNodeBySourceSet(
 		.get(analyzerId, sourceSetHash) as AnalysisNodeRow | undefined;
 }
 
-export function getSessionNodes(db: Database.Database, sessionId: string): AnalysisNodeRow[] {
+export function getSessionNodes(db: Database.Database, sessionId: string, asOf?: string): AnalysisNodeRow[] {
+	if (asOf) {
+		return prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? AND created_at <= ? ORDER BY created_at ASC, rowid ASC")
+			.all(sessionId, asOf) as AnalysisNodeRow[];
+	}
 	return prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? ORDER BY created_at ASC, rowid ASC").all(sessionId) as AnalysisNodeRow[];
 }
 
 /** Every analysis node, for integrity verification. */
-export function getAllAnalysisNodes(db: Database.Database): AnalysisNodeRow[] {
+export function getAllAnalysisNodes(db: Database.Database, asOf?: string): AnalysisNodeRow[] {
+	if (asOf) {
+		return prep(db, "SELECT * FROM analysis_nodes WHERE created_at <= ? ORDER BY created_at ASC, rowid ASC")
+			.all(asOf) as AnalysisNodeRow[];
+	}
 	return prep(db, "SELECT * FROM analysis_nodes ORDER BY created_at ASC, rowid ASC").all() as AnalysisNodeRow[];
 }
 
@@ -342,7 +350,11 @@ export function getSessionMessageRows(db: Database.Database, sessionId: string):
 		.all(sessionId) as MessageRow[];
 }
 
-export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, sessionId: string): AnalysisNodeRow[] {
+export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, sessionId: string, asOf?: string): AnalysisNodeRow[] {
+	if (asOf) {
+		return prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND session_id = ? AND created_at <= ? ORDER BY created_at ASC, rowid ASC")
+			.all(analyzerId, sessionId, asOf) as AnalysisNodeRow[];
+	}
 	return prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND session_id = ? ORDER BY created_at ASC, rowid ASC")
 		.all(analyzerId, sessionId) as AnalysisNodeRow[];
 }
@@ -358,7 +370,26 @@ export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, se
  * that `findLatestNodeBySourceSet` applies per unit: one row per
  * `source_set_hash`, newest first, errors excluded.
  */
-export function getLatestNodesByAnalyzerAcrossSessions(db: Database.Database, analyzerId: string): AnalysisNodeRow[] {
+export function getLatestNodesByAnalyzerAcrossSessions(db: Database.Database, analyzerId: string, asOf?: string): AnalysisNodeRow[] {
+	if (asOf) {
+		return prep(db, 
+				`SELECT * FROM analysis_nodes n
+			 WHERE n.analyzer_id = ?
+			   AND n.node_kind != 'error'
+			   AND n.created_at <= ?
+			   AND n.rowid = (
+			     SELECT m.rowid FROM analysis_nodes m
+			     WHERE m.analyzer_id = n.analyzer_id
+			       AND m.source_set_hash = n.source_set_hash
+			       AND m.node_kind != 'error'
+			       AND m.created_at <= ?
+			     ORDER BY m.created_at DESC, m.rowid DESC
+			     LIMIT 1
+			   )
+			 ORDER BY n.created_at ASC, n.rowid ASC`,
+			)
+			.all(analyzerId, asOf, asOf) as AnalysisNodeRow[];
+	}
 	return prep(db, 
 			`SELECT * FROM analysis_nodes n
 			 WHERE n.analyzer_id = ?
@@ -464,10 +495,16 @@ export function getNodeVersions(
 	db: Database.Database,
 	analyzerId: string,
 	sourceSetHash: string,
+	asOf?: string,
 ): AnalysisNodeRow[] {
-	return prep(db, 
-			"SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? ORDER BY created_at ASC, rowid ASC",
-		)
+	if (asOf) {
+		return prep(
+				db,
+				"SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND created_at <= ? ORDER BY created_at ASC, rowid ASC",
+			)
+			.all(analyzerId, sourceSetHash, asOf) as AnalysisNodeRow[];
+	}
+	return prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? ORDER BY created_at ASC, rowid ASC")
 		.all(analyzerId, sourceSetHash) as AnalysisNodeRow[];
 }
 
@@ -504,15 +541,55 @@ export interface AnalysisStats {
 	nodesByKind: Record<string, number>;
 }
 
-export function getAnalysisStats(db: Database.Database): AnalysisStats {
-	const nodes = (prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes").get() as { c: number }).c;
-	const edges = (prep(db, "SELECT COUNT(*) AS c FROM analysis_edges").get() as { c: number }).c;
+export function getAnalysisStats(db: Database.Database, asOf?: string): AnalysisStats {
+	const nodes = asOf
+		? (prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ?").get(asOf) as { c: number }).c
+		: (prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes").get() as { c: number }).c;
+	// Edges have no timestamp of their own; they are bounded by their source node,
+	// so an as-of edge count counts edges whose source node exists at T.
+	const edges = asOf
+		? (prep(
+					db,
+					"SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON n.id = e.from_node_id WHERE n.created_at <= ?",
+				)
+				.get(asOf) as { c: number }).c
+		: (prep(db, "SELECT COUNT(*) AS c FROM analysis_edges").get() as { c: number }).c;
 	const runs = (prep(db, "SELECT COUNT(*) AS c FROM analysis_runs").get() as { c: number }).c;
-	const kindRows = prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes GROUP BY node_kind").all() as Array<{
-		node_kind: string;
-		c: number;
-	}>;
+	const kindRows = asOf
+		? (prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? GROUP BY node_kind").all(asOf) as Array<{
+				node_kind: string;
+				c: number;
+			}>)
+		: (prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes GROUP BY node_kind").all() as Array<{
+				node_kind: string;
+				c: number;
+			}>);
 	const nodesByKind: Record<string, number> = {};
 	for (const r of kindRows) nodesByKind[r.node_kind] = r.c;
 	return { nodes, edges, runs, nodesByKind };
+}
+
+/** A compact, current read of the runs table for discoverability (`prospect runs`). */
+export interface RunLite {
+	id: string;
+	analyzer_id: string;
+	analyzer_version_id: string;
+	session_id: string;
+	mode: string;
+	status: string;
+	model_spec: string | null;
+	started_at: string;
+	finished_at: string | null;
+	nodes_produced: number;
+	nodes_skipped: number;
+	cost_usd: number;
+	tokens_used: number;
+}
+
+export function listRuns(db: Database.Database, limit = 30): RunLite[] {
+	return db
+		.prepare(
+			"SELECT id, analyzer_id, analyzer_version_id, session_id, mode, status, model_spec, started_at, finished_at, nodes_produced, nodes_skipped, cost_usd, tokens_used FROM analysis_runs ORDER BY started_at DESC, rowid DESC LIMIT ?",
+		)
+		.all(limit) as RunLite[];
 }

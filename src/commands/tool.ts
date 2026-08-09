@@ -207,8 +207,16 @@ Workflow:
   1. sync   — index new sessions from disk
   2. stats  — see proposal counts, token ratios, analysis depth
   3. list_proposals [status] [severity] [limit] [offset] — ranked by confidence
+      (add --as-of <ts|7d> / --as-of-run <id> for a point-in-time view)
   4. accept/reject — decide proposals singly or in bulk (proposal_ids array)
   5. remediate — accept many proposals under one shared remediation record
+
+Analysis-graph & point-in-time commands (slash commands):
+  - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
+  - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
+  - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)
+  - /prospect-diff --unit <analyzer> <sset> | --runs <A> <B> | --as-of <T1> <T2> [--full]
+  - /prospect-verify — now also validates every edge's referential integrity
 
 Bulk operations:
   - accept/reject accept proposal_ids (string array) for bulk decisions

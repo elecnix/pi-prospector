@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { getStats } from "../db/queries.js";
 import { getDbPath } from "../config.js";
+import { parseFlags, resolveTimepoint } from "../timepoint.js";
 import type { TokenStats } from "../types.js";
 
 function fmt(n: number): string {
@@ -41,11 +42,19 @@ function tokenBlock(label: string, stats: TokenStats): string[] {
 	return lines;
 }
 
-export async function prospectStats(_args: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function prospectStats(args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const db = new Database(getDbPath());
 	migrate(db);
 	try {
-		const s = getStats(db);
+		const { flags } = parseFlags(args ?? "");
+		let asOf: string | undefined;
+		let timepointLabel: string | undefined;
+		const tp = resolveTimepoint(db, flags);
+		if (tp) {
+			asOf = tp.at;
+			timepointLabel = tp.source;
+		}
+		const s = getStats(db, asOf);
 		const kindLines = Object.entries(s.analysis.nodesByKind).map(([k, v]) => `    ${k}: ${v}`);
 		const t = s.tokens;
 
@@ -54,6 +63,7 @@ export async function prospectStats(_args: string, ctx: ExtensionCommandContext)
 			"║          ⛏️  Prospector Stats             ║",
 			"╚══════════════════════════════════════════╝",
 			"",
+			...(timepointLabel ? [`  (VIEW ${timepointLabel} — not current state)`] : []),
 			"  ── Sessions ──",
 			`  Sessions indexed:     ${s.totalSessions} (Pi: ${s.piSessions}, Claude: ${s.claudeSessions})`,
 			`  Messages (user+asst): ${s.totalMessages} (Pi: ${s.piMessages}, Claude: ${s.claudeMessages})`,
@@ -100,7 +110,7 @@ export async function prospectStats(_args: string, ctx: ExtensionCommandContext)
 
 export function registerStatsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-stats", {
-		description: "Show prospector database statistics with token and tool-call breakdowns",
+		description: "Show prospector database statistics with token and tool-call breakdowns. Flags: --as-of <ts|7d|24h> / --as-of-run <id> to view stats as of a past point (labelled as a view, not current state).",
 		handler: prospectStats,
 	});
 }
