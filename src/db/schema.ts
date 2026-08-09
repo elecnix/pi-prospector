@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { migrateDecisionsToAssertions } from "./assertions.js";
 
 /**
  * Schema for pi-prospector.
@@ -148,11 +149,21 @@ export function migrate(db: Database.Database): void {
 			id            TEXT PRIMARY KEY, -- content-addressed: H(subject_kind|subject_key|verdict)
 			subject_kind  TEXT NOT NULL,    -- 'term' | (later) 'node' | 'proposal' | 'analyzer'
 			subject_key   TEXT NOT NULL,    -- content-addressed: the term, an input_key, …
-			verdict       TEXT NOT NULL,    -- 'muted' | (later) 'accepted' | 'rejected' | …
-			reason        TEXT,             -- operator's free-text rationale (nullable)
-			asserted_at   TEXT NOT NULL,
+			verdict       TEXT NOT NULL,    -- 'muted' | 'accepted' | 'rejected' | 'accepted_modified' | 'remediation' | …
+			reason        TEXT,             -- operator's free-text rationale (nullable); a decision's rationale, a remediation's description
+			asserted_at   TEXT NOT NULL,   -- when the judgement was made: a decision's decided_at, a mute's asserted_at
 			asserted_by   TEXT,             -- 'operator' | 'agent' (nullable)
-			superseded_at TEXT              -- NULL = active; set on unmute (NULLable)
+			superseded_at TEXT,             -- NULL = active; set on unmute (NULLable)
+			-- Decision-qualifier columns (issue #73): the assertions relation also carries
+			-- proposal_decisions and remediations, with identical semantics, so existing
+			-- tables can be retired in a later change. disposition / actual_change /
+			-- harness_ref come from proposal_decisions verbatim; remediation_id groups the
+			-- decisions of one shared remediation and references the remediation
+			-- assertion's subject_key.
+			disposition    TEXT,            -- planned | done | done_differently (nullable)
+			actual_change  TEXT,            -- commit sha / path / note of what was actually done (nullable)
+			harness_ref    TEXT,            -- marker of the prompt/AGENTS.md at decision time (nullable)
+			remediation_id TEXT             -- shared remediation subject_key (nullable)
 		);
 
 		-- ──────────────────── analyzer identity & recipe ────────────────────
@@ -292,6 +303,8 @@ export function migrate(db: Database.Database): void {
 
 		CREATE INDEX IF NOT EXISTS idx_assertions_active ON assertions(subject_kind, subject_key);
 		CREATE INDEX IF NOT EXISTS idx_assertions_lookup ON assertions(subject_kind, verdict, superseded_at);
+		-- Fast lookup of the decisions grouped under one shared remediation (issue #73).
+		CREATE INDEX IF NOT EXISTS idx_assertions_remediation ON assertions(subject_kind, remediation_id);
 
 		-- Group nodes into logical units (analyzer + source set) for the
 		-- version-alternative timeline, and look up by recipe identity.
@@ -304,6 +317,13 @@ export function migrate(db: Database.Database): void {
 		CREATE INDEX IF NOT EXISTS idx_edges_to ON analysis_edges(to_ref_id, edge_kind);
 		CREATE INDEX IF NOT EXISTS idx_edges_kind ON analysis_edges(edge_kind);
 	`);
+
+	// Fold existing proposal_decisions and remediations onto the assertions
+	// relation (issue #73). Idempotent: for an already-migrated DB it is a no-op,
+	// and it can be run again after a partial failure. The old tables are kept
+	// intact (they remain the reversible rollback) until a separate change drops
+	// them.
+	migrateDecisionsToAssertions(db);
 }
 
 /**
@@ -411,6 +431,16 @@ function addMissingColumns(db: Database.Database): void {
 	// run repopulates them, since the proposals table is rebuilt from nodes.
 	if (!hasColumn("proposals", "cost_usd")) {
 		db.exec("ALTER TABLE proposals ADD COLUMN cost_usd REAL");
+	}
+
+	// assertions: decision-qualifier columns (issue #73). Databases created before
+	// decisions/remediations were folded onto the assertions relation lack these;
+	// migrate() adds them in place so the migration is reversible. (Verified
+	// column names come from the fixed assertions CREATE TABLE above.)
+	for (const col of ["disposition", "actual_change", "harness_ref", "remediation_id"] as const) {
+		if (!hasColumn("assertions", col)) {
+			db.exec(`ALTER TABLE assertions ADD COLUMN ${col} TEXT`);
+		}
 	}
 }
 

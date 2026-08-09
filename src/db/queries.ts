@@ -1,5 +1,15 @@
 import Database from "better-sqlite3";
 import { prep } from "./prepared.js";
+import {
+	ASSERTION_SUBJECT_KINDS,
+	REMEDIATION_VERDICT,
+	upsertAssertion,
+	getProposalAssertions,
+	getProposalAssertionsForKey,
+	getProposalAssertionsByRemediation,
+	getRemediationAssertion,
+	type AssertionRow,
+} from "./assertions.js";
 import type {
 	Proposal,
 	ProposalStatus,
@@ -162,6 +172,32 @@ export interface DecisionInput {
  * that survives recompute. Status is a projection of the verdict
  * (accepted/accepted_modified -> 'applied', rejected -> 'rejected').
  */
+
+/** Map a proposal assertion row back to the domain `ProposalDecision` shape. */
+function assertionToDecision(a: AssertionRow): ProposalDecision {
+	return {
+		id: a.id,
+		proposal_input_key: a.subject_key,
+		decision: a.verdict as DecisionVerdict,
+		disposition: a.disposition as DecisionDisposition | null,
+		rationale: a.reason,
+		actual_change: a.actual_change,
+		harness_ref: a.harness_ref,
+		remediation_id: a.remediation_id,
+		decided_at: a.asserted_at,
+	};
+}
+
+/** Map a remediation assertion row back to the domain `Remediation` shape. */
+function assertionToRemediation(a: AssertionRow): Remediation {
+	return {
+		id: a.subject_key,
+		description: a.reason ?? "",
+		actual_change: a.actual_change,
+		created_at: a.asserted_at,
+	};
+}
+
 function decideProposal(
 	db: Database.Database,
 	id: string,
@@ -177,6 +213,11 @@ function decideProposal(
 	const now = new Date().toISOString();
 	const tx = db.transaction(() => {
 		prep(db, "UPDATE proposals SET status = ?, updated_at = ? WHERE id = ?").run(newStatus, now, id);
+		// The decision is written to the legacy table (the reversible rollback)
+		// AND to the assertions relation, the canonical view keyed by the
+		// content-addressed proposal input_key (issue #73). Both in one transaction
+		// so they never diverge; reads go through assertions. The legacy table is
+		// kept, still written, until a separate change retires it.
 		prep(db, 
 			"INSERT INTO proposal_decisions " +
 				"(id, proposal_input_key, decision, disposition, rationale, actual_change, harness_ref, remediation_id, decided_at) " +
@@ -192,6 +233,18 @@ function decideProposal(
 			remediationId ?? null,
 			now,
 		);
+		upsertAssertion(db, {
+			subjectKind: ASSERTION_SUBJECT_KINDS.PROPOSAL,
+			subjectKey: row.input_key,
+			verdict,
+			reason: input?.rationale ?? null,
+			assertedAt: now,
+			assertedBy: "operator",
+			disposition: input?.disposition ?? null,
+			actualChange: input?.actual_change ?? null,
+			harnessRef: input?.harness_ref ?? null,
+			remediationId: remediationId ?? null,
+		});
 	});
 	tx();
 	return true;
@@ -302,12 +355,23 @@ export function acceptProposalsWithRemediation(
 		);
 		if (open.size > 0) {
 			remediationId = uuidv7();
+			const createdAt = new Date().toISOString();
 			prep(db, "INSERT INTO remediations (id, description, actual_change, created_at) VALUES (?, ?, ?, ?)").run(
 				remediationId,
 				remediation.description,
 				remediation.actual_change ?? null,
-				new Date().toISOString(),
+				createdAt,
 			);
+			// Also record the shared remediation as an assertion (issue #73), so the
+			// disaster corpus is uniform; decisions reference it via remediation_id.
+			upsertAssertion(db, {
+				subjectKind: ASSERTION_SUBJECT_KINDS.REMEDIATION,
+				subjectKey: remediationId,
+				verdict: REMEDIATION_VERDICT,
+				reason: remediation.description,
+				assertedAt: createdAt,
+				actualChange: remediation.actual_change ?? null,
+			});
 		}
 		for (const id of proposalIds) {
 			if (open.has(id) && decideProposal(db, id, "applied", acceptVerdict(decision), decision, remediationId)) {
@@ -322,32 +386,33 @@ export function acceptProposalsWithRemediation(
 }
 
 export function getRemediation(db: Database.Database, id: string): Remediation | undefined {
-	return prep(db, "SELECT * FROM remediations WHERE id = ?").get(id) as Remediation | undefined;
+	const a = getRemediationAssertion(db, id);
+	return a ? assertionToRemediation(a) : undefined;
 }
 
 /** Every decision made under one remediation, oldest first. */
 export function getDecisionsForRemediation(db: Database.Database, remediationId: string): ProposalDecision[] {
-	return prep(db, "SELECT * FROM proposal_decisions WHERE remediation_id = ? ORDER BY decided_at ASC, rowid ASC")
-		.all(remediationId) as ProposalDecision[];
+	return getProposalAssertionsByRemediation(db, remediationId).map(assertionToDecision);
 }
 
 // ── Proposal decisions (append-only human feedback) ──
 
 /** The latest (authoritative) decision for a proposal's input_key, if any. */
 export function getLatestDecision(db: Database.Database, proposalInputKey: string): ProposalDecision | undefined {
-	return prep(db, "SELECT * FROM proposal_decisions WHERE proposal_input_key = ? ORDER BY decided_at DESC, rowid DESC LIMIT 1")
-		.get(proposalInputKey) as ProposalDecision | undefined;
+	const rows = getProposalAssertionsForKey(db, proposalInputKey);
+	if (rows.length === 0) return undefined;
+	// Oldest-first, so the latest (authoritative) decision is the last row.
+	return assertionToDecision(rows[rows.length - 1]!);
 }
 
 /** Full decision history for one proposal, oldest first. */
 export function getDecisionsForProposal(db: Database.Database, proposalInputKey: string): ProposalDecision[] {
-	return prep(db, "SELECT * FROM proposal_decisions WHERE proposal_input_key = ? ORDER BY decided_at ASC, rowid ASC")
-		.all(proposalInputKey) as ProposalDecision[];
+	return getProposalAssertionsForKey(db, proposalInputKey).map(assertionToDecision);
 }
 
 /** Every decision, newest first — the corpus the future meta-analyzer consumes. */
 export function getAllDecisions(db: Database.Database): ProposalDecision[] {
-	return prep(db, "SELECT * FROM proposal_decisions ORDER BY decided_at DESC, rowid DESC").all() as ProposalDecision[];
+	return getProposalAssertions(db).map(assertionToDecision);
 }
 
 // ── Proposal validation (issue #6) ──

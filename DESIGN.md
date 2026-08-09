@@ -497,6 +497,24 @@ contain the new word have anything to compute.
   content-addressed from kind+key+verdict, so an assertion survives a
   wipe-and-recompute and an edge referencing it reproduces on any machine. The
   next kind of operator feedback is a new verdict value, never new schema.
+  The relation is generic: **proposal decisions and remediations live on it
+  too** (the follow-up that folded them on), so mutes, decisions, and shared
+  remediations are one uniform corpus of operator judgement, keyed the same way.
+- **Decision assertion** — a proposal decision stored as an assertion:
+  `subject_kind='proposal'`, `subject_key=<the proposal's input_key>`,
+  `verdict=accepted|rejected|accepted_modified`, with the decision's
+  `disposition`, `actual_change`, and `harness_ref` kept verbatim. Because it is
+  keyed by the content-addressed `input_key`, it re-attaches to a regenerated
+  proposal after a wipe — the exact durability contract of the legacy
+  `proposal_decisions` table, now uniform with mutes. A shared remediation is a
+  `subject_kind='remediation'` assertion (its `subject_key` is the remediation
+  id), and each decision assertion in the batch carries that id in its
+  `remediation_id` to preserve the grouping. This migration is **additive and
+  reversible**: legacy `proposal_decisions`/`remediations` rows are folded onto
+  the relation (and new decisions still written to both) while the legacy
+  tables are kept intact as the rollback, dropped only by a later change — and
+  it is *verified by content* (a reconcile that proves every decision
+  round-trips) rather than by "it ran", because decisions cannot be recomputed.
 - **Mute** — an assertion whose verdict is *muted*, applied today to a **lexicon
   term** (`subject_kind='term'`): it stops a term from matching new turns while
   leaving its existing hit nodes untouched and reachable as lineage. The mute
