@@ -195,6 +195,7 @@ export function finalizeAnalyzeRun(
 		status: "ok" | "partial";
 		sessionCompleted: number;
 		sessionFailed: number;
+		retried: number;
 		nodesProduced: number;
 		nodesRevised: number;
 		proposalsCreated: number;
@@ -207,7 +208,7 @@ export function finalizeAnalyzeRun(
 	prep(
 		db,
 		`UPDATE analyze_runs SET
-			status = ?, session_completed = ?, session_failed = ?,
+			status = ?, session_completed = ?, session_failed = ?, retried = ?,
 			nodes_produced = ?, nodes_revised = ?, proposals_created = ?,
 			cost_usd = ?, tokens_used = ?, error_count = ?, error_examples = ?, finished_at = ?
 		WHERE id = ?`,
@@ -215,6 +216,7 @@ export function finalizeAnalyzeRun(
 		fields.status,
 		fields.sessionCompleted,
 		fields.sessionFailed,
+		fields.retried,
 		fields.nodesProduced,
 		fields.nodesRevised,
 		fields.proposalsCreated,

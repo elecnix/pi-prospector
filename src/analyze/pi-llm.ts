@@ -77,9 +77,15 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			headers: auth.headers,
 			temperature: request.temperature,
 			maxTokens: request.maxTokens,
-			// Let pi-ai ride out transient rate limits (e.g. provider 429s) instead
-			// of failing a whole analysis run on the first throttled call.
-			maxRetries: 4,
+			// Retries are owned one layer up, in the analyze overlay (see
+			// callWithRetry in concurrency.ts). Disabling the broker's internal retry
+			// means a throttled call surfaces here as a status-bearing error we can
+			// classify, count, and back off ourselves — the broker's retries were
+			// invisible to the run record, which is how a retryable 429 was misread
+			// as a coverage gap in the first place. We also get to cap the total
+			// added wall-clock and adapt in-flight concurrency, which the broker's
+			// fixed retry count cannot.
+			maxRetries: 0,
 			signal: ctx.signal,
 		});
 

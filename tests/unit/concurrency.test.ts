@@ -4,8 +4,12 @@ import {
 	mapWithConcurrency,
 	createSemaphore,
 	withTimeout,
+	callWithRetry,
+	classifyRetryable,
+	DEFAULT_RETRY_POLICY,
 	DEFAULT_LLM_CONCURRENCY,
 	DEFAULT_DETERMINISTIC_CONCURRENCY,
+	type RetryPolicy,
 } from "../../src/analyze/concurrency.js";
 
 const tick = (ms = 1): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -103,6 +107,136 @@ test("createSemaphore serializes with limit 1 (FIFO)", async () => {
 		),
 	);
 	assert.deepEqual(order, [1, 2, 3]);
+});
+
+describe("classifyRetryable", () => {
+	const withStatus = (status: number): Error =>
+		Object.assign(new Error(`http ${status}`), { status });
+
+	it("treats 429 and 5xx as retryable, other 4xx as terminal", () => {
+		for (const s of [408, 409, 429, 500, 502, 503, 504]) {
+			assert.equal(classifyRetryable(withStatus(s)).retryable, true, `status ${s}`);
+		}
+		for (const s of [400, 401, 403, 404, 422]) {
+			assert.equal(classifyRetryable(withStatus(s)).retryable, false, `status ${s}`);
+		}
+	});
+
+	it("falls back to message text only for unmistakable transient signatures", () => {
+		assert.equal(classifyRetryable(new Error("429 Too Many Requests")).retryable, true);
+		assert.equal(classifyRetryable(new Error("rate limit exceeded")).retryable, true);
+		assert.equal(classifyRetryable(new Error("ECONNRESET")).retryable, true);
+		assert.equal(classifyRetryable(new Error("502 Bad Gateway")).retryable, true);
+		assert.equal(classifyRetryable(new Error("Model not found in Pi registry")).retryable, false);
+		assert.equal(classifyRetryable(new Error("No credentials for openrouter/x")).retryable, false);
+	});
+
+	it("surfaces a provider Retry-After delay", () => {
+		const headers = new Headers({ "retry-after": "3" });
+		const err = Object.assign(new Error("throttled"), { status: 429, headers });
+		const d = classifyRetryable(err);
+		assert.equal(d.retryable, true);
+		assert.ok(d.retryAfterMs && Math.abs(d.retryAfterMs - 3000) < 50);
+	});
+
+	it("does not surface a delay on a terminal error", () => {
+		const err = Object.assign(new Error("nope"), { status: 404 });
+		assert.deepEqual(classifyRetryable(err), { retryable: false, retryAfterMs: undefined });
+	});
+});
+
+describe("callWithRetry", () => {
+	const base: Omit<RetryPolicy, "isRetryable"> = {
+		maxAttempts: 5,
+		baseDelayMs: 5,
+		maxDelayMs: 50,
+		maxTotalDelayMs: 100_000,
+	};
+	const policy = (o: Partial<RetryPolicy> = {}): RetryPolicy => ({
+		...base,
+		...o,
+		isRetryable: o.isRetryable ?? classifyRetryable,
+	});
+	const retryable = Object.assign(new Error("throttled"), { status: 429 });
+	const terminal = Object.assign(new Error("bad request"), { status: 400 });
+
+	it("returns the result when the first attempt succeeds", async () => {
+		const stats = { retries: 0 };
+		const out = await callWithRetry(() => Promise.resolve(7), policy(), stats);
+		assert.equal(out, 7);
+		assert.equal(stats.retries, 0);
+	});
+
+	it("retries a retryable failure and succeeds, counting the retry", async () => {
+		const stats = { retries: 0 };
+		const calls: number[] = [];
+		const out = await callWithRetry(
+			() => {
+				calls.push(1);
+				return calls.length === 1 ? Promise.reject(retryable) : Promise.resolve("ok");
+			},
+			policy(),
+			stats,
+		);
+		assert.equal(out, "ok");
+		assert.equal(stats.retries, 1);
+		assert.equal(calls.length, 2);
+	});
+
+	it("propagates a terminal failure immediately (no retry)", async () => {
+		const stats = { retries: 0 };
+		const calls: number[] = [];
+		await assert.rejects(
+			callWithRetry(
+				() => {
+					calls.push(1);
+					return Promise.reject(terminal);
+				},
+				policy(),
+				stats,
+			),
+			/bad request/,
+		);
+		assert.equal(stats.retries, 0);
+		assert.equal(calls.length, 1);
+	});
+
+	it("gives up after exhausting the attempt budget", async () => {
+		const stats = { retries: 0 };
+		const p = policy({ maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 2 });
+		await assert.rejects(() => callWithRetry(() => Promise.reject(retryable), p, stats), /throttled/);
+		assert.equal(stats.retries, 2); // two retries before the (failed) third attempt
+	});
+
+	it("honours a provider Retry-After delay", async () => {
+		const stats = { retries: 0 };
+		const headers = new Headers({ "retry-after-ms": "300" });
+		const ra = Object.assign(new Error("slow throttle"), { status: 429, headers });
+		let done = false;
+		const start = Date.now();
+		await callWithRetry(
+			() => {
+				if (!done) {
+					done = true;
+					return Promise.reject(ra);
+				}
+				return Promise.resolve(1);
+			},
+			policy(),
+			stats,
+		);
+		assert.equal(stats.retries, 1);
+		assert.ok(Date.now() - start >= 250, "should wait out the Retry-After");
+	});
+
+	it("stops retrying when the total-delay budget would be exceeded", async () => {
+		const stats = { retries: 0 };
+		const p = policy({ maxAttempts: 5, baseDelayMs: 40, maxDelayMs: 40, maxTotalDelayMs: 50 });
+		await assert.rejects(() => callWithRetry(() => Promise.reject(retryable), p, stats), /throttled/);
+		// With a 50ms budget and a >=40ms first delay, it retries once then gives up
+		// rather than spending past the budget.
+		assert.ok(stats.retries <= 1, `retries ${stats.retries}`);
+	});
 });
 
 describe("withTimeout", () => {

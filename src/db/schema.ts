@@ -238,6 +238,7 @@ export function migrate(db: Database.Database): void {
 			session_attempted INTEGER NOT NULL DEFAULT 0,
 			session_completed INTEGER NOT NULL DEFAULT 0,
 			session_failed INTEGER NOT NULL DEFAULT 0,
+			retried INTEGER NOT NULL DEFAULT 0,
 			nodes_produced INTEGER NOT NULL DEFAULT 0,
 			nodes_revised INTEGER NOT NULL DEFAULT 0,
 			proposals_created INTEGER NOT NULL DEFAULT 0,
@@ -426,6 +427,15 @@ function addMissingColumns(db: Database.Database): void {
 	if (!hasColumn("analysis_nodes", "config_fingerprint")) {
 		db.exec("ALTER TABLE analysis_nodes ADD COLUMN config_fingerprint TEXT DEFAULT ''");
 		db.exec("UPDATE analysis_nodes SET config_fingerprint = '' WHERE config_fingerprint IS NULL");
+	}
+
+	// analyze_runs: whole-run overlay. `retried` counts throttled LLM calls that
+	// the retry layer absorbed after a 429/5xx, so the next person can tell "we
+	// were throttled and recovered" (high retried, low failed) from "we were
+	// throttled and gave up" (high retried, high failed) — a coverage number with
+	// no visibility into why produced the wrong diagnosis in the first place.
+	if (!hasColumn("analyze_runs", "retried")) {
+		db.exec("ALTER TABLE analyze_runs ADD COLUMN retried INTEGER NOT NULL DEFAULT 0");
 	}
 
 	// analysis_runs: add missing columns

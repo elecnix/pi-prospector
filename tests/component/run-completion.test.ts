@@ -1,7 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
-import { mapWithConcurrency, withTimeout } from "../../src/analyze/concurrency.js";
+import {
+	mapWithConcurrency,
+	withTimeout,
+	callWithRetry,
+	classifyRetryable,
+	DEFAULT_RETRY_POLICY,
+	type RetryPolicy,
+	type RetryStats,
+} from "../../src/analyze/concurrency.js";
 import { accountResults, accountOne, emptyAccounting, runStatus } from "../../src/analyze/run-accounting.js";
 import {
 	createAnalyzeRun,
@@ -61,6 +69,7 @@ describe("whole-run completion record + terminal state", () => {
 				status: "partial",
 				sessionCompleted: 312,
 				sessionFailed: 8,
+				retried: 14,
 				nodesProduced: 1000,
 				nodesRevised: 2,
 				proposalsCreated: 5,
@@ -73,6 +82,7 @@ describe("whole-run completion record + terminal state", () => {
 			assert.equal(row.status, "partial");
 			assert.equal(row.session_completed, 312);
 			assert.equal(row.session_failed, 8);
+			assert.equal(row.retried, 14);
 			assert.ok(row.finished_at, "should be timestamped when finalized");
 			const examples = JSON.parse(String(row.error_examples)) as string[];
 			assert.deepEqual(examples, ["turn-pair-llm: …timed out…"]);
@@ -131,6 +141,70 @@ describe("whole-run completion record + terminal state", () => {
 			assert.equal(accounting.errorCount, 1);
 			assert.equal(runStatus(accounting), "partial");
 			assert.match(accounting.errorExamples[0] ?? "", /exceeded 120ms/);
+		} finally {
+			close();
+		}
+	});
+
+	it("retries a throttled (429) LLM call, completes the session, and records the retry", async () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s-throttled");
+
+			// baseLlm fails the first calls with a status-bearing 429 (as a provider
+			// error looks after its own internal retries are spent) then succeeds.
+			const retryable = Object.assign(new Error("429 Too Many Requests"), { status: 429 });
+			let calls = 0;
+			const baseLlm: LLMCaller = async () => {
+				calls++;
+				if (calls <= 2) throw retryable;
+				return { text: "ok", model: "anthropic/c", costUsd: 0.001, tokensUsed: 5 };
+			};
+
+			// Mirrors analyze.ts: a bounded retry layer wrapped around the caller.
+			const retryPolicy: RetryPolicy = { ...DEFAULT_RETRY_POLICY, isRetryable: classifyRetryable };
+			const retryStats: RetryStats = { retries: 0 };
+			const llm: LLMCaller = (req) => callWithRetry(() => baseLlm(req), retryPolicy, retryStats);
+
+			const fw = new AnalyzerFramework({ db, llm, modelTiers: DEFAULT_MODEL_TIERS });
+			fw.register(llmAnalyzer("one-shot"));
+
+			let accounting = emptyAccounting();
+			await mapWithConcurrency(["s-throttled"], 1, async (sessionId) => {
+				const summary = await fw.run(sessionId, {});
+				accounting = accountOne(
+					accounting,
+					summary.errors.length === 0
+						? { ok: true, nodesProduced: summary.nodesProduced, nodesRevised: 0, proposalsCreated: summary.proposalsCreated, costUsd: summary.costUsd, tokensUsed: summary.tokensUsed, errors: [] }
+						: { ok: false, nodesProduced: 0, nodesRevised: 0, proposalsCreated: 0, costUsd: 0, tokensUsed: 0, errors: summary.errors },
+				);
+			});
+
+			// The throttle was absorbed: the session completed instead of failing.
+			assert.equal(accounting.completed, 1);
+			assert.equal(accounting.failed, 0);
+			assert.equal(retryStats.retries, 2);
+			assert.equal(calls, 3);
+
+			// The run record persists the retries so the next person can tell
+			// "throttled and recovered" from "throttled and gave up".
+			createAnalyzeRun(db, { id: "run-throttle", mode: "fill", sessionAttempted: 1 });
+			finalizeAnalyzeRun(db, "run-throttle", {
+				status: runStatus(accounting),
+				sessionCompleted: accounting.completed,
+				sessionFailed: accounting.failed,
+				retried: retryStats.retries,
+				nodesProduced: accounting.nodesProduced,
+				nodesRevised: accounting.nodesRevised,
+				proposalsCreated: accounting.proposalsCreated,
+				costUsd: accounting.costUsd,
+				tokensUsed: accounting.tokensUsed,
+				errorCount: accounting.errorCount,
+				errorExamples: accounting.errorExamples,
+			});
+			const row = getLatestAnalyzeRuns(db, 1)[0] as Record<string, unknown>;
+			assert.equal(row.status, "ok");
+			assert.equal(row.retried, retryStats.retries);
 		} finally {
 			close();
 		}
