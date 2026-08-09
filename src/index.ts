@@ -10,6 +10,7 @@ import { registerShowCommand } from "./commands/show.js";
 import { registerProspectTool } from "./commands/tool.js";
 import { registerHeadlessFlag } from "./commands/headless.js";
 import { registerMutesCommand } from "./commands/mutes.js";
+import { registerModelsCommand } from "./commands/models.js";
 
 export default function (pi: ExtensionAPI) {
 	registerSyncCommand(pi);
@@ -23,4 +24,5 @@ export default function (pi: ExtensionAPI) {
 	registerProspectTool(pi);
 	registerHeadlessFlag(pi);
 	registerMutesCommand(pi);
+	registerModelsCommand(pi);
 }
