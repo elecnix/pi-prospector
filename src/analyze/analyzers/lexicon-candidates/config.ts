@@ -24,22 +24,9 @@ export const LexiconCandidatesConfig = Type.Object({
 	 * vocabulary no earlier session used.
 	 */
 	maxTermsPerSession: Type.Number(),
-	/**
-	 * Ceiling on how many distinct two-word phrases a nomination node records.
-	 *
-	 * Phrases are the expensive half: the measured corpus holds 14,321 distinct
-	 * words but 190,125 distinct bigrams, 128,645 of which occur in just one
-	 * session. A recurrence floor would cut that sharply — but it must not be used
-	 * here, because the idioms this feature exists to catch live in exactly that
-	 * tail: `laisse tomber` and `trop lent` each appear in one session, while the
-	 * bigrams that recur across hundreds of sessions are `in the`, `of the`, `do
-	 * not`. Filtering by recurrence would discard the signal and keep the noise.
-	 */
-	maxPhrasesPerSession: Type.Number(),
 });
 export type LexiconCandidatesConfig = Static<typeof LexiconCandidatesConfig>;
 
 export const DEFAULT_LEXICON_CANDIDATES_CONFIG: LexiconCandidatesConfig = {
 	maxTermsPerSession: 2000,
-	maxPhrasesPerSession: 2000,
 };

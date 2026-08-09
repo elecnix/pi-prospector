@@ -48,7 +48,7 @@ export const FRUSTRATION_LEXICON_DEF: AnalyzerDef = {
 	id: "frustration-lexicon",
 	label: "Frustration Lexicon (LLM, corpus-wide)",
 	description:
-		"Judges each previously unseen term or two-word phrase nominated by a session — in any language — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the term alone, so a word is adjudicated once for the entire corpus and reused by every later session for free.",
+		"Judges each previously unseen term nominated by a session — in any language — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the term alone, so a word is adjudicated once for the entire corpus and reused by every later session for free.",
 	anchorSpan: "full_session",
 	dependencies: [LEXICON_CANDIDATES_DEF.id],
 };
@@ -58,13 +58,16 @@ export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	major: 1,
 	// 1.1: the prompt now also covers two-word phrases (issue #40), judged as a
 	// unit rather than as their parts.
+	// 1.3: phrases removed. At corpus scale they were 84% of adjudications and 75%
+	// of hits while being overwhelmingly noise; adjacent words in running prose are
+	// not idioms. Single-word judgement is what actually works. See #40.
 	// 1.2: precision. Measured against a real corpus, cheap models flagged `ci`,
 	// `pr`, `gh`, `sh` and 🔀 as frustration — 10.7% of vocabulary called
 	// non-neutral against a 3.8% reference. Two unrelated cheap models failing the
 	// same way pointed at the prompt, not the model: it never said that naming a
 	// tool or reporting a status is not a feeling. Existing verdicts stay valid and
 	// are re-judged only by an explicit `--revise minor`.
-	minor: 2,
+	minor: 3,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };
@@ -102,12 +105,9 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
 		// This session's nominations, kept in the frequency order nomination chose.
-		// Words and phrases are the same kind of subject — a corpus-wide string — so
-		// they share one planning path and one cache; a phrase's id is simply its
-		// words joined by a space. Nodes are read in a fixed order and a duplicate
-		// keeps its first position, so this list is reproducible.
+		// Nodes are read in a fixed order and a duplicate keeps its first position, so
+		// this list is reproducible.
 		const nominatedTerms: string[] = [];
-		const nominatedPhrases: string[] = [];
 		const seen = new Set<string>();
 		const candidateNodes = [...(ctx.dependencyNodes[LEXICON_CANDIDATES_DEF.id] ?? [])].sort((a, b) =>
 			a.output_key < b.output_key ? -1 : a.output_key > b.output_key ? 1 : 0,
@@ -121,9 +121,6 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			}
 			for (const t of props.terms ?? []) {
 				if (!seen.has(t.term)) { seen.add(t.term); nominatedTerms.push(t.term); }
-			}
-			for (const p of props.phrases ?? []) {
-				if (!seen.has(p.term)) { seen.add(p.term); nominatedPhrases.push(p.term); }
 			}
 		}
 
@@ -143,7 +140,7 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 		// earlier session used. The total spend across the whole corpus is therefore
 		// bounded by the corpus's distinct vocabulary, once, no matter how the caps
 		// are set. The ceilings in lexicon-candidates bound node size, not spend.
-		const planned = [...nominatedTerms, ...nominatedPhrases];
+		const planned = nominatedTerms;
 
 		return planned.map((term): AnalysisUnit => {
 			const sources: SourceRef[] = [{ kind: "term", id: term }];

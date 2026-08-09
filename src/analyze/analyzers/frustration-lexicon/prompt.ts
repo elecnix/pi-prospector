@@ -21,16 +21,11 @@ import { Type } from "typebox";
 export const CLASSIFY_TERM_PROMPT = `You judge single words for a multilingual lexicon used to detect
 user frustration in coding-agent conversations.
 
-You will be given one entry — a single word, an abbreviation, an emoji, or a
-short two-word phrase, in any language. Judge how that entry is *habitually* used
-when a person addresses a software assistant. Do not guess at a specific
+You will be given one entry — a single word, an abbreviation, or an emoji, in any
+language. Judge how that entry is *habitually* used when a person addresses a
+software assistant. Do not guess at a specific
 conversation; there is none.
 
-For a two-word phrase, judge the phrase as a unit. Many frustration expressions
-are exactly this: the individual words are ordinary, and only together do they
-express disengagement or annoyance — "laisse tomber", "never mind", "forget it",
-"trop lent", "come on", "not again". Judge such a phrase on what it means as a
-whole, not on its parts.
 
 Return your judgement by calling the \`classify_term\` tool with exactly these fields:
 {
@@ -53,8 +48,7 @@ Guidance:
   useful, because they mark what the assistant did right.
 - Be strict. The great majority of entries are ordinary vocabulary: if an entry
   only signals frustration in a particular sentence rather than by its own
-  character, it is "neutral" with category "none". Most two-word phrases are just
-  two ordinary words next to each other — say so.
+  character, it is "neutral" with category "none".
 - A word that is merely negative in subject matter ("bug", "error", "fail",
   "failing", "broken", "conflict") is NOT a frustration signal — it describes the
   work, not the user's feeling.

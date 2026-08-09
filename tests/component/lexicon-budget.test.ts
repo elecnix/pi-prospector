@@ -48,9 +48,9 @@ function words(prefix: string, count: number): string[] {
 	return Array.from({ length: count }, (_, i) => `${prefix}${letter(Math.floor(i / 26))}${letter(i)}`);
 }
 
-/** Adjudications of a single word (phrases carry a space). */
+/** Adjudications performed. Every entry is a single word. */
 function wordCalls(llm: ReturnType<typeof build>["llm"]): number {
-	return llm.calls.filter((c) => !/TERM: \S+ \S+/.test(c.user)).length;
+	return llm.calls.length;
 }
 
 describe("lexicon cost", () => {
@@ -132,20 +132,4 @@ describe("lexicon cost", () => {
 		}
 	});
 
-	it("judges phrases as well as words, with neither crowding the other out", async () => {
-		const { db, close } = tempDb();
-		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: words("gamma", 80).join(" ") }]);
-
-			const { framework, llm } = build(db);
-			await framework.run("s1");
-
-			const phrases = llm.calls.length - wordCalls(llm);
-			assert.equal(wordCalls(llm), 80, "every word is judged");
-			assert.equal(phrases, 79, "and every adjacent bigram — n tokens yield n-1");
-		} finally {
-			close();
-		}
-	});
 });
