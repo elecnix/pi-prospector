@@ -142,6 +142,15 @@ regenerated proposal. It is shown in `/prospect-proposals` and `/prospect-show`,
 and is the intended training signal for a future quality-improving meta-analyzer.
 Calling with just an id still works.
 
+Decisions and shared remediations live on the same generic, content-addressed
+**assertions** relation as mutes (`subject_kind='proposal'` keyed by the
+`input_key`; a remediation is `subject_kind='remediation'`), so all operator
+judgement is one uniform corpus. The migration is additive and reversible: new
+decisions are written to both the assertions relation and the legacy
+`proposal_decisions`/`remediations` tables, which are kept intact as the
+rollback until a follow-up change retires them, and a reconcile proves every
+decision round-trips before anything is ever dropped.
+
 ### `/prospect-reject <id> [rationale...]`
 
 Mark an open proposal as `rejected`, optionally with a rationale (for example

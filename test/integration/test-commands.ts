@@ -173,6 +173,17 @@ if (other) assert(rejectProposal(db, other.id) === true, "reject another proposa
 const s2 = getStats(db);
 assert(s2.proposalsByStatus.applied >= 1, "stats report applied proposals");
 
+console.log("\nDecisions/remediations replay through the assertions relation (#73):");
+{
+	const { reconcileDecisionsMigration } = await import("../../src/db/assertions.js");
+	const r = reconcileDecisionsMigration(db);
+	assert(r.legacyDecisions === r.assertionDecisions, "every decision is an assertion", "legacy " + r.legacyDecisions + " vs assertions " + r.assertionDecisions);
+	assert(r.legacyDecisions > 0, "not vacuous — decisions exist");
+	assert(r.missingDecisions.length === 0, "no decision without a matching assertion", `missing: ${r.missingDecisions.join(", ")}`);
+	assert(r.extraAssertions.length === 0, "no assertion decision without a legacy row", `extra: ${r.extraAssertions.join(", ")}`);
+	assert(r.missingRemediations.length === 0, "every remediation has an assertion", `missing: ${r.missingRemediations.join(", ")}`);
+}
+
 db.close();
 try {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
