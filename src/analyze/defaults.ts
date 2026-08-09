@@ -13,6 +13,7 @@ import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
 import { cacheEconomyAnalyzer } from "./analyzers/cache-economy/index.js";
+import { routingOpportunityAnalyzer } from "./analyzers/routing-opportunity/index.js";
 import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.js";
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
@@ -26,6 +27,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"tool-trajectory",
 	"context-economy",
 	"cache-economy",
+	"routing-opportunity",
 	"session-overview",
 ] as const;
 
@@ -42,6 +44,7 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	toolTrajectoryAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
+	routingOpportunityAnalyzer,
 	sessionOverviewAnalyzer,
 ];
 
