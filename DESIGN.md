@@ -132,6 +132,9 @@ roughly the order concepts build on one another.
   - **produces** — “this node yielded that proposal.”
   - **revises** — “this node is a newer-version alternative of that node,
     covering the same subject.” This is the backbone of lineage (below).
+  - **mutes** — “this node's conclusion is silenced by that human assertion.” The
+    edge reaches a *judgement* (a mute) from the analyzed conclusion it
+    suppresses, so human input is traversable alongside everything else.
 - **Anchor** — the conversation entity a node is about, reached via an *anchors*
   edge. A turn-level node anchors to its user message; a session-level node
   anchors to the session.
@@ -485,6 +488,26 @@ contain the new word have anything to compute.
   ("the idea triggered a different action than recommended"). Disposition captures
   the realistic feedback loop where accepting a proposal and acting on it are the
   same moment, and where the action taken may diverge from the literal text.
+- **Assertion** — a content-addressed, append-only *judgement* the operator (or
+  the reviewing agent on their behalf) makes about a derived subject, recorded
+  as external human input — the same category as a decision or a conversation
+  message — never as an analysis node. Each assertion is about a
+  `subject_kind`/`subject_key` pair (the *content* key: a term, an `input_key`,
+  …) and carries a **verdict** (the kind of judgement). Identity is
+  content-addressed from kind+key+verdict, so an assertion survives a
+  wipe-and-recompute and an edge referencing it reproduces on any machine. The
+  next kind of operator feedback is a new verdict value, never new schema.
+- **Mute** — an assertion whose verdict is *muted*, applied today to a **lexicon
+  term** (`subject_kind='term'`): it stops a term from matching new turns while
+  leaving its existing hit nodes untouched and reachable as lineage. The mute
+  set is the user's `config`, so an analyzer that consults term mutes folds a
+  hash of the currently-active mute set into its **config fingerprint** —
+  muting therefore marks the affected nodes `stale/config`, a plain fill never
+  recomputes them silently, and `--revise config` cleanly recomputes them with
+  the old nodes preserved as lineage. Unmuting is append-only via
+  `superseded_at` — the mute row stays inspectable with its reason and time. The
+  mute corpus is operator judgement, and like the decision corpus it is natural
+  training input for improving the classifier.
 
 ---
 

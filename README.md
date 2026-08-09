@@ -167,6 +167,25 @@ can see at a glance which proposals were resolved by the same action.
 Remediations live in the same durability family as decisions: they survive a
 wipe-and-recompute.
 
+### `/prospect-mute <term> [--reason "why"] [--by operator|agent]` · `/prospect-unmute <term>` · `/prospect-mutes`
+
+Mute a lexicon term: pick the tail vocabulary that *looks* like a signal but is
+not for your corpus (`cannot`, `do`, `must`, …) and say "not that one". A mute
+is recorded as a generic, content-addressed **assertion** keyed on the term (not
+on a row), so it survives a wipe and recompute. The term stops matching new
+turns; its previous hit nodes stay in place as stale/config lineage. Because a
+mute is `config`, muting folds a hash of the active mute set into
+`turn-frustration`'s config fingerprint — muting marks the affected nodes
+`stale/config`, a plain `/prospect-analyze` never silently recomputes them, and
+`--revise config` cleanly recomputes them with the old nodes preserved.
+
+`/prospect-unmute <term>` reverses a mute append-only (via `superseded_at` — the
+original row stays inspectable with its reason and time). `/prospect-mutes`
+lists the mute corpus — what is muted, by whom, when, and why. The same three
+operations are available as tool actions (`prospect mute|unmute|mutes`) and as
+`--prospect "mute|unmute|mutes"`, so the reviewing agent can perform the mute
+after operator feedback.
+
 ### `/prospect-verify`
 
 Recompute every analysis node's output key from its stored content and confirm it matches what is recorded. Because identities are content-addressed, any mismatch reveals out-of-band tampering or corruption of the database. Pure read; reports `ok` or lists the mismatching nodes. See [Verification](#design) in `DESIGN.md`.

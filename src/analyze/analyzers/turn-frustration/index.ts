@@ -45,6 +45,7 @@ import {
 	type FrustrationLexiconProperties,
 } from "../frustration-lexicon/index.js";
 import { DEFAULT_TURN_FRUSTRATION_CONFIG, type TurnFrustrationConfig } from "./config.js";
+import { getMutedTerms } from "../../../db/assertions.js";
 
 export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 	id: "turn-frustration",
@@ -133,10 +134,20 @@ export const turnFrustrationAnalyzer: Analyzer = {
 		label: "default",
 	},
 
+	// Term mutes are part of this analyzer's config: folding the active mute set
+	// into the config fingerprint marks a muted term's existing hit nodes stale for
+	// the `config` reason (the corpus no longer contradicts itself), while a plain
+	// fill leaves them as preserved lineage. frustration-lexicon deliberately does
+	// not set this — judging a word is unaffected by muting it.
+	consultsAssertions: ["term"],
+
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
 		const config = (ctx.config as unknown as TurnFrustrationConfig) ?? DEFAULT_TURN_FRUSTRATION_CONFIG;
 		// The lexicon is corpus-wide: a term learned in any session applies here.
 		const lexicon = usableLexicon(ctx.getGlobalDependencyNodes(FRUSTRATION_LEXICON_DEF.id), config);
+		// The operator-muted terms (config, not derived). A muted term stops matching
+		// new turns; its existing hit nodes stay and become stale/config lineage.
+		const muted = new Set(getMutedTerms(ctx.db));
 
 		const units: AnalysisUnit[] = [];
 		for (const pair of buildTurnPairs(ctx.messages)) {
@@ -147,7 +158,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 			// never fires on `north`.
 			const counts = new Map<string, number>();
 			for (const token of tokenize(pair.userText)) {
-				if (lexicon.has(token)) counts.set(token, (counts.get(token) ?? 0) + 1);
+				if (lexicon.has(token) && !muted.has(token)) counts.set(token, (counts.get(token) ?? 0) + 1);
 			}
 
 			for (const term of [...counts.keys()].sort()) {

@@ -6,6 +6,8 @@ import { runSync } from "../sync/index.js";
 import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposalsBulk, rejectProposalsBulk, acceptProposalsWithRemediation, getLatestDecision, getSessionLabels } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionLabel } from "./proposals.js";
+import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
+import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
 import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
@@ -27,12 +29,14 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		name: "prospect",
 		label: "Prospect",
 		description:
-			"Index sessions, check stats, list/accept/reject proposals. Actions: sync, stats, list_proposals, accept, reject, remediate, help. " +
+			"Index sessions, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, help. " +
 			"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 			"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
 			"Use proposal_ids (string array) on accept/reject for bulk operations with a shared rationale. " +
 			"Use remediate when ONE action addresses MANY proposals: pass proposal_ids and a description, and all of them " +
-			"are accepted linked to a single shared remediation record instead of N duplicated rationales.",
+			"are accepted linked to a single shared remediation record instead of N duplicated rationales. " +
+			"For muting: the reviewing agent performs the mute after operator feedback — pass the muted term and an optional reason; " +
+			"the term stops matching new turns and its prior hit nodes become stale/config, cleanly recomputed by analyze --revise config.",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
@@ -41,6 +45,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				Type.Literal("accept"),
 				Type.Literal("reject"),
 				Type.Literal("remediate"),
+				Type.Literal("mute"),
+				Type.Literal("unmute"),
+				Type.Literal("mutes"),
 				Type.Literal("help"),
 			]),
 			status: Type.Optional(
@@ -64,6 +71,8 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				}),
 			),
 			actual_change: Type.Optional(Type.String({ description: "Commit sha / path / note of what was actually done." })),
+			term: Type.Optional(Type.String({ description: "The lexicon term to mute or unmute (mute/unmute actions)." })),
+			reason: Type.Optional(Type.String({ description: "Operator's free-text reason for muting a term (mute action)." })),
 		}),
 		async execute(
 			_toolCallId: string,
@@ -161,6 +170,35 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						if (!params.proposal_id) return text("proposal_id or proposal_ids required", {});
 						const ok = rejectProposal(db, params.proposal_id as string, decision);
 						return text(ok ? `Rejected ${params.proposal_id}` : `Proposal "${params.proposal_id}" not found or not open. Use the full ID from the list_proposals output (e.g., prospect show <id>). Check that the proposal is still "open".`, { ok });
+					}
+					case "mute": {
+						if (!params.term) return text("term required for mute", {});
+						const term = params.term as string;
+						const { assertionId } = muteTerm(db, {
+							term,
+							reason: (params.reason as string | undefined) ?? null,
+							by: "agent",
+						});
+						return text(
+							`Muted '${term.toLowerCase()}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage. ` +
+								`Run analyze with revise=config to recompute nodes that consulted it. Assertion ${assertionId}.`,
+							{ assertionId, term: term.toLowerCase() },
+						);
+					}
+					case "unmute": {
+						if (!params.term) return text("term required for unmute", {});
+						const term = params.term as string;
+						const n = unmuteTerm(db, term);
+						return text(
+							n > 0 ? `Unmuted '${term.toLowerCase()}'.` : `'${term.toLowerCase()}' was not muted.`,
+							{ superseded: n, term: term.toLowerCase() },
+						);
+					}
+					case "mutes": {
+						const rows = listAssertions(db, "term");
+						if (rows.length === 0) return text("No term assertions recorded.", []);
+						const active = rows.filter((r) => r.superseded_at === null).length;
+						return text(`Term assertions (${rows.length} total, ${active} active):\n${rows.map(formatAssertion).join("\n")}`, rows);
 					}
 					case "help": {
 						return text(`=== prospect tool ===

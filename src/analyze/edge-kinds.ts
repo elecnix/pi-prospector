@@ -18,6 +18,8 @@
  *   contrasts_with node → session                   cross-session contrast: this node
  *                                                   used the target (smooth sibling)
  *                                                   session as a negative example
+ *   mutes        node → assertion                  this node's conclusion is muted by
+ *                                                   the target (human) assertion
  */
 
 export const REF_KINDS = {
@@ -27,6 +29,7 @@ export const REF_KINDS = {
 	PROMPT_VERSION: "prompt_version",
 	CONFIG_VERSION: "config_version",
 	PROPOSAL: "proposal",
+	ASSERTION: "assertion",
 } as const;
 
 export type RefKind = (typeof REF_KINDS)[keyof typeof REF_KINDS];
@@ -39,6 +42,7 @@ export const EDGE_KINDS = {
 	PRODUCES: "produces",
 	REVISES: "revises",
 	CONTRASTS_WITH: "contrasts_with",
+	MUTES: "mutes",
 } as const;
 
 export type EdgeKind = (typeof EDGE_KINDS)[keyof typeof EDGE_KINDS];
@@ -55,6 +59,7 @@ const VALID_TARGETS: Record<EdgeKind, ReadonlySet<RefKind>> = {
 	[EDGE_KINDS.PRODUCES]: new Set([REF_KINDS.PROPOSAL]),
 	[EDGE_KINDS.REVISES]: new Set([REF_KINDS.ANALYSIS_NODE]),
 	[EDGE_KINDS.CONTRASTS_WITH]: new Set([REF_KINDS.SESSION]),
+	[EDGE_KINDS.MUTES]: new Set([REF_KINDS.ASSERTION]),
 };
 
 export function isRefKind(value: string): value is RefKind {

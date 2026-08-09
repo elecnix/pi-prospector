@@ -118,6 +118,32 @@ for (const session of sessions) {
 }
 assert(reRunNodes === 0, "fill re-run produces nothing new", `got ${reRunNodes}`);
 
+console.log("\nLexicon muting (generic assertions relation, #72):");
+{
+	const { muteTerm, unmuteTerm } = await import("../../src/commands/mutes.js");
+	const { isTermMuted, getMutedTerms, getActiveAssertions } = await import("../../src/db/assertions.js");
+	const { verifyNodes } = await import("../../src/commands/verify.js");
+
+	muteTerm(db, { term: "putain", reason: "ordinary prose for this corpus", by: "agent" });
+	assert(isTermMuted(db, "putain"), "a term is muted");
+	assert(getActiveAssertions(db).length === 1, "one active assertion recorded");
+	// No node was touched: verify stays clean and a plain fill re-runs to nothing
+	// (the mute is config; muting marks affected nodes stale/config, and a frugal
+	// fill never recomputes them silently).
+	assert(verifyNodes(db).mismatches.length === 0, "verify stays clean after muting");
+	let reRunAfterMute = 0;
+	for (const session of sessions) {
+		const summary = await fw.run(session.id, {});
+		reRunAfterMute += summary.nodesProduced;
+	}
+	assert(reRunAfterMute === 0, "plain fill after muting recomputes nothing", `got ${reRunAfterMute}`);
+	// Unmuting restores, append-only: the mute row is superseded, not removed.
+	unmuteTerm(db, "putain");
+	assert(!isTermMuted(db, "putain"), "term is unmuted");
+	assert(getMutedTerms(db).length === 0, "no active mutes remain");
+	assert(getActiveAssertions(db).length === 0, "all mutes superseded");
+}
+
 console.log("\nRevise re-run with a new analyzer version (lineage):");
 const firstSession = sessions[0]!;
 const v2 = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });

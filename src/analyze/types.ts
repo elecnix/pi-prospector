@@ -368,6 +368,17 @@ export interface Analyzer {
 	contentHash?: string;
 	/** Absolute path a disk-loaded analyzer was loaded from (diagnostics only). */
 	sourcePath?: string;
+	/**
+	 * The subject kinds whose ACTIVE assertions fold into this analyzer's config
+	 * fingerprint, so muting one of them marks this analyzer's nodes stale for the
+	 * `config` reason (a plain fill leaves them alone, `--revise config` recomputes
+	 * them, old nodes stay as lineage). Only analyzers that actually consult the
+	 * mute list set this — `turn-frustration` consults term mutes, while
+	 * `frustration-lexicon` (which judges, not matches) deliberately does not.
+	 * The mute set is `config` (DESIGN.md: config is what the user sets); folding
+	 * it into the fingerprint makes muting behave exactly like changing a threshold.
+	 */
+	consultsAssertions?: readonly string[];
 }
 
 // ─────────────────────────── framework results ───────────────────────────
