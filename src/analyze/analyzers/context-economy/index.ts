@@ -55,8 +55,12 @@ export const CONTEXT_ECONOMY_DEF: AnalyzerDef = {
 
 export const CONTEXT_ECONOMY_VERSION: AnalyzerVersion = {
 	analyzerId: CONTEXT_ECONOMY_DEF.id,
-	major: 1,
-	minor: 2,
+	// 2.0 (issue #67): major. The recipe changes because the node now *judges*
+	// compaction policy, not just accounts for it — per-cycle carry-avoided vs
+	// rebuild cost, with fired-too-late and fired-too-often flags and new config
+	// keys. Existing 1.2 nodes go stale/major and are revisable.
+	major: 2,
+	minor: 0,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/context-economy/index.ts",
 };
@@ -98,6 +102,40 @@ interface RawProposal {
 	severity: string;
 }
 
+// ── compaction policy (issue #67) ──
+
+export interface CompactionCycle {
+	/** Row ordinal of the compaction event that ends this cycle. */
+	flushOrdinal: number;
+	/** Billed assistant turns in the cycle before the flush. */
+	turnsSpanned: number;
+	/** Peak cacheRead across the cycle's billed turns — the carried context at flush time. */
+	peakCarriedTokens: number;
+	/**
+	 * Carry that an EARLIER flush (at the cycle start) would have avoided — the
+	 * token-turns accrued by results loaded in this cycle before the flush.
+	 * A LOWER BOUND of the saving: it only counts what moving THIS flush earlier
+	 * would remove, never the future conservation beyond the cycle.
+	 */
+	carryAvoidedTokenTurns: number;
+	/** Context re-established after the flush (first billed turn's input + cacheWrite). */
+	rebuildTokens: number;
+	firedTooLate: boolean;
+	firedTooOften: boolean;
+}
+
+export interface CompactionPolicy {
+	compactionCount: number;
+	cycles: CompactionCycle[];
+	/** Sum of carryAvoidedTokenTurns across cycles (lower bound). */
+	totalCarryAvoidedTokenTurns: number;
+	totalRebuildTokens: number;
+	firedTooLateCount: number;
+	firedTooOftenCount: number;
+	/** A session with substantial carry but no compaction at all. */
+	neverCompacted: boolean;
+}
+
 // ── config ──
 
 export interface ContextEconomyConfig {
@@ -105,6 +143,11 @@ export interface ContextEconomyConfig {
 	oversizedResultTokens: number;
 	highCarryTokenTurns: number;
 	topResultsCount: number;
+	/** Compaction policy (issue #67): a cycle that spanned this many billed turns and could have saved this much carry is judged fired-too-late. */
+	firedTooLateTurnsMin: number;
+	firedTooLateCarryTokenTurns: number;
+	/** A cycle whose rebuild cost crosses this, while it carried no more than its rebuild, is judged fired-too-often. */
+	firedTooOftenRebuildTokens: number;
 }
 
 export const DEFAULT_CONTEXT_ECONOMY_CONFIG: ContextEconomyConfig = {
@@ -114,6 +157,12 @@ export const DEFAULT_CONTEXT_ECONOMY_CONFIG: ContextEconomyConfig = {
 	/** ~P90 of per-result carry in the corpus. */
 	highCarryTokenTurns: 1_000_000,
 	topResultsCount: 8,
+	/** At least this many turns spanned before a flush counts as late. */
+	firedTooLateTurnsMin: 5,
+	/** An earlier flush that would have avoided at least this many token-turns counts as late. */
+	firedTooLateCarryTokenTurns: 1_000_000,
+	/** Rebuild cost above this is expensive enough to be a candidate fired-too-often. */
+	firedTooOftenRebuildTokens: 50_000,
 };
 
 // ── threshold defaults for analyze() (plan already used config values) ──
@@ -121,6 +170,119 @@ export const DEFAULT_CONTEXT_ECONOMY_CONFIG: ContextEconomyConfig = {
 const OVERSIZED_TOKENS = 4000;
 const SKILL_TOKENS_AFTER_THRESHOLD = 50000;
 const SESSION_CARRY_THRESHOLD = 5_000_000;
+
+// ── compaction policy computation (issue #67) ──
+
+function parseUsage(row: DbRow): Record<string, number> | null {
+	if (!row.usage) return null;
+	try {
+		return JSON.parse(row.usage) as Record<string, number>;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Judge the session's compaction policy. Each cycle runs from just after the
+ * previous compaction (or session start) to the next compaction event. For a
+ * cycle we measure what an EARLIER flush (at the cycle start) would have
+ * avoided — the carry accrued by results loaded in the cycle — versus the cost
+ * of re-establishing context after the actual flush. All token figures inherit
+ * the `charsPerToken` estimate; the carry-avoided number is a LOWER BOUND.
+ */
+export function analyzeCompactionPolicy(
+	rows: DbRow[],
+	results: Array<{ ordinal: number; carry: number }>,
+	cfg: ContextEconomyConfig,
+	charsPerToken: number,
+): CompactionPolicy {
+	const n = rows.length;
+	const billedPrefix = new Array(n + 1).fill(0);
+	for (let i = 0; i < n; i++) {
+		const isBilled = rows[i]!.role === "assistant" && rows[i]!.usage ? 1 : 0;
+		billedPrefix[i + 1] = billedPrefix[i] + isBilled;
+	}
+
+	// usage per billed turn (for cacheRead + rebuild) keyed by row ordinal.
+	const usageCacheRead = new Map<number, number>();
+	const usageRebuild = new Map<number, number>(); // input + cacheWrite
+	for (let i = 0; i < n; i++) {
+		const u = parseUsage(rows[i]!);
+		if (!u) continue;
+		usageCacheRead.set(i, u["cacheRead"] ?? 0);
+		usageRebuild.set(i, (u["input"] ?? 0) + (u["cacheWrite"] ?? 0));
+	}
+
+	const compactions: number[] = [];
+	for (let i = 0; i < n; i++) if (rows[i]!.role === "compaction") compactions.push(i);
+
+	const cycles: CompactionCycle[] = [];
+	for (let ci = 0; ci < compactions.length; ci++) {
+		const flush = compactions[ci]!;
+		const prev = ci > 0 ? compactions[ci - 1]! : -1;
+
+		// Billed turns strictly inside the cycle: (prev, flush].
+		let turnsSpanned = billedPrefix[flush + 1]! - billedPrefix[prev + 1]!;
+		if (turnsSpanned < 0) turnsSpanned = 0;
+
+		let peakCarried = 0;
+		for (let i = prev + 1; i <= flush; i++) {
+			const cr = usageCacheRead.get(i);
+			if (cr !== undefined && cr > peakCarried) peakCarried = cr;
+		}
+
+		// Carry avoided by an earlier flush at the cycle start == the carry of
+		// results loaded in this cycle (each result's carry is already capped at
+		// this flush by the existing carry model).
+		let carryAvoided = 0;
+		for (const r of results) {
+			if (r.ordinal > prev && r.ordinal < flush) carryAvoided += r.carry;
+		}
+
+		// Rebuild cost: the first billed turn after the flush re-establishes the
+		// prefix (input + cacheWrite).
+		let rebuildTokens = 0;
+		for (let i = flush + 1; i < n; i++) {
+			const rb = usageRebuild.get(i);
+			if (rb !== undefined) {
+				rebuildTokens = rb;
+				break;
+			}
+		}
+
+		const firedTooLate = turnsSpanned >= cfg.firedTooLateTurnsMin && carryAvoided >= cfg.firedTooLateCarryTokenTurns;
+		const firedTooOften = rebuildTokens >= cfg.firedTooOftenRebuildTokens && peakCarried <= rebuildTokens;
+
+		cycles.push({
+			flushOrdinal: flush,
+			turnsSpanned,
+			peakCarriedTokens: Math.round(peakCarried),
+			carryAvoidedTokenTurns: Math.round(carryAvoided),
+			rebuildTokens: Math.round(rebuildTokens),
+			firedTooLate,
+			firedTooOften,
+		});
+	}
+
+	const totalCarryAvoidedTokenTurns = cycles.reduce((a, c) => a + c.carryAvoidedTokenTurns, 0);
+	const totalRebuildTokens = cycles.reduce((a, c) => a + c.rebuildTokens, 0);
+	const firedTooLateCount = cycles.filter((c) => c.firedTooLate).length;
+	const firedTooOftenCount = cycles.filter((c) => c.firedTooOften).length;
+
+	// A session that never compacted but carried a lot is a fired-too-late at
+	// session scale. totalCarryApprox is the sum of carry over ALL results.
+	const totalCarry = results.reduce((a, r) => a + r.carry, 0);
+
+	return {
+		compactionCount: compactions.length,
+		cycles,
+		totalCarryAvoidedTokenTurns,
+		totalRebuildTokens,
+		firedTooLateCount,
+		firedTooOftenCount,
+		neverCompacted: compactions.length === 0 && totalCarry >= SESSION_CARRY_THRESHOLD,
+	};
+}
 
 // ── analyzer ──
 
@@ -144,6 +306,9 @@ export const contextEconomyAnalyzer: Analyzer = {
 		const oversizedResultTokens = cfg.oversizedResultTokens ?? DEFAULT_CONTEXT_ECONOMY_CONFIG.oversizedResultTokens;
 		const highCarryTokenTurns = cfg.highCarryTokenTurns ?? DEFAULT_CONTEXT_ECONOMY_CONFIG.highCarryTokenTurns;
 		const topResultsCount = cfg.topResultsCount ?? DEFAULT_CONTEXT_ECONOMY_CONFIG.topResultsCount;
+		const firedTooLateTurnsMin = cfg.firedTooLateTurnsMin ?? DEFAULT_CONTEXT_ECONOMY_CONFIG.firedTooLateTurnsMin;
+		const firedTooLateCarryTokenTurns = cfg.firedTooLateCarryTokenTurns ?? DEFAULT_CONTEXT_ECONOMY_CONFIG.firedTooLateCarryTokenTurns;
+		const firedTooOftenRebuildTokens = cfg.firedTooOftenRebuildTokens ?? DEFAULT_CONTEXT_ECONOMY_CONFIG.firedTooOftenRebuildTokens;
 
 		const rows = ctx.db
 			.prepare("SELECT role, tool_calls, tool_results, usage FROM messages WHERE session_id = ? ORDER BY rowid ASC")
@@ -283,6 +448,12 @@ export const contextEconomyAnalyzer: Analyzer = {
 				},
 				readAmplification: Math.round(readAmplification),
 				flags,
+				compactionPolicy: analyzeCompactionPolicy(
+					rows,
+					results,
+					{ firedTooLateTurnsMin, firedTooLateCarryTokenTurns, firedTooOftenRebuildTokens } as ContextEconomyConfig,
+					charsPerToken,
+				),
 				topResults: results.slice(0, topResultsCount).map((r) => ({
 					tool: r.tool,
 					tokens: Math.round(r.tokens),
@@ -321,6 +492,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 		const billed = (result["billed"] as Record<string, number>) ?? {};
 		const carry = (result["carry"] as Record<string, unknown>) ?? {};
 		const readAmpl = result["readAmplification"] as number;
+		const compactionPolicy = result["compactionPolicy"] as CompactionPolicy | undefined;
 
 		const proposals: RawProposal[] = [];
 
@@ -391,6 +563,47 @@ export const contextEconomyAnalyzer: Analyzer = {
 					evidence: `Skill ${s["skill"] as string}: first at ordinal ${s["firstOrdinal"] as number}, ${tokensAfter.toLocaleString()} tokens of tool results loaded afterward across ${invocations} invocation(s)`,
 					confidence: 0.7,
 					severity: "waste",
+				});
+			}
+		}
+
+		// ── compaction policy (issue #67) ──
+		if (compactionPolicy) {
+			if (compactionPolicy.firedTooLateCount > 0) {
+				const cycles = compactionPolicy.cycles.filter((c) => c.firedTooLate);
+				const avoided = cycles.reduce((a, c) => a + c.carryAvoidedTokenTurns, 0);
+				proposals.push({
+					target_type: "config",
+					title: `Compaction fired too late: ${cycles.length} flush(es) could have saved ${avoided.toLocaleString()} token-turns`,
+					summary: `${cycles.length} compaction(s) ran ${cycles.map((c) => c.turnsSpanned).join(", ")} turns after the context grew; an earlier flush at each cycle start would have avoided ${avoided.toLocaleString()} token-turns of carry (LOWER BOUND).`,
+					detail: "Each turn before a late flush paid to carry context that an earlier flush would have dropped. Consider lowering the compaction threshold so it fires sooner (this is a one-time harness-config change that pays out every future session).",
+					evidence: `total carry avoided (lower bound) ${compactionPolicy.totalCarryAvoidedTokenTurns.toLocaleString()} token-turns across ${compactionPolicy.cycles.length} cycle(s); ${compactionPolicy.firedTooLateCount} fired-too-late.`,
+					confidence: 0.7,
+					severity: "waste",
+				});
+			}
+			if (compactionPolicy.firedTooOftenCount > 0) {
+				const cycles = compactionPolicy.cycles.filter((c) => c.firedTooOften);
+				const rebuild = cycles.reduce((a, c) => a + c.rebuildTokens, 0);
+				proposals.push({
+					target_type: "config",
+					title: `Compaction fired too often: ${cycles.length} flush(es) rebuilt more context than they carried`,
+					summary: `${cycles.length} compaction(s) cost ${rebuild.toLocaleString()} tokens to rebuild the cache prefix while carrying ${cycles[0]?.peakCarriedTokens.toLocaleString() ?? "0"} tokens or less — pure loss.`,
+					detail: "Each compaction pays to summarise and then re-establish the cache prefix from scratch. Beyond a cadence the rebuild costs more than the carry it saves. Consider raising the compaction threshold or compressing less frequently.",
+					evidence: `total rebuild ${compactionPolicy.totalRebuildTokens.toLocaleString()} tokens across ${compactionPolicy.cycles.length} cycle(s); ${compactionPolicy.firedTooOftenCount} fired-too-often.`,
+					confidence: 0.7,
+					severity: "waste",
+				});
+			}
+			if (compactionPolicy.compactionCount === 0 && compactionPolicy.neverCompacted) {
+				proposals.push({
+					target_type: "config",
+					title: `Session never compacted despite ${((carry["totalTokenTurns"] as number) ?? 0).toLocaleString()} token-turns of carry`,
+					summary: "This session carried substantial context to its end without ever compacting, so every result stayed billed as cacheRead until the last turn.",
+					detail: "Consider compacting long sessions so early large reads do not trail through the whole conversation, or split the work into shorter sessions.",
+					evidence: `${((carry["totalTokenTurns"] as number) ?? 0).toLocaleString()} token-turns carried; 0 compactions.`,
+					confidence: 0.6,
+					severity: "suggestion",
 				});
 			}
 		}
