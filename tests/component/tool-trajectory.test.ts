@@ -258,6 +258,134 @@ describe("tool-trajectory component test", () => {
 	});
 });
 
+describe("trajectory signal pricing", () => {
+	// Build a polling loop: `gh pr view` repeated N times, each assistant turn
+	// carrying an optional per-message billed cost.
+	function pollLoop(n: number, costUsd?: number): TestMessage[] {
+		const out: TestMessage[] = [];
+		for (let i = 0; i < n; i++) {
+			out.push({
+				role: "assistant",
+				text: `check ${i}`,
+				toolCalls: bashCall("gh pr view 5"),
+				...(costUsd !== undefined ? { costUsd, model: "test-model" } : {}),
+			});
+			out.push({ role: "toolResult", toolResults: [{ toolName: "bash", isError: false, textLength: 80 }] });
+		}
+		return out;
+	}
+
+	it("prices signals when recorded cost is carried through the loader", async () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "priced");
+			insertMessages(db, "priced", [
+				{ role: "user", text: "watch PR 5" },
+				...pollLoop(5, 0.02),
+				{ role: "user", text: "ok" },
+			]);
+
+			const fw = newFramework(db);
+			fw.register(turnPairCoreAnalyzer);
+			fw.register(toolTrajectoryAnalyzer);
+			const summary = await fw.run("priced", {});
+			assert.equal(summary.errors.length, 0, "no errors in run");
+
+			const props = readTrajectoryNode(db);
+			const polling = props.signals.find((s) => s.pattern === "polling-loop")!;
+			// The 5 priced assistant turns each cost $0.02 → the loop prices at $0.10.
+			assert.ok(polling, "expected a polling-loop signal");
+			assert.equal(polling.count, 5, "polling loop should span all 5 calls");
+			assert.ok(typeof polling.cost_usd === "number", "polling-loop signal should be priced");
+			assert.ok(Math.abs(polling.cost_usd! - 0.1) < 1e-9, `expected $0.10, got ${polling.cost_usd}`);
+
+			assert.equal(props.priced_signal_count, 1, "one signal is priced");
+			assert.equal(props.unpriced_signal_count, 0, "no signal is unpriced");
+			assert.ok(props.trajectory_cost_usd !== null, "aggregate cost should be present when fully priced");
+			assert.ok(Math.abs(props.trajectory_cost_usd! - 0.1) < 1e-9, `aggregate should be $0.10, got ${props.trajectory_cost_usd}`);
+		} finally {
+			close();
+		}
+	});
+
+	it("reports partial pricing as a lower bound, never a silent total", async () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "partial");
+			// One polling loop whose turns ARE priced, plus a checkout oscillation
+			// whose turns have NO recorded cost (e.g. a subscription route).
+			const checkout = (text: string, branch: string): TestMessage[] => [
+				{ role: "assistant", text, toolCalls: bashCall(`git checkout ${branch}`) },
+				{ role: "toolResult", toolResults: [{ toolName: "bash", isError: false, textLength: 40 }] },
+			];
+			insertMessages(db, "partial", [
+				{ role: "user", text: "look at branches" },
+				...checkout("a", "main"),
+				...checkout("b", "feature"),
+				...checkout("c", "main"),
+				{ role: "user", text: "also watch PR" },
+				...pollLoop(5, 0.02),
+				{ role: "user", text: "done" },
+			]);
+
+			const fw = newFramework(db);
+			fw.register(turnPairCoreAnalyzer);
+			fw.register(toolTrajectoryAnalyzer);
+			const summary = await fw.run("partial", {});
+			assert.equal(summary.errors.length, 0, "no errors in run");
+
+			const props = readTrajectoryNode(db);
+			const polling = props.signals.find((s) => s.pattern === "polling-loop")!;
+			const osc = props.signals.find((s) => s.pattern === "oscillation")!;
+			assert.ok(polling, "expected a polling-loop signal");
+			assert.ok(osc, "expected an oscillation signal");
+
+			// The priced loop is priced; the unpriced oscillation stays null.
+			assert.ok(typeof polling.cost_usd === "number", "priced polling loop should carry cost");
+			assert.ok(Math.abs(polling.cost_usd! - 0.1) < 1e-9, `polling cost should be $0.10, got ${polling.cost_usd}`);
+			assert.equal(osc.cost_usd, null, "unpriced oscillation must stay null, never 0");
+
+			// Coverage is explicit: fraction priced, and the aggregate is only the
+			// priced subset (the oscillation's true cost is unknown → lower bound).
+			assert.equal(props.priced_signal_count, 1, "exactly the polling loop is priced");
+			assert.equal(props.unpriced_signal_count, 1, "the oscillation is legitimately unpriced");
+			assert.equal(props.priced_signal_count + props.unpriced_signal_count, props.signals.length, "coverage counts must sum to the signal count");
+			assert.ok(props.trajectory_cost_usd !== null, "aggregate reflects the priced subset");
+			assert.ok(Math.abs(props.trajectory_cost_usd! - 0.1) < 1e-9, `aggregate must be the $0.10 of priced signals (a lower bound), got ${props.trajectory_cost_usd}`);
+		} finally {
+			close();
+		}
+	});
+
+	it("a fully unpriced session prices nothing and says so", async () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "unpriced");
+			insertMessages(db, "unpriced", [
+				{ role: "user", text: "watch PR 5" },
+				...pollLoop(5),
+				{ role: "user", text: "ok" },
+			]);
+
+			const fw = newFramework(db);
+			fw.register(turnPairCoreAnalyzer);
+			fw.register(toolTrajectoryAnalyzer);
+			const summary = await fw.run("unpriced", {});
+			assert.equal(summary.errors.length, 0, "no errors in run");
+
+			const props = readTrajectoryNode(db);
+			const polling = props.signals.find((s) => s.pattern === "polling-loop")!;
+			assert.ok(polling, "expected a polling-loop signal");
+			assert.equal(polling.cost_usd, null, "unpriced signal cost stays null");
+			assert.equal(props.priced_signal_count, 0, "nothing priced");
+			assert.equal(props.unpriced_signal_count, 1, "the signal is reported as unpriced");
+			assert.equal(props.trajectory_cost_usd, null, "aggregate stays null (unknown), never 0");
+		} finally {
+			close();
+		}
+	});
+});
+
 /**
  * Dogfood-style regressions. These encode the two concrete misses from issue #8
  * (the `gh pr view ×5` polling loop and the `--force` restore oscillation) as

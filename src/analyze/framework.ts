@@ -744,8 +744,12 @@ function isDuplicateInputKey(err: unknown): boolean {
 
 function db_loadMessages(db: Database.Database, sessionId: string): MessageRow[] {
 	// Static SQL (two adjacent string literals) — stable text, so safe to cache.
+	// The full message shape (including model and cost_usd) is carried so every
+	// downstream per-message-cost consumer sees the recorded value. Cost is
+	// money and is never guessed: an unrecorded cost stays null here, not a
+	// silent 0 (see src/sync/parser.ts extractCostUsd).
 	return prep(db,
-			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results " +
+			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd " +
 			"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
 		)
 		.all(sessionId) as MessageRow[];

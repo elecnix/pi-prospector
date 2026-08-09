@@ -115,6 +115,30 @@ describe("edges and anchored messages", () => {
 		}
 	});
 
+	it("message loaders carry model and cost_usd when recorded", () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s1");
+			const ids = insertMessages(db, "s1", [
+				{ role: "user", text: "do it" },
+				{ role: "assistant", text: "done", model: "claude-3-5-sonnet", costUsd: 0.042 },
+			]);
+
+			// The recorded cost/model survives the loader verbatim.
+			const priced = getMessage(db, ids[1]!)!;
+			assert.equal(priced.content_text, "done");
+			assert.equal(priced.model, "claude-3-5-sonnet");
+			assert.equal(priced.cost_usd, 0.042);
+
+			// An unrecorded message keeps both null — money is never invented as 0.
+			const unpriced = getMessage(db, ids[0]!)!;
+			assert.equal(unpriced.model, null);
+			assert.equal(unpriced.cost_usd, null);
+		} finally {
+			close();
+		}
+	});
+
 	it("framework.getAnchoredMessages returns the pair's user message", async () => {
 		const { db, close } = tempDb();
 		try {

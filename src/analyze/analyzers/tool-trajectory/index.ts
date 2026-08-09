@@ -46,8 +46,15 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// semantics are unchanged. This is what lets a loop read as "$0.34" instead
 	// of "repeated 9×" in proposal evidence, and it also enriches the digest the
 	// synthesizer sees (riding the recompute the shape change already forces).
+	// 1.2: the framework loader now carries per-message cost/model to
+	// every consumer, so signals actually price. The output also gains
+	// `priced_signal_count`/`unpriced_signal_count` so a trajectory priced from
+	// partial data states what fraction it could price, and `trajectory_cost_usd`
+	// is now documented as the sum of the *priced* signals — a lower bound of the
+	// true cost whenever any signal is unpriced, never a silent total.
+	// Minor: output gains fields; detection semantics unchanged.
 	major: 1,
-	minor: 1,
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
 };
@@ -60,10 +67,22 @@ export interface ToolTrajectoryProperties {
 	/** Aggregate friction contribution from trajectory signals. */
 	trajectory_friction_score: number;
 	/**
-	 * The total billed dollar cost of this session's trajectory signals (the sum
-	 * of each signal's cost_usd), or null when none of them is priced (issue #71).
+	 * The sum of the billed dollar cost of the signals that could be priced (the
+	 * sum of each priced signal's `cost_usd`), or null when none could be priced.
+	 * Money is never guessed: an unpriced signal contributes nothing.
+	 * When `unpriced_signal_count > 0` this is a LOWER BOUND of the session's true
+	 * trajectory cost — it is never presented as a complete total when any signal
+	 * is unpriced. See `priced_signal_count`/`unpriced_signal_count` for coverage.
 	 */
 	trajectory_cost_usd: number | null;
+	/**
+	 * How many of `signals` carry a recorded cost. Together with
+	 * `unpriced_signal_count` this states what fraction of the trajectory could
+	 * be priced, so a partial pricing is visible rather than silently omitted.
+	 */
+	priced_signal_count: number;
+	/** How many of `signals` could not be priced (no recorded cost on the turns). */
+	unpriced_signal_count: number;
 	/** Counts per pattern. */
 	pattern_counts: Record<string, number>;
 	/** Total number of tool calls analysed. */
@@ -253,19 +272,26 @@ export const toolTrajectoryAnalyzer: Analyzer = {
 		}
 
 		// Aggregate billed cost across signals: a session whose loops burned money
-		// is worth surfacing even when each individual signal is modest. Null when
-		// no signal is priced (never a synthetic 0).
+		// is worth surfacing even when each individual signal is modest. The
+		// aggregate is the sum of the *priced* signals only — never a synthetic 0,
+		// and never presented as a complete total when any signal is unpriced. The
+		// priced/unpriced counts state the coverage so a partial pricing is visible.
 		let trajectoryCostUsd: number | null = null;
+		let pricedCount = 0;
+		let unpricedCount = 0;
 		{
 			let sum = 0;
-			let any = false;
 			for (const s of signals) {
-				if (typeof s.cost_usd === "number" && Number.isFinite(s.cost_usd)) {
+				if (typeof s.cost_usd === "number" && Number.isFinite(s.cost_usd) && s.cost_usd > 0) {
 					sum += s.cost_usd;
-					any = true;
+					pricedCount++;
+				} else {
+					unpricedCount++;
 				}
 			}
-			if (any && sum > 0) trajectoryCostUsd = sum;
+			// A signal whose participating turns recorded a cost always prices
+			// non-null, so a non-empty priced count implies a positive sum.
+			trajectoryCostUsd = pricedCount > 0 ? sum : null;
 		}
 
 		const properties: ToolTrajectoryProperties = {
@@ -273,6 +299,8 @@ export const toolTrajectoryAnalyzer: Analyzer = {
 			signals,
 			trajectory_friction_score: trajectoryFriction,
 			trajectory_cost_usd: trajectoryCostUsd,
+			priced_signal_count: pricedCount,
+			unpriced_signal_count: unpricedCount,
 			pattern_counts: patternCounts,
 			tool_call_count: toolCalls.length,
 		};

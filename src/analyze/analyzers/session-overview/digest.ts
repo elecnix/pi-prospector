@@ -239,6 +239,20 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	];
 	if (trajectory.length > 0) {
 		headerLines.push(`trajectory_friction=${trajectory.reduce((max, t) => Math.max(max, t.trajectory_friction_score ?? 0), 0).toFixed(2)}`);
+		// Pricing coverage: state what fraction of trajectory signals could
+		// be priced and how much that priced subset cost. A trajectory priced from
+		// partial data must say so — a cost line without the coverage would read as a
+		// complete total when it is a lower bound.
+		const priced = trajectory.reduce((acc, t) => acc + (t.priced_signal_count ?? 0), 0);
+		const unpriced = trajectory.reduce((acc, t) => acc + (t.unpriced_signal_count ?? 0), 0);
+		const pricedCost = trajectory.reduce(
+			(acc, t) => acc + (typeof t.trajectory_cost_usd === "number" ? t.trajectory_cost_usd : 0),
+			0,
+		);
+		const total = priced + unpriced;
+		const coverage = total > 0 ? ` (${priced}/${total} priced)` : "";
+		const costBit = priced > 0 ? ` cost=$${roundUsd(pricedCost)}` : " cost=unknown";
+		headerLines.push(`trajectory_pricing:${coverage}${costBit}`);
 	}
 	if (positiveSignals.length > 0) {
 		headerLines.push(`positive_signals=${positiveSignals.join(",")}`);
