@@ -439,7 +439,15 @@ contain the new word have anything to compute.
   failed trajectories for the same class of task, so the synthesiser can spot
   patterns that friction-only analysis misses. ExpeL (Zhao et al. 2023) shows
   that comparing successes against failures is what produces useful insights;
-  summarising only one side is insufficient. In pi-prospector the contrast works
+  summarising only one side is insufficient. Two 2026 results reach the same
+  premise by different routes: Dubey (2026) fits its failure detector as a
+  *one-class* model on healthy runs alone and flags deviation from that
+  baseline, and SWE-Replay (2026) *discards* trajectories whose outcome was bad
+  before mining them, on the grounds that their intermediate steps mislead —
+  worth about four points in their ablation. The second of those marks a gap we
+  still carry: a session's **outcome** is not something this system labels, so
+  friction from a session that succeeded anyway is mined identically to friction
+  from one that was abandoned. In pi-prospector the contrast works
   at two scopes: **within-session** (a clean pair versus a friction pair in the
   same session) and **cross-session** (a session is handed a compact digest of up
   to N *smooth* sibling sessions in the same repo/`cwd` as negative examples —
@@ -648,6 +656,18 @@ layer synthesise everything into proposals. The reason is cost and reliability:
 the cheap, repeatable layer does the bulk of the triage and always works, the
 expensive layer is spent sparingly on the moments that warrant it, and the whole
 pipeline still produces useful structure even if the model layer is unavailable.
+
+Two independent 2026 results argue this layering is not merely the cheap choice
+but the accurate one. Dubey (2026) builds both layers for live agent monitoring
+and finds the deterministic checks beating the trained monitor outright — 60% of
+failures caught at zero false positives, against the learned monitor's 54% at a
+17% false-alarm rate — and the deterministic layer transfers across model
+families unchanged where the monitor's transfer falls to chance. SWE-Replay
+(2026) reaches the same conclusion from the other side: its LLM-as-a-judge
+selector underperforms a cheap deterministic signal at higher cost. A model
+asked to *judge* is the weak link in both systems; a model asked to *interpret
+a specific escalated case* is not. That is the split this layering encodes.
+
 A final, optional layer **replay-validates** the proposals (see *Replay
 validation*): it re-judges each proposal's originating turns with and without the
 candidate rule, using a distinct model, and grounds the proposal's confidence in
@@ -658,7 +678,15 @@ empirical score without ever editing anything.
 consume tool-call arguments and tool-result error text, not just message prose.
 This lets the classifier diagnose the *mechanism* of a failure (wrong flags, a
 missing `--repo`, targeting the wrong resource) instead of paraphrasing the
-user's complaint. The deterministic correction regex in `turn-pair-core` is a
+user's complaint. DebugRepair (2026) makes the general form of this argument:
+outcome-level failure symptoms show *how* a failure was observed but not the
+intermediate state needed to explain it, so a model reasoning from symptoms
+alone infers causes it has no evidence for. Their ablations put roughly a
+quarter of end-to-end quality on having that evidence — and another quarter on
+selecting it by *relevance* (backward-slicing from the failure) rather than by
+position, which is the direction this channel still has to grow.
+
+The deterministic correction regex in `turn-pair-core` is a
 *ranking signal only* — it enriches pairs it matches with a `note=` hint — but
 it must never *gate* what the synthesizer is allowed to see. Every pair carries
 a truncated verbatim user-text snippet in the digest; pairs the regex misses are
@@ -851,3 +879,55 @@ When extending this system, ask in order:
 Hold to these and the system stays what it is meant to be: a trustworthy,
 cheaply-recomputable engine that turns the friction in past agent conversations
 into clear, evidence-backed suggestions for making the next conversation better.
+
+---
+
+## 7. Supporting literature
+
+The architectural bets above were made before this work was published and are
+recorded here because it corroborates them. None of it is a dependency; the
+value is being able to tell which choices have external support, which have
+only our own reasoning, and where the literature says we are still short.
+
+- **Zhao et al. (2023), ExpeL: Experiential Learning of LLM Agents.**
+  Comparing successful against failed trajectories is what produces usable
+  insight; summarising one side alone is not enough. → *Success/failure
+  contrast*, positive signals, reinforcement proposals.
+
+- **Dubey (2026), Real-Time Detection and Repair of LLM Agent Failures**
+  ([arXiv:2608.02464](https://arxiv.org/abs/2608.02464)). Deterministic,
+  label-free checks beat a trained monitor on the same corpus — 60% detection
+  (96% with a coverage check) at zero false positives, against 54% at a 17%
+  false-alarm rate — and transfer across model families where the learned
+  monitor does not. Its failure taxonomy names looping and tool-cascade, which
+  the trajectory analyzer detects. → *Deterministic first, language model
+  second*; trajectory analysis; the one-class framing of contrast.
+  **Where it says we are short:** we detect none of goal drift, fabrication,
+  silent abort, or contract violation, and nothing in the pipeline accumulates
+  friction across turns, so gradual drift trips no threshold.
+
+- **DebugRepair (2026)**
+  ([arXiv:2604.19305](https://arxiv.org/abs/2604.19305)). Outcome-level
+  symptoms under-determine root cause; evidence must be intermediate, and it
+  must be selected by relevance rather than by position. → *Tool arguments and
+  error payloads are first-class evidence*.
+  **Where it says we are short:** our evidence is capped positionally, not
+  sliced back from the failure to what actually determined it.
+
+- **Scaling Test-Time Compute for Agentic Coding (2026)**
+  ([arXiv:2604.16529](https://arxiv.org/abs/2604.16529)). Selection among
+  long-horizon trajectories works by structured *comparison* of compact
+  summaries, not by asking a model to score them. → *Replay validation*, and
+  the refusal to rank on a model's self-rating.
+  **Where we go further:** replay validation is counterfactual rather than
+  comparative — it injects the candidate rule and checks whether the friction
+  flips, which grounds a proposal in isolation instead of only against its
+  rivals.
+
+- **SWE-Replay (2026)**
+  ([arXiv:2601.22129](https://arxiv.org/abs/2601.22129)). Filter trajectories by
+  outcome before mining them; a cheap deterministic selector beat an
+  LLM-as-a-judge at lower cost. → *Deterministic first*; success/failure
+  contrast.
+  **Where it says we are short:** we assign no outcome label to a session, so
+  we cannot filter or weight by it.
