@@ -456,6 +456,10 @@ function isSystemInjected(text: string): boolean {
 	if (text.startsWith("<system-reminder>")) return true;
 	// Skill injection (alternate format without angle brackets).
 	if (text.startsWith("Base directory for this skill:")) return true;
+	// Pi instruction/guideline injection blocks.
+	if (text.startsWith("<instructions>")) return true;
+	if (text.startsWith("<guidelines>")) return true;
+	if (text.startsWith("<workflow>")) return true;
 	// ghpr-monitor notification templates (specific prefixes, not bare emoji).
 	const notifPrefixes = [
 		"💭 ", "❌ ", "✅ ", "📝 ", "🔀 ", "📋 ", "📡 ", "⚠️ ",
@@ -648,6 +652,11 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 	// if any act is present. A reply that issues a command AND shifts topic is
 	// just a command, not a continuation.
 	if (continuation && hasActs) return null;
+	// An all-empty verdict (no acts, no continuation, no other, no abstention) is
+	// a model giving up. Every genuine reply carries at least one signal — a
+	// command, a question, an acceptance, a status drop, or at minimum a topic
+	// shift. Reject the empty verdict so the agentic retry forces a real answer.
+	if (!hasActs && !continuation && !other) return null;
 
 	return {
 		acceptances,
