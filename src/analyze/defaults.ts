@@ -17,6 +17,7 @@ import { routingOpportunityAnalyzer } from "./analyzers/routing-opportunity/inde
 import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.js";
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
+import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 
 export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-core",
@@ -28,6 +29,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
+	"secret-leak",
 	"session-overview",
 ] as const;
 
@@ -45,6 +47,10 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,
+	// Session-level, standalone, deterministic. Placed before the synthesizer so a
+	// future session-overview consumer can declare it as a dependency without
+	// reordering. Emits redacted findings only — never the matched secret.
+	secretLeakAnalyzer,
 	sessionOverviewAnalyzer,
 ];
 

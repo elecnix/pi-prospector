@@ -88,7 +88,7 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
   Reasons only *select* which out-of-date nodes a run touches. A selected node is always recomputed to the **current recipe in full** (latest version, latest config, latest resolved model), and the new node is linked to its predecessor by a `revises` edge so lineage stays navigable. A plain fill scans only not-yet-analysed sessions; any `--revise` reason re-scans every session so stale work can be found.
 - `--limit N` — cap how many sessions are scanned
 - `--session ID` — analyse a single session
-- `--analyzer ID` — run a single analyzer (`turn-pair-core`, `turn-pair-llm`, `tool-trajectory`, or `session-overview`) and its dependencies
+- `--analyzer ID` — run a single analyzer (`turn-pair-core`, `turn-pair-llm`, `tool-trajectory`, `secret-leak`, or `session-overview`) and its dependencies
 - `--model provider/model` — pin **every** model tier to one concrete model for this run. Because the resolved model is part of a node's identity, a pinned run produces its own nodes; switching back to the normal mapping marks them stale (reason `config`).
 
 Proposals are never auto-applied. They sit in the database with status `open` until you accept or reject them.
@@ -276,6 +276,12 @@ Source: [`lexicon-candidates/index.ts`](./src/analyze/analyzers/lexicon-candidat
 Looks at the ordered stream of tool calls across the whole session and flags four shapes of wasted motion: **stuck-loops** (the same failing action repeated), **polling-loops** (re-checking the same state over and over), **oscillation** (doing and undoing), and **pre-flight gaps** (acting without the check that should precede it). No model — pure pattern detection that complements the text-based signals.
 
 Source: [`tool-trajectory/index.ts`](./src/analyze/analyzers/tool-trajectory/index.ts) · detectors in [`detectors.ts`](./src/analyze/analyzers/tool-trajectory/detectors.ts) · call normalisation in [`arg-parser.ts`](./src/analyze/analyzers/tool-trajectory/arg-parser.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/tool-trajectory/config.ts).
+
+### secret-leak — credential detection (deterministic)
+
+Scans every message field of a transcript (user text, assistant reasoning, tool-call arguments, tool results) for high-confidence **credential patterns**: provider-anchored API keys (AWS, GitHub, Google, Slack, Stripe, GitLab, Anthropic, OpenAI), PEM private-key headers, and signed JWTs. No model — pure regex detection tuned for precision (every pattern requires a provider-specific prefix or structural marker, so ordinary prose does not match). Findings are **redacted**: each carries a first/last-character preview and a short SHA-256 fingerprint, never the matched secret — the analysis graph is durable and widely readable, so it must not become a second leak surface. Emits one `metric` node per session, anchored to the session plus one `anchors` edge per leaked message so a finding traces back to the exact turn.
+
+Source: [`secret-leak/index.ts`](./src/analyze/analyzers/secret-leak/index.ts) · detectors + rule catalogue in [`detectors.ts`](./src/analyze/analyzers/secret-leak/detectors.ts) · allowlist/thresholds in [`config.ts`](./src/analyze/analyzers/secret-leak/config.ts).
 
 ### session-overview — synthesis & proposals (LLM map-reduce)
 
