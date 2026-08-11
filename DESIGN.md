@@ -931,3 +931,24 @@ only our own reasoning, and where the literature says we are still short.
   contrast.
   **Where it says we are short:** we assign no outcome label to a session, so
   we cannot filter or weight by it.
+
+- **LivePlan (2026), Online Monitoring and Corrective Steering of
+  Programming Agents**
+  ([arXiv:2608.06701](https://arxiv.org/abs/2608.06701)). A deterministic,
+  rule-based monitor detects *behavioral drift* over a trajectory (Graphectory
+  back-edges for repetition/oscillation, Langutory phase sequences for plan
+  violation and stagnation) and only then consults an advisor LLM for a single
+  next-step correction. Its ablation shows event-triggered advice beats
+  periodic advice despite *fewer* interventions — misleading advice is worse
+  than no advice, so an LLM asked to judge is the weak link. → *Deterministic
+  first, language model second*; selective escalation; *Tool arguments and
+  error payloads are first-class evidence*; trajectory analysis (stuck-loop,
+  oscillation).
+  **Where it says we are short:** its Langutory phase representation detects
+  *plan violation* (premature patching, skip validation), *long stagnation*, and
+  *thought oscillation* — none of which we detect, and nothing here accumulates
+  friction across turns so gradual drift trips no threshold. Its
+  plan-compliance score (PPC/POC/PPF/PC) deterministically separates resolved
+  from unresolved trajectories, which is the session outcome label we still
+  lack. Its advisor slices the trajectory *from the last trigger* (event-centered),
+  where our evidence is capped positionally.
