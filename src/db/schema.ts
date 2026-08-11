@@ -408,6 +408,12 @@ function addMissingColumns(db: Database.Database): void {
 		db.exec("ALTER TABLE messages ADD COLUMN cost_usd REAL");
 	}
 
+	// messages: token usage (JSON). Added after model/cost; databases created
+	// before usage was recorded lack this column and fail on INSERT.
+	if (!hasColumn("messages", "usage")) {
+		db.exec("ALTER TABLE messages ADD COLUMN usage TEXT");
+	}
+
 	// proposals v2: check if it has v1 schema (has "target" instead of "title")
 	// and migrate to v2
 	if (!hasColumn("proposals", "title") && hasColumn("proposals", "target")) {
