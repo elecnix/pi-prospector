@@ -114,6 +114,14 @@ const UserReplyActsConfig = Type.Object({
 	maxRepliesPerSession: Type.Number(),
 	/** Min assistant-context chars to render into the prompt. */
 	minAssistantContextChars: Type.Number(),
+	/**
+	 * Use the provider's native structured output (response_format) instead of
+	 * tool-calling for schema enforcement. Requires a provider that supports
+	 * `response_format: { type: "json_schema", strict: true }` (e.g. OpenRouter).
+	 * When false, falls back to forced tool calls (toolChoice: "required").
+	 * Default: true. Override via `analyzers["user-reply-acts"].structuredOutput`.
+	 */
+	structuredOutput: Type.Boolean(),
 });
 type UserReplyActsConfig = Static<typeof UserReplyActsConfig>;
 
@@ -123,6 +131,7 @@ const DEFAULT_CONFIG: UserReplyActsConfig = {
 	reasoning: "off",
 	maxRepliesPerSession: 100,
 	minAssistantContextChars: 1,
+	structuredOutput: true,
 };
 
 function configOf(config: Record<string, unknown>): UserReplyActsConfig {
@@ -139,6 +148,7 @@ function configOf(config: Record<string, unknown>): UserReplyActsConfig {
 				: DEFAULT_CONFIG.reasoning,
 		maxRepliesPerSession: typeof c.maxRepliesPerSession === "number" && c.maxRepliesPerSession > 0 ? c.maxRepliesPerSession : DEFAULT_CONFIG.maxRepliesPerSession,
 		minAssistantContextChars: typeof c.minAssistantContextChars === "number" && c.minAssistantContextChars >= 0 ? c.minAssistantContextChars : DEFAULT_CONFIG.minAssistantContextChars,
+		structuredOutput: typeof c.structuredOutput === "boolean" ? c.structuredOutput : DEFAULT_CONFIG.structuredOutput,
 	};
 }
 
@@ -401,6 +411,22 @@ export const CLASSIFY_RESPONSE_SCHEMA_RETRY = {
 	name: "classify_reply_retry",
 	schema: CLASSIFY_SCHEMA_RETRY,
 	strict: true as const,
+};
+
+// ── Tool-call fallback schemas (for providers without response_format support) ──
+// These wrap the same TypeBox schemas as tool parameters, used when
+// structuredOutput is false. The schema is identical; only the transport differs.
+
+export const CLASSIFY_TOOL = {
+	name: "classify_reply",
+	description: "Submit the multi-act classification of a user reply to the assistant's preceding output.",
+	parameters: CLASSIFY_SCHEMA,
+};
+
+export const CLASSIFY_TOOL_RETRY = {
+	name: "classify_reply",
+	description: "Submit the multi-act classification of a user reply, or abstain with a reason if you genuinely cannot classify.",
+	parameters: CLASSIFY_SCHEMA_RETRY,
 };
 
 const VALID_LEVELS = new Set(["full", "partial"]);
@@ -876,7 +902,11 @@ const analyzer: Analyzer = {
 		const meta = unit.meta as unknown as ReplyMeta;
 		const userPrompt = buildClassifyPrompt({ priorAssistantText: meta.priorAssistantText, userText: meta.userText });
 
-		// ── Attempt 1: native structured output, no abstention escape ──
+		// Select structured output mode: native response_format (default) or
+		// forced tool call (fallback for providers without response_format support).
+		const useStructuredOutput = config.structuredOutput;
+
+		// ── Attempt 1: no abstention escape ──
 		const r1 = await ctx.llm({
 			model: resolveModelSpec(config.tier, ctx.modelTiers),
 			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
@@ -884,7 +914,9 @@ const analyzer: Analyzer = {
 			temperature: config.temperature,
 			maxTokens: 1200,
 			reasoning: config.reasoning,
-			responseSchema: CLASSIFY_RESPONSE_SCHEMA,
+			...(useStructuredOutput
+				? { responseSchema: CLASSIFY_RESPONSE_SCHEMA }
+				: { tool: CLASSIFY_TOOL }),
 		});
 
 		const verdict1 = extractVerdict(r1.structured, r1.text, meta.userText);
@@ -903,7 +935,9 @@ const analyzer: Analyzer = {
 			temperature: config.temperature,
 			maxTokens: 1200,
 			reasoning: config.reasoning,
-			responseSchema: CLASSIFY_RESPONSE_SCHEMA_RETRY,
+			...(useStructuredOutput
+				? { responseSchema: CLASSIFY_RESPONSE_SCHEMA_RETRY }
+				: { tool: CLASSIFY_TOOL_RETRY }),
 		});
 
 		// Accumulate cost/tokens/duration across both attempts.
