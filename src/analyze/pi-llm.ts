@@ -111,7 +111,7 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			signal: ctx.signal,
 		});
 
-		return toLLMResponse(message, spec, Date.now() - start);
+		return toLLMResponse(message, spec, Date.now() - start, request.responseSchema !== undefined);
 	};
 }
 
@@ -123,7 +123,7 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
  * JSON, so a parse failure is a provider contract violation, not a soft
  * error we should heal.
  */
-export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, durationMs: number): LLMResponse {
+export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, durationMs: number, parseTextJson = false): LLMResponse {
 	const textParts: string[] = [];
 	const thinkingParts: string[] = [];
 	let structured: Record<string, unknown> | undefined;
@@ -137,10 +137,11 @@ export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, du
 		throw new Error(`LLM error from ${modelSpec}: ${message.errorMessage ?? "unknown error"}`);
 	}
 
-	// When there's no tool call but there IS text, try to parse it as JSON.
-	// This handles the response_format path: the provider returns schema-conforming
-	// JSON as text content, not as a tool call.
-	if (structured === undefined && textParts.length > 0) {
+	// When responseSchema was used, the provider returns JSON as text content.
+	// Parse it into structured — the provider guarantees valid JSON.
+	// Only do this when responseSchema was requested, so other analyzers that
+	// use tool calls or plain text are not affected.
+	if (parseTextJson && structured === undefined && textParts.length > 0) {
 		const raw = textParts.join("\n").trim();
 		if (raw.startsWith("{") || raw.startsWith("[")) {
 			try {
