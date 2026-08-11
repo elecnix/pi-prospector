@@ -166,6 +166,10 @@ export interface PiCompleteOptions {
 	/** Max client-side retries for transient failures (e.g. provider 429s). */
 	maxRetries?: number;
 	signal?: AbortSignal;
+	/** Force the model to call a tool ("required") or none ("none"). */
+	toolChoice?: "auto" | "none" | "required";
+	/** Reasoning effort for models that support it. */
+	reasoning?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 /** The subset of `@earendil-works/pi-ai` we call at runtime. */
