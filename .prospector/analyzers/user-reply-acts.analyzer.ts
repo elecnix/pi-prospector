@@ -284,11 +284,19 @@ Respond ONLY by calling the classify_reply tool. Never answer in prose.`;
 export const CLASSIFY_PROMPT_HASH = shortHash(`prompt(classify_reply:${CLASSIFY_PROMPT})`);
 
 /** Retry prompt: shown only on the second attempt when the first returned no usable verdict. */
-export const RETRY_PROMPT = `Your previous response was not usable — it did not contain a valid classify_reply tool call with the required fields (every act needs a quote that is an exact verbatim substring of the USER reply text).
+export const RETRY_PROMPT = `Your previous response was not usable. There are two common reasons:
+
+1. You returned all-empty arrays with no continuation and no other. Every reply carries at least one signal — a command, a question, an acceptance, a refusal, a status drop, or at minimum a topic shift. Pick the closest class and emit it.
+2. Your quotes were not exact verbatim substrings of the USER reply text. Copy the text character-for-character from the USER reply. Do not paraphrase, do not include text from the ASSISTANT output, do not add or remove whitespace.
 
 Try again. You MUST use the classify_reply tool. Use only the provided classes:
   acceptances, refusals, commands, questions (request/decision/clarify/information), answers,
   information_provisions, continuation, other.
+
+Rules:
+  - Every act MUST include a quote that is an exact verbatim substring of the USER reply text.
+  - Do not set other=true if you have any acts. Do not set continuation=true if you have any acts.
+  - Do not return all-empty arrays with no booleans — that is not a valid classification.
 
 If you genuinely cannot classify the reply into any of these classes — for example the reply is in a language you don't understand, is pure noise, or is a system-generated message that is not a human reply — you may call the classify_reply tool with the classifier_abstention field instead. When you abstain:
   - You MUST provide a reason (why you cannot classify).
@@ -460,6 +468,35 @@ function isSystemInjected(text: string): boolean {
 	if (text.startsWith("<instructions>")) return true;
 	if (text.startsWith("<guidelines>")) return true;
 	if (text.startsWith("<workflow>")) return true;
+	// Diff/patch/git output pasted into chat.
+	if (text.startsWith("=== diff stat ===")) return true;
+	if (text.startsWith("diff --git")) return true;
+	if (/^@@ -\d+,\d+ \+\d+,\d+ @@/.test(text)) return true;
+	// Shell/terminal output pasted as a user message.
+	if (text.startsWith("nicolas@")) return true;
+	if (text.startsWith("Server running at:")) return true;
+	if (text.startsWith("Deploy succeeded")) return true;
+	if (text.startsWith("File created successfully at:")) return true;
+	if (text.startsWith("File updated successfully at:")) return true;
+	// Lint/test/build output blocks.
+	if (text.startsWith("=== LINT ===")) return true;
+	if (text.startsWith("=== FULL TEST ===")) return true;
+	if (text.startsWith("=== install tail ===")) return true;
+	if (text.startsWith("=== PR #")) return true;
+	if (text.startsWith("=== go.work ===")) return true;
+	if (text.startsWith("=== remaining changed")) return true;
+	if (text.startsWith("=== config-api build")) return true;
+	if (text.startsWith("=== next-skills")) return true;
+	// Orchestrator broadcasts injected as user messages.
+	if (text.startsWith("ORCHESTRATOR —")) return true;
+	if (text.startsWith("INCIDENT —")) return true;
+	if (text.startsWith("FLEET RESUMED")) return true;
+	if (text.startsWith("PLAN APPROVED")) return true;
+	if (text.startsWith("RE-RANK")) return true;
+	// File-read directives from orchestrator.
+	if (text.startsWith("Read /tmp/orch/") || (text.startsWith("Read these two files") && text.includes("/tmp/orch/"))) return true;
+	// Subagent task injection blocks.
+	if (text.startsWith("Task: You are a delegated subagent")) return true;
 	// ghpr-monitor notification templates (specific prefixes, not bare emoji).
 	const notifPrefixes = [
 		"💭 ", "❌ ", "✅ ", "📝 ", "🔀 ", "📋 ", "📡 ", "⚠️ ",
@@ -679,7 +716,13 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 function isQuoteValid(quote: string, replyText?: string): boolean {
 	if (quote.length === 0) return false;
 	if (replyText === undefined) return true; // skip substring check when no text provided
-	return replyText.includes(quote);
+	if (replyText.includes(quote)) return true;
+	// Whitespace-normalized fallback: models sometimes collapse or rewrap
+	// whitespace (newlines to spaces, multiple spaces to one). Accept the
+	// quote if it matches after normalizing all whitespace runs to a single
+	// space in both the quote and the reply text.
+	const norm = (s: string): string => s.replace(/\s+/g, " ").trim();
+	return norm(replyText).includes(norm(quote));
 }
 
 /** Accept JSON in the text channel too, for providers that answer that way. */

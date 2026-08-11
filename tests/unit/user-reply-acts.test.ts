@@ -181,6 +181,37 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 		assert.ok(v);
 		assert.equal(v!.continuation, true);
 	});
+
+	it("accepts whitespace-normalized quotes (model collapsed newlines to spaces)", () => {
+		const replyText = "The go command periodically deletes cached data that has not been\nused recently.";
+		const v = parseReply({
+			acceptances: [],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [{ quote: "The go command periodically deletes cached data that has not been used recently.", rationale: "info" }],
+			continuation: false,
+			other: false,
+		}, replyText);
+		assert.ok(v, "should parse with whitespace-normalized quote");
+		assert.equal(v!.information_provisions.length, 1);
+	});
+
+	it("rejects quotes that are not substrings even after normalization", () => {
+		const replyText = "I want option A";
+		const v = parseReply({
+			acceptances: [{ level: "full", quote: "I want option B", rationale: "wrong" }],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [],
+			continuation: false,
+			other: false,
+		}, replyText);
+		assert.equal(v, null, "should reject non-substring quote");
+	});
 });
 
 describe("user-reply-acts: prompt + tool shape", () => {
