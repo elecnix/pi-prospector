@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
-import { getAllSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
+import { getAllSessions, getRecentSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
 import { getAnalyzerConfigOverrides, getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, loadConfig } from "../config.js";
 import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerAll } from "../analyze/defaults.js";
@@ -35,6 +35,8 @@ interface AnalyzeArgs {
 	/** Plain-fill every session, not just the not-yet-analysed ones. */
 	all?: boolean;
 	limit?: number;
+	/** Get the N most-recent sessions (by started_at DESC). */
+	recent?: number;
 	session?: string;
 	analyzer?: string;
 	model?: string;
@@ -69,6 +71,8 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		// cheap, and only the genuinely missing units are computed.
 		const sessions = args.session
 			? [{ id: args.session, file_path: "", started_at: "" }]
+			: args.recent
+				? getRecentSessions(db, args.recent)
 			: reviseActive || args.all
 				? getAllSessions(db, args.limit)
 				: getUnanalyzedSessions(db, args.limit);
@@ -270,7 +274,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --limit N, --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		handler: prospectAnalyze,
 	});
 }
@@ -306,6 +310,9 @@ function parseArgs(raw: string): AnalyzeArgs {
 		} else if (p === "--limit" && parts[i + 1]) {
 			const n = parseInt(parts[++i]!, 10);
 			if (!Number.isNaN(n)) result.limit = n;
+		} else if (p === "--recent" && parts[i + 1]) {
+			const n = parseInt(parts[++i]!, 10);
+			if (!Number.isNaN(n) && n > 0) result.recent = n;
 		} else if (p === "--all") result.all = true;
 		else if (p === "--session" && parts[i + 1]) result.session = parts[++i];
 		else if (p === "--analyzer" && parts[i + 1]) result.analyzer = parts[++i];

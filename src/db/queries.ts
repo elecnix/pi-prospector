@@ -82,6 +82,11 @@ export function getAllSessions(db: Database.Database, limit?: number): Array<{ i
 	return (limit ? prep(db, sql).all(limit) : prep(db, sql).all()) as Array<{ id: string; file_path: string; started_at: string }>;
 }
 
+/** Get the N most-recent sessions by started_at, useful for pilots. */
+export function getRecentSessions(db: Database.Database, limit: number): Array<{ id: string; file_path: string; started_at: string }> {
+	return prep(db, "SELECT id, file_path, started_at FROM sessions ORDER BY started_at DESC LIMIT ?").all(limit) as Array<{ id: string; file_path: string; started_at: string }>;
+}
+
 export interface SessionLabel {
 	id: string;
 	project: string;
