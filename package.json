@@ -1,6 +1,6 @@
 {
   "name": "pi-prospector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Incremental session indexing and proposal generation for the Pi coding agent",
   "type": "module",
   "main": "src/index.ts",
