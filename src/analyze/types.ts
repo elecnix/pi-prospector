@@ -269,12 +269,36 @@ export const LLMRequest = Type.Object({
 	 * offers this single tool to the model and returns its parsed call arguments
 	 * in `LLMResponse.structured`. `parameters` is a TypeBox schema (TSchema).
 	 * Far more reliable than "return only JSON" for reasoning models.
+	 *
+	 * Mutually exclusive with `responseSchema`.
 	 */
 	tool: Type.Optional(
 		Type.Object({
 			name: Type.String(),
 			description: Type.String(),
 			parameters: Type.Unknown(),
+		}),
+	),
+	/**
+	 * Request provider-enforced structured output via `response_format`.
+	 * When set, the provider guarantees the response is valid JSON conforming
+	 * to `schema` — the model cannot skip it, return empty text, or produce
+	 * malformed JSON. The parsed object is returned in `LLMResponse.structured`.
+	 *
+	 * `schema` must be a strict-compatible JSON Schema: every property required,
+	 * `additionalProperties: false` at every object level. The caller is
+	 * responsible for this; the framework does not rewrite the schema.
+	 *
+	 * For OpenRouter, `require_parameters: true` is sent in provider routing
+	 * so only endpoints that support structured outputs are selected.
+	 *
+	 * Mutually exclusive with `tool`.
+	 */
+	responseSchema: Type.Optional(
+		Type.Object({
+			name: Type.String(),
+			schema: Type.Unknown(),
+			strict: Type.Optional(Type.Boolean()),
 		}),
 	),
 });

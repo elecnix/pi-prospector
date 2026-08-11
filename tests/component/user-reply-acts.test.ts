@@ -30,7 +30,7 @@ const ANALYZER_DIR = path.resolve(__dirname, "..", "..", ".prospector", "analyze
 
 /** Scripted mock keyed on the USER (reply) text. */
 function responder(req: LLMRequest): MockLLMReply {
-	if (req.tool?.name !== "classify_reply") return { text: "{}" };
+	if (req.tool?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply_retry") return { text: "{}" };
 	const replyText = extractReplyText(req.user);
 	const base = { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], continuation: false, other: false };
 
@@ -269,7 +269,7 @@ describe("user-reply-acts agentic retry", () => {
 			const mock = createMockLLM({
 				responder: (req: LLMRequest): MockLLMReply => {
 					callCount++;
-					if (req.tool?.name === "classify_reply") {
+					if (req.tool?.name === "classify_reply" || req.responseSchema?.name === "classify_reply" || req.responseSchema?.name === "classify_reply_retry") {
 						// First call uses CLASSIFY_TOOL (no abstention). Second uses CLASSIFY_TOOL_RETRY.
 						// Distinguish by the system prompt: retry uses RETRY_PROMPT.
 						const isRetry = req.system?.includes("classifier_abstention") ?? false;
@@ -337,7 +337,7 @@ describe("user-reply-acts agentic retry", () => {
 			const mock = createMockLLM({
 				responder: (req: LLMRequest): MockLLMReply => {
 					callCount++;
-					if (req.tool?.name !== "classify_reply") return { text: "{}" };
+					if (req.tool?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply_retry") return { text: "{}" };
 					const isRetry = req.system?.includes("classifier_abstention") ?? false;
 					if (!isRetry) {
 						// First attempt: garbage.
@@ -393,7 +393,7 @@ describe("user-reply-acts agentic retry", () => {
 			const mock = createMockLLM({
 				responder: (req: LLMRequest): MockLLMReply => {
 					callCount++;
-					if (req.tool?.name !== "classify_reply") return { text: "{}" };
+					if (req.tool?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply_retry") return { text: "{}" };
 					return {
 						text: "ok",
 						structured: {

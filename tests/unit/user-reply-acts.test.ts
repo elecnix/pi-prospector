@@ -11,8 +11,10 @@ import {
 	parseReply,
 	parseAbstention,
 	CLASSIFY_PROMPT,
-	CLASSIFY_TOOL,
-	CLASSIFY_TOOL_RETRY,
+	CLASSIFY_SCHEMA,
+	CLASSIFY_SCHEMA_RETRY,
+	CLASSIFY_RESPONSE_SCHEMA,
+	CLASSIFY_RESPONSE_SCHEMA_RETRY,
 	RETRY_PROMPT,
 	type UserReplyActsProperties,
 } from "../../.prospector/analyzers/user-reply-acts.analyzer.js";
@@ -183,7 +185,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 	});
 });
 
-describe("user-reply-acts: prompt + tool shape", () => {
+describe("user-reply-acts: prompt + schema shape", () => {
 	it("the shipped prompt requires quotes, steers away from other, and covers all purposes", () => {
 		assert.ok(CLASSIFY_PROMPT.includes("ASSISTANT (previous)"));
 		assert.ok(CLASSIFY_PROMPT.includes("acceptances"));
@@ -192,7 +194,7 @@ describe("user-reply-acts: prompt + tool shape", () => {
 		assert.ok(CLASSIFY_PROMPT.includes("decision"));
 		assert.ok(CLASSIFY_PROMPT.includes("information"));
 		assert.ok(CLASSIFY_PROMPT.includes("NOT mutually exclusive"));
-		assert.ok(CLASSIFY_PROMPT.includes("classify_reply tool"));
+		assert.ok(CLASSIFY_PROMPT.includes("classify_reply"), "prompt mentions classify_reply");
 		// quote requirement
 		assert.ok(CLASSIFY_PROMPT.includes("quote"), "prompt requires quotes");
 		assert.ok(CLASSIFY_PROMPT.includes("exact substring"), "prompt says exact substring");
@@ -202,34 +204,37 @@ describe("user-reply-acts: prompt + tool shape", () => {
 		assert.ok(CLASSIFY_PROMPT.includes("correction"), "prompt mentions corrections as refusals");
 	});
 
-	it("the tool schema requires a quote on every act and enumerates levels/purposes", () => {
-		const params = CLASSIFY_TOOL.parameters as unknown as {
+	it("the response schema requires a quote on every act and enumerates levels/purposes", () => {
+		const schema = CLASSIFY_SCHEMA as unknown as {
 			properties: {
 				acceptances: { items: { properties: { level: { anyOf: Array<{ const: string }> }; quote: unknown } } };
 				refusals: { items: { properties: { level: { anyOf: Array<{ const: string }> }; quote: unknown } } };
 				questions: { items: { properties: { purpose: { anyOf: Array<{ const: string }> }; quote: unknown } } };
 				answers: { items: { properties: { quote: unknown } } };
 			};
+			additionalProperties: false;
 		};
 		// quote is present on every act
-		assert.ok(params.properties.acceptances.items.properties.quote, "acceptances have quote");
-		assert.ok(params.properties.refusals.items.properties.quote, "refusals have quote");
-		assert.ok(params.properties.questions.items.properties.quote, "questions have quote");
-		assert.ok(params.properties.answers.items.properties.quote, "answers have quote");
+		assert.ok(schema.properties.acceptances.items.properties.quote, "acceptances have quote");
+		assert.ok(schema.properties.refusals.items.properties.quote, "refusals have quote");
+		assert.ok(schema.properties.questions.items.properties.quote, "questions have quote");
+		assert.ok(schema.properties.answers.items.properties.quote, "answers have quote");
 		// levels and purposes
-		const levels = params.properties.acceptances.items.properties.level.anyOf.map((x) => x.const);
-		const purposes = params.properties.questions.items.properties.purpose.anyOf.map((x) => x.const);
+		const levels = schema.properties.acceptances.items.properties.level.anyOf.map((x) => x.const);
+		const purposes = schema.properties.questions.items.properties.purpose.anyOf.map((x) => x.const);
 		assert.deepEqual([...levels].sort(), ["full", "partial"]);
 		assert.deepEqual([...purposes].sort(), ["clarify", "decision", "information", "request"]);
+		// strict mode: additionalProperties: false
+		assert.equal(schema.additionalProperties, false, "schema has additionalProperties: false for strict mode");
 	});
 });
 
-describe("user-reply-acts: retry tool + abstention", () => {
-	it("the retry tool includes classifier_abstention but the primary tool does not", () => {
-		const retryParams = CLASSIFY_TOOL_RETRY.parameters as unknown as { properties: { classifier_abstention?: unknown } };
-		const primaryParams = CLASSIFY_TOOL.parameters as unknown as { properties: { classifier_abstention?: unknown } };
-		assert.ok(retryParams.properties.classifier_abstention, "retry tool has abstention");
-		assert.ok(!primaryParams.properties.classifier_abstention, "primary tool has no abstention");
+describe("user-reply-acts: retry schema + abstention", () => {
+	it("the retry schema includes classifier_abstention but the primary schema does not", () => {
+		const retrySchema = CLASSIFY_SCHEMA_RETRY as unknown as { properties: { classifier_abstention?: unknown } };
+		const primarySchema = CLASSIFY_SCHEMA as unknown as { properties: { classifier_abstention?: unknown } };
+		assert.ok(retrySchema.properties.classifier_abstention, "retry schema has abstention");
+		assert.ok(!primarySchema.properties.classifier_abstention, "primary schema has no abstention");
 	});
 
 	it("the retry prompt mentions abstention, reason, and proposed_class", () => {

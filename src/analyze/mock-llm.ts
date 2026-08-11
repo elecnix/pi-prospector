@@ -73,7 +73,7 @@ export function createMockLLM(options: MockLLMOptions = {}): MockLLM {
 		return {
 			text: response.text ?? "",
 			thinking: response.thinking,
-			structured: request.tool ? response.structured : undefined,
+			structured: (request.tool || request.responseSchema) ? response.structured : undefined,
 			model: response.model ?? request.model,
 			costUsd: response.costUsd ?? options.costPerCall ?? 0,
 			tokensUsed: response.tokensUsed ?? options.tokensPerCall ?? 0,

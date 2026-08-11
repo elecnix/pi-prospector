@@ -170,6 +170,8 @@ export interface PiCompleteOptions {
 	toolChoice?: "auto" | "none" | "required";
 	/** Reasoning effort for models that support it. */
 	reasoning?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	/** Arbitrary sampling parameters merged into the request body (provider-specific). */
+	samplingParams?: Record<string, unknown>;
 }
 
 /** The subset of `@earendil-works/pi-ai` we call at runtime. */
