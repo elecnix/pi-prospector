@@ -77,6 +77,11 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			headers: auth.headers,
 			temperature: request.temperature,
 			maxTokens: request.maxTokens,
+			// Force the model to call the provided tool. Without this, models like
+			// ling-2.6-flash may skip the tool call and return empty text, which
+			// surfaces as "no usable verdict" errors. See issue #98.
+			toolChoice: request.tool ? "required" : undefined,
+			reasoning: request.reasoning,
 			// Retries are owned one layer up, in the analyze overlay (see
 			// callWithRetry in concurrency.ts). Disabling the broker's internal retry
 			// means a throttled call surfaces here as a status-bearing error we can
