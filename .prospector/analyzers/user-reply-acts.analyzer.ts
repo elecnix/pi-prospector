@@ -809,6 +809,49 @@ function buildResult(
 	};
 }
 
+/** Diagnose why both attempts failed, for a precise error message. */
+function diagnoseFailure(r1: { structured?: unknown; text?: string }, r2: { structured?: unknown; text?: string }, replyText: string): string {
+	const s1 = r1.structured;
+	const s2 = r2.structured;
+	if (!s1 && !s2) return 'Both attempts returned no structured output (likely transport errors or the model returned plain text).';
+
+	function describe(raw: unknown): string {
+		if (!raw || typeof raw !== 'object') return 'no structured output';
+		const o = raw as Record<string, unknown>;
+		const acc = Array.isArray(o['acceptances']) ? o['acceptances'].length : 0;
+		const ref = Array.isArray(o['refusals']) ? o['refusals'].length : 0;
+		const q = Array.isArray(o['questions']) ? o['questions'].length : 0;
+		const ans = Array.isArray(o['answers']) ? o['answers'].length : 0;
+		const cmd = Array.isArray(o['commands']) ? o['commands'].length : 0;
+		const info = Array.isArray(o['information_provisions']) ? o['information_provisions'].length : 0;
+		const cont = Boolean(o['continuation']);
+		const other = Boolean(o['other']);
+		const hasActs = acc + ref + q + ans + cmd + info > 0;
+		if (!hasActs && !cont && !other) return 'empty verdict (all arrays empty, no booleans)';
+		if (other && hasActs) return `contradiction: other=true with ${acc + ref + q + ans + cmd + info} acts present`;
+		if (cont && hasActs) return `contradiction: continuation=true with ${acc + ref + q + ans + cmd + info} acts present`;
+		// Check quote validity
+		const allActs = [
+			...Array.isArray(o['acceptances']) ? o['acceptances'] : [],
+			...Array.isArray(o['refusals']) ? o['refusals'] : [],
+			...Array.isArray(o['questions']) ? o['questions'] : [],
+			...Array.isArray(o['answers']) ? o['answers'] : [],
+			...Array.isArray(o['commands']) ? o['commands'] : [],
+			...Array.isArray(o['information_provisions']) ? o['information_provisions'] : [],
+		];
+		const badQuotes: string[] = [];
+		for (let i = 0; i < allActs.length; i++) {
+			const q = (allActs[i] as Record<string, unknown>)?.['quote'];
+			if (typeof q !== 'string' || q.length === 0) badQuotes.push(`act[${i}]: missing/empty quote`);
+			else if (!replyText.includes(q)) badQuotes.push(`act[${i}]: quote not substring of reply`);
+		}
+		if (badQuotes.length > 0) return `quote validation: ${badQuotes.join('; ')}`;
+		return 'unknown validation failure';
+	}
+
+	return `Attempt 1: ${describe(s1)}. Attempt 2: ${describe(s2)}.`;
+}
+
 const analyzer: Analyzer = {
 	def: {
 		id: "user-reply-acts",
@@ -915,7 +958,7 @@ const analyzer: Analyzer = {
 			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
 			user: userPrompt,
 			temperature: config.temperature,
-			maxTokens: 1200,
+			maxTokens: 2400,
 			reasoning: config.reasoning,
 			...(useStructuredOutput
 				? { responseSchema: CLASSIFY_RESPONSE_SCHEMA }
@@ -936,7 +979,7 @@ const analyzer: Analyzer = {
 			system: ctx.prompts["retry"] ?? RETRY_PROMPT,
 			user: userPrompt,
 			temperature: config.temperature,
-			maxTokens: 1200,
+			maxTokens: 2400,
 			reasoning: config.reasoning,
 			...(useStructuredOutput
 				? { responseSchema: CLASSIFY_RESPONSE_SCHEMA_RETRY }
@@ -990,10 +1033,10 @@ const analyzer: Analyzer = {
 			return buildResult(unit, meta, verdict2, 2, { ...r2, costUsd: totalCost, tokensUsed: totalTokens, durationMs: totalDuration, model: modelUsed }, ctx);
 		}
 
-		// Both attempts failed. Record the error.
+		// Both attempts failed. Record the error with a precise reason.
+		const reason = diagnoseFailure(r1, r2, meta.userText);
 		throw new Error(
-			`Model '${modelUsed}' returned no usable classify_reply verdict after 2 attempts for user message '${unit.anchorRef}'. ` +
-			`The model either cannot do structured output or could not classify this reply.`,
+			`Model '${modelUsed}' returned no usable classify_reply verdict after 2 attempts for user message '${unit.anchorRef}'. ${reason}`,
 		);
 	},
 };
