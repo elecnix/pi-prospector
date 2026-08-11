@@ -284,144 +284,123 @@ Respond ONLY by calling the classify_reply tool. Never answer in prose.`;
 export const CLASSIFY_PROMPT_HASH = shortHash(`prompt(classify_reply:${CLASSIFY_PROMPT})`);
 
 /** Retry prompt: shown only on the second attempt when the first returned no usable verdict. */
-export const RETRY_PROMPT = `Your previous response was not usable — it did not contain a valid classify_reply tool call with the required fields (every act needs a quote that is an exact verbatim substring of the USER reply text).
+export const RETRY_PROMPT = `Your previous response was not usable — the JSON did not contain a valid classification (every act needs a quote that is an exact verbatim substring of the USER reply text).
 
-Try again. You MUST use the classify_reply tool. Use only the provided classes:
+Try again. Use only the provided classes:
   acceptances, refusals, commands, questions (request/decision/clarify/information), answers,
   information_provisions, continuation, other.
 
-If you genuinely cannot classify the reply into any of these classes — for example the reply is in a language you don't understand, is pure noise, or is a system-generated message that is not a human reply — you may call the classify_reply tool with the classifier_abstention field instead. When you abstain:
+If you genuinely cannot classify the reply into any of these classes — for example the reply is in a language you don't understand, is pure noise, or is a system-generated message that is not a human reply — set the classifier_abstention field with a reason and proposed class. When you abstain:
   - You MUST provide a reason (why you cannot classify).
   - You MUST propose the closest class (one of: acceptance, refusal, command, question, information_provision, continuation, other).
 Abstaining is a last resort. Only use it when you truly cannot classify — not when the reply is merely hard or ambiguous. When in doubt, pick the closest class and emit it.`;
 
 export const RETRY_PROMPT_HASH = shortHash(`prompt(classify_reply_retry:${RETRY_PROMPT})`);
 
-/** Forced-tool-call schema for the classify phase (reliable structured output). */
-export const CLASSIFY_TOOL = {
+/**
+ * Strict-compatible JSON Schema for the classify phase (native structured output).
+ *
+ * Every object has `additionalProperties: false` and all properties are required,
+ * as required by OpenAI/OpenRouter strict mode. The provider enforces this schema
+ * server-side — the model cannot skip it, return empty text, or produce malformed JSON.
+ */
+const actObject = (props: Record<string, unknown>) =>
+	Type.Object(props, { additionalProperties: false });
+
+export const CLASSIFY_SCHEMA = Type.Object({
+	acceptances: Type.Array(actObject({
+		level: Type.Union([Type.Literal("full"), Type.Literal("partial")]),
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that shows the acceptance." }),
+		rationale: Type.String({ description: "One short sentence: what is being accepted." }),
+	})),
+	refusals: Type.Array(actObject({
+		level: Type.Union([Type.Literal("full"), Type.Literal("partial")]),
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that shows the refusal or correction." }),
+		rationale: Type.String({ description: "One short sentence: what is being refused or corrected." }),
+	})),
+	questions: Type.Array(actObject({
+		purpose: Type.Union([Type.Literal("request"), Type.Literal("decision"), Type.Literal("clarify"), Type.Literal("information")]),
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the question." }),
+		rationale: Type.String({ description: "One short sentence justifying this question and its purpose." }),
+	})),
+	answers: Type.Array(actObject({
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the answer." }),
+		rationale: Type.String({ description: "One short sentence: which assistant question this answers." }),
+	})),
+	commands: Type.Array(actObject({
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the command." }),
+		rationale: Type.String({ description: "One short sentence: what is being commanded." }),
+	})),
+	information_provisions: Type.Array(actObject({
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the information being provided." }),
+		rationale: Type.String({ description: "One short sentence: what information is being provided." }),
+	})),
+	continuation: Type.Boolean(),
+	other: Type.Boolean(),
+}, { additionalProperties: false });
+
+/** Response schema name for the classify phase. */
+export const CLASSIFY_RESPONSE_SCHEMA = {
 	name: "classify_reply",
-	description: "Submit the multi-act classification of a user reply to the assistant's preceding output.",
-	parameters: Type.Object({
-		acceptances: Type.Array(
-			Type.Object({
-				level: Type.Union([Type.Literal("full"), Type.Literal("partial")]),
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that shows the acceptance." }),
-				rationale: Type.String({ description: "One short sentence: what is being accepted." }),
-			}),
-		),
-		refusals: Type.Array(
-			Type.Object({
-				level: Type.Union([Type.Literal("full"), Type.Literal("partial")]),
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that shows the refusal or correction." }),
-				rationale: Type.String({ description: "One short sentence: what is being refused or corrected." }),
-			}),
-		),
-		questions: Type.Array(
-			Type.Object({
-				purpose: Type.Union([
-					Type.Literal("request"),
-					Type.Literal("decision"),
-					Type.Literal("clarify"),
-					Type.Literal("information"),
-				]),
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the question." }),
-				rationale: Type.String({ description: "One short sentence justifying this question and its purpose." }),
-			}),
-		),
-		answers: Type.Array(
-			Type.Object({
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the answer." }),
-				rationale: Type.String({ description: "One short sentence: which assistant question this answers." }),
-			}),
-		),
-		commands: Type.Array(
-			Type.Object({
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the command." }),
-				rationale: Type.String({ description: "One short sentence: what is being commanded." }),
-			}),
-		),
-		information_provisions: Type.Array(
-			Type.Object({
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the information being provided." }),
-				rationale: Type.String({ description: "One short sentence: what information is being provided." }),
-			}),
-		),
-		continuation: Type.Boolean(),
-		other: Type.Boolean(),
-	}),
+	schema: CLASSIFY_SCHEMA,
+	strict: true as const,
 };
 
 /**
- * Retry tool: same schema as CLASSIFY_TOOL plus an optional classifier_abstention.
+ * Retry schema: same as CLASSIFY_SCHEMA plus an optional classifier_abstention.
  * The abstention is only offered on the second attempt, so the model doesn't
  * see it as an easy escape on the first pass. When abstaining, the model must
  * give a reason and propose the closest class.
  */
-export const CLASSIFY_TOOL_RETRY = {
-	name: "classify_reply",
-	description: "Submit the multi-act classification of a user reply, or abstain with a reason if you genuinely cannot classify.",
-	parameters: Type.Object({
-		acceptances: Type.Array(
-			Type.Object({
-				level: Type.Union([Type.Literal("full"), Type.Literal("partial")]),
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that shows the acceptance." }),
-				rationale: Type.String({ description: "One short sentence: what is being accepted." }),
-			}),
-		),
-		refusals: Type.Array(
-			Type.Object({
-				level: Type.Union([Type.Literal("full"), Type.Literal("partial")]),
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that shows the refusal or correction." }),
-				rationale: Type.String({ description: "One short sentence: what is being refused or corrected." }),
-			}),
-		),
-		questions: Type.Array(
-			Type.Object({
-				purpose: Type.Union([
-					Type.Literal("request"),
-					Type.Literal("decision"),
-					Type.Literal("clarify"),
-					Type.Literal("information"),
-				]),
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the question." }),
-				rationale: Type.String({ description: "One short sentence justifying this question and its purpose." }),
-			}),
-		),
-		answers: Type.Array(
-			Type.Object({
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the answer." }),
-				rationale: Type.String({ description: "One short sentence: which assistant question this answers." }),
-			}),
-		),
-		commands: Type.Array(
-			Type.Object({
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the command." }),
-				rationale: Type.String({ description: "One short sentence: what is being commanded." }),
-			}),
-		),
-		information_provisions: Type.Array(
-			Type.Object({
-				quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the information being provided." }),
-				rationale: Type.String({ description: "One short sentence: what information is being provided." }),
-			}),
-		),
-		continuation: Type.Boolean(),
-		other: Type.Boolean(),
-		classifier_abstention: Type.Optional(
-			Type.Object({
-				reason: Type.String({ description: "Why you cannot classify this reply into the provided classes." }),
-				proposed_class: Type.Union([
-					Type.Literal("acceptance"),
-					Type.Literal("refusal"),
-					Type.Literal("command"),
-					Type.Literal("question"),
-					Type.Literal("information_provision"),
-					Type.Literal("continuation"),
-					Type.Literal("other"),
-				]),
-			}),
-		),
-	}),
+export const CLASSIFY_SCHEMA_RETRY = Type.Object({
+	acceptances: Type.Array(actObject({
+		level: Type.Union([Type.Literal("full"), Type.Literal("partial")]),
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that shows the acceptance." }),
+		rationale: Type.String({ description: "One short sentence: what is being accepted." }),
+	})),
+	refusals: Type.Array(actObject({
+		level: Type.Union([Type.Literal("full"), Type.Literal("partial")]),
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that shows the refusal or correction." }),
+		rationale: Type.String({ description: "One short sentence: what is being refused or corrected." }),
+	})),
+	questions: Type.Array(actObject({
+		purpose: Type.Union([Type.Literal("request"), Type.Literal("decision"), Type.Literal("clarify"), Type.Literal("information")]),
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the question." }),
+		rationale: Type.String({ description: "One short sentence justifying this question and its purpose." }),
+	})),
+	answers: Type.Array(actObject({
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the answer." }),
+		rationale: Type.String({ description: "One short sentence: which assistant question this answers." }),
+	})),
+	commands: Type.Array(actObject({
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the command." }),
+		rationale: Type.String({ description: "One short sentence: what is being commanded." }),
+	})),
+	information_provisions: Type.Array(actObject({
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text that contains the information being provided." }),
+		rationale: Type.String({ description: "One short sentence: what information is being provided." }),
+	})),
+	continuation: Type.Boolean(),
+	other: Type.Boolean(),
+	classifier_abstention: Type.Optional(actObject({
+		reason: Type.String({ description: "Why you cannot classify this reply into the provided classes." }),
+		proposed_class: Type.Union([
+			Type.Literal("acceptance"),
+			Type.Literal("refusal"),
+			Type.Literal("command"),
+			Type.Literal("question"),
+			Type.Literal("information_provision"),
+			Type.Literal("continuation"),
+			Type.Literal("other"),
+		]),
+	})),
+}, { additionalProperties: false });
+
+/** Response schema for the retry phase. */
+export const CLASSIFY_RESPONSE_SCHEMA_RETRY = {
+	name: "classify_reply_retry",
+	schema: CLASSIFY_SCHEMA_RETRY,
+	strict: true as const,
 };
 
 const VALID_LEVELS = new Set(["full", "partial"]);
@@ -897,15 +876,15 @@ const analyzer: Analyzer = {
 		const meta = unit.meta as unknown as ReplyMeta;
 		const userPrompt = buildClassifyPrompt({ priorAssistantText: meta.priorAssistantText, userText: meta.userText });
 
-		// ── Attempt 1: the primary tool, no abstention escape ──
+		// ── Attempt 1: native structured output, no abstention escape ──
 		const r1 = await ctx.llm({
 			model: resolveModelSpec(config.tier, ctx.modelTiers),
 			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
 			user: userPrompt,
 			temperature: config.temperature,
-			maxTokens: 600,
+			maxTokens: 1200,
 			reasoning: config.reasoning,
-			tool: CLASSIFY_TOOL,
+			responseSchema: CLASSIFY_RESPONSE_SCHEMA,
 		});
 
 		const verdict1 = extractVerdict(r1.structured, r1.text, meta.userText);
@@ -914,7 +893,7 @@ const analyzer: Analyzer = {
 		}
 
 		// ── Attempt 2: agentic retry with the abstention escape ──
-		// The retry tool is the same schema plus classifier_abstention, so the
+		// The retry schema is the same plus classifier_abstention, so the
 		// model can refuse to classify — but only after failing the first pass,
 		// and only with a reason and a proposed closest class.
 		const r2 = await ctx.llm({
@@ -922,9 +901,9 @@ const analyzer: Analyzer = {
 			system: ctx.prompts["retry"] ?? RETRY_PROMPT,
 			user: userPrompt,
 			temperature: config.temperature,
-			maxTokens: 600,
+			maxTokens: 1200,
 			reasoning: config.reasoning,
-			tool: CLASSIFY_TOOL_RETRY,
+			responseSchema: CLASSIFY_RESPONSE_SCHEMA_RETRY,
 		});
 
 		// Accumulate cost/tokens/duration across both attempts.

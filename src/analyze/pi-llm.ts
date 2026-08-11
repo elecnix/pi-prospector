@@ -72,6 +72,22 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			];
 		}
 
+		// When responseSchema is set, forward it to pi-ai via samplingParams so the
+		// provider enforces the schema natively (OpenRouter response_format with
+		// strict: true). This is more reliable than tool-calling for structured
+		// output: the provider guarantees valid JSON, the model cannot skip it.
+		const samplingParams: Record<string, unknown> = {};
+		if (request.responseSchema) {
+			samplingParams.response_format = {
+				type: "json_schema",
+				json_schema: {
+					name: request.responseSchema.name,
+					strict: request.responseSchema.strict ?? true,
+					schema: request.responseSchema.schema,
+				},
+			};
+		}
+
 		const message = await piAi.complete(model, context, {
 			apiKey: auth.apiKey,
 			headers: auth.headers,
@@ -82,6 +98,7 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			// surfaces as "no usable verdict" errors. See issue #98.
 			toolChoice: request.tool ? "required" : undefined,
 			reasoning: request.reasoning,
+			samplingParams: Object.keys(samplingParams).length > 0 ? samplingParams : undefined,
 			// Retries are owned one layer up, in the analyze overlay (see
 			// callWithRetry in concurrency.ts). Disabling the broker's internal retry
 			// means a throttled call surfaces here as a status-bearing error we can
@@ -98,7 +115,14 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 	};
 }
 
-/** Flatten a pi-ai AssistantMessage into the framework's LLMResponse. */
+/** Flatten a pi-ai AssistantMessage into the framework's LLMResponse.
+ *
+ * When the response is a tool call, the parsed arguments become `structured`.
+ * When the response is text (native structured output via response_format),
+ * the text is JSON.parse'd into `structured` — the provider guarantees valid
+ * JSON, so a parse failure is a provider contract violation, not a soft
+ * error we should heal.
+ */
 export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, durationMs: number): LLMResponse {
 	const textParts: string[] = [];
 	const thinkingParts: string[] = [];
@@ -113,7 +137,20 @@ export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, du
 		throw new Error(`LLM error from ${modelSpec}: ${message.errorMessage ?? "unknown error"}`);
 	}
 
-
+	// When there's no tool call but there IS text, try to parse it as JSON.
+	// This handles the response_format path: the provider returns schema-conforming
+	// JSON as text content, not as a tool call.
+	if (structured === undefined && textParts.length > 0) {
+		const raw = textParts.join("\n").trim();
+		if (raw.startsWith("{") || raw.startsWith("[")) {
+			try {
+				structured = JSON.parse(raw) as Record<string, unknown>;
+			} catch {
+				// Not valid JSON — leave structured undefined. The caller will
+				// see text but no structured data and can decide what to do.
+			}
+		}
+	}
 
 	// Every call this caller makes expects a complete structured (JSON) answer, so
 	// a response cut off at the output limit is never usable. Fail fast with an
