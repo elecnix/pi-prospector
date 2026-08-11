@@ -392,18 +392,21 @@ export const CLASSIFY_SCHEMA_RETRY = Type.Object({
 	})),
 	continuation: Type.Boolean(),
 	other: Type.Boolean(),
-	classifier_abstention: Type.Optional(actObject({
-		reason: Type.String({ description: "Why you cannot classify this reply into the provided classes." }),
-		proposed_class: Type.Union([
-			Type.Literal("acceptance"),
-			Type.Literal("refusal"),
-			Type.Literal("command"),
-			Type.Literal("question"),
-			Type.Literal("information_provision"),
-			Type.Literal("continuation"),
-			Type.Literal("other"),
-		]),
-	})),
+	classifier_abstention: Type.Union([
+		actObject({
+			reason: Type.String({ description: "Why you cannot classify this reply into the provided classes." }),
+			proposed_class: Type.Union([
+				Type.Literal("acceptance"),
+				Type.Literal("refusal"),
+				Type.Literal("command"),
+				Type.Literal("question"),
+				Type.Literal("information_provision"),
+				Type.Literal("continuation"),
+				Type.Literal("other"),
+			]),
+		}),
+		Type.Null(),
+	]),
 }, { additionalProperties: false });
 
 /** Response schema for the retry phase. */

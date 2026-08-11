@@ -94,6 +94,29 @@ describe("toLLMResponse", () => {
 		});
 		assert.throws(() => toLLMResponse(msg, "google/gemini-2.5-flash", 0), /truncated at the output limit \(500 output tokens\)/);
 	});
+
+	it("parses text as JSON only when parseTextJson is true (responseSchema path)", () => {
+		const msg = assistantMessage({
+			content: [{ type: "text", text: '{"class":"acceptance","quote":"ok"}' }],
+		});
+		// Without parseTextJson: text stays as text, structured is undefined
+		const r1 = toLLMResponse(msg, "anthropic/m", 0);
+		assert.equal(r1.structured, undefined, "no structured without parseTextJson");
+		assert.ok(r1.text.includes("acceptance"), "text preserved");
+
+		// With parseTextJson: text is parsed into structured
+		const r2 = toLLMResponse(msg, "anthropic/m", 0, true);
+		assert.deepEqual(r2.structured, { class: "acceptance", quote: "ok" }, "text parsed as JSON");
+	});
+
+	it("does not parse non-JSON text even with parseTextJson", () => {
+		const msg = assistantMessage({
+			content: [{ type: "text", text: "I cannot classify this" }],
+		});
+		const r = toLLMResponse(msg, "anthropic/m", 0, true);
+		assert.equal(r.structured, undefined, "non-JSON text not parsed");
+		assert.equal(r.text, "I cannot classify this");
+	});
 });
 
 describe("makePiLLMCaller", () => {
