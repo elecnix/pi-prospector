@@ -182,4 +182,35 @@ describe("schema migration", () => {
 			db.close();
 		}
 	});
+
+	it("adds usage column to a pre-existing messages table, leaving history as null", () => {
+		// Simulate a DB created before the usage column was introduced.
+		// migrate must add it in place; existing rows keep NULL until a
+		// full re-sync rebuilds the index from transcripts.
+		const db = new Database(":memory:");
+		try {
+			db.exec(`CREATE TABLE messages (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				parent_id TEXT,
+				timestamp TEXT,
+				role TEXT NOT NULL,
+				content_text TEXT,
+				content_thinking TEXT,
+				tool_calls TEXT,
+				tool_results TEXT,
+				content_hash TEXT
+			)`);
+			db.prepare(
+				"INSERT INTO messages (id, session_id, role) VALUES ('old1', 's', 'assistant')",
+			).run();
+			migrate(db);
+			const cols = tableColumns(db, "messages");
+			assert.ok(cols.has("usage"), "messages missing usage column after migration");
+			const row = db.prepare("SELECT usage FROM messages WHERE id = 'old1'").get() as { usage: string | null };
+			assert.equal(row.usage, null, "existing rows should keep null usage");
+		} finally {
+			db.close();
+		}
+	});
 });
