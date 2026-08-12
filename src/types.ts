@@ -48,11 +48,21 @@ export interface ProspectorConfig {
 	 * ```
 	 */
 	analyzers?: Record<string, Record<string, unknown>>;
+	/**
+	 * Session sources to enable beyond the built-in pi and claude file sources.
+	 * Example: ["pi-subagent", "snowflake"]
+	 *
+	 * Built-in sources: "pi-subagent" (nested subagent sessions),
+	 * "snowflake" (requires PROSPECTOR_SNOWFLAKE_SOURCE=1 + snow CLI).
+	 * User-loaded sources from ~/.pi/agent/prospector/sources/<name>/
+	 * or ./.prospector/sources/<name>/ are also resolved from this list.
+	 */
+	sources?: string[];
 }
 
 // ─── Session ───
 
-export type SessionSource = "pi" | "claude";
+export type SessionSource = string;
 
 export interface SessionHeader {
 	id: string;

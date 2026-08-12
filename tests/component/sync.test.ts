@@ -5,16 +5,22 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { runSync } from "../../src/sync/index.js";
+import { PiFileSource } from "../../src/sync/sources/pi-file.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { getStats } from "../../src/db/queries.js";
 import { tempDb, NO_CLAUDE_DIR } from "./helpers.js";
 
 const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 
+function adps(piDir: string, claudeDir: string) {
+	return [new PiFileSource(piDir), new ClaudeFileSource(claudeDir)];
+}
+
 describe("end-to-end sync", () => {
 	it("syncs simple.jsonl into database", async () => {
 		const { db, close } = await tempDb();
 		try {
-			const result = await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			const result = await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 			assert.ok(result.sessionsProcessed >= 1, `expected >=1 session, got ${result.sessionsProcessed}`);
 			assert.ok(result.messagesInserted > 0, `expected messages, got ${result.messagesInserted}`);
 			const stats = await getStats(db);
@@ -28,10 +34,10 @@ describe("end-to-end sync", () => {
 	it("incremental re-sync skips unchanged files", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 			const stats1 = await getStats(db);
 
-			const result2 = await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			const result2 = await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 			assert.ok(result2.sessionsSkipped >= 1);
 			assert.equal(result2.messagesInserted, 0);
 
@@ -45,7 +51,7 @@ describe("end-to-end sync", () => {
 	it("handles compacted session (compactionSummary entries)", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 			const stats = await getStats(db);
 			assert.ok(stats.totalSessions >= 2, "should index at least 2 sessions (simple + compacted)");
 		} finally {
@@ -69,7 +75,7 @@ describe("end-to-end sync", () => {
 				);
 			}
 
-			const result = await runSync(db, home, NO_CLAUDE_DIR, { project: "projA" });
+			const result = await runSync(db, [new PiFileSource(home)], { project: "projA" });
 			assert.equal(result.sessionsProcessed, 1);
 			assert.equal(result.messagesInserted, 1);
 
@@ -91,7 +97,7 @@ describe("end-to-end sync", () => {
 	it("carries model and billed cost through into the message index (issue #65)", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 
 			// simple.jsonl's Pi assistant messages record a model and a cost total.
 			const assistant = (await db
@@ -127,7 +133,7 @@ describe("end-to-end sync", () => {
 
 		async function syncOne(db: AsyncDatabase, root: string, lines: string[]): Promise<void> {
 			writePiFixture(root, "t.jsonl", lines);
-			await runSync(db, root, NO_CLAUDE_DIR);
+			await runSync(db, [new PiFileSource(root)]);
 		}
 
 		async function getInventory(db: AsyncDatabase): Promise<{ tool_inventory: string | null }> {
@@ -214,7 +220,7 @@ describe("end-to-end sync", () => {
 						}),
 					];
 					fs.writeFileSync(path.join(sessDir, "c.jsonl"), lines.join("\n") + "\n");
-					await runSync(db, root, NO_CLAUDE_DIR);
+					await runSync(db, [new PiFileSource(root)]);
 					const usage = (await db.prepare("SELECT usage FROM messages WHERE session_id = 'sess-cost'").get()) as { usage: string };
 					assert.ok(usage);
 					const parsed = JSON.parse(usage.usage);
@@ -231,7 +237,7 @@ describe("end-to-end sync", () => {
 	it("captures the session name from session_info records (issue #207)", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 			const rows = (await db.prepare("SELECT id, name FROM sessions ORDER BY id").all()) as Array<{ id: string; name: string | null }>;
 			const named = rows.find((r) => r.id === "bbbb0002-cccc-dddd-eeee-ffffffffffff");
 			assert.ok(named, "named fixture session is indexed");
@@ -242,7 +248,7 @@ describe("end-to-end sync", () => {
 			assert.equal(plain.name, null);
 
 			// Idempotent: a re-sync (all files unchanged → skipped) leaves the names alone.
-			const result2 = await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			const result2 = await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 			assert.ok(result2.sessionsSkipped >= 1);
 		} finally {
 			await close();

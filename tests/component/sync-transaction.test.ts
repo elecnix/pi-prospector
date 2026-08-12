@@ -26,7 +26,13 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { runSync } from "../../src/sync/index.js";
+import { PiFileSource } from "../../src/sync/sources/pi-file.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { tempDb, NO_CLAUDE_DIR } from "./helpers.js";
+
+function adps(piDir: string, claudeDir: string) {
+	return [new PiFileSource(piDir), new ClaudeFileSource(claudeDir)];
+}
 
 /**
  * Arm (when `armed` is true) a trigger that aborts any message insert whose id
@@ -91,7 +97,7 @@ describe("per-session sync transaction (issue #59)", () => {
 
 			await armMessageFailure(db, true);
 
-			const result = await runSync(db, fx.piRoot, NO_CLAUDE_DIR);
+			const result = await runSync(db, adps(fx.piRoot, NO_CLAUDE_DIR));
 
 			assert.ok(result.errors.some((e) => e.includes("sess-b.jsonl")), `error should mention session B, got: ${result.errors}`);
 			// Session A is unaffected; only A counts as processed.
@@ -141,7 +147,8 @@ describe("per-session sync transaction (issue #59)", () => {
 
 			// Run 1: a clean sync commits the whole session and advances the cursor.
 			await armMessageFailure(db, false);
-			const r1 = await runSync(db, fx.piRoot, NO_CLAUDE_DIR);
+			const r1 = await runSync(db, adps(fx.piRoot, NO_CLAUDE_DIR));
+			armMessageFailure(db, false);
 			assert.equal(r1.errors.length, 0);
 			assert.equal(((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess")) as { c: number }).c, 1);
 			let cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess")) as { last_line: number };
@@ -158,7 +165,8 @@ describe("per-session sync transaction (issue #59)", () => {
 			fs.appendFileSync(filePath, "\n" + appended.join("\n") + "\n");
 
 			await armMessageFailure(db, true);
-			const r2 = await runSync(db, fx.piRoot, NO_CLAUDE_DIR);
+			const r2 = await runSync(db, adps(fx.piRoot, NO_CLAUDE_DIR));
+			armMessageFailure(db, true);
 
 			assert.ok(r2.errors.some((e) => e.includes("sess.jsonl")), `second run must report the failure, got: ${r2.errors}`);
 			// The already-committed row survives; the appended rows rolled back
@@ -171,7 +179,8 @@ describe("per-session sync transaction (issue #59)", () => {
 			// Run 3: once the failure is gone, sync resumes and imports the rows the
 			// failed run rolled back — they are not lost to an advanced cursor.
 			await armMessageFailure(db, false);
-			const r3 = await runSync(db, fx.piRoot, NO_CLAUDE_DIR);
+			const r3 = await runSync(db, adps(fx.piRoot, NO_CLAUDE_DIR));
+			armMessageFailure(db, false);
 			assert.equal(r3.errors.length, 0, `third run should succeed, got: ${r3.errors}`);
 			const idsRecovered = ((await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>).map((r) => r.id);
 			assert.deepEqual(idsRecovered, ["m1", "m2", "m3-fail"], "re-sync imports the rows the failed run rolled back");

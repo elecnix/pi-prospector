@@ -6,7 +6,13 @@ import * as os from "node:os";
 import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
+import { PiFileSource } from "../../src/sync/sources/pi-file.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { getStats } from "../../src/db/queries.js";
+
+function adps(piDir: string, claudeDir: string) {
+	return [new PiFileSource(piDir), new ClaudeFileSource(claudeDir)];
+}
 
 async function tempDb(): Promise<{ db: AsyncDatabase; close: () => Promise<void> }> {
 	const dbPath = path.join(os.tmpdir(), `prospect-claude-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
@@ -73,7 +79,7 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				const result = await runSync(db, piRoot, claudeRoot);
+				const result = await runSync(db, adps(piRoot, claudeRoot));
 				assert.ok(result.sessionsProcessed >= 1, `expected >=1 session, got ${result.sessionsProcessed}`);
 
 				// Verify session row
@@ -127,7 +133,7 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				await runSync(db, piRoot, claudeRoot);
+				await runSync(db, adps(piRoot, claudeRoot));
 				const assistant = ((await db
 					.prepare("SELECT role, model, cost_usd, usage FROM messages WHERE role = 'assistant'")
 					.get()) as { role: string; model: string | null; cost_usd: number | null; usage: string | null });
@@ -160,10 +166,12 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				const r1 = await runSync(db, piRoot, claudeRoot);
+				const r1 = await runSync(db, adps(piRoot, claudeRoot));
 				assert.equal(r1.sessionsProcessed, 1);
 
-				const r2 = await runSync(db, piRoot, claudeRoot);
+				const r2 = await runSync(db, adps(piRoot, claudeRoot));
+				assert.equal(r1.sessionsProcessed, 1);
+
 				assert.equal(r2.sessionsSkipped, 1);
 				assert.equal(r2.messagesInserted, 0);
 			} finally {
@@ -199,7 +207,7 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				const result = await runSync(db, piRoot, claudeRoot);
+				const result = await runSync(db, adps(piRoot, claudeRoot));
 				assert.ok(result.sessionsProcessed >= 2, `expected >=2 sessions, got ${result.sessionsProcessed}`);
 
 				const stats = await getStats(db);

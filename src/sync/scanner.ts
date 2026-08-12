@@ -55,7 +55,12 @@ async function discoverClaudeSessions(sessionsDir: string): Promise<DiscoveredSe
 	return walkSessionDir(sessionsDir, "claude");
 }
 
-async function walkSessionDir(
+/**
+ * Walk one session root for its .jsonl files, tagged with the given source.
+ * Exported for SessionSourceAdapter implementations, which own discovery for
+ * their source and reuse this walker for the shared directory layout.
+ */
+export async function walkSessionDir(
 	sessionsDir: string,
 	source: SessionSource,
 ): Promise<DiscoveredSession[]> {

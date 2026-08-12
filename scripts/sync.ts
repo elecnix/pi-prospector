@@ -2,9 +2,11 @@
  * Standalone sync runner for pi-prospector.
  * Usage: npx tsx scripts/sync.ts
  */
-import Database from "better-sqlite3";
 import { migrate } from "../src/db/schema.js";
+import { openAsyncDatabase } from "../src/db/async-db.js";
 import { runSync } from "../src/sync/index.js";
+import { PiFileSource } from "../src/sync/sources/pi-file.js";
+import { ClaudeFileSource } from "../src/sync/sources/claude-file.js";
 import { getClaudeSessionsDir, getDbPath, getSessionsDir, loadConfig } from "../src/config.js";
 
 const config = loadConfig();
@@ -17,17 +19,18 @@ console.log(`Sessions: ${sessionsDir}`);
 console.log(`Claude:   ${claudeSessionsDir}`);
 console.log();
 
-const db = new Database(dbPath);
-migrate(db);
+const db = openAsyncDatabase(dbPath);
+await migrate(db);
 
 try {
-	const result = runSync(db, sessionsDir, claudeSessionsDir);
+	const result = await runSync(db, [new PiFileSource(sessionsDir), new ClaudeFileSource(claudeSessionsDir)]);
 	const lines = [
 		"⛏️  Prospect sync complete",
 		`  Sessions processed: ${result.sessionsProcessed}`,
 		`  Sessions skipped:   ${result.sessionsSkipped}`,
 		`  Messages inserted:  ${result.messagesInserted}`,
 		`  Forks resolved:     ${result.forksResolved}`,
+		`  Subagent runs:      ${result.subagentRunsProcessed} ingested, ${result.subagentRunsSkipped} unchanged`,
 	];
 	if (result.errors.length > 0) {
 		lines.push(`  Errors: ${result.errors.length}`);
@@ -36,5 +39,5 @@ try {
 	}
 	console.log(lines.join("\n"));
 } finally {
-	db.close();
+	await db.close();
 }
