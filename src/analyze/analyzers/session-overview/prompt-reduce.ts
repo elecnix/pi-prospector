@@ -28,6 +28,12 @@ in the SAME repo. Use them as negative examples: if this session hit friction th
 the smooth siblings avoided, say what the smooth sessions did differently and
 propose encoding it. Do not invent contrast the evidence does not support.
 
+If a REPLY ACTS section is present, it shows what the user did with each assistant
+response (accept, refuse, ask, command, provide information). Use it to understand
+which proposals address repeated refusals or clarify questions — a refusal means
+the assistant's approach was rejected, a clarify question means the response
+under-explained.
+
 STEP 1 — ENUMERATE FRICTION: List EVERY distinct friction point in the session.
 For each one, write a textual gradient: what went wrong, what should change, the
 evidence that supports it, and how severe it is. Do NOT merge or drop distinct

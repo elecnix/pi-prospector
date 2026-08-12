@@ -70,6 +70,41 @@ function trajectoryNode(id: string, props: Partial<ToolTrajectoryProperties>): A
 	};
 }
 
+function replyActsNode(id: string, props: {
+	user_message_id: string;
+	pair_index: number;
+	acceptances?: Array<{ level: string; quote: string; rationale: string }>;
+	refusals?: Array<{ level: string; quote: string; rationale: string }>;
+	questions?: Array<{ purpose: string; quote: string; rationale: string }>;
+	answers?: Array<{ quote: string; rationale: string }>;
+	commands?: Array<{ quote: string; rationale: string }>;
+	information_provisions?: Array<{ quote: string; rationale: string }>;
+	continuation?: boolean;
+	other?: boolean;
+}): AnalysisNodeRow {
+	return {
+		...coreNode(id, {}),
+		analyzer_id: "user-reply-acts",
+		node_kind: "classification",
+		content_json: JSON.stringify({
+			user_message_id: props.user_message_id,
+			prior_user_message_id: null,
+			prior_core_output_key: null,
+			pair_index: props.pair_index,
+			acceptances: props.acceptances ?? [],
+			refusals: props.refusals ?? [],
+			questions: props.questions ?? [],
+			answers: props.answers ?? [],
+			commands: props.commands ?? [],
+			information_provisions: props.information_provisions ?? [],
+			continuation: props.continuation ?? false,
+			other: props.other ?? false,
+			abstention: null,
+			attempt: 1,
+		}),
+	};
+}
+
 describe("buildDigest", () => {
 	it("aggregates counts and renders per-pair lines", () => {
 		const digest = buildDigest({
@@ -438,6 +473,77 @@ describe("buildDigest", () => {
 	});
 });
 
+describe("buildDigest — reply acts", () => {
+	it("includes a Reply acts section when reply-acts nodes are present", () => {
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: [
+				coreNode("n1", { pair_index: 0, user_message_id: "u0", friction_score: 0.1 }),
+				coreNode("n2", { pair_index: 1, user_message_id: "u1", friction_score: 0.8, high_signal: true, correction_detected: true, correction_type: "negation" }),
+			],
+			llmNodes: [],
+			trajectoryNodes: [],
+			replyActsNodes: [
+				replyActsNode("ra1", { user_message_id: "u1", pair_index: 1, acceptances: [{ level: "partial", quote: "ok but", rationale: "partial accept" }], refusals: [{ level: "partial", quote: "not that", rationale: "pushback" }], questions: [{ purpose: "clarify", quote: "what?", rationale: "needs more detail" }] }),
+			],
+		});
+		assert.ok(digest.text.includes("### Reply acts"), "digest should include Reply acts section");
+		assert.equal(digest.replyActsCount, 1);
+		assert.equal(digest.replyActsLines.length, 1);
+		const line = digest.replyActsLines[0]!;
+		assert.ok(line.includes("#1"), "line should reference pair index 1");
+		assert.ok(line.includes("accept=partial"), "line should show acceptance level");
+		assert.ok(line.includes("refuse=partial"), "line should show refusal level");
+		assert.ok(line.includes("question=clarify"), "line should show question purpose");
+	});
+
+	it("omits Reply acts section when no reply-acts nodes exist", () => {
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: [coreNode("n1", {})],
+			llmNodes: [],
+			trajectoryNodes: [],
+		});
+		assert.ok(!digest.text.includes("### Reply acts"), "no reply-acts nodes → no section");
+		assert.equal(digest.replyActsCount, 0);
+		assert.equal(digest.replyActsLines.length, 0);
+	});
+
+	it("renders commands and information provisions", () => {
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: [coreNode("n1", { pair_index: 0, user_message_id: "u0" })],
+			llmNodes: [],
+			trajectoryNodes: [],
+			replyActsNodes: [
+				replyActsNode("ra1", { user_message_id: "u0", pair_index: 0, commands: [{ quote: "do it", rationale: "command" }], information_provisions: [{ quote: "context", rationale: "info" }] }),
+			],
+		});
+		const line = digest.replyActsLines[0]!;
+		assert.ok(line.includes("command=1"), "line should show command count");
+		assert.ok(line.includes("info_prov=1"), "line should show info provision count");
+	});
+
+	it("renders continuation and other flags", () => {
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: [coreNode("n1", { pair_index: 0, user_message_id: "u0" })],
+			llmNodes: [],
+			trajectoryNodes: [],
+			replyActsNodes: [
+				replyActsNode("ra1", { user_message_id: "u0", pair_index: 0, continuation: true, other: false }),
+			],
+		});
+		const line = digest.replyActsLines[0]!;
+		assert.ok(line.includes("continuation"), "line should show continuation flag");
+		assert.ok(!line.includes("other"), "line should not show other when false");
+	});
+});
+
 describe("splitDigest", () => {
 	it("returns a single segment when under budget", () => {
 		const digest = buildDigest({ sessionId: "s1", messages: NO_MESSAGES, coreNodes: [coreNode("n1", {})], llmNodes: [], trajectoryNodes: [] });
@@ -480,5 +586,21 @@ describe("splitDigest", () => {
 		const joined = splitDigest(digest, 500).map((s) => s.text).join("\n");
 		assert.ok(joined.includes("### Positive signals"));
 		assert.ok(joined.includes("### Trajectory signals"));
+	});
+
+	it("keeps reply acts section when splitting", () => {
+		const nodes = Array.from({ length: 20 }, (_, i) => coreNode(`n${i}`, { pair_index: i, user_message_id: `u${i}`, correction_text: "x".repeat(80) }));
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: nodes,
+			llmNodes: [],
+			trajectoryNodes: [],
+			replyActsNodes: [
+				replyActsNode("ra1", { user_message_id: "u0", pair_index: 0, acceptances: [{ level: "full", quote: "ok", rationale: "accept" }] }),
+			],
+		});
+		const joined = splitDigest(digest, 500).map((s) => s.text).join("\n");
+		assert.ok(joined.includes("### Reply acts"), "reply acts section should survive splitting");
 	});
 });
