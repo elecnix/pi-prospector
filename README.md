@@ -62,6 +62,188 @@ Requires Pi with an LLM API key configured for at least one provider. You choose
 
 > **Back up your sessions first.** pi-prospector treats `~/.pi/agent/sessions/` as read-only and never writes to it, but it does not make a backup for you. Run something like `tar czf ~/prospector-backup/sessions-$(date +%Y%m%d).tgz ~/.pi/agent/sessions/` before your first sync.
 
+## Analyzers
+
+Analysis is a small DAG of analyzers. The **deterministic** ones never call a model; the **LLM** ones ask for an abstract *tier* (`cheap`/`mid`), not a specific model. Every analyzer is versioned and content-addressed, so its nodes recompute only when its code version, config, or inputs change. Built-in sources live under [`src/analyze/analyzers/`](./src/analyze/analyzers/); custom analyzers live in `.prospector/analyzers/`.
+
+### Dependency graph
+
+```mermaid
+flowchart TD
+  subgraph roots [Root analyzers — no dependencies]
+    TPC[turn-pair-core<br/>friction metrics]
+    LEX[lexicon-candidates<br/>vocabulary nomination]
+    CE[cache-economy<br/>cache hit ratio]
+    CTX[context-economy<br/>token carry attribution]
+    SL[secret-leak<br/>credential detection]
+  end
+
+  subgraph deterministic [Deterministic layers]
+    FL[frustration-lexicon<br/>term judgement]
+    TF[turn-frustration<br/>lexicon + paralinguistic hits]
+    TT[tool-trajectory<br/>loop &amp; oscillation detection]
+    RO[routing-opportunity<br/>downshift / escalation labels]
+    URD[user-reply-acts-distribution<br/>session-level roll-up]
+  end
+
+  subgraph llm [LLM layers]
+    TPL[turn-pair-llm<br/>per-turn classification]
+    SO[session-overview<br/>synthesis &amp; proposals]
+    PV[proposal-validate<br/>replay validation]
+    URA[user-reply-acts<br/>multi-act reply classification]
+  end
+
+  subgraph readonly [Read-time fold — not a node]
+    MM[model-mix<br/>efficiency frontier]
+  end
+
+  LEX -->|nominated terms| FL
+  TPC -->|friction score| TF
+  FL -->|lexicon verdicts| TF
+  TPC -->|high-signal pairs| TPL
+  TF -->|frustration hits| TPL
+  TPC -->|tool-action trace| TT
+  TPC -->|friction + trajectory| RO
+  TF -->|frustration signals| RO
+  TT -->|trajectory signals| RO
+  TPC -->|pair metrics| SO
+  TPL -->|classifications| SO
+  TT -->|trajectory signals| SO
+  TF -->|frustration signals| SO
+  SO -->|proposals| PV
+  TPC -->|turn context| URA
+  URA -->|per-reply acts| URD
+  RO -.->|routing labels<br/>read-time fold| MM
+```
+
+### turn-pair-core — per-turn friction metrics (deterministic)
+
+Scores every user→assistant **turn pair**: did the user correct the agent, did tools fail, was the reply empty, was tool output wasted? It also extracts a compact **tool-action trace** — each call's name, truncated arguments, and the first line of any failed result — which later analyzers rely on to blame the command actually at fault. No model; high-scoring pairs are flagged *high-signal*.
+
+Source: [`turn-pair-core/index.ts`](./src/analyze/analyzers/turn-pair-core/index.ts) · correction/repetition patterns in [`patterns.ts`](./src/analyze/analyzers/turn-pair-core/patterns.ts) · turn assembly + trace extraction in [`build.ts`](./src/analyze/analyzers/turn-pair-core/build.ts) · weights/thresholds in [`config.ts`](./src/analyze/analyzers/turn-pair-core/config.ts).
+
+### turn-pair-llm — per-turn classification (cheap LLM)
+
+For *only* the high-signal pairs, a cheap model labels the friction: sentiment, friction type (`wrong_approach`, `missed_instruction`, `tool_misuse`, `repetition`, …), whether it is a genuine correction, and a severity. The prompt includes the turn's **actual tool calls and error heads** (from turn-pair-core's trace), so the model attributes friction to the command that failed rather than paraphrasing your wording. A length-aware cap bounds how many pairs are enriched per session.
+
+Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.ts) · classifier prompt + evidence formatting in [`prompt.ts`](./src/analyze/analyzers/turn-pair-llm/prompt.ts) · tier + enrichment cap in [`config.ts`](./src/analyze/analyzers/turn-pair-llm/config.ts).
+
+### lexicon-candidates / frustration-lexicon / turn-frustration — the learned frustration lexicon
+
+The correction patterns in `turn-pair-core` are English regexes. Write `putain, c'est encore faux` or `не то` and they see nothing. Instead of shipping more languages — an unbounded list that is always partial — these three analyzers **learn the vocabulary from your own corpus**.
+
+1. **lexicon-candidates** (deterministic) tokenises your messages and nominates the distinct terms worth judging, ranked by frequency and capped per session. It is language-blind on purpose: no stopwords, no stemming, just a shape filter that drops code, paths, and identifiers.
+2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it.
+3. **turn-frustration** (deterministic) matches each turn against the learned lexicon, emitting one node per (turn, signal). A hit promotes the turn into `turn-pair-llm` enrichment even when the deterministic score missed it, and lands in the `session-overview` digest as `frustration=[term:category/lang]`.
+
+Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
+
+**The lexicon widens detection; it never gates it.** Everything that worked before — tool failures, re-asking, empty replies, wasted output, trajectory signals — is untouched. `turn-frustration` also detects frustration carried with *no vocabulary at all*: shouting, repeated punctuation (`???`), and elongation (`nooooo`), which need neither a lexicon nor a language.
+
+When a run learns new words it says so, because earlier sessions may use them:
+
+```
+Frustration lexicon: learned 12 new term(s).
+  Sessions analysed earlier may use them — run '/prospect-analyze --all' to back-fill.
+```
+
+`--all` plain-fills every session rather than only unanalysed ones. It stays cheap: scanning is fingerprint lookups, and only turns that actually contain a newly learned word have anything to compute.
+
+Source: [`lexicon-candidates/index.ts`](./src/analyze/analyzers/lexicon-candidates/index.ts) · tokeniser + paralinguistic markers in [`tokenize.ts`](./src/analyze/analyzers/lexicon-candidates/tokenize.ts) · [`frustration-lexicon/index.ts`](./src/analyze/analyzers/frustration-lexicon/index.ts) · term prompt in [`prompt.ts`](./src/analyze/analyzers/frustration-lexicon/prompt.ts) · [`turn-frustration/index.ts`](./src/analyze/analyzers/turn-frustration/index.ts).
+
+### tool-trajectory — tool-call patterns (deterministic)
+
+Looks at the ordered stream of tool calls across the whole session and flags four shapes of wasted motion: **stuck-loops** (the same failing action repeated), **polling-loops** (re-checking the same state over and over), **oscillation** (doing and undoing), and **pre-flight gaps** (acting without the check that should precede it). No model — pure pattern detection that complements the text-based signals.
+
+Source: [`tool-trajectory/index.ts`](./src/analyze/analyzers/tool-trajectory/index.ts) · detectors in [`detectors.ts`](./src/analyze/analyzers/tool-trajectory/detectors.ts) · call normalisation in [`arg-parser.ts`](./src/analyze/analyzers/tool-trajectory/arg-parser.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/tool-trajectory/config.ts).
+
+### cache-economy — prompt-cache efficiency (deterministic)
+
+Tells you when a session is silently paying full price for context that should have been cached. Measures per-turn prompt-cache hit ratio, separates TTL-expiry from prefix-instability cold misses, and counts write churn. Sessions that run with near-zero cache reads are flagged — each one is money left on the table from context that could have been reused. No LLM.
+
+Source: [`cache-economy/index.ts`](./src/analyze/analyzers/cache-economy/index.ts).
+
+### context-economy — token-carry attribution (deterministic)
+
+Tells you which tool results are bloating your context window. Attributes a session's carried (`cacheRead`) tokens to the tool results that produced them, and flags oversized reads, high-carry reads, and redundant reads that repeat the same content. This is where you find the `bash` call that dumped 50K tokens into context and stayed there for the rest of the session. No LLM.
+
+Source: [`context-economy/index.ts`](./src/analyze/analyzers/context-economy/index.ts).
+
+### routing-opportunity — model routing labels (deterministic)
+
+Labels each turn as downshiftable (a cheaper model could have handled it) or escalation-worthy (a better model was needed), based on existing friction and trajectory signals. Attaches the serving model and billed cost so the corpus-level efficiency frontier can be computed honestly — a turn labeled "downshiftable" that cost $0.03 on an expensive model is a concrete saving opportunity. No LLM.
+
+Source: [`routing-opportunity/index.ts`](./src/analyze/analyzers/routing-opportunity/index.ts).
+
+### model-mix — efficiency frontier (deterministic, read-time fold)
+
+Computes the efficiency frontier across your whole corpus: which models give you the best quality-per-dollar, based on the routing labels from `routing-opportunity`. This is **not a per-session node** — it is a pure function of the routing corpus, re-derived at read time by the `prospect models` command. A cumulative cross-session aggregate has no honest home as an append-only node (it would churn on every new session and race under concurrency), so it lives outside the graph as a read-time computation over routing nodes.
+
+Source: [`model-mix/index.ts`](./src/analyze/analyzers/model-mix/index.ts).
+
+### secret-leak — credential detection (deterministic)
+
+Scans every message field of a transcript (user text, assistant reasoning, tool-call arguments, tool results) for high-confidence **credential patterns**: provider-anchored API keys (AWS, GitHub, Google, Slack, Stripe, GitLab, Anthropic, OpenAI), PEM private-key headers, and signed JWTs. No model — pure regex detection tuned for precision (every pattern requires a provider-specific prefix or structural marker, so ordinary prose does not match). Findings are **redacted**: each carries a first/last-character preview and a short SHA-256 fingerprint, never the matched secret — the analysis graph is durable and widely readable, so it must not become a second leak surface. Emits one `metric` node per session, anchored to the session plus one `anchors` edge per leaked message so a finding traces back to the exact turn.
+
+Source: [`secret-leak/index.ts`](./src/analyze/analyzers/secret-leak/index.ts) · detectors + rule catalogue in [`detectors.ts`](./src/analyze/analyzers/secret-leak/detectors.ts) · allowlist/thresholds in [`config.ts`](./src/analyze/analyzers/secret-leak/config.ts).
+
+### session-overview — synthesis & proposals (LLM map-reduce)
+
+Consumes the per-turn and trajectory analyzers above and turns a whole session into a short summary, a list of **positive signals** (what went well), and a set of **ranked improvement proposals**. It uses an *enumerate-then-propose* strategy — first list every friction point as a textual gradient, then emit one proposal per point — so recurring issues are not collapsed away. It emits a node even for clean sessions, which can yield `reinforcement` proposals that praise good habits. Proposals are materialised into the `proposals` table, each linked to the node that justifies it.
+
+Source: [`session-overview/index.ts`](./src/analyze/analyzers/session-overview/index.ts) · deterministic digest in [`digest.ts`](./src/analyze/analyzers/session-overview/digest.ts) · map/reduce prompts in [`prompt-map.ts`](./src/analyze/analyzers/session-overview/prompt-map.ts) and [`prompt-reduce.ts`](./src/analyze/analyzers/session-overview/prompt-reduce.ts).
+
+### proposal-validate — replay validation (opt-in LLM, advisory)
+
+Run separately via `/prospect-validate`. For each open proposal it replays the originating high-signal turns twice with a **distinct** validator model — once as-is, once with the candidate rule injected as a standing instruction — and credits the proposal only where the rule turns friction into no-friction. The result is a grounded `validated_score` and a `supported`/`unsupported`/`unvalidated` status written back onto the proposal (mutable result fields — never part of any identity key). Advisory only; it never edits anything.
+
+Source: [`proposal-validate/index.ts`](./src/analyze/analyzers/proposal-validate/index.ts) · baseline/with-rule replay prompts in [`prompt.ts`](./src/analyze/analyzers/proposal-validate/prompt.ts) · validator tier in [`config.ts`](./src/analyze/analyzers/proposal-validate/config.ts).
+
+### user-reply-acts — user reply classification (LLM, multi-act, custom)
+
+Classifies what the user's reply *does* with the assistant's preceding output — one boundary later than `turn-pair-llm`. Instead of "what went wrong inside this turn?" it asks "did the user accept, refuse, answer, ask, command, or provide information?" A single reply can do several things at once, so the classifier emits **multi-act arrays**: acceptances (full/partial), refusals (full/partial), questions (with purpose: request / decision / clarify / information), answers to assistant questions, commands, information provisions, continuation, or other. Each act carries a verbatim quote validated as an exact substring of the reply text.
+
+Unlike `turn-pair-llm`, this analyzer is **ungated** — acceptance and clarify-questions live in smooth turns, which friction-only gating would suppress. Cost is bounded only by a hard per-session ceiling, applied in turn order (not friction-ranked) so the act distribution is not biased. Uses a two-attempt agentic retry: the first pass has no abstention option; if it fails, a second pass offers a `classifier_abstention` escape with a reason and proposed class.
+
+Source: [`.prospector/analyzers/user-reply-acts.analyzer.ts`](./.prospector/analyzers/user-reply-acts.analyzer.ts).
+
+### user-reply-acts-distribution — session-level reply roll-up (deterministic, custom)
+
+Folds the per-reply `user-reply-acts` classifications into a session-level distribution: counts of each act and question purpose, acceptance/refusal balance, and abstention rate. This is the shape you need to answer "what is the distribution of acceptance, refusal, and under-explanation questions in this session?" — the classifier's per-reply nodes are the evidence; this node is the summary. One `metric` node per session.
+
+Source: [`.prospector/analyzers/user-reply-acts-distribution.analyzer.ts`](./.prospector/analyzers/user-reply-acts-distribution.analyzer.ts).
+
+Registration and dependency order live in [`src/analyze/defaults.ts`](./src/analyze/defaults.ts); the framework that schedules analyzers, computes their content-addressed identities, and tracks lineage is [`src/analyze/framework.ts`](./src/analyze/framework.ts).
+
+### Custom analyzers (author your own, no rebuild)
+
+You — or your Pi coding agent — can drop a locally-authored analyzer on disk and run it without touching the extension source. An analyzer is a module that **default-exports** an object satisfying the [`Analyzer`](./src/analyze/types.ts) contract (`def` / `version` / `prompts` / `defaultConfig` / `plan()` / `analyze()`). Write it in TypeScript — the extension runs under `tsx`, so no build step is needed; `.js`/`.mjs` also work.
+
+Files are discovered from these locations, in precedence order:
+
+1. `--analyzer-path <file|dir>` on `/prospect-analyze` (repeatable)
+2. `analyzerPaths` in `~/.pi/agent/prospector.json`
+3. `./.prospector/analyzers/` (project-local)
+4. `~/.pi/agent/prospector/analyzers/` (**the Pi agent path — always scanned**)
+
+A file is picked up only if it is named `*.analyzer.{ts,js,mjs}` (helper files alongside it are ignored). A copy-paste starting point lives at [`examples/analyzers/example.analyzer.ts`](./examples/analyzers/example.analyzer.ts).
+
+**The authoring loop.** Write the file into `~/.pi/agent/prospector/analyzers/`, then:
+
+```
+/reload                                   # re-imports the extension; picks up new/edited analyzers
+/prospect-analyzers list                  # confirm it loaded (or see a precise validation error)
+/prospect-analyze --analyzer <your-id>    # run just yours
+```
+
+`/prospect-analyzers list` shows built-ins + discovered custom analyzers and any load errors; `/prospect-analyzers validate <path>` checks one file without running. A malformed analyzer is skipped and reported — the valid ones still run. Everything works headlessly too, e.g. `--prospect "analyzers list"` and `--prospect "analyze --analyzer <id>"`.
+
+**Editing while iterating.** Node identity normally changes only when you bump `version`. For analyzers loaded from disk, pi-prospector additionally folds a hash of the file's source into the node identity, so **editing the code or prompt automatically marks its prior nodes stale** — re-run with `--revise config` (or `--revise all`) to recompute them. No manual version bump while you iterate; bump `version.major`/`minor` when you ship a change you want graded for existing users.
+
+Custom analyzer code runs in-process with full privileges — only load analyzers you trust (typically ones you or your own agent authored).
+
+Loader and discovery: [`src/analyze/loader.ts`](./src/analyze/loader.ts) · optional `defineAnalyzer()` helper: [`src/analyze/authoring.ts`](./src/analyze/authoring.ts) · registration: [`registerAll()` in `src/analyze/defaults.ts`](./src/analyze/defaults.ts).
+
 ## Commands
 
 ### `/prospect-sync`
@@ -231,100 +413,6 @@ pi-prospector reads **only what is inside Pi and Claude Code session files**. It
 - Model changes and thinking-level changes
 
 The unit of analysis is a **turn** — one round of work, segmented at the same boundaries Pi uses (a user or `bashExecution` message, or a `branch_summary`/`custom_message` entry). The deterministic layer scores every turn; only high-signal turns are sent to the LLM. The system prompt is not stored in session files and is not captured.
-
-## Analyzers
-
-Analysis is a small DAG of analyzers. The **deterministic** ones never call a model; the **LLM** ones ask for an abstract *tier* (`cheap`/`mid`), not a specific model. Every analyzer is versioned and content-addressed, so its nodes recompute only when its code version, config, or inputs change. All sources live under [`src/analyze/analyzers/`](./src/analyze/analyzers/).
-
-### turn-pair-core — per-turn friction metrics (deterministic)
-
-Scores every user→assistant **turn pair**: did the user correct the agent, did tools fail, was the reply empty, was tool output wasted? It also extracts a compact **tool-action trace** — each call's name, truncated arguments, and the first line of any failed result — which later analyzers rely on to blame the command actually at fault. No model; high-scoring pairs are flagged *high-signal*.
-
-Source: [`turn-pair-core/index.ts`](./src/analyze/analyzers/turn-pair-core/index.ts) · correction/repetition patterns in [`patterns.ts`](./src/analyze/analyzers/turn-pair-core/patterns.ts) · turn assembly + trace extraction in [`build.ts`](./src/analyze/analyzers/turn-pair-core/build.ts) · weights/thresholds in [`config.ts`](./src/analyze/analyzers/turn-pair-core/config.ts).
-
-### turn-pair-llm — per-turn classification (cheap LLM)
-
-For *only* the high-signal pairs, a cheap model labels the friction: sentiment, friction type (`wrong_approach`, `missed_instruction`, `tool_misuse`, `repetition`, …), whether it is a genuine correction, and a severity. The prompt includes the turn's **actual tool calls and error heads** (from turn-pair-core's trace), so the model attributes friction to the command that failed rather than paraphrasing your wording. A length-aware cap bounds how many pairs are enriched per session.
-
-Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.ts) · classifier prompt + evidence formatting in [`prompt.ts`](./src/analyze/analyzers/turn-pair-llm/prompt.ts) · tier + enrichment cap in [`config.ts`](./src/analyze/analyzers/turn-pair-llm/config.ts).
-
-### lexicon-candidates / frustration-lexicon / turn-frustration — the learned frustration lexicon
-
-The correction patterns in `turn-pair-core` are English regexes. Write `putain, c'est encore faux` or `не то` and they see nothing. Instead of shipping more languages — an unbounded list that is always partial — these three analyzers **learn the vocabulary from your own corpus**.
-
-1. **lexicon-candidates** (deterministic) tokenises your messages and nominates the distinct terms worth judging, ranked by frequency and capped per session. It is language-blind on purpose: no stopwords, no stemming, just a shape filter that drops code, paths, and identifiers.
-2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it.
-3. **turn-frustration** (deterministic) matches each turn against the learned lexicon, emitting one node per (turn, signal). A hit promotes the turn into `turn-pair-llm` enrichment even when the deterministic score missed it, and lands in the `session-overview` digest as `frustration=[term:category/lang]`.
-
-Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
-
-**The lexicon widens detection; it never gates it.** Everything that worked before — tool failures, re-asking, empty replies, wasted output, trajectory signals — is untouched. `turn-frustration` also detects frustration carried with *no vocabulary at all*: shouting, repeated punctuation (`???`), and elongation (`nooooo`), which need neither a lexicon nor a language.
-
-When a run learns new words it says so, because earlier sessions may use them:
-
-```
-Frustration lexicon: learned 12 new term(s).
-  Sessions analysed earlier may use them — run '/prospect-analyze --all' to back-fill.
-```
-
-`--all` plain-fills every session rather than only unanalysed ones. It stays cheap: scanning is fingerprint lookups, and only turns that actually contain a newly learned word have anything to compute.
-
-Source: [`lexicon-candidates/index.ts`](./src/analyze/analyzers/lexicon-candidates/index.ts) · tokeniser + paralinguistic markers in [`tokenize.ts`](./src/analyze/analyzers/lexicon-candidates/tokenize.ts) · [`frustration-lexicon/index.ts`](./src/analyze/analyzers/frustration-lexicon/index.ts) · term prompt in [`prompt.ts`](./src/analyze/analyzers/frustration-lexicon/prompt.ts) · [`turn-frustration/index.ts`](./src/analyze/analyzers/turn-frustration/index.ts).
-
-### tool-trajectory — tool-call patterns (deterministic)
-
-Looks at the ordered stream of tool calls across the whole session and flags four shapes of wasted motion: **stuck-loops** (the same failing action repeated), **polling-loops** (re-checking the same state over and over), **oscillation** (doing and undoing), and **pre-flight gaps** (acting without the check that should precede it). No model — pure pattern detection that complements the text-based signals.
-
-Source: [`tool-trajectory/index.ts`](./src/analyze/analyzers/tool-trajectory/index.ts) · detectors in [`detectors.ts`](./src/analyze/analyzers/tool-trajectory/detectors.ts) · call normalisation in [`arg-parser.ts`](./src/analyze/analyzers/tool-trajectory/arg-parser.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/tool-trajectory/config.ts).
-
-### secret-leak — credential detection (deterministic)
-
-Scans every message field of a transcript (user text, assistant reasoning, tool-call arguments, tool results) for high-confidence **credential patterns**: provider-anchored API keys (AWS, GitHub, Google, Slack, Stripe, GitLab, Anthropic, OpenAI), PEM private-key headers, and signed JWTs. No model — pure regex detection tuned for precision (every pattern requires a provider-specific prefix or structural marker, so ordinary prose does not match). Findings are **redacted**: each carries a first/last-character preview and a short SHA-256 fingerprint, never the matched secret — the analysis graph is durable and widely readable, so it must not become a second leak surface. Emits one `metric` node per session, anchored to the session plus one `anchors` edge per leaked message so a finding traces back to the exact turn.
-
-Source: [`secret-leak/index.ts`](./src/analyze/analyzers/secret-leak/index.ts) · detectors + rule catalogue in [`detectors.ts`](./src/analyze/analyzers/secret-leak/detectors.ts) · allowlist/thresholds in [`config.ts`](./src/analyze/analyzers/secret-leak/config.ts).
-
-### session-overview — synthesis & proposals (LLM map-reduce)
-
-Consumes the three analyzers above and turns a whole session into a short summary, a list of **positive signals** (what went well), and a set of **ranked improvement proposals**. It uses an *enumerate-then-propose* strategy — first list every friction point as a textual gradient, then emit one proposal per point — so recurring issues are not collapsed away. It emits a node even for clean sessions, which can yield `reinforcement` proposals that praise good habits. Proposals are materialised into the `proposals` table, each linked to the node that justifies it.
-
-Source: [`session-overview/index.ts`](./src/analyze/analyzers/session-overview/index.ts) · deterministic digest in [`digest.ts`](./src/analyze/analyzers/session-overview/digest.ts) · map/reduce prompts in [`prompt-map.ts`](./src/analyze/analyzers/session-overview/prompt-map.ts) and [`prompt-reduce.ts`](./src/analyze/analyzers/session-overview/prompt-reduce.ts).
-
-### proposal-validate — replay validation (opt-in LLM, advisory)
-
-Run separately via `/prospect-validate`. For each open proposal it replays the originating high-signal turns twice with a **distinct** validator model — once as-is, once with the candidate rule injected as a standing instruction — and credits the proposal only where the rule turns friction into no-friction. The result is a grounded `validated_score` and a `supported`/`unsupported`/`unvalidated` status written back onto the proposal (mutable result fields — never part of any identity key). Advisory only; it never edits anything.
-
-Source: [`proposal-validate/index.ts`](./src/analyze/analyzers/proposal-validate/index.ts) · baseline/with-rule replay prompts in [`prompt.ts`](./src/analyze/analyzers/proposal-validate/prompt.ts) · validator tier in [`config.ts`](./src/analyze/analyzers/proposal-validate/config.ts).
-
-Registration and dependency order live in [`src/analyze/defaults.ts`](./src/analyze/defaults.ts); the framework that schedules analyzers, computes their content-addressed identities, and tracks lineage is [`src/analyze/framework.ts`](./src/analyze/framework.ts).
-
-### Custom analyzers (author your own, no rebuild)
-
-You — or your Pi coding agent — can drop a locally-authored analyzer on disk and run it without touching the extension source. An analyzer is a module that **default-exports** an object satisfying the [`Analyzer`](./src/analyze/types.ts) contract (`def` / `version` / `prompts` / `defaultConfig` / `plan()` / `analyze()`). Write it in TypeScript — the extension runs under `tsx`, so no build step is needed; `.js`/`.mjs` also work.
-
-Files are discovered from these locations, in precedence order:
-
-1. `--analyzer-path <file|dir>` on `/prospect-analyze` (repeatable)
-2. `analyzerPaths` in `~/.pi/agent/prospector.json`
-3. `./.prospector/analyzers/` (project-local)
-4. `~/.pi/agent/prospector/analyzers/` (**the Pi agent path — always scanned**)
-
-A file is picked up only if it is named `*.analyzer.{ts,js,mjs}` (helper files alongside it are ignored). A copy-paste starting point lives at [`examples/analyzers/example.analyzer.ts`](./examples/analyzers/example.analyzer.ts).
-
-**The authoring loop.** Write the file into `~/.pi/agent/prospector/analyzers/`, then:
-
-```
-/reload                                   # re-imports the extension; picks up new/edited analyzers
-/prospect-analyzers list                  # confirm it loaded (or see a precise validation error)
-/prospect-analyze --analyzer <your-id>    # run just yours
-```
-
-`/prospect-analyzers list` shows built-ins + discovered custom analyzers and any load errors; `/prospect-analyzers validate <path>` checks one file without running. A malformed analyzer is skipped and reported — the valid ones still run. Everything works headlessly too, e.g. `--prospect "analyzers list"` and `--prospect "analyze --analyzer <id>"`.
-
-**Editing while iterating.** Node identity normally changes only when you bump `version`. For analyzers loaded from disk, pi-prospector additionally folds a hash of the file's source into the node identity, so **editing the code or prompt automatically marks its prior nodes stale** — re-run with `--revise config` (or `--revise all`) to recompute them. No manual version bump while you iterate; bump `version.major`/`minor` when you ship a change you want graded for existing users.
-
-Custom analyzer code runs in-process with full privileges — only load analyzers you trust (typically ones you or your own agent authored).
-
-Loader and discovery: [`src/analyze/loader.ts`](./src/analyze/loader.ts) · optional `defineAnalyzer()` helper: [`src/analyze/authoring.ts`](./src/analyze/authoring.ts) · registration: [`registerAll()` in `src/analyze/defaults.ts`](./src/analyze/defaults.ts).
 
 ## Fork deduplication
 
