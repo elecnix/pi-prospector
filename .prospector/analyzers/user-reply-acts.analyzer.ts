@@ -955,7 +955,8 @@ const analyzer: Analyzer = {
 		// ── Attempt 1: no abstention escape ──
 		// ling-2.6-flash sometimes generates 2400+ tokens of whitespace-padded JSON
 		// with strict structured outputs (non-deterministic). 2400 is enough for
-		// 95% of replies; attempt 2 raises to 8000 for the rare verbose case.
+		// 95% of replies; if attempt 1 truncates, attempt 2 falls back to the
+		// tool-call path (which doesn't have the whitespace issue).
 		let r1: { structured?: unknown; text: string; costUsd?: number; tokensUsed?: number; durationMs?: number; model?: string; stopReason?: string };
 		try {
 			r1 = await ctx.llm({
@@ -971,7 +972,7 @@ const analyzer: Analyzer = {
 			});
 		} catch (err) {
 			// Truncation is non-deterministic on this model — fall through to
-			// attempt 2 with a higher maxTokens rather than recording an error.
+			// attempt 2 with the tool-call fallback rather than recording an error.
 			r1 = { text: "", costUsd: 0, tokensUsed: 0, durationMs: 0, model: "", stopReason: "error" };
 		}
 
@@ -984,17 +985,17 @@ const analyzer: Analyzer = {
 		// The retry schema is the same plus classifier_abstention, so the
 		// model can refuse to classify — but only after failing the first pass,
 		// and only with a reason and a proposed closest class.
-		// Uses 8000 maxTokens to handle non-deterministic verbose output.
+		// Always uses the tool-call path (not response_format) because ling-2.6-flash
+		// non-deterministically generates massive whitespace with strict structured
+		// outputs — the tool-call path doesn't have this issue.
 		const r2 = await ctx.llm({
 			model: resolveModelSpec(config.tier, ctx.modelTiers),
 			system: ctx.prompts["retry"] ?? RETRY_PROMPT,
 			user: userPrompt,
 			temperature: config.temperature,
-			maxTokens: 8000,
+			maxTokens: 2400,
 			reasoning: config.reasoning,
-			...(useStructuredOutput
-				? { responseSchema: CLASSIFY_RESPONSE_SCHEMA_RETRY }
-				: { tool: CLASSIFY_TOOL_RETRY }),
+			tool: CLASSIFY_TOOL_RETRY,
 		});
 
 		// Accumulate cost/tokens/duration across both attempts.
