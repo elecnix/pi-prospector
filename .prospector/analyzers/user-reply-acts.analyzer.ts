@@ -234,6 +234,27 @@ entry per distinct act; a long reply may carry several.
                status updates (those are information_provisions), not for corrections
                (those are refusals). When in doubt between continuation and another
                class, prefer the other class.
+  memories     Zero or more. A durable fact the user states that warrants being
+               stored permanently — promoted to global or project AGENTS.md.
+               Each entry needs a scope, a quote, and a rationale.
+                 scope: global  — a user-wide preference (communication style,
+                                  workflow habits, tool preferences).
+                 scope: project — a repo-specific convention (test runner,
+                                  formatting, architecture decisions).
+               Good memories:
+                 - stable user preferences
+                 - communication style
+                 - durable workflow preferences
+                 - recurring project conventions
+                 - decisions likely to matter later
+                 - things that belong in global or project AGENTS.md
+               Bad memories:
+                 - temporary task progress
+                 - implementation minutiae
+                 - one-off facts
+                 - obvious summaries
+                 - secrets or credentials
+                 - anything already clearly covered by existing context files
   other        true ONLY if the reply is genuinely none of the above — small talk,
                a joke, or something truly unclassifiable. This is the absolute
                last resort. A correction or complaint is a refusal. A new
@@ -302,7 +323,7 @@ export const RETRY_PROMPT = `Your previous response was not usable — the JSON 
 
 Try again. Use only the provided classes:
   acceptances, refusals, commands, questions (request/decision/clarify/information), answers,
-  information_provisions, continuation, other.
+  information_provisions, memories (scope: global|project), continuation, other.
 
 If you genuinely cannot classify the reply into any of these classes — for example the reply is in a language you don't understand, is pure noise, or is a system-generated message that is not a human reply — set the classifier_abstention field with a reason and proposed class. When you abstain:
   - You MUST provide a reason (why you cannot classify).
@@ -351,6 +372,11 @@ export const CLASSIFY_SCHEMA = Type.Object({
 	})),
 	continuation: Type.Boolean(),
 	other: Type.Boolean(),
+	memories: Type.Array(actObject({
+		scope: Type.Union([Type.Literal("global"), Type.Literal("project")]),
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text containing the durable fact." }),
+		rationale: Type.String({ description: "One short sentence: what durable fact is being stated and why it matters." }),
+	})),
 }, { additionalProperties: false });
 
 /** Response schema name for the classify phase. */
@@ -396,6 +422,11 @@ export const CLASSIFY_SCHEMA_RETRY = Type.Object({
 	})),
 	continuation: Type.Boolean(),
 	other: Type.Boolean(),
+	memories: Type.Array(actObject({
+		scope: Type.Union([Type.Literal("global"), Type.Literal("project")]),
+		quote: Type.String({ description: "Exact verbatim substring from the USER (reply) text containing the durable fact." }),
+		rationale: Type.String({ description: "One short sentence: what durable fact is being stated and why it matters." }),
+	})),
 	classifier_abstention: Type.Union([
 		actObject({
 			reason: Type.String({ description: "Why you cannot classify this reply into the provided classes." }),
@@ -438,6 +469,7 @@ export const CLASSIFY_TOOL_RETRY = {
 
 const VALID_LEVELS = new Set(["full", "partial"]);
 const VALID_PURPOSES = new Set(["request", "decision", "clarify", "information"]);
+const VALID_SCOPES = new Set(["global", "project"]);
 
 /**
  * Pi injects many system-generated messages as role="user" that are not
@@ -551,6 +583,13 @@ export interface InformationProvisionAct {
 	rationale: string;
 }
 
+/** A durable fact the user states that warrants being stored permanently. */
+export interface MemoryAct {
+	scope: "global" | "project";
+	quote: string;
+	rationale: string;
+}
+
 /** The model's abstention verdict, only on the second (retry) attempt. */
 export interface ClassifierAbstention {
 	reason: string;
@@ -571,6 +610,7 @@ export interface UserReplyActsProperties {
 	answers: AnswerAct[];
 	commands: CommandAct[];
 	information_provisions: InformationProvisionAct[];
+	memories: MemoryAct[];
 	continuation: boolean;
 	other: boolean;
 	/** Present only when the model abstained on the retry attempt. */
@@ -581,7 +621,7 @@ export interface UserReplyActsProperties {
 
 /** Parse and validate the structured reply. Returns null if no usable verdict. */
 export function parseReply(raw: Record<string, unknown>, replyText?: string): Omit<UserReplyActsProperties, "user_message_id" | "prior_user_message_id" | "prior_core_output_key" | "pair_index" | "attempt"> | null {
-	if (!Array.isArray(raw["acceptances"]) || !Array.isArray(raw["refusals"]) || !Array.isArray(raw["questions"]) || !Array.isArray(raw["answers"]) || !Array.isArray(raw["commands"]) || !Array.isArray(raw["information_provisions"])) {
+	if (!Array.isArray(raw["acceptances"]) || !Array.isArray(raw["refusals"]) || !Array.isArray(raw["questions"]) || !Array.isArray(raw["answers"]) || !Array.isArray(raw["commands"]) || !Array.isArray(raw["information_provisions"]) || !Array.isArray(raw["memories"])) {
 		return null;
 	}
 
@@ -651,13 +691,25 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		informationProvisions.push({ quote, rationale: typeof o["rationale"] === "string" ? o["rationale"].slice(0, 300) : "" });
 	}
 
+	const memories: MemoryAct[] = [];
+	for (const mem of raw["memories"]) {
+		if (!mem || typeof mem !== "object" || Array.isArray(mem)) return null;
+		const o = mem as Record<string, unknown>;
+		const scope = typeof o["scope"] === "string" && VALID_SCOPES.has(o["scope"]) ? (o["scope"] as MemoryAct["scope"]) : null;
+		if (!scope) return null;
+		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
+		if (quote.length === 0) return null;
+		if (!isQuoteValid(quote, replyText)) continue;
+		memories.push({ scope, quote, rationale: typeof o["rationale"] === "string" ? o["rationale"].slice(0, 300) : "" });
+	}
+
 	// Structural validation: reject contradictory verdicts so the agentic retry
 	// can repair them. These are not prompt-level calibrations (which would
 	// overfit) — they are logical invariants the model should never violate.
 	const hasActs =
 		acceptances.length > 0 || refusals.length > 0 ||
 		questions.length > 0 || answers.length > 0 ||
-		commands.length > 0 || informationProvisions.length > 0;
+		commands.length > 0 || informationProvisions.length > 0 || memories.length > 0;
 	let continuation = Boolean(raw["continuation"]);
 	let other = Boolean(raw["other"]);
 	// `other` means "none of the above" — if any act is present, the model is
@@ -679,6 +731,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		answers,
 		commands,
 		information_provisions: informationProvisions,
+		memories,
 		continuation,
 		other,
 		abstention: null,
@@ -843,6 +896,7 @@ function diagnoseFailure(r1: { structured?: unknown; text?: string }, r2: { stru
 			...Array.isArray(o['answers']) ? o['answers'] : [],
 			...Array.isArray(o['commands']) ? o['commands'] : [],
 			...Array.isArray(o['information_provisions']) ? o['information_provisions'] : [],
+			...Array.isArray(o['memories']) ? o['memories'] : [],
 		];
 		const badQuotes: string[] = [];
 		for (let i = 0; i < allActs.length; i++) {
@@ -1029,6 +1083,7 @@ const analyzer: Analyzer = {
 				answers: [],
 				commands: [],
 				information_provisions: [],
+				memories: [],
 				continuation: false,
 				other: false,
 				abstention,

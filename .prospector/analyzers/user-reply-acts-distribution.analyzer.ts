@@ -25,7 +25,7 @@ import type {
 } from "../../src/analyze/types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../src/analyze/input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../src/analyze/edge-kinds.js";
-import type { UserReplyActsProperties, AcceptanceAct, RefusalAct, QuestionAct } from "./user-reply-acts.analyzer.js";
+import type { UserReplyActsProperties, AcceptanceAct, RefusalAct, QuestionAct, MemoryAct } from "./user-reply-acts.analyzer.js";
 
 const USER_REPLY_ACTS_ID = "user-reply-acts";
 
@@ -51,6 +51,12 @@ interface DistributionProperties {
 	replies_with_command: number;
 	/** Count of replies with ≥1 information_provision act. */
 	replies_with_information_provision: number;
+	/** Count of replies with ≥1 memory act. */
+	replies_with_memory: number;
+	/** Total memory acts. */
+	total_memories: number;
+	/** Total memories by scope. */
+	memories_by_scope: { global: number; project: number };
 	/** Count of replies where the model abstained (retry only). */
 	replies_abstained: number;
 	/** Total acceptance acts by level. */
@@ -82,6 +88,9 @@ function emptyDist(sessionId: string): DistributionProperties {
 		replies_continuation: 0,
 		replies_other: 0,
 		replies_with_information_provision: 0,
+		replies_with_memory: 0,
+		total_memories: 0,
+		memories_by_scope: { global: 0, project: 0 },
 		replies_with_command: 0,
 		replies_abstained: 0,
 		acceptances_by_level: { full: 0, partial: 0 },
@@ -107,11 +116,16 @@ export function rollUp(sessionId: string, replies: UserReplyActsProperties[]): D
 		if (r.other) d.replies_other++;
 		if (r.information_provisions?.length > 0) d.replies_with_information_provision++;
 		if (r.commands?.length > 0) d.replies_with_command++;
+		if (r.memories?.length > 0) d.replies_with_memory++;
 		if (r.abstention) d.replies_abstained++;
 		for (const a of r.acceptances as AcceptanceAct[]) d.acceptances_by_level[a.level]++;
 		for (const f of r.refusals as RefusalAct[]) d.refusals_by_level[f.level]++;
 		for (const q of r.questions as QuestionAct[]) d.questions_by_purpose[q.purpose]++;
 		d.total_answers += r.answers.length;
+		for (const mem of r.memories ?? []) {
+			d.total_memories++;
+			d.memories_by_scope[mem.scope]++;
+		}
 		d.source_output_keys.push(/* r.prior_core_output_key is the node's own key; use user_message_id as a stable ref */ r.user_message_id);
 	}
 	const totalAcc = d.acceptances_by_level.full + d.acceptances_by_level.partial;
