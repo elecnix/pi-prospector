@@ -14,6 +14,20 @@ import type { ToolTrajectoryProperties } from "../tool-trajectory/index.js";
 import type { TurnFrustrationProperties } from "../turn-frustration/index.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
 
+/** Properties stored in a user-reply-acts classification node. */
+interface ReplyActProperties {
+	user_message_id: string;
+	pair_index: number;
+	acceptances: Array<{ level: string; quote: string; rationale: string }>;
+	refusals: Array<{ level: string; quote: string; rationale: string }>;
+	questions: Array<{ purpose: string; quote: string; rationale: string }>;
+	answers: Array<{ quote: string; rationale: string }>;
+	commands: Array<{ quote: string; rationale: string }>;
+	information_provisions: Array<{ quote: string; rationale: string }>;
+	continuation: boolean;
+	other: boolean;
+}
+
 export interface DigestSegment {
 	index: number;
 	text: string;
@@ -42,6 +56,10 @@ export interface SessionDigest {
 	taskCompletedWithoutCorrection: boolean;
 	/** True when fewer than half the turns had a tool failure (density check). */
 	lowToolFailureDensity: boolean;
+	/** Number of user-reply-acts classification nodes folded into the digest. */
+	replyActsCount: number;
+	/** Per-reply act summary lines for the digest. */
+	replyActsLines: string[];
 }
 
 export interface BuildDigestInput {
@@ -51,6 +69,8 @@ export interface BuildDigestInput {
 	llmNodes: AnalysisNodeRow[];
 	trajectoryNodes: AnalysisNodeRow[];
 	frustrationNodes?: AnalysisNodeRow[];
+	/** user-reply-acts classification nodes (custom analyzer). */
+	replyActsNodes?: AnalysisNodeRow[];
 }
 
 function safeParse<T>(json: string): T | null {
@@ -134,6 +154,44 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	const trajectory = input.trajectoryNodes
 		.map((n) => safeParse<ToolTrajectoryProperties>(n.content_json))
 		.filter((p): p is ToolTrajectoryProperties => p !== null);
+
+	// Parse user-reply-acts classification nodes (custom analyzer).
+	// Map user_message_id → reply act properties for per-turn enrichment.
+	const replyActsByUser = new Map<string, ReplyActProperties>();
+	for (const node of input.replyActsNodes ?? []) {
+		const props = safeParse<ReplyActProperties>(node.content_json);
+		if (props && props.user_message_id) replyActsByUser.set(props.user_message_id, props);
+	}
+	const replyActsCount = replyActsByUser.size;
+
+	// Build per-reply act summary lines for the digest.
+	const replyActsLines: string[] = [];
+	for (const p of core) {
+		const acts = replyActsByUser.get(p.user_message_id);
+		if (!acts) continue;
+		const bits: string[] = [`#${p.pair_index}`];
+		if (acts.acceptances.length > 0) {
+			bits.push(`accept=${acts.acceptances.map((a) => a.level).join(",")}`);
+		}
+		if (acts.refusals.length > 0) {
+			bits.push(`refuse=${acts.refusals.map((r) => r.level).join(",")}`);
+		}
+		if (acts.questions.length > 0) {
+			bits.push(`question=${acts.questions.map((q) => q.purpose).join(",")}`);
+		}
+		if (acts.answers.length > 0) {
+			bits.push(`answer=${acts.answers.length}`);
+		}
+		if (acts.commands.length > 0) {
+			bits.push(`command=${acts.commands.length}`);
+		}
+		if (acts.information_provisions.length > 0) {
+			bits.push(`info_prov=${acts.information_provisions.length}`);
+		}
+		if (acts.continuation) bits.push("continuation");
+		if (acts.other) bits.push("other");
+		replyActsLines.push(bits.join(" "));
+	}
 
 	const compactions = input.messages
 		.filter((m) => m.role === "compactionSummary" || m.role === "branch_summary")
@@ -270,6 +328,9 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	if (trajectoryLines.length > 0) {
 		sections.push("", "### Trajectory signals", ...trajectoryLines);
 	}
+	if (replyActsLines.length > 0) {
+		sections.push("", "### Reply acts", ...replyActsLines);
+	}
 	const text = sections.join("\n");
 
 	return {
@@ -290,6 +351,8 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		cleanRecovery,
 		taskCompletedWithoutCorrection,
 		lowToolFailureDensity,
+		replyActsCount,
+		replyActsLines,
 	};
 }
 
@@ -323,6 +386,9 @@ export function splitDigest(digest: SessionDigest, segmentChars: number): Digest
 			: []),
 		...(digest.trajectoryLines.length > 0
 			? ["", "### Trajectory signals", ...digest.trajectoryLines]
+			: []),
+		...(digest.replyActsLines.length > 0
+			? ["", "### Reply acts", ...digest.replyActsLines]
 			: []),
 	];
 

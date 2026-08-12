@@ -49,9 +49,9 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	id: "session-overview",
 	label: "Session Analysis & Proposals",
 	description:
-		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, and tool-trajectory nodes; always emits a node, even for clean sessions.",
+		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, tool-trajectory, turn-frustration, and user-reply-acts nodes; always emits a node, even for clean sessions.",
 	anchorSpan: "full_session",
-	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id, TURN_FRUSTRATION_DEF.id],
+	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id, TURN_FRUSTRATION_DEF.id, "user-reply-acts"],
 };
 
 export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
@@ -82,7 +82,12 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// turn-frustration. This is what lets the synthesiser see friction expressed in
 	// a language the shipped regex has no patterns for, or with no words at all.
 	// Sessions with no such signal keep an unchanged source set and are untouched.
-	minor: 5,
+	// 1.6: user-reply-acts in the digest (issue #131) — the digest now carries a
+	// `### Reply acts` section showing what the user did with each assistant
+	// response (accept, refuse, ask, command, provide information). The reduce
+	// prompt notes this context is available. The dependency is declared by string
+	// literal because user-reply-acts is a custom analyzer, not a built-in.
+	minor: 6,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -115,12 +120,14 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const llm = (ctx.dependencyNodes[TURN_PAIR_LLM_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		const traj = (ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		const frustration = (ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
+		const replyActs = (ctx.dependencyNodes["user-reply-acts"] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 
 		const sources: SourceRef[] = [
 			...core.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...llm.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...traj.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...frustration.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+			...replyActs.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 		];
 
 		// Cross-session contrast (issue #10): deterministically fold up to N smooth
@@ -149,9 +156,10 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const llmNodes = ctx.getDependencyNodes(TURN_PAIR_LLM_DEF.id);
 		const trajectoryNodes = ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id);
 		const frustrationNodes = ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id);
+		const replyActsNodes = ctx.getDependencyNodes("user-reply-acts");
 		const messages = ctx.getSessionMessages(ctx.sessionId);
 
-		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes, frustrationNodes });
+		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes, frustrationNodes, replyActsNodes });
 		const statsText = JSON.stringify(
 			{
 				pairs: digest.pairCount,
@@ -253,7 +261,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 		];
 		let ordinal = 1;
-		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes, ...frustrationNodes]) {
+		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes, ...frustrationNodes, ...replyActsNodes]) {
 			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.output_key, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
 		}
 		for (const h of usedPromptHashes) {
