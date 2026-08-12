@@ -86,6 +86,9 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 					schema: request.responseSchema.schema,
 				},
 			};
+			// Enable OpenRouter's response-healing plugin for auto-repair of malformed
+			// JSON (code fences, trailing commas, missing brackets). Free, non-streaming.
+			samplingParams.plugins = [{ id: "response-healing" }];
 		}
 
 		const message = await piAi.complete(model, context, {

@@ -254,6 +254,10 @@ Rules:
   - Judge only what the text and context support. Do not invent acts.
   - Every quote must be an EXACT substring of the USER (reply) text — copy it
     verbatim, including any typos or formatting. Do not paraphrase.
+  - Do NOT quote from the ASSISTANT (previous) text. Quotes must come from
+    the USER reply only. If the text you want to quote is only in the assistant's
+    message, it is not a valid quote — find the corresponding text in the user
+    reply, or do not emit that act.
   - "A" / "the first one" / "yes, do it" in reply to an assistant question is an
     answer (and, if it also endorses a proposal, an acceptance) — NOT a question.
   - A clarification is specifically about something the assistant ALREADY said;
@@ -946,6 +950,10 @@ const analyzer: Analyzer = {
 	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = configOf(ctx.config.configJson);
 		const meta = unit.meta as unknown as ReplyMeta;
+		// The model sees a head+tail truncated version of the reply. Validate
+		// quotes against that same text, not the full reply, so quotes from
+		// the visible portion always pass.
+		const visibleReplyText = truncateHeadTail(meta.userText, 2400);
 		const userPrompt = buildClassifyPrompt({ priorAssistantText: meta.priorAssistantText, userText: meta.userText });
 
 		// Select structured output mode: native response_format (default) or
@@ -971,12 +979,15 @@ const analyzer: Analyzer = {
 					: { tool: CLASSIFY_TOOL }),
 			});
 		} catch (err) {
-			// Truncation is non-deterministic on this model — fall through to
-			// attempt 2 with the tool-call fallback rather than recording an error.
+			// Only catch truncation errors (non-deterministic on ling-2.6-flash with
+			// strict structured outputs). Let 429s and other transport errors
+			// propagate so the framework's retry logic handles them properly.
+			const msg = err instanceof Error ? err.message : String(err);
+			if (!msg.includes("truncated")) throw err;
 			r1 = { text: "", costUsd: 0, tokensUsed: 0, durationMs: 0, model: "", stopReason: "error" };
 		}
 
-		const verdict1 = extractVerdict(r1.structured, r1.text, meta.userText);
+		const verdict1 = extractVerdict(r1.structured, r1.text, visibleReplyText);
 		if (verdict1) {
 			return buildResult(unit, meta, verdict1, 1, r1, ctx);
 		}
@@ -1040,13 +1051,13 @@ const analyzer: Analyzer = {
 		}
 
 		// Check for a valid classification on the retry.
-		const verdict2 = extractVerdict(r2.structured, r2.text, meta.userText);
+		const verdict2 = extractVerdict(r2.structured, r2.text, visibleReplyText);
 		if (verdict2) {
 			return buildResult(unit, meta, verdict2, 2, { ...r2, costUsd: totalCost, tokensUsed: totalTokens, durationMs: totalDuration, model: modelUsed }, ctx);
 		}
 
 		// Both attempts failed. Record the error with a precise reason.
-		const reason = diagnoseFailure(r1, r2, meta.userText);
+		const reason = diagnoseFailure(r1, r2, visibleReplyText);
 		throw new Error(
 			`Model '${modelUsed}' returned no usable classify_reply verdict after 2 attempts for user message '${unit.anchorRef}'. ${reason}`,
 		);
