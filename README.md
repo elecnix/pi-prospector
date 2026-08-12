@@ -281,6 +281,44 @@ Run it as often as you like. It's idempotent and incremental.
 
 The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.
 
+### Custom sources (author your own, no rebuild)
+
+You can add session sources beyond the built-in Pi and Claude file scanners. A session source is a module that **default-exports** a class satisfying the [`SessionSourceAdapter`](./src/sync/adapter.ts) interface:
+
+```typescript
+export default class MySource implements SessionSourceAdapter {
+  readonly source = "my-source";
+
+  async discover(): Promise<DiscoveredSession[]> { /* return what this source knows about */ }
+  async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {
+    /* parse one session, return session + message rows */
+  }
+}
+```
+
+Write it in TypeScript — the extension runs under `tsx`, so no build step is needed. Drop it into one of these discovery paths:
+
+1. `~/.pi/agent/prospector/sources/<name>/index.ts` (user-level, always scanned)
+2. `./.prospector/sources/<name>/index.ts` (project-local)
+
+Then enable it in `~/.pi/agent/prospector.json`:
+
+```json
+{ "sources": ["pi-subagent", "<name>"] }
+```
+
+Built-in sources you can enable without authoring anything:
+
+| Source | Config key | What it discovers |
+|---|---|---|
+| `pi` | always on | Pi agent session `.jsonl` files under `~/.pi/agent/sessions/` |
+| `claude` | always on | Claude Code session `.jsonl` files under `~/.claude/projects/` |
+| `pi-subagent` | `"pi-subagent"` | Nested subagent sessions at `<sessions>/<project>/<parent-uuid>/run-*/session.jsonl` |
+
+The built-in `PiFileSource` and `ClaudeFileSource` are always active and don't appear in the `sources` array. Every source type gets its own `source` tag on every session and message row, so you can segment stats by source.
+
+Reference implementations: [`src/sync/sources/pi-file.ts`](./src/sync/sources/pi-file.ts) (file-based) and [`src/sync/sources/pi-subagent.ts`](./src/sync/sources/pi-subagent.ts) (nested discovery). The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
+
 ### `/prospect-analyze [--revise <reasons>] [--source pi|claude] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
 
 Build the analysis graph over synced sessions and materialise proposals. By default it does the cheapest useful thing: it **fills only missing work**. Nodes that are already current are skipped; nodes that are out of date are left alone unless you ask for them with `--revise`.
