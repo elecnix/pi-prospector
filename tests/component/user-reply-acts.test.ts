@@ -32,7 +32,7 @@ const ANALYZER_DIR = path.resolve(__dirname, "..", "..", ".prospector", "analyze
 function responder(req: LLMRequest): MockLLMReply {
 	if (req.tool?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply_retry") return { text: "{}" };
 	const replyText = extractReplyText(req.user);
-	const base = { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], continuation: false, other: false };
+	const base = { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], memories: [], continuation: false, other: false };
 
 	if (replyText.includes("Looks good, ship it")) {
 		return { text: "ok", structured: { ...base, acceptances: [{ level: "full", quote: "Looks good, ship it", rationale: "approves" }] } };
@@ -53,6 +53,7 @@ function responder(req: LLMRequest): MockLLMReply {
 				...base,
 				acceptances: [{ level: "full", quote: "The backoff looks right", rationale: "backoff ok" }],
 				questions: [{ purpose: "request", quote: "Can you also add tests for it?", rationale: "add tests" }],
+				memories: [{ scope: "project", quote: "The backoff looks right", rationale: "project uses exponential backoff for retries" }],
 			},
 		};
 	}
@@ -74,6 +75,7 @@ interface ReplyNode {
 	refusals: Array<{ level: string; rationale: string }>;
 	questions: Array<{ purpose: string; rationale: string }>;
 	answers: Array<{ rationale: string }>;
+	memories: Array<{ scope: string; quote: string; rationale: string }>;
 	continuation: boolean;
 	other: boolean;
 }
@@ -154,6 +156,10 @@ describe("user-reply-acts custom analyzer", () => {
 			assert.equal(dist.questions_by_purpose.request, 1);
 			// acceptances(3) / (3 + 1) = 0.75
 			assert.equal(dist.acceptance_refusal_ratio, 0.75);
+			// memories: u5 has one project-scoped memory
+			assert.equal(dist.replies_with_memory, 1);
+			assert.equal(dist.total_memories, 1);
+			assert.equal(dist.memories_by_scope.project, 1);
 
 			// idempotent re-run
 			const fw2 = new AnalyzerFramework({ db: t.db, llm: createMockLLM({ responder }).caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -214,7 +220,7 @@ describe("user-reply-acts custom analyzer", () => {
 			}
 			insertMessages(t.db, sid, msgs);
 
-			const mock = createMockLLM({ responder: () => ({ text: "ok", structured: { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], continuation: true, other: false } }), tokensPerCall: 1, costPerCall: 0 });
+			const mock = createMockLLM({ responder: () => ({ text: "ok", structured: { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], memories: [], continuation: true, other: false } }), tokensPerCall: 1, costPerCall: 0 });
 			// Override the cap to 3 via configOverrides.
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS, configOverrides: { "user-reply-acts": { maxRepliesPerSession: 3 } } });
 			await registerAll(fw, { builtins: [turnPairCoreAnalyzer], paths: [ANALYZER_DIR] });
@@ -285,7 +291,7 @@ describe("user-reply-acts agentic retry", () => {
 									refusals: [],
 									questions: [],
 									answers: [],
-									continuation: false, commands: [], information_provisions: [],
+									continuation: false, commands: [], information_provisions: [], memories: [],
 									other: false,
 									classifier_abstention: {
 										reason: "reply is nonsensical text with no discernible act",
@@ -351,7 +357,7 @@ describe("user-reply-acts agentic retry", () => {
 								refusals: [],
 								questions: [],
 								answers: [],
-								continuation: false, commands: [], information_provisions: [],
+								continuation: false, commands: [], information_provisions: [], memories: [],
 								other: false,
 							},
 						};
@@ -401,7 +407,7 @@ describe("user-reply-acts agentic retry", () => {
 							refusals: [],
 							questions: [],
 							answers: [],
-							continuation: false, commands: [], information_provisions: [],
+							continuation: false, commands: [], information_provisions: [], memories: [],
 							other: false,
 						},
 					};

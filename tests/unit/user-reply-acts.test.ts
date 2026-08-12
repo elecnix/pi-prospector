@@ -17,6 +17,7 @@ import {
 	CLASSIFY_RESPONSE_SCHEMA_RETRY,
 	RETRY_PROMPT,
 	type UserReplyActsProperties,
+	type MemoryAct,
 } from "../../.prospector/analyzers/user-reply-acts.analyzer.js";
 import { rollUp } from "../../.prospector/analyzers/user-reply-acts-distribution.analyzer.js";
 
@@ -49,6 +50,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 			commands: [],
 			information_provisions: [],
 			continuation: false,
+			memories: [],
 			other: false,
 		});
 		assert.ok(v);
@@ -69,6 +71,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 			questions: [],
 			answers: [], commands: [], information_provisions: [],
 			continuation: false,
+			memories: [],
 			other: false,
 		});
 		assert.ok(v);
@@ -89,6 +92,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 				{ purpose: "information", quote: "what does X do?", rationale: "i" },
 			],
 			answers: [], commands: [], information_provisions: [],
+			memories: [],
 			continuation: false,
 			other: false,
 		});
@@ -115,6 +119,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 			questions: [{ purpose: "bogus", quote: "x", rationale: "x" }],
 			answers: [], commands: [], information_provisions: [],
 			continuation: false,
+			memories: [],
 			other: false,
 		});
 		assert.equal(v, null);
@@ -127,6 +132,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 			questions: [],
 			answers: [], commands: [], information_provisions: [],
 			continuation: false,
+			memories: [],
 			other: false,
 		});
 		assert.equal(v, null, "an act without a quote is unusable");
@@ -139,6 +145,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 			questions: [{ purpose: "clarify", quote: "", rationale: "x" }],
 			answers: [], commands: [], information_provisions: [],
 			continuation: false,
+			memories: [],
 			other: false,
 		});
 		assert.equal(v, null, "an act without a quote is unusable");
@@ -151,6 +158,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 			questions: [],
 			answers: [{ quote: "", rationale: "x" }],
 			continuation: false,
+			memories: [],
 			other: false,
 		});
 		assert.equal(v, null, "an act without a quote is unusable");
@@ -164,6 +172,7 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 			questions: [],
 			answers: [], commands: [], information_provisions: [],
 			continuation: false,
+			memories: [],
 			other: false,
 		});
 		assert.ok(v);
@@ -178,10 +187,139 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 			questions: [],
 			answers: [], commands: [], information_provisions: [],
 			continuation: true,
+			memories: [],
 			other: false,
 		});
 		assert.ok(v);
 		assert.equal(v!.continuation, true);
+	});
+});
+
+describe("user-reply-acts: parseReply memories", () => {
+	it("parses a memory with valid scope and quote", () => {
+		const v = parseReply({
+			acceptances: [],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [],
+			memories: [{ scope: "global", quote: "we use vitest here", rationale: "test runner preference" }],
+			continuation: false,
+			other: false,
+		});
+		assert.ok(v);
+		assert.equal(v!.memories.length, 1);
+		assert.equal(v!.memories[0]!.scope, "global");
+		assert.equal(v!.memories[0]!.quote, "we use vitest here");
+		assert.equal(v!.memories[0]!.rationale, "test runner preference");
+	});
+
+	it("parses multiple memories with different scopes", () => {
+		const v = parseReply({
+			acceptances: [],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [],
+			memories: [
+				{ scope: "global", quote: "I prefer tabs", rationale: "indentation preference" },
+				{ scope: "project", quote: "this repo uses pnpm", rationale: "package manager convention" },
+			],
+			continuation: false,
+			other: false,
+		});
+		assert.ok(v);
+		assert.equal(v!.memories.length, 2);
+		assert.equal(v!.memories[0]!.scope, "global");
+		assert.equal(v!.memories[1]!.scope, "project");
+	});
+
+	it("returns null when a memory has an invalid scope", () => {
+		const v = parseReply({
+			acceptances: [],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [],
+			memories: [{ scope: "bogus", quote: "x", rationale: "x" }],
+			continuation: false,
+			other: false,
+		});
+		assert.equal(v, null);
+	});
+
+	it("returns null when a memory has no quote", () => {
+		const v = parseReply({
+			acceptances: [],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [],
+			memories: [{ scope: "global", quote: "", rationale: "x" }],
+			continuation: false,
+			other: false,
+		});
+		assert.equal(v, null);
+	});
+
+	it("rejects a memory whose quote is not a substring of the reply text", () => {
+		const v = parseReply({
+			acceptances: [],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [],
+			memories: [{ scope: "global", quote: "we use jest here", rationale: "x" }],
+			continuation: false,
+			other: false,
+		}, "we use vitest here and that's final");
+		// The memory with the bad quote is skipped, but the verdict is still usable
+		// because memories don't gate the verdict. But all memories are filtered out,
+		// and with no other acts, the verdict is all-empty → null.
+		assert.equal(v, null);
+	});
+
+	it("keeps a valid memory when another memory has a bad quote", () => {
+		const v = parseReply({
+			acceptances: [{ level: "full", quote: "ok", rationale: "accepts" }],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [],
+			memories: [
+				{ scope: "global", quote: "we use vitest", rationale: "valid" },
+				{ scope: "project", quote: "NOT IN REPLY", rationale: "invalid" },
+			],
+			continuation: false,
+			other: false,
+		}, "ok we use vitest here");
+		assert.ok(v);
+		assert.equal(v!.memories.length, 1, "only the valid memory survives");
+		assert.equal(v!.memories[0]!.scope, "global");
+	});
+
+	it("truncates a very long memory quote and rationale to 300 chars", () => {
+		const long = "r".repeat(1000);
+		const v = parseReply({
+			acceptances: [],
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [],
+			information_provisions: [],
+			memories: [{ scope: "global", quote: long, rationale: long }],
+			continuation: false,
+			other: false,
+		});
+		assert.ok(v);
+		assert.equal(v!.memories[0]!.quote.length, 300);
+		assert.equal(v!.memories[0]!.rationale.length, 300);
 	});
 });
 
@@ -202,6 +340,12 @@ describe("user-reply-acts: prompt + schema shape", () => {
 		// other is a last resort
 		assert.ok(CLASSIFY_PROMPT.includes("last resort"), "prompt says other is a last resort");
 		assert.ok(CLASSIFY_PROMPT.includes("correction"), "prompt mentions corrections as refusals");
+		// memories class
+		assert.ok(CLASSIFY_PROMPT.includes("memories"), "prompt mentions memories");
+		assert.ok(CLASSIFY_PROMPT.includes("scope"), "prompt mentions scope");
+		assert.ok(CLASSIFY_PROMPT.includes("global"), "prompt mentions global scope");
+		assert.ok(CLASSIFY_PROMPT.includes("project"), "prompt mentions project scope");
+		assert.ok(CLASSIFY_PROMPT.includes("durable"), "prompt says durable");
 	});
 
 	it("the response schema requires a quote on every act and enumerates levels/purposes", () => {
@@ -282,6 +426,7 @@ describe("user-reply-acts-distribution: rollUp", () => {
 			answers: over.answers ?? [],
 			commands: over.commands ?? [],
 			information_provisions: over.information_provisions ?? [],
+			memories: over.memories ?? [],
 			continuation: over.continuation ?? false,
 			other: over.other ?? false,
 			abstention: over.abstention ?? null,
@@ -325,5 +470,23 @@ describe("user-reply-acts-distribution: rollUp", () => {
 		const d = rollUp("s1", []);
 		assert.equal(d.replies_classified, 0);
 		assert.equal(d.acceptance_refusal_ratio, null);
+		assert.equal(d.replies_with_memory, 0);
+		assert.equal(d.total_memories, 0);
+	});
+
+	it("counts memories by scope in the roll-up", () => {
+		const d = rollUp("s1", [
+			reply({ memories: [{ scope: "global", quote: "I prefer tabs", rationale: "indentation" }] }),
+			reply({ memories: [
+				{ scope: "project", quote: "we use vitest", rationale: "test runner" },
+				{ scope: "global", quote: "I like terse responses", rationale: "communication style" },
+			] }),
+			reply({ acceptances: [{ level: "full", quote: "ok", rationale: "" }] }),
+		]);
+		assert.equal(d.replies_classified, 3);
+		assert.equal(d.replies_with_memory, 2);
+		assert.equal(d.total_memories, 3);
+		assert.equal(d.memories_by_scope.global, 2);
+		assert.equal(d.memories_by_scope.project, 1);
 	});
 });
