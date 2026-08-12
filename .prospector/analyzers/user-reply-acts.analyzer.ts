@@ -953,17 +953,27 @@ const analyzer: Analyzer = {
 		const useStructuredOutput = config.structuredOutput;
 
 		// ── Attempt 1: no abstention escape ──
-		const r1 = await ctx.llm({
-			model: resolveModelSpec(config.tier, ctx.modelTiers),
-			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
-			user: userPrompt,
-			temperature: config.temperature,
-			maxTokens: 2400,
-			reasoning: config.reasoning,
-			...(useStructuredOutput
-				? { responseSchema: CLASSIFY_RESPONSE_SCHEMA }
-				: { tool: CLASSIFY_TOOL }),
-		});
+		// ling-2.6-flash sometimes generates 2400+ tokens of whitespace-padded JSON
+		// with strict structured outputs (non-deterministic). 2400 is enough for
+		// 95% of replies; attempt 2 raises to 8000 for the rare verbose case.
+		let r1: { structured?: unknown; text: string; costUsd?: number; tokensUsed?: number; durationMs?: number; model?: string; stopReason?: string };
+		try {
+			r1 = await ctx.llm({
+				model: resolveModelSpec(config.tier, ctx.modelTiers),
+				system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
+				user: userPrompt,
+				temperature: config.temperature,
+				maxTokens: 2400,
+				reasoning: config.reasoning,
+				...(useStructuredOutput
+					? { responseSchema: CLASSIFY_RESPONSE_SCHEMA }
+					: { tool: CLASSIFY_TOOL }),
+			});
+		} catch (err) {
+			// Truncation is non-deterministic on this model — fall through to
+			// attempt 2 with a higher maxTokens rather than recording an error.
+			r1 = { text: "", costUsd: 0, tokensUsed: 0, durationMs: 0, model: "", stopReason: "error" };
+		}
 
 		const verdict1 = extractVerdict(r1.structured, r1.text, meta.userText);
 		if (verdict1) {
@@ -974,12 +984,13 @@ const analyzer: Analyzer = {
 		// The retry schema is the same plus classifier_abstention, so the
 		// model can refuse to classify — but only after failing the first pass,
 		// and only with a reason and a proposed closest class.
+		// Uses 8000 maxTokens to handle non-deterministic verbose output.
 		const r2 = await ctx.llm({
 			model: resolveModelSpec(config.tier, ctx.modelTiers),
 			system: ctx.prompts["retry"] ?? RETRY_PROMPT,
 			user: userPrompt,
 			temperature: config.temperature,
-			maxTokens: 2400,
+			maxTokens: 8000,
 			reasoning: config.reasoning,
 			...(useStructuredOutput
 				? { responseSchema: CLASSIFY_RESPONSE_SCHEMA_RETRY }
