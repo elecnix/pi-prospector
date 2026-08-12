@@ -476,6 +476,8 @@ function isSystemInjected(text: string): boolean {
 	const notifPrefixes = [
 		"💭 ", "❌ ", "✅ ", "📝 ", "🔀 ", "📋 ", "📡 ", "⚠️ ",
 		"✨ ", // PR all-clear / CI status
+		"⏳ ", // Workflow run in-progress
+		"🏁 ", // Workflow run completed
 	];
 	for (const p of notifPrefixes) {
 		if (text.startsWith(p)) return true;
@@ -591,7 +593,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		if (!level) return null;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
 		if (quote.length === 0) return null;
-		if (!isQuoteValid(quote, replyText)) return null;
+		if (!isQuoteValid(quote, replyText)) continue;
 		acceptances.push({ level, quote, rationale: typeof o["rationale"] === "string" ? o["rationale"].slice(0, 300) : "" });
 	}
 
@@ -603,7 +605,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		if (!level) return null;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
 		if (quote.length === 0) return null;
-		if (!isQuoteValid(quote, replyText)) return null;
+		if (!isQuoteValid(quote, replyText)) continue;
 		refusals.push({ level, quote, rationale: typeof o["rationale"] === "string" ? o["rationale"].slice(0, 300) : "" });
 	}
 
@@ -615,7 +617,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		if (!purpose) return null;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
 		if (quote.length === 0) return null;
-		if (!isQuoteValid(quote, replyText)) return null;
+		if (!isQuoteValid(quote, replyText)) continue;
 		questions.push({ purpose, quote, rationale: typeof o["rationale"] === "string" ? o["rationale"].slice(0, 300) : "" });
 	}
 
@@ -625,7 +627,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		const o = a as Record<string, unknown>;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
 		if (quote.length === 0) return null;
-		if (!isQuoteValid(quote, replyText)) return null;
+		if (!isQuoteValid(quote, replyText)) continue;
 		answers.push({ quote, rationale: typeof o["rationale"] === "string" ? o["rationale"].slice(0, 300) : "" });
 	}
 
@@ -635,7 +637,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		const o = cmd as Record<string, unknown>;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
 		if (quote.length === 0) return null;
-		if (!isQuoteValid(quote, replyText)) return null;
+		if (!isQuoteValid(quote, replyText)) continue;
 		commands.push({ quote, rationale: typeof o["rationale"] === "string" ? o["rationale"].slice(0, 300) : "" });
 	}
 
@@ -645,7 +647,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		const o = ip as Record<string, unknown>;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
 		if (quote.length === 0) return null;
-		if (!isQuoteValid(quote, replyText)) return null;
+		if (!isQuoteValid(quote, replyText)) continue;
 		informationProvisions.push({ quote, rationale: typeof o["rationale"] === "string" ? o["rationale"].slice(0, 300) : "" });
 	}
 
@@ -656,18 +658,18 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 		acceptances.length > 0 || refusals.length > 0 ||
 		questions.length > 0 || answers.length > 0 ||
 		commands.length > 0 || informationProvisions.length > 0;
-	const continuation = Boolean(raw["continuation"]);
-	const other = Boolean(raw["other"]);
-	// `other` means "none of the above" — it is contradictory if any act is present.
-	if (other && hasActs) return null;
-	// `continuation` means "a new topic shift with no acts" — it is contradictory
-	// if any act is present. A reply that issues a command AND shifts topic is
-	// just a command, not a continuation.
-	if (continuation && hasActs) return null;
-	// An all-empty verdict (no acts, no continuation, no other, no abstention) is
-	// a model giving up. Every genuine reply carries at least one signal — a
-	// command, a question, an acceptance, a status drop, or at minimum a topic
-	// shift. Reject the empty verdict so the agentic retry forces a real answer.
+	let continuation = Boolean(raw["continuation"]);
+	let other = Boolean(raw["other"]);
+	// `other` means "none of the above" — if any act is present, the model is
+	// wrong to also set other=true. The acts are the signal; override other
+	// to false rather than rejecting the whole verdict.
+	if (other && hasActs) other = false;
+	// `continuation` means "a new topic shift with no acts". If acts are
+	// present, the continuation flag is noise — the reply is a command or
+	// question that also happens to shift topic. Override to false.
+	if (continuation && hasActs) continuation = false;
+	// An all-empty verdict (no acts, no continuation, no other) is a model
+	// giving up. Reject so the agentic retry forces a real answer.
 	if (!hasActs && !continuation && !other) return null;
 
 	return {
@@ -832,9 +834,8 @@ function diagnoseFailure(r1: { structured?: unknown; text?: string }, r2: { stru
 		const other = Boolean(o['other']);
 		const hasActs = acc + ref + q + ans + cmd + info > 0;
 		if (!hasActs && !cont && !other) return 'empty verdict (all arrays empty, no booleans)';
-		if (other && hasActs) return `contradiction: other=true with ${acc + ref + q + ans + cmd + info} acts present`;
-		if (cont && hasActs) return `contradiction: continuation=true with ${acc + ref + q + ans + cmd + info} acts present`;
-		// Check quote validity
+		// Check quote validity FIRST — this is the actual blocking issue in most cases.
+		// Contradictions are now auto-overridden in parseReply, so they're not fatal.
 		const allActs = [
 			...Array.isArray(o['acceptances']) ? o['acceptances'] : [],
 			...Array.isArray(o['refusals']) ? o['refusals'] : [],
