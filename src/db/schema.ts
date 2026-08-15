@@ -59,6 +59,7 @@ export function migrate(db: Database.Database): void {
 			content_hash TEXT,
 			model TEXT,
 			cost_usd REAL,
+			provider_message_id TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
@@ -412,6 +413,18 @@ function addMissingColumns(db: Database.Database): void {
 	// before usage was recorded lack this column and fail on INSERT.
 	if (!hasColumn("messages", "usage")) {
 		db.exec("ALTER TABLE messages ADD COLUMN usage TEXT");
+	}
+
+	// messages: the provider's own message id, so several rows can be recognised
+	// as one billed API call. Claude Code writes each content block of a single
+	// assistant response as its own JSONL line, every one repeating that
+	// response's `usage` — 125k rows for 59k real calls on this corpus, so
+	// summing rows overstates Claude tokens by 111%. Pi writes one row per
+	// response and needs no de-duplication; its id is stored here too so the
+	// column means the same thing for both sources. NULL on rows indexed before
+	// this column existed — a full re-sync backfills them.
+	if (!hasColumn("messages", "provider_message_id")) {
+		db.exec("ALTER TABLE messages ADD COLUMN provider_message_id TEXT");
 	}
 
 	// proposals v2: check if it has v1 schema (has "target" instead of "title")

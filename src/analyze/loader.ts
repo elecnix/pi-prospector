@@ -27,6 +27,7 @@ import { Check } from "typebox/value";
 import type { Analyzer } from "./types.js";
 import { AnalyzerDef, AnalyzerVersion } from "./types.js";
 import { computeConfigHash, shortHash } from "./input-hash.js";
+import { validateOutputs } from "./outputs.js";
 
 /** A validation/import failure tied to the file that produced it. */
 export interface LoadError {
@@ -181,6 +182,8 @@ export function validateAnalyzer(a: Analyzer): string | null {
 	if (typeof a.analyze !== "function") return `analyzer '${a.def.id}' is missing an \`analyze\` function`;
 	if (!a.defaultConfig || typeof a.defaultConfig !== "object") return `analyzer '${a.def.id}' is missing \`defaultConfig\``;
 	if (a.prompts && typeof a.prompts !== "object") return `analyzer '${a.def.id}' has an invalid \`prompts\` map`;
+	const outputsError = validateOutputs(a);
+	if (outputsError) return `analyzer '${a.def.id}': ${outputsError}`;
 	return null;
 }
 

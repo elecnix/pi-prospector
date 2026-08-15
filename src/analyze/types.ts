@@ -411,6 +411,81 @@ export interface Analyzer {
 	 * it into the fingerprint makes muting behave exactly like changing a threshold.
 	 */
 	consultsAssertions?: readonly string[];
+	/**
+	 * Files this analyzer can render from the finished graph.
+	 *
+	 * An analyzer's `analyze()` produces *nodes* — the durable, content-addressed
+	 * record. An output produces a *file*: the same findings shaped for a person,
+	 * or for a tool that is not this one. Keeping them apart matters, because they
+	 * have opposite lifecycles. A node is immutable and expensive; an output is
+	 * disposable and cheap, re-rendered from scratch on every request. Nothing is
+	 * written to the graph when an output runs, so re-rendering can never revise
+	 * history, and an output that crashes costs a re-run rather than a repair.
+	 *
+	 * Optional: an analyzer with no outputs is unaffected.
+	 */
+	outputs?: readonly AnalyzerOutput[];
+}
+
+// ─────────────────────────── outputs ───────────────────────────
+
+/** One rendered file. `content` is text; binary outputs are out of scope. */
+export const OutputArtifact = Type.Object({
+	/** Bare file name, no directory — the caller chooses where it lands. */
+	filename: Type.String(),
+	mediaType: Type.String(),
+	content: Type.String(),
+	/** One line telling a reader what they are looking at. */
+	summary: Type.Optional(Type.String()),
+});
+export type OutputArtifact = Static<typeof OutputArtifact>;
+
+export const AnalyzerOutputDef = Type.Object({
+	/** Unique within its analyzer. Addressed as `<analyzer-id>:<output-id>`. */
+	id: Type.String(),
+	label: Type.String(),
+	description: Type.String(),
+});
+export type AnalyzerOutputDef = Static<typeof AnalyzerOutputDef>;
+
+/**
+ * Context handed to an output's `render()`.
+ *
+ * Unlike `plan()`/`analyze()`, this reads across the whole corpus and across
+ * analyzers: `getNodes` will return any analyzer's nodes without that analyzer
+ * being a declared dependency. That looks like a hole in the dependency rule and
+ * is not one. The rule exists so a node's *identity* names every input that
+ * shaped it — an output has no identity, writes nothing, and can neither create
+ * a cycle nor make anything stale. A report that needs two analyzers' findings
+ * is the ordinary case, and forcing a dependency edge to express it would
+ * reorder real analysis work to satisfy a rendering concern.
+ */
+export interface AnalyzerOutputContext {
+	db: Database.Database;
+	/**
+	 * Newest live node per logical unit for the owning analyzer, corpus-wide.
+	 * Read lazily — an output that never touches it runs no query.
+	 *
+	 * "Per logical unit" is not "per session": an analyzer that folds a session's
+	 * progress into its `sourceSetHash` has one live node per generation of that
+	 * session, and summing them counts the session twice. `latestBySession` is the
+	 * fold for that.
+	 */
+	readonly ownNodes: AnalysisNodeRow[];
+	/** The same read for any analyzer id. Empty when that analyzer has never run. */
+	getNodes: (analyzerId: string) => AnalysisNodeRow[];
+	/** The owning analyzer's resolved config. */
+	config: Record<string, unknown>;
+	/** Caller-supplied knobs, e.g. `{ day: "2026-08-14" }`. */
+	options: Record<string, string>;
+	/** When set, the graph is read as it stood at this instant. */
+	asOf?: string;
+}
+
+/** A named file an analyzer knows how to render. */
+export interface AnalyzerOutput {
+	def: AnalyzerOutputDef;
+	render: (ctx: AnalyzerOutputContext) => OutputArtifact[] | Promise<OutputArtifact[]>;
 }
 
 // ─────────────────────────── framework results ───────────────────────────

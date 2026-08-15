@@ -115,13 +115,15 @@ export interface MessageInsert {
 	usage: string | null;
 	model: string | null;
 	cost_usd: number | null;
+	/** The provider's response id — several rows may share one. See the schema note. */
+	provider_message_id: string | null;
 }
 
 export function insertMessage(db: Database.Database, m: MessageInsert): void {
 	prep(db, `
-		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, content_hash, model, cost_usd)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, m.usage, null, m.model, m.cost_usd);
+		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, content_hash, model, cost_usd, provider_message_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, m.usage, null, m.model, m.cost_usd, m.provider_message_id);
 }
 
 export function countMessages(db: Database.Database, sessionId: string): number {

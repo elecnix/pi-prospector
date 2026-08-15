@@ -3,25 +3,25 @@
  * Usage: npx tsx scripts/sync.ts
  */
 import Database from "better-sqlite3";
-import * as path from "node:path";
-import * as os from "node:os";
 import { migrate } from "../src/db/schema.js";
 import { runSync } from "../src/sync/index.js";
-import { getDbPath, getSessionsDir, loadConfig } from "../src/config.js";
+import { getClaudeSessionsDir, getDbPath, getSessionsDir, loadConfig } from "../src/config.js";
 
 const config = loadConfig();
 const dbPath = getDbPath(config);
 const sessionsDir = getSessionsDir();
+const claudeSessionsDir = getClaudeSessionsDir();
 
 console.log(`Database: ${dbPath}`);
 console.log(`Sessions: ${sessionsDir}`);
+console.log(`Claude:   ${claudeSessionsDir}`);
 console.log();
 
 const db = new Database(dbPath);
 migrate(db);
 
 try {
-	const result = runSync(db, sessionsDir);
+	const result = runSync(db, sessionsDir, claudeSessionsDir);
 	const lines = [
 		"⛏️  Prospect sync complete",
 		`  Sessions processed: ${result.sessionsProcessed}`,

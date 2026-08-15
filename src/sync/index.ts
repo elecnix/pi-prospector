@@ -135,6 +135,7 @@ function syncPiSession(
 				usage: entry.usage ? JSON.stringify(entry.usage) : null,
 				model: entry.model,
 				cost_usd: entry.costUsd,
+				provider_message_id: entry.providerMessageId,
 			});
 			msgCount++;
 		}
@@ -215,6 +216,7 @@ function syncClaudeSession(
 				usage: entry.usage ? JSON.stringify(entry.usage) : null,
 				model: entry.model,
 				cost_usd: entry.costUsd,
+				provider_message_id: entry.providerMessageId,
 			});
 			msgCount++;
 		}

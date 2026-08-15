@@ -117,6 +117,15 @@ roughly the order concepts build on one another.
   occupies the recipe identity reserved for a successful result. Failures stay
   visible and auditable, yet never mark a unit as done: the unit stays *missing*
   and is recomputed on the next scan that reaches it.
+- **Output** — a file an analyzer can render from the finished graph, named and
+  described by that analyzer and addressed as `analyzer:output`. An output is
+  **not** a node: it produces an **artifact** (a filename, a media type, and
+  text) and writes nothing back. Where a node is the durable record of what was
+  found, an output is that record shaped for a person or for a tool that is not
+  this one — a report, an export, a feed.
+- **Artifact** — one rendered file produced by an output. Artifacts are
+  disposable by design: they are re-rendered from scratch on every request and
+  carry no identity, no lineage, and no place in the graph.
 - **Edge** — a typed, directed relationship in the analysis graph. Edges are the
   **single source of truth** for relationships: there are no parent links or
   embedded references hidden inside nodes. Every connection between a node and
@@ -646,6 +655,38 @@ allowed. The reason is to keep the analysis pipeline a clear, declared dependenc
 graph: composition stays predictable, ordering can be derived, and no analyzer
 can develop a hidden reliance on another's internals.
 
+The rule governs *analysis*, and **outputs are exempt**: an output may read any
+analyzer's nodes without declaring a dependency. This is narrower than it looks.
+The rule exists so that a node's identity names every input that shaped it —
+that is what makes recomputation honest. An output has no identity, produces no
+node, and writes nothing, so it cannot create a cycle, cannot make anything
+stale, and cannot be depended upon in turn. A report over two analyzers'
+findings is the ordinary case, and expressing it as a dependency edge would
+reorder real analysis work to satisfy a rendering concern.
+
+### Rendering is separate from analysis
+
+Producing a node and producing a file are different jobs with opposite
+lifecycles, so they are different concepts rather than two modes of one.
+
+A node is expensive to earn — it may have cost a model call — and must not
+change under a reader, which is why it is content-addressed, append-only and
+recomputed only when its recipe genuinely goes out of date. A file is the
+opposite: cheap, disposable, and expected to differ every time the question
+differs ("show me yesterday instead"). Modelling a report as a node would force
+one to inherit the other's costs — either reports become immutable and go stale,
+or nodes become rewritable and the append-only invariant dies.
+
+Keeping them apart buys three things. Rendering is safe to repeat, because it
+writes nothing. A failed render costs a re-run rather than a repair, because
+there is no half-written record to reconcile. And an output can freely fold
+across analyzers, because it is a read.
+
+The corollary is that an output never *fills* the graph: it displays what
+analysis has already found. A report that looks empty means analysis has not
+run, and the tooling says so rather than rendering a blank page as though the
+day were quiet.
+
 ### Deterministic first, language model second
 
 Analysis is layered. A deterministic layer measures every turn with no model
@@ -790,6 +831,10 @@ set explain *why* the recipe moved.
 These statements must always hold. If a change would violate one, the change is
 wrong.
 
+- Rendering an output writes nothing. No node, run, edge, proposal or decision
+  is created by producing an artifact, so an output can be re-rendered any
+  number of times without touching history, and no output can be a step in
+  analysis.
 - A node, once written, is never modified or deleted. **Retraction** is how the
   invariant is enforced rather than merely expected: `prospect gc` sets a
   `retracted_at` tombstone (with a `retracted_by_run` provenance) instead of
