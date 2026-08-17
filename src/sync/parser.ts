@@ -30,6 +30,13 @@ export interface ParsedMessage {
 		usage: UsageData | null;
 		model: string | null;
 		costUsd: number | null;
+		/**
+		 * The provider's id for the response this line belongs to. Claude Code
+		 * splits one assistant response across a line per content block, each
+		 * repeating the same `usage`, so this is the only key that identifies a
+		 * single billed API call. Null when the transcript records none.
+		 */
+		providerMessageId: string | null;
 	};
 }
 
@@ -124,9 +131,11 @@ function parsePiLine(line: string): ParsedLine | null {
 		const model = role === "assistant" ? extractModel(msg) : null;
 		const costUsd = role === "assistant" ? extractCostUsd(msg.usage as Record<string, unknown> | undefined) : null;
 
+		// Pi writes one line per assistant response, so the line's own id already
+		// identifies the billed call.
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, usage, model, costUsd },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, usage, model, costUsd, providerMessageId: role === "assistant" ? id : null },
 		};
 	}
 
@@ -151,7 +160,7 @@ function parsePiLine(line: string): ParsedLine | null {
 
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, usage: null, model: null, costUsd: null },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, usage: null, model: null, costUsd: null, providerMessageId: null },
 		};
 	}
 
@@ -298,7 +307,7 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 
 		return {
 			kind: "message",
-			entry: { id: uuid, parentId: parentUuid, timestamp, role, text, thinking: null, tool_calls: null, tool_results, usage: null, model: null, costUsd: null },
+			entry: { id: uuid, parentId: parentUuid, timestamp, role, text, thinking: null, tool_calls: null, tool_results, usage: null, model: null, costUsd: null, providerMessageId: null },
 		};
 	}
 
@@ -349,10 +358,13 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 		const model = extractModel(msg);
 		// Claude Code records no per-message dollar cost, so billed cost stays null.
 		const costUsd = null;
+		// One assistant response becomes a line per content block, each repeating
+		// that response's usage. `message.id` is what ties them back together.
+		const providerMessageId = typeof msg.id === "string" ? msg.id : null;
 
 		return {
 			kind: "message",
-			entry: { id: uuid, parentId: parentUuid, timestamp, role: "assistant", text, thinking, tool_calls, tool_results: null, usage, model, costUsd },
+			entry: { id: uuid, parentId: parentUuid, timestamp, role: "assistant", text, thinking, tool_calls, tool_results: null, usage, model, costUsd, providerMessageId },
 		};
 	}
 

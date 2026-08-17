@@ -78,6 +78,7 @@ flowchart TD
     CE[cache-economy<br/>cache hit ratio]
     CTX[context-economy<br/>token carry attribution]
     SL[secret-leak<br/>credential detection]
+    TU[token-units<br/>MITE per request segment]
   end
 
   subgraph deterministic [Deterministic layers]
@@ -89,14 +90,16 @@ flowchart TD
   end
 
   subgraph llm [LLM layers]
+    RC[request-classes<br/>open-vocabulary request types]
     TPL[turn-pair-llm<br/>per-turn classification]
     SO[session-overview<br/>synthesis &amp; proposals]
     PV[proposal-validate<br/>replay validation]
     URA[user-reply-acts<br/>multi-act reply classification]
   end
 
-  subgraph readonly [Read-time fold — not a node]
+  subgraph readonly [Read-time folds — not nodes]
     MM[model-mix<br/>efficiency frontier]
+    OUT[token-units outputs<br/>HTML report + class-cost CSV]
   end
 
   LEX -->|nominated terms| FL
@@ -116,6 +119,8 @@ flowchart TD
   TPC -->|turn context| URA
   URA -->|per-reply acts| URD
   RO -.->|routing labels<br/>read-time fold| MM
+  TU -.->|priced segments<br/>read-time fold| OUT
+  RC -.->|class assignments<br/>read-time fold| OUT
 ```
 
 ### turn-pair-core — per-turn friction metrics (deterministic)
@@ -215,7 +220,19 @@ Folds the per-reply `user-reply-acts` classifications into a session-level distr
 
 Source: [`.prospector/analyzers/user-reply-acts-distribution.analyzer.ts`](./.prospector/analyzers/user-reply-acts-distribution.analyzer.ts).
 
-Registration and dependency order live in [`src/analyze/defaults.ts`](./src/analyze/defaults.ts); the framework that schedules analyzers, computes their content-addressed identities, and tracks lineage is [`src/analyze/framework.ts`](./src/analyze/framework.ts).
+### token-units — what a session cost, in MITE (deterministic)
+
+Prices every billed call in **MITE** (Million Input-Token Equivalents) and attributes the spend to *request segments* — a user turn plus every call answering it. It de-duplicates Claude Code's per-content-block transcript rows by the provider's own message id, without which Claude totals run 2.1× high. It also declares the two **outputs** that render the daily report. One `metric` node per session; no model.
+
+Source: [`token-units/index.ts`](./src/analyze/analyzers/token-units/index.ts) · the unit and its rates in [`config.ts`](./src/analyze/analyzers/token-units/config.ts) · the arithmetic in [`fold.ts`](./src/analyze/analyzers/token-units/fold.ts) · the read-time join in [`leaves.ts`](./src/analyze/analyzers/token-units/leaves.ts) · the renderers in [`report.ts`](./src/analyze/analyzers/token-units/report.ts). See [Daily token report](#daily-token-report).
+
+### request-classes — an open vocabulary for request types (cheap LLM)
+
+Every other classifier here hands the model a fixed label set and asks it to pick, which measures how well a corpus fits a taxonomy someone wrote in advance. This one asks the model to **name its own** classes for the request types it sees and supplies no candidate names, no examples, and no count. The vocabulary that comes back is the finding — including the fact that it differs between sessions. The model also says which requests belong to each class, which is what lets `token-units` spend be split by class. One `classification` node per session, one cheap call.
+
+Source: [`request-classes/index.ts`](./src/analyze/analyzers/request-classes/index.ts). The prompt is deliberately minimal; the module note explains why adding an example to it would break the measurement.
+
+Registration and dependency order live in [`src/analyze/defaults.ts`](./src/analyze/defaults.ts); the framework that schedules analyzers, computes their content-addressed identities, and tracks lineage is [`src/analyze/framework.ts`](./src/analyze/framework.ts). Analyzers can also declare [outputs](#outputs--turning-the-graph-into-files) — files rendered from the finished graph.
 
 ### Custom analyzers (author your own, no rebuild)
 
@@ -276,6 +293,14 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
 - `--model provider/model` — pin **every** model tier to one concrete model for this run. Because the resolved model is part of a node's identity, a pinned run produces its own nodes; switching back to the normal mapping marks them stale (reason `config`).
 
 Proposals are never auto-applied. They sit in the database with status `open` until you accept or reject them.
+
+### `/prospect-output [list | <analyzer>[:<output>]] [--out DIR] [--as-of TS] [--key value]`
+
+Render an analyzer's [outputs](#outputs--turning-the-graph-into-files) to files. `output list` prints every output the registered analyzers declare, with its description and options.
+
+Addressing goes `analyzer:output`; an analyzer id renders all of its outputs, and a bare output id works when only one analyzer declares it. Any `--key value` the command does not recognise is passed to the output, so `--day 2026-08-14` and `--previews false` reach the report without the command knowing what they mean. Files land in `--out DIR`, defaulting to `~/Documents`.
+
+This reads the graph and never writes to it: it renders what analysis has already found and never runs analysis itself. An empty or stale report therefore means `analyze` has not caught up, not that the day was quiet.
 
 ### `/prospect-stats`
 
@@ -467,6 +492,86 @@ pi -e ./src/index.ts --prospect stats
 ```
 
 For structured-output calls, prefer a non-reasoning model/tier: reasoning models spend the token budget on thinking and can truncate the JSON answer (the LLM caller now fails fast with a clear message when a response is cut off at the output limit).
+
+## Outputs — turning the graph into files
+
+An analyzer's `analyze()` produces **nodes**: the durable, content-addressed record of what it found. An **output** produces a **file**: the same findings shaped for a person, or for a tool that is not this one.
+
+They are kept apart because their lifecycles are opposite. A node is expensive to earn and must not change under a reader. A file should be free to re-render and safe to delete. Rendering an output writes nothing to the graph, so it can be repeated at will and a crash mid-render costs a re-run rather than a repair.
+
+```bash
+pi -e ./src/index.ts --prospect "output list"
+pi -e ./src/index.ts --prospect "output token-units:report --day 2026-08-14"
+pi -e ./src/index.ts --prospect "output token-units --day all --out /tmp/reports"
+```
+
+An output is addressed as `analyzer:output`. An analyzer id renders every output it declares, and a bare output id works when only one analyzer declares it — ambiguity is an error naming both addresses, never a guess. Unknown `--key value` pairs pass through to the output, so an output can add a knob without the command changing.
+
+To declare one, add `outputs` to your analyzer:
+
+```ts
+outputs: [{
+  def: { id: "report", label: "Daily report (HTML)", description: "…" },
+  render(ctx) {
+    // ctx.ownNodes  — this analyzer's newest node per unit, read lazily
+    // ctx.getNodes  — the same for ANY analyzer, no dependency needed
+    // ctx.db, ctx.config, ctx.options, ctx.asOf
+    return [{ filename: "report.html", mediaType: "text/html", content: html }];
+  },
+}]
+```
+
+`getNodes` reaching any analyzer looks like a hole in the declared-dependency rule and is not one. That rule exists so a node's *identity* names every input that shaped it; an output has no identity, writes nothing, and can neither create a cycle nor make anything stale. A report that needs two analyzers' findings is the ordinary case, and a dependency edge to express it would reorder real analysis work around a rendering concern.
+
+**One trap, and it is the expensive kind.** `getNodes` returns the newest node per *logical unit*, and a unit is a source set, not a session. An analyzer that folds a session's progress into its `sourceSetHash` — so that appending turns produces a fresh node instead of leaving a stale total standing — has one live node per *generation* of that session, and all of them are legitimately current. Summing them counts the session once per generation. It stays invisible until a session is analysed twice, which is exactly what happens to a session still running when the report is built, so it surfaces as a number quietly too high on the days a reader cares about most. Fold with `latestBySession` before you total anything per-session.
+
+## Daily token report
+
+What did today cost, and what did you spend it on? The `token-units` analyzer answers both, through two outputs.
+
+```bash
+scripts/session-report.sh                          # today
+scripts/session-report.sh 2026-08-14               # a specific day
+scripts/session-report.sh 2026-08-14 --previews false
+scripts/session-report.sh all --out /tmp/reports
+```
+
+The script indexes new transcript lines, runs the two analyzers, and renders both outputs to `~/Documents/`. A repeat run takes seconds: sync reads only unseen lines, the analyzers recompute only units whose inputs changed, and rendering is a pure read.
+
+| output | file | what it is |
+| --- | --- | --- |
+| `token-units:report` | `token-report-<day>.html` | one self-contained page — total MITE, a nested treemap, and per-class, per-model, per-project and per-hour tables |
+| `token-units:classes` | `token-classes-<day>.csv` | one row per class: its MITE and the raw token counts behind it |
+
+Both fold the same leaf list, so the page and the CSV cannot disagree.
+
+### The unit: MITE
+
+**One MITE is a million input-token equivalents.** Tokens are priced against each other once, so a number means the same thing across every provider:
+
+| token | counts | why |
+| --- | --- | --- |
+| input | ×1 | the numeraire |
+| output | ×15 | far costlier to produce |
+| cache read | ×0.1 | a fraction of fresh input |
+| cache write | ×1.25 | the one assumed rate — the conventional 5-minute multiple |
+
+Dollars are not an option: Claude Code records no per-message cost at all, and Pi records one only where the route priced the call, so a dollar report would silently omit most of a corpus. Every weight lives in the `token-units` analyzer config, so restating one marks prior nodes stale rather than rewriting history in place.
+
+### What the report shows
+
+A nested treemap where **area is MITE**, over a hierarchy the reader can re-order in the page (agent → project → class → session, class-first, model-first, hour-first), plus the tables and a table view of every leaf.
+
+Colour is spent carefully. A treemap sets arbitrary rectangles side by side, which makes it an all-pairs form for colourblind safety, and only three hues clear the separation floors in both light and dark — a fourth seats yellow beside orange and fails. So three or fewer top-level groups each get a hue; past that the diagram drops to one hue and lets labels and area carry identity, rather than colouring the three biggest and grey-washing the rest, which reads as a grouping that does not exist.
+
+### The two analyzers
+
+- **`token-units`** (deterministic) prices a session in MITE and attributes spend to *request segments* — a user turn plus every call answering it. It folds Claude Code's per-content-block rows by the provider's message id, so one API call counts once. Without that fold Claude totals run **2.1× high**, because Claude Code repeats a response's `usage` on every content-block line it writes.
+- **`request-classes`** (LLM, cheap tier) asks the model to *name its own* set of classes describing the request types it sees. No taxonomy, no examples, and no target count are supplied — the emergent vocabulary is the finding. Do not add examples to that prompt; an example name is a suggestion the model will take, and the analyzer would then measure the example instead of the corpus.
+
+Neither depends on the other. The report joins them at read time, which is what an output is for.
+
+Two conventions the reports state on their own face, rather than leaving a reader to discover: a request that belongs to several classes splits its spend evenly among them, so class totals still add to the whole; and a request is attributed to the local day it *started* on and is not split at midnight.
 
 ## Design
 

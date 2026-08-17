@@ -4,6 +4,7 @@ import { registerStatsCommand } from "./commands/stats.js";
 import { registerProposalsCommand } from "./commands/proposals.js";
 import { registerAnalyzeCommand } from "./commands/analyze.js";
 import { registerAnalyzersCommand } from "./commands/analyzers.js";
+import { registerOutputCommand } from "./commands/output.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { registerValidateCommand } from "./commands/validate.js";
 import { registerShowCommand } from "./commands/show.js";
@@ -22,6 +23,7 @@ export default function (pi: ExtensionAPI) {
 	registerProposalsCommand(pi);
 	registerAnalyzeCommand(pi);
 	registerAnalyzersCommand(pi);
+	registerOutputCommand(pi);
 	registerVerifyCommand(pi);
 	registerValidateCommand(pi);
 	registerShowCommand(pi);

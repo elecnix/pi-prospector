@@ -18,6 +18,8 @@ import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
+import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
+import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
 
 export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-core",
@@ -30,6 +32,8 @@ export const DEFAULT_ANALYZER_IDS = [
 	"cache-economy",
 	"routing-opportunity",
 	"secret-leak",
+	"token-units",
+	"request-classes",
 	"session-overview",
 ] as const;
 
@@ -51,6 +55,12 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// future session-overview consumer can declare it as a dependency without
 	// reordering. Emits redacted findings only — never the matched secret.
 	secretLeakAnalyzer,
+	// Cost accounting. token-units is deterministic and depends on nothing;
+	// request-classes labels the same request segments it prices. Neither depends
+	// on the other — the report joins them at read time, through token-units'
+	// outputs, so no dependency edge orders analysis around a rendering concern.
+	tokenUnitsAnalyzer,
+	requestClassesAnalyzer,
 	sessionOverviewAnalyzer,
 ];
 
