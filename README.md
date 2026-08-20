@@ -265,7 +265,7 @@ Loader and discovery: [`src/analyze/loader.ts`](./src/analyze/loader.ts) · opti
 
 ## Commands
 
-### `/prospect-sync`
+### `/prospect-sync [--project NAME] [--source pi|claude]`
 
 Index session files into the database. No LLM is called. Fast and cheap.
 
@@ -275,6 +275,11 @@ Index session files into the database. No LLM is called. Fast and cheap.
 - Tracks a cursor per session file (`{session_id, last_line, last_modified}`) and re-indexes a file only when its modification time changes
 
 Run it as often as you like. It's idempotent and incremental.
+
+- `--project NAME` — scope the sync to one **project** (derived from the session directory name). On a fresh install with hundreds of sessions across many repos, this is the escape hatch that syncs only the project you care about instead of paying for every session on disk.
+- `--source pi|claude` — restrict the sync to one coding harness.
+
+The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.
 
 ### `/prospect-analyze [--revise <reasons>] [--source pi|claude] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
 
@@ -306,9 +311,9 @@ This reads the graph and never writes to it: it renders what analysis has alread
 
 Print a summary of the database: sessions indexed, messages and tool results, sessions analysed, proposals by status (`open`/`applied`/`rejected`/`duplicate`), and analysis-graph totals (nodes, edges, runs, and a breakdown of nodes by kind).
 
-### `/prospect-proposals [status] [--source pi|claude]`
+### `/prospect-proposals [status] [--source pi|claude] [--session <id>]`
 
-List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`) and by the coding harness that produced the session (`--source pi` or `--source claude`). Each group header shows the harness as `[Pi]`/`[Claude]`. Each row shows its status, a score label, severity, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous). If you have decided a proposal, the row also shows your latest **decision** (verdict, disposition, and rationale).
+List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`), by the coding harness that produced the session (`--source pi` or `--source claude`), and/or scoped to a single session (`--session <id>`). Each group header shows the harness as `[Pi]`/`[Claude]`. Each row shows its status, a score label, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous). If you have decided a proposal, the row also shows your latest **decision** (verdict, disposition, and rationale).
 
 - **Target** — what the proposal suggests changing (a category and optional path, e.g. a standing instruction file or a skill)
 - **Severity** — the nature of the signal: `friction` | `correction` | `waste` | `suggestion` | `reinforcement` (listed as `reinforce`)

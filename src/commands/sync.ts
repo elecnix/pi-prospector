@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
+import { parseHarnessSource } from "../harness.js";
 import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
 export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -50,9 +51,8 @@ function parseSyncArgs(raw: string): SyncArgs {
 		const p = parts[i];
 		if (p === "--project" && parts[i + 1]) result.project = parts[++i]!;
 		else if (p === "--source" && parts[i + 1]) {
-			const v = parts[++i]!;
-			if (v !== "pi" && v !== "claude") throw new Error(`Unknown --source "${v}" — expected pi or claude`);
-			result.source = v;
+			// Unknown values throw (parseHarnessSource), so a typo fails loudly.
+			result.source = parseHarnessSource(parts[++i]!);
 		}
 	}
 	return result;
