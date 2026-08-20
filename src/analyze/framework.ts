@@ -668,6 +668,10 @@ export class AnalyzerFramework {
 			const active = getActiveAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
 			extra.push(`assertions:${computeAssertionFingerprint(active)}`);
 		}
+		// Setup the analyzer reads but does not own (what the host has installed, …).
+		// Same category as the assertion set above: the user set it, so it is
+		// `config`, and changing it marks the nodes drawn under the old setup stale.
+		for (const fact of analyzer.identityExtras?.() ?? []) extra.push(fact);
 		const configFingerprint = computeConfigFingerprint(config.configHash, models, extra);
 		return { analyzer, config, promptBundleHash, configFingerprint };
 	}
@@ -749,7 +753,7 @@ function db_loadMessages(db: Database.Database, sessionId: string): MessageRow[]
 	// money and is never guessed: an unrecorded cost stays null here, not a
 	// silent 0 (see src/sync/parser.ts extractCostUsd).
 	return prep(db,
-			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd " +
+			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message " +
 			"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
 		)
 		.all(sessionId) as MessageRow[];

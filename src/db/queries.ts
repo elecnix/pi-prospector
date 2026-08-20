@@ -117,13 +117,17 @@ export interface MessageInsert {
 	cost_usd: number | null;
 	/** The provider's response id — several rows may share one. See the schema note. */
 	provider_message_id: string | null;
+	/** How the assistant generation ended, verbatim from the host. NULL for non-assistant rows. */
+	stop_reason: string | null;
+	/** Why it failed, verbatim from the host. NULL unless the generation failed. */
+	error_message: string | null;
 }
 
 export function insertMessage(db: Database.Database, m: MessageInsert): void {
 	prep(db, `
-		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, content_hash, model, cost_usd, provider_message_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, m.usage, null, m.model, m.cost_usd, m.provider_message_id);
+		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, content_hash, model, cost_usd, provider_message_id, stop_reason, error_message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, m.usage, null, m.model, m.cost_usd, m.provider_message_id, m.stop_reason, m.error_message);
 }
 
 export function countMessages(db: Database.Database, sessionId: string): number {

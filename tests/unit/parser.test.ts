@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseLine } from "../../src/sync/parser.js";
+import { parseLine, parseClaudeLine } from "../../src/sync/parser.js";
 
 describe("parseLine", () => {
 	it("parses a v3 session header", () => {
@@ -190,5 +190,82 @@ describe("parseLine", () => {
 		assert.equal(result.entry.model, null);
 		assert.equal(result.entry.costUsd, null);
 		assert.equal(result.entry.usage, null);
+	});
+});
+// ──────────────────── turn failures (issue #159) ────────────────────
+
+describe("parseLine — assistant turn failure capture", () => {
+	it("captures stopReason and errorMessage from a failed Pi assistant turn", () => {
+		const line = JSON.stringify({
+			type: "message",
+			id: "a1",
+			parentId: "u1",
+			timestamp: "2026-01-01T00:00:00Z",
+			message: {
+				role: "assistant",
+				content: [],
+				stopReason: "error",
+				errorMessage: '429: {"type":"api_error","message":"rate limited"}',
+				usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 10, cost: { total: 0.02 } },
+			},
+		});
+		const parsed = parseLine(line);
+		assert.ok(parsed && parsed.kind === "message");
+		assert.equal(parsed.entry.stopReason, "error");
+		assert.equal(parsed.entry.errorMessage, '429: {"type":"api_error","message":"rate limited"}');
+	});
+
+	it("leaves stopReason and errorMessage null on a clean Pi turn", () => {
+		const line = JSON.stringify({
+			type: "message",
+			id: "a2",
+			message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" },
+		});
+		const parsed = parseLine(line);
+		assert.ok(parsed && parsed.kind === "message");
+		assert.equal(parsed.entry.stopReason, "stop");
+		assert.equal(parsed.entry.errorMessage, null);
+	});
+
+	it("carries the provider tool-call id so results can be paired exactly", () => {
+		const line = JSON.stringify({
+			type: "message",
+			id: "a3",
+			message: {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call_7", name: "bash", arguments: { command: "ls" } }],
+			},
+		});
+		const parsed = parseLine(line);
+		assert.ok(parsed && parsed.kind === "message");
+		assert.deepEqual(parsed.entry.tool_calls, [{ id: "call_7", name: "bash", arguments: { command: "ls" } }]);
+	});
+});
+
+describe("parseClaudeLine — assistant turn failure capture", () => {
+	it("treats an isApiErrorMessage assistant line as a turn failure", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			uuid: "c1",
+			isApiErrorMessage: true,
+			message: { role: "assistant", stop_reason: "stop_sequence", content: [{ type: "text", text: "API Error: 500 Internal server error." }] },
+		});
+		const parsed = parseClaudeLine(line);
+		assert.ok(parsed && parsed.kind === "message");
+		assert.equal(parsed.entry.stopReason, "error");
+		assert.equal(parsed.entry.errorMessage, "API Error: 500 Internal server error.");
+	});
+
+	it("records a clean Claude turn's stop_reason without an error", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			uuid: "c2",
+			message: { role: "assistant", stop_reason: "tool_use", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }] },
+		});
+		const parsed = parseClaudeLine(line);
+		assert.ok(parsed && parsed.kind === "message");
+		assert.equal(parsed.entry.stopReason, "tool_use");
+		assert.equal(parsed.entry.errorMessage, null);
+		assert.deepEqual(parsed.entry.tool_calls, [{ id: "toolu_1", name: "bash", arguments: { command: "ls" } }]);
 	});
 });

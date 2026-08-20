@@ -11,6 +11,8 @@ import type { AnalysisNodeRow, MessageRow } from "../../types.js";
 import type { TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import type { TurnPairLLMProperties } from "../turn-pair-llm/prompt.js";
 import type { ToolTrajectoryProperties } from "../tool-trajectory/index.js";
+import type { FailureModesProperties } from "../failure-modes/index.js";
+import { failureClass } from "../failure-modes/classes.js";
 import type { TurnFrustrationProperties } from "../turn-frustration/index.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
 
@@ -37,6 +39,8 @@ export interface SessionDigest {
 	header: string;
 	perPairLines: string[];
 	trajectoryLines: string[];
+	/** One line per classified failure group — what failed, how often, at what cost. */
+	failureLines: string[];
 	positiveSignals: string[];
 	text: string;
 	totalChars: number;
@@ -46,6 +50,12 @@ export interface SessionDigest {
 	correctionCount: number;
 	toolFailureCount: number;
 	trajectorySignalCount: number;
+	/**
+	 * Generations that failed outright — the provider refused them, the stream
+	 * dropped, the tool call would not parse. Distinct from `toolFailureCount`,
+	 * where the action was well-formed and the tool itself failed.
+	 */
+	turnFailureCount: number;
 	/** Turns carrying at least one learned-lexicon or lexicon-free frustration signal. */
 	frustrationSignalCount: number;
 	/** Distinct languages the learned lexicon matched in this session. */
@@ -68,6 +78,8 @@ export interface BuildDigestInput {
 	coreNodes: AnalysisNodeRow[];
 	llmNodes: AnalysisNodeRow[];
 	trajectoryNodes: AnalysisNodeRow[];
+	/** failure-modes metric/proposal nodes for this session. */
+	failureNodes?: AnalysisNodeRow[];
 	frustrationNodes?: AnalysisNodeRow[];
 	/** user-reply-acts classification nodes (custom analyzer). */
 	replyActsNodes?: AnalysisNodeRow[];
@@ -154,6 +166,10 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	const trajectory = input.trajectoryNodes
 		.map((n) => safeParse<ToolTrajectoryProperties>(n.content_json))
 		.filter((p): p is ToolTrajectoryProperties => p !== null);
+
+	const failures = (input.failureNodes ?? [])
+		.map((n) => safeParse<FailureModesProperties>(n.content_json))
+		.filter((p): p is FailureModesProperties => p !== null);
 
 	// Parse user-reply-acts classification nodes (custom analyzer).
 	// Map user_message_id → reply act properties for per-turn enrichment.
@@ -291,10 +307,40 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		}),
 	);
 
+	// Failure lines. The synthesiser cannot see a failed generation in the turn
+	// text — the turn just looks short — so this is the only place a rate limit or
+	// a dropped stream becomes visible to it. Only the curated class and matcher
+	// labels appear here; the host's error text never does, because the digest is
+	// sent to a model and host errors quote account names and request ids.
+	const failureLines = failures.flatMap((f) =>
+		f.groups.map((g) => {
+			const cls = failureClass(g.class_id);
+			const cost = typeof g.cost_usd === "number" ? ` cost=$${roundUsd(g.cost_usd)}` : "";
+			const tool = g.tool ? ` tool=${g.tool}` : "";
+			const causes = g.causes.map((c) => `${c.label}×${c.count}`).join(", ");
+			return `failure:${g.axis}/${g.class_id}${tool} count=${g.count}${cost} ${cls?.label ?? "unrecognised"} — ${causes}`;
+		}),
+	);
+	const turnFailureCount = failures.reduce((n, f) => n + f.turn_failure_count, 0);
+
 	const headerLines = [
 		`## Session ${input.sessionId}`,
 		`pairs=${core.length} high_signal=${frictionCount} corrections=${correctionCount} tool_failures=${toolFailureCount} trajectory_signals=${trajectorySignalCount}`,
 	];
+	for (const f of failures) {
+		// Coverage before counts: rows indexed before sync kept the host's stop
+		// reason cannot show a failed generation at all, and a silent zero there
+		// would read to the synthesiser as a clean session.
+		if (f.turn_failure_capture === "absent") {
+			headerLines.push("turn_failures=unknown (this session was indexed before failed generations were recorded; re-sync to see them)");
+		} else {
+			const cost = typeof f.failure_cost_usd === "number" ? ` cost=$${roundUsd(f.failure_cost_usd)}` : " cost=unknown";
+			headerLines.push(
+				`turn_failures=${f.turn_failure_count}/${f.assistant_turn_count} tool_failures_classified=${f.tool_failure_count}/${f.tool_call_count}` +
+					` (${f.priced_failure_count}/${f.priced_failure_count + f.unpriced_failure_count} priced)${cost}`,
+			);
+		}
+	}
 	if (trajectory.length > 0) {
 		headerLines.push(`trajectory_friction=${trajectory.reduce((max, t) => Math.max(max, t.trajectory_friction_score ?? 0), 0).toFixed(2)}`);
 		// Pricing coverage: state what fraction of trajectory signals could
@@ -328,6 +374,9 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	if (trajectoryLines.length > 0) {
 		sections.push("", "### Trajectory signals", ...trajectoryLines);
 	}
+	if (failureLines.length > 0) {
+		sections.push("", "### Failures", ...failureLines);
+	}
 	if (replyActsLines.length > 0) {
 		sections.push("", "### Reply acts", ...replyActsLines);
 	}
@@ -337,6 +386,7 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		header,
 		perPairLines,
 		trajectoryLines,
+		failureLines,
 		positiveSignals,
 		text,
 		totalChars: text.length,
@@ -346,6 +396,7 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		correctionCount,
 		toolFailureCount,
 		trajectorySignalCount,
+		turnFailureCount,
 		frustrationSignalCount,
 		frustrationLanguages,
 		cleanRecovery,

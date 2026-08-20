@@ -18,6 +18,7 @@ import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
+import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
 
@@ -28,6 +29,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"turn-frustration",
 	"turn-pair-llm",
 	"tool-trajectory",
+	"failure-modes",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -48,6 +50,10 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	turnFrustrationAnalyzer,
 	turnPairLLMAnalyzer,
 	toolTrajectoryAnalyzer,
+	// What failed, of every kind. Deterministic and standalone; ordered next to
+	// tool-trajectory because the two read the same action stream — one for the
+	// shape of the sequence, the other for what went wrong in it.
+	failureModesAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,

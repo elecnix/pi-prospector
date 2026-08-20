@@ -25,7 +25,7 @@ export interface ParsedMessage {
 		role: MessageRole;
 		text: string | null;
 		thinking: string | null;
-		tool_calls: Array<{ name: string; arguments: Record<string, unknown> }> | null;
+		tool_calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null;
 		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number }> | null;
 		usage: UsageData | null;
 		model: string | null;
@@ -37,6 +37,20 @@ export interface ParsedMessage {
 		 * single billed API call. Null when the transcript records none.
 		 */
 		providerMessageId: string | null;
+		/**
+		 * The host's recorded stop reason for an assistant generation
+		 * (`toolUse`, `stop`, `error`, `length`, `aborted`, …), or null when the
+		 * transcript recorded none. `error` is the marker of a **turn failure**:
+		 * the generation was billed and produced nothing usable.
+		 */
+		stopReason: string | null;
+		/**
+		 * The host's recorded error text for a failed assistant generation, or
+		 * null. It is the only record of *why* a turn failed — without it a turn
+		 * failure is indistinguishable from a short reply, so no analyzer can tell
+		 * a rate limit from a malformed tool call.
+		 */
+		errorMessage: string | null;
 	};
 }
 
@@ -105,6 +119,7 @@ function parsePiLine(line: string): ParsedLine | null {
 				else if (p.type === "thinking" && typeof p.thinking === "string") thinkParts.push(p.thinking);
 				else if (p.type === "toolCall") {
 					calls.push({
+						id: String(p.id ?? ""),
 						name: String(p.name ?? ""),
 						arguments: (p.arguments as Record<string, unknown>) ?? {},
 					});
@@ -131,11 +146,17 @@ function parsePiLine(line: string): ParsedLine | null {
 		const model = role === "assistant" ? extractModel(msg) : null;
 		const costUsd = role === "assistant" ? extractCostUsd(msg.usage as Record<string, unknown> | undefined) : null;
 
+		// The host's own verdict on how the generation ended, and — when it ended
+		// badly — why. Both are recorded verbatim: classification is an analyzer's
+		// job, and sync must not decide in advance which failures matter.
+		const stopReason = role === "assistant" ? extractStopReason(msg) : null;
+		const errorMessage = role === "assistant" ? extractErrorMessage(msg) : null;
+
 		// Pi writes one line per assistant response, so the line's own id already
 		// identifies the billed call.
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, usage, model, costUsd, providerMessageId: role === "assistant" ? id : null },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, usage, model, costUsd, providerMessageId: role === "assistant" ? id : null, stopReason, errorMessage },
 		};
 	}
 
@@ -160,7 +181,7 @@ function parsePiLine(line: string): ParsedLine | null {
 
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, usage: null, model: null, costUsd: null, providerMessageId: null },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, usage: null, model: null, costUsd: null, providerMessageId: null, stopReason: null, errorMessage: null },
 		};
 	}
 
@@ -307,7 +328,7 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 
 		return {
 			kind: "message",
-			entry: { id: uuid, parentId: parentUuid, timestamp, role, text, thinking: null, tool_calls: null, tool_results, usage: null, model: null, costUsd: null, providerMessageId: null },
+			entry: { id: uuid, parentId: parentUuid, timestamp, role, text, thinking: null, tool_calls: null, tool_results, usage: null, model: null, costUsd: null, providerMessageId: null, stopReason: null, errorMessage: null },
 		};
 	}
 
@@ -341,6 +362,7 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 					thinkParts.push(p.thinking);
 				} else if (p.type === "tool_use") {
 					calls.push({
+						id: String(p.id ?? ""),
 						name: normalizeClaudeToolName(String(p.name ?? "")),
 						arguments: (p.input as Record<string, unknown>) ?? {},
 					});
@@ -362,9 +384,17 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 		// that response's usage. `message.id` is what ties them back together.
 		const providerMessageId = typeof msg.id === "string" ? msg.id : null;
 
+		// Claude Code has no `errorMessage` field: an API failure is written as an
+		// ordinary assistant line flagged `isApiErrorMessage`, whose text *is* the
+		// error. Normalising it to the same two columns is what lets one analyzer
+		// read turn failures from both hosts.
+		const isApiError = obj.isApiErrorMessage === true;
+		const stopReason = isApiError ? "error" : extractStopReason(msg);
+		const errorMessage = isApiError && text ? text : null;
+
 		return {
 			kind: "message",
-			entry: { id: uuid, parentId: parentUuid, timestamp, role: "assistant", text, thinking, tool_calls, tool_results: null, usage, model, costUsd, providerMessageId },
+			entry: { id: uuid, parentId: parentUuid, timestamp, role: "assistant", text, thinking, tool_calls, tool_results: null, usage, model, costUsd, providerMessageId, stopReason, errorMessage },
 		};
 	}
 
@@ -477,4 +507,31 @@ function extractModel(msg: Record<string, unknown>): string | null {
 function extractCostUsd(usage: Record<string, unknown> | undefined): number | null {
 	const total = (usage?.cost as Record<string, unknown> | undefined)?.total;
 	return typeof total === "number" && Number.isFinite(total) && total > 0 ? total : null;
+}
+
+/**
+ * The host's recorded stop reason for an assistant generation.
+ *
+ * Pi writes `message.stopReason` (`toolUse` | `stop` | `error` | `length` |
+ * `aborted` | `pending`); Claude Code writes `message.stop_reason`
+ * (`tool_use` | `end_turn` | `stop_sequence` | `max_tokens`). The two
+ * vocabularies are *not* unified here — sync records what the host said, and
+ * the failure-class catalogue is the single place that interprets it.
+ */
+function extractStopReason(msg: Record<string, unknown>): string | null {
+	const raw = msg.stopReason ?? msg.stop_reason;
+	return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+/**
+ * The host's recorded error text for a failed assistant generation, or null.
+ *
+ * Pi writes it at `message.errorMessage`. It is stored verbatim: it is the
+ * only evidence of *why* a turn produced nothing, and truncating or
+ * pre-classifying it here would decide, in the ingest layer, which failures an
+ * analyzer is allowed to see.
+ */
+function extractErrorMessage(msg: Record<string, unknown>): string | null {
+	const raw = msg.errorMessage;
+	return typeof raw === "string" && raw.length > 0 ? raw : null;
 }

@@ -25,7 +25,8 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
-import { normalizeToolCall, type NormalizedToolCall } from "./arg-parser.js";
+import { buildToolStream } from "../../tool-stream.js";
+import { normalizeToolCall } from "./arg-parser.js";
 import { detectAllSignals, type TrajectorySignal, type ToolCallWithResult } from "./detectors.js";
 import { DEFAULT_TOOL_TRAJECTORY_CONFIG, type ToolTrajectoryConfig } from "./config.js";
 
@@ -53,8 +54,16 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// is now documented as the sum of the *priced* signals — a lower bound of the
 	// true cost whenever any signal is unpriced, never a silent total.
 	// Minor: output gains fields; detection semantics unchanged.
-	major: 1,
-	minor: 2,
+	//
+	// 2.0 (issue #159): calls and results are now paired by the provider's
+	// tool-call id, through the shared session action stream, instead of by
+	// position. The old positional walk mis-attributed every error whenever one
+	// step issued several calls or a call never returned — and `isError` is what
+	// decides whether a run of repeats counts as a stuck-loop. Major: previously
+	// reported signals can disappear and new ones appear, because the inputs to
+	// the detectors were wrong.
+	major: 2,
+	minor: 0,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
 };
@@ -89,106 +98,31 @@ export interface ToolTrajectoryProperties {
 	tool_call_count: number;
 }
 
-// ──────────────────────────── message parsing ────────────────────────────
-
-interface ParsedToolCall {
-	name: string;
-	args: Record<string, unknown>;
-	messageId: string;
-}
-
-interface ParsedToolResult {
-	toolName: string;
-	isError: boolean;
-	textLength: number;
-}
+// ──────────────────────────── the action stream ────────────────────────────
 
 /**
- * Extract tool calls and results from the session's message stream.
+ * Adapt the session's shared action stream to what the detectors expect.
+ *
+ * The pairing itself lives in `src/analyze/tool-stream.ts`, alongside turn
+ * failures, so this analyzer and `failure-modes` agree on what "that call
+ * failed" means. Before it did, this analyzer paired the Nth call with the Nth
+ * result gathered from a map — which put every error on the wrong call in any
+ * session where one step issued several calls, or where a call never got a
+ * result at all. Loop detection reads `isError` to decide whether a run of
+ * repeats ever succeeded, so the mis-attribution silently changed which loops
+ * were reported.
+ *
+ * A call with no recorded result is treated as *not* an error: the session
+ * simply ended before the answer arrived, and inventing a failure there would
+ * manufacture stuck-loops out of clean tails.
  */
 function extractToolCalls(messages: MessageRow[]): ToolCallWithResult[] {
-	const calls: ParsedToolCall[] = [];
-	const resultsByMsgId = new Map<string, ParsedToolResult[]>();
-
-	for (const m of messages) {
-		if (m.role === "assistant" && m.tool_calls) {
-			try {
-				const parsed = JSON.parse(m.tool_calls) as Array<{ name?: unknown; arguments?: unknown; input?: unknown }>;
-				for (const tc of parsed) {
-					calls.push({
-						name: typeof tc.name === "string" ? tc.name : "",
-						// Stored tool calls carry their args under `arguments` (see
-						// src/sync/parser.ts and turn-pair-core's parseToolCalls). Older or
-						// alternate shapes may use `input`; accept it as a fallback so the
-						// normaliser always receives the real command string.
-						args: (() => {
-							const rawArgs = tc.arguments ?? tc.input;
-							return rawArgs && typeof rawArgs === "object" ? rawArgs as Record<string, unknown> : {};
-						})(),
-						messageId: m.id,
-					});
-				}
-			} catch {
-				// skip malformed tool_calls
-			}
-		}
-		if (m.role === "toolResult" && m.tool_results) {
-			try {
-				const parsed = JSON.parse(m.tool_results) as Array<{ toolName?: unknown; isError?: unknown; textLength?: unknown; toolCallId?: unknown }>;
-				// Tool results are associated with the preceding assistant message;
-				// we pair them by order since they follow the calls.
-				for (const tr of parsed) {
-					if (typeof tr.toolName === "string") {
-						if (!resultsByMsgId.has(m.id)) {
-							resultsByMsgId.set(m.id, []);
-						}
-						resultsByMsgId.get(m.id)!.push({
-							toolName: tr.toolName,
-							isError: Boolean(tr.isError),
-							textLength: typeof tr.textLength === "number" ? tr.textLength : 0,
-						});
-					}
-				}
-			} catch {
-				// skip malformed tool_results
-			}
-		}
-	}
-
-	// Normalise each call and pair with its result
-	const normalized: NormalizedToolCall[] = calls.map((c) =>
-		normalizeToolCall(c),
-	);
-
-	// Pair calls with their results. Tool results follow the assistant messages
-	// that contained the calls, in order. We pair them sequentially.
-	let resultIdx = 0;
-	const allResults: ParsedToolResult[] = [];
-	for (const [, results] of resultsByMsgId) {
-		allResults.push(...results);
-	}
-
-	// The billed dollar cost of each call's assistant turn, so every detected
-	// signal can be priced (issue #71). Unrecorded/zero costs stay absent; money
-	// is never invented.
-	const costByMsgId = new Map<string, number>();
-	for (const m of messages) {
-		if (typeof m.cost_usd === "number" && m.cost_usd > 0) costByMsgId.set(m.id, m.cost_usd);
-	}
-
-	const withResults: ToolCallWithResult[] = normalized.map((nc, i) => {
-		// Each call should have a corresponding result; if not, assume success
-		const result = allResults[resultIdx];
-		resultIdx++;
-		return {
-			call: nc,
-			isError: result?.isError ?? false,
-			resultMessageId: "",
-			costUsd: costByMsgId.get(nc.messageId) ?? null,
-		};
-	});
-
-	return withResults;
+	return buildToolStream(messages).invocations.map((inv) => ({
+		call: normalizeToolCall({ name: inv.name, args: inv.args, messageId: inv.messageId }),
+		isError: inv.outcome?.isError ?? false,
+		resultMessageId: inv.outcome?.messageId ?? "",
+		costUsd: inv.costUsd,
+	}));
 }
 
 /**

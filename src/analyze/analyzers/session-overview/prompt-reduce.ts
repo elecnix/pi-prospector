@@ -78,8 +78,8 @@ with prose or markdown. The tool takes exactly these fields:
   ],
   "improvement_proposals": [
     {
-      "target_type": "agents_md" | "skill" | "prompt" | "config" | "workflow" | "general",
-      "target_path": "optional path or section, e.g. AGENTS.md § Tooling",
+      "target_type": "agents_md" | "skill" | "prompt" | "config" | "workflow" | "extension" | "general",
+      "target_path": "optional path or section, e.g. AGENTS.md § Tooling; for target_type 'extension', the exact package spec named in the digest, e.g. npm:@scope/name",
       "title": "short imperative title",
       "summary": "one sentence",
       "detail": "2-4 sentences with the concrete change to make",
@@ -89,6 +89,13 @@ with prose or markdown. The tool takes exactly these fields:
     }
   ]
 }
+
+Use target_type "extension" ONLY to repeat a package that the digest's \`### Failures\`
+section named for you, and copy the package spec into target_path verbatim. Never
+name a package the digest did not: a package name you produce from memory may not
+exist, and telling someone to install a package that does not exist is a
+supply-chain hazard, not a bad suggestion. If a failure has no package named for
+it, propose the change that needs no package.
 
 A "reinforcement" proposal is a proposal that identifies something the agent did
 RIGHT and suggests encoding it ("keep doing X", "add this pattern to instructions").
@@ -168,9 +175,18 @@ export const ReduceToolParameters = Type.Object({
 				Type.Literal("prompt"),
 				Type.Literal("config"),
 				Type.Literal("workflow"),
+				// Only ever emitted by repeating a package the digest named — see the
+				// prompt. The catalogue in failure-modes/classes.ts is the sole source
+				// of package names anywhere in this system.
+				Type.Literal("extension"),
 				Type.Literal("general"),
 			]),
-			target_path: Type.Optional(Type.String({ description: "optional path or section, e.g. AGENTS.md § Tooling" })),
+			target_path: Type.Optional(
+				Type.String({
+					description:
+						"optional path or section, e.g. AGENTS.md § Tooling. For target_type 'extension', the exact package spec the digest named, e.g. npm:@scope/name — never a package name from memory.",
+				}),
+			),
 			title: Type.String({ description: "short imperative title" }),
 			summary: Type.String({ description: "one sentence" }),
 			detail: Type.String({ description: "2-4 sentences with the concrete change to make" }),

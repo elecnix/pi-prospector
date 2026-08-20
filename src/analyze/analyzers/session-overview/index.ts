@@ -26,6 +26,7 @@ import { extractJsonObject } from "../turn-pair-llm/prompt.js";
 import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import { TURN_PAIR_LLM_DEF } from "../turn-pair-llm/index.js";
 import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
+import { FAILURE_MODES_DEF } from "../failure-modes/index.js";
 import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
 import { MAP_PROMPT, MAP_PROMPT_HASH, MAP_TOOL, buildMapPrompt, parseMapResponse, parseMapObject, type MapSummary } from "./prompt-map.js";
@@ -49,9 +50,9 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	id: "session-overview",
 	label: "Session Analysis & Proposals",
 	description:
-		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, tool-trajectory, turn-frustration, and user-reply-acts nodes; always emits a node, even for clean sessions.",
+		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, tool-trajectory, failure-modes, turn-frustration, and user-reply-acts nodes; always emits a node, even for clean sessions.",
 	anchorSpan: "full_session",
-	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id, TURN_FRUSTRATION_DEF.id, "user-reply-acts"],
+	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id, FAILURE_MODES_DEF.id, TURN_FRUSTRATION_DEF.id, "user-reply-acts"],
 };
 
 export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
@@ -87,7 +88,14 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// response (accept, refuse, ask, command, provide information). The reduce
 	// prompt notes this context is available. The dependency is declared by string
 	// literal because user-reply-acts is a custom analyzer, not a built-in.
-	minor: 6,
+	// 1.7: failed generations (issue #159) — the digest now carries a `### Failures`
+	// section and a `turn_failures=` header line from failure-modes, and the
+	// proposal contract gains the `extension` target type. Until now a turn that
+	// failed outright was invisible to the synthesiser: no tool ran, so nothing in
+	// the trajectory recorded it and the turn read as a short reply. Minor: the
+	// digest and prompt gain a channel; the synthesis contract is otherwise
+	// unchanged.
+	minor: 7,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -119,6 +127,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		if (core.length === 0) return [];
 		const llm = (ctx.dependencyNodes[TURN_PAIR_LLM_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		const traj = (ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
+		const failures = (ctx.dependencyNodes[FAILURE_MODES_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		const frustration = (ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		const replyActs = (ctx.dependencyNodes["user-reply-acts"] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 
@@ -126,6 +135,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			...core.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...llm.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...traj.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+			...failures.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...frustration.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...replyActs.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 		];
@@ -155,11 +165,12 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const coreNodes = ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id);
 		const llmNodes = ctx.getDependencyNodes(TURN_PAIR_LLM_DEF.id);
 		const trajectoryNodes = ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id);
+		const failureNodes = ctx.getDependencyNodes(FAILURE_MODES_DEF.id);
 		const frustrationNodes = ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id);
 		const replyActsNodes = ctx.getDependencyNodes("user-reply-acts");
 		const messages = ctx.getSessionMessages(ctx.sessionId);
 
-		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes, frustrationNodes, replyActsNodes });
+		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes, failureNodes, frustrationNodes, replyActsNodes });
 		const statsText = JSON.stringify(
 			{
 				pairs: digest.pairCount,
@@ -167,6 +178,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 				corrections: digest.correctionCount,
 				tool_failures: digest.toolFailureCount,
 				trajectory_signals: digest.trajectorySignalCount,
+				turn_failures: digest.turnFailureCount,
 				frustration_signals: digest.frustrationSignalCount,
 				frustration_languages: digest.frustrationLanguages,
 				compactions: digest.compactionCount,
@@ -241,6 +253,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			corrections: digest.correctionCount,
 			tool_failures: digest.toolFailureCount,
 			trajectory_signals: digest.trajectorySignalCount,
+			turn_failures: digest.turnFailureCount,
 			positive_signals: digest.positiveSignals,
 		};
 
@@ -261,7 +274,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 		];
 		let ordinal = 1;
-		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes, ...frustrationNodes, ...replyActsNodes]) {
+		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes, ...failureNodes, ...frustrationNodes, ...replyActsNodes]) {
 			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.output_key, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
 		}
 		for (const h of usedPromptHashes) {
