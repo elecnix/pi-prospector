@@ -28,24 +28,41 @@ describe("AsyncDatabase worker bridge", () => {
 		}
 	});
 
-	it("transactions commit and roll back", async () => {
+	it("transactions are exclusive: no outside stmt lands mid-transaction", async () => {
 		const dbPath = tempDbPath();
 		const db = new AsyncDatabase(dbPath);
 		try {
 			await db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+			// The tx body awaits (simulating an fs/LLM yield) while holding the lock.
 			const tx = db.transaction(async () => {
 				await db.prepare("INSERT INTO t (id, v) VALUES (1, 'a')").run();
+				await new Promise<void>((r) => setTimeout(r, 20));
 			});
+			// Fire the tx and concurrently an outside insert from a different async
+			// context. It must wait for the tx to finish — if it landed inside,
+			// its row would sit in the same transaction and could be rolled back.
+			const outside = db.exec("INSERT INTO t (id, v) VALUES (99, 'outside')");
 			await tx();
-			assert.equal(((await db.prepare("SELECT COUNT(*) c FROM t").get()) as { c: number }).c, 1);
+			await outside;
+			const rows = (await db.prepare("SELECT id FROM t").all()) as Array<{ id: number }>;
+			assert.deepEqual(rows.map((r) => r.id), [1, 99]);
+		} finally {
+			await db.close();
+		}
+	});
 
-			// Rolling back path: a throw inside the closure must not persist.
+	it("transactions roll back atomically on throw", async () => {
+		const dbPath = tempDbPath();
+		const db = new AsyncDatabase(dbPath);
+		try {
+			await db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
 			const bad = db.transaction(async () => {
 				await db.prepare("INSERT INTO t (id, v) VALUES (2, 'b')").run();
 				throw new Error("boom");
 			});
 			await assert.rejects(() => bad());
-			assert.equal(((await db.prepare("SELECT COUNT(*) c FROM t").get()) as { c: number }).c, 1);
+			const count = ((await db.prepare("SELECT COUNT(*) c FROM t").get()) as { c: number }).c;
+			assert.equal(count, 0);
 		} finally {
 			await db.close();
 		}
