@@ -25,10 +25,11 @@ const PROPOSAL_SEVERITIES = new Set<string>(["friction", "correction", "waste", 
  * `--full`/`-v`/`--verbose`, in any order. Unknown tokens — and an unknown
  * `--severity` value — are ignored, mirroring the status filter.
  */
-export function parseProposalsArgs(args: string): { status?: string; severity?: string; full: boolean } {
+export function parseProposalsArgs(args: string): { status?: string; severity?: string; full: boolean; sessionId?: string } {
 	let status: string | undefined;
 	let severity: string | undefined;
 	let full = false;
+	let sessionId: string | undefined;
 	const toks = (args ?? "").trim().split(/\s+/).filter(Boolean);
 	for (let i = 0; i < toks.length; i++) {
 		const t = toks[i]!.toLowerCase();
@@ -39,9 +40,13 @@ export function parseProposalsArgs(args: string): { status?: string; severity?: 
 			const val = toks[i + 1]?.toLowerCase();
 			if (val && PROPOSAL_SEVERITIES.has(val)) severity = val;
 			i++;
+		} else if (t === "--session") {
+			const val = toks[i + 1];
+			if (val) sessionId = val;
+			i++;
 		} else if (PROPOSAL_STATUSES.has(t)) status = t;
 	}
-	return { status, severity, full };
+	return { status, severity, full, sessionId };
 }
 
 /**
@@ -268,15 +273,23 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 		let asOfLabel: string | undefined;
 		let proposals: Proposal[] = [];
 		const tp = resolveTimepoint(db, flags);
+		const { sessionId } = parseProposalsArgs(args);
 		if (tp) {
 			asOfLabel = tp.source;
 			const all = listProposalsAsOf(db, tp.at, source);
-			proposals = all.filter((p) => (!status || p.status === status) && (!severity || p.severity === severity));
+			proposals = all.filter(
+				(p) =>
+					(!status || p.status === status) &&
+					(!severity || p.severity === severity) &&
+					(!sessionId || p.session_id === sessionId),
+			);
 		} else {
-			proposals = listProposals(db, status, severity, undefined, undefined, source);
+			proposals = listProposals(db, status, severity, undefined, undefined, source, sessionId ?? undefined);
 		}
 		proposals = proposals.sort(rankProposals);
-		const filterDesc = [status, severity, source ? `source ${source}` : undefined].filter(Boolean).join(" ");
+		const filterDesc = [status, severity, sessionId ? `session ${sessionId}` : undefined, source ? `source ${source}` : undefined]
+			.filter(Boolean)
+			.join(" ");
 
 		if (proposals.length === 0) {
 			output(ctx, filterDesc ? `No ${filterDesc} proposals found.` : "No proposals found.");
@@ -372,7 +385,7 @@ export async function prospectRemediate(args: string, ctx: ExtensionCommandConte
 export function registerProposalsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-proposals", {
 		description:
-			"List proposals, ranked by trust tier (replay-validated) then billed cost, then confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, --source <pi|claude>, and --full for evidence/source.",
+			"List proposals, ranked by trust tier (replay-validated) then billed cost, then confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, --source <pi|claude>, --session <id> (only that session's proposals), and --full for evidence/source.",
 		handler: prospectProposals,
 	});
 

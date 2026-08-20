@@ -32,39 +32,44 @@ function makeProposal(overrides: Partial<Proposal>): Proposal {
 }
 
 test("parseProposalsArgs: empty yields no status and concise", () => {
-	assert.deepEqual(parseProposalsArgs(""), { status: undefined, severity: undefined, full: false });
-	assert.deepEqual(parseProposalsArgs("   "), { status: undefined, severity: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs(""), { status: undefined, severity: undefined, full: false, sessionId: undefined });
+	assert.deepEqual(parseProposalsArgs("   "), { status: undefined, severity: undefined, full: false, sessionId: undefined });
 });
 
 test("parseProposalsArgs: recognises a status word", () => {
-	assert.deepEqual(parseProposalsArgs("applied"), { status: "applied", severity: undefined, full: false });
-	assert.deepEqual(parseProposalsArgs("OPEN"), { status: "open", severity: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs("applied"), { status: "applied", severity: undefined, full: false, sessionId: undefined });
+	assert.deepEqual(parseProposalsArgs("OPEN"), { status: "open", severity: undefined, full: false, sessionId: undefined });
 });
 
 test("parseProposalsArgs: recognises --full / -v / --verbose in any order", () => {
-	assert.deepEqual(parseProposalsArgs("--full"), { status: undefined, severity: undefined, full: true });
-	assert.deepEqual(parseProposalsArgs("-v rejected"), { status: "rejected", severity: undefined, full: true });
-	assert.deepEqual(parseProposalsArgs("duplicate --verbose"), { status: "duplicate", severity: undefined, full: true });
+	assert.deepEqual(parseProposalsArgs("--full"), { status: undefined, severity: undefined, full: true, sessionId: undefined });
+	assert.deepEqual(parseProposalsArgs("-v rejected"), { status: "rejected", severity: undefined, full: true, sessionId: undefined });
+	assert.deepEqual(parseProposalsArgs("duplicate --verbose"), { status: "duplicate", severity: undefined, full: true, sessionId: undefined });
 });
 
 test("parseProposalsArgs: ignores unknown tokens", () => {
-	assert.deepEqual(parseProposalsArgs("garbage --nope"), { status: undefined, severity: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs("garbage --nope"), { status: undefined, severity: undefined, full: false, sessionId: undefined });
 });
 
 test("parseProposalsArgs: recognises --severity <value>", () => {
-	assert.deepEqual(parseProposalsArgs("--severity friction"), { status: undefined, severity: "friction", full: false });
-	assert.deepEqual(parseProposalsArgs("--severity REINFORCEMENT"), { status: undefined, severity: "reinforcement", full: false });
+	assert.deepEqual(parseProposalsArgs("--severity friction"), { status: undefined, severity: "friction", full: false, sessionId: undefined });
+	assert.deepEqual(parseProposalsArgs("--severity REINFORCEMENT"), { status: undefined, severity: "reinforcement", full: false, sessionId: undefined });
 });
 
 test("parseProposalsArgs: --severity combines with status and --full in any order", () => {
-	assert.deepEqual(parseProposalsArgs("open --severity waste --full"), { status: "open", severity: "waste", full: true });
-	assert.deepEqual(parseProposalsArgs("--severity correction applied"), { status: "applied", severity: "correction", full: false });
+	assert.deepEqual(parseProposalsArgs("open --severity waste --full"), { status: "open", severity: "waste", full: true, sessionId: undefined });
+	assert.deepEqual(parseProposalsArgs("--severity correction applied"), { status: "applied", severity: "correction", full: false, sessionId: undefined });
 });
 
 test("parseProposalsArgs: ignores an unknown --severity value (mirrors status)", () => {
-	assert.deepEqual(parseProposalsArgs("--severity garbage"), { status: undefined, severity: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs("--severity garbage"), { status: undefined, severity: undefined, full: false, sessionId: undefined });
 	// The bogus value is consumed by the flag, not mistaken for a status word.
-	assert.deepEqual(parseProposalsArgs("--severity nope open"), { status: "open", severity: undefined, full: false });
+	assert.deepEqual(parseProposalsArgs("--severity nope open"), { status: "open", severity: undefined, full: false, sessionId: undefined });
+});
+
+test("parseProposalsArgs: scopes to a session with --session <id>", () => {
+	assert.deepEqual(parseProposalsArgs("--session abc-123"), { status: undefined, severity: undefined, full: false, sessionId: "abc-123" });
+	assert.deepEqual(parseProposalsArgs("open --session abc-123 --full"), { status: "open", severity: undefined, full: true, sessionId: "abc-123" });
 });
 
 test("rankProposals: higher confidence sorts first; nulls last", () => {

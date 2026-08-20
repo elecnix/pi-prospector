@@ -327,6 +327,49 @@ describe("prospect tool", () => {
 		assert.match(unknown.content[0]!.text, /Unknown action/);
 	});
 
+	it("sync accepts a project scope and only indexes that project", async () => {
+		// Point the sessions dir at a temp tree with two projects; only the scoped
+		// one may be indexed. (Claude dir stays absent.)
+		const syncRoot = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-tool-sync"));
+		const dbPath = path.join(tmpDir, "scope-sync.db");
+		const prevDb = process.env["PROSPECTOR_DB_PATH"];
+		const prevDir = process.env["PROSPECTOR_SESSIONS_DIR"];
+		const prevUser = process.env.USER;
+		process.env.USER = "test";
+		process.env["PROSPECTOR_DB_PATH"] = dbPath;
+		process.env["PROSPECTOR_SESSIONS_DIR"] = syncRoot;
+		try {
+			for (const proj of ["projA", "projB"]) {
+				const d = path.join(syncRoot, `--Users-test--${proj}`);
+				fs.mkdirSync(d, { recursive: true });
+				fs.writeFileSync(
+					path.join(d, `${proj}.jsonl`),
+					`{"type":"session","version":3,"id":"${proj}-001","timestamp":"2026-06-01T10:00:00.000Z"}\n`,
+				);
+			}
+
+			const res = await toolExec("syncProj", { action: "sync", project: "projA" }, signal, null, ctx);
+			const body = JSON.parse(res.content[0]!.text);
+			assert.equal(body.sessionsProcessed, 1);
+
+			const db = new Database(dbPath);
+			const rows = db.prepare("SELECT id FROM sessions").all() as Array<{ id: string }>;
+			db.close();
+			assert.deepEqual(rows.map((r) => r.id), ["projA-001"]);
+		} finally {
+			process.env.USER = prevUser;
+			if (prevDb !== undefined) process.env["PROSPECTOR_DB_PATH"] = prevDb;
+			else delete process.env["PROSPECTOR_DB_PATH"];
+			if (prevDir !== undefined) process.env["PROSPECTOR_SESSIONS_DIR"] = prevDir;
+			else delete process.env["PROSPECTOR_SESSIONS_DIR"];
+			try {
+				fs.rmSync(syncRoot, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		}
+	});
+
 	// ── Issues #18–#22: tool list_proposals / accept / reject improvements ──
 
 	it("#18 list_proposals shows the full 36-char proposal id, not a truncated prefix", async () => {
@@ -361,6 +404,21 @@ describe("prospect tool", () => {
 		assert.match(onlyClaude.content[0]!.text, /Tool Claude proposal/);
 		assert.doesNotMatch(onlyClaude.content[0]!.text, /Tool Pi proposal/);
 		assert.match(onlyClaude.content[0]!.text, /\[Claude\]/);
+	});
+
+	it("list_proposals accepts a session_id param and only shows that session's proposals", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		insertSession(db, "sess-filt-a", "/tmp/filta.jsonl", "/home/user/filtA");
+		insertSession(db, "sess-filt-b", "/tmp/filtb.jsonl", "/home/user/filtB");
+		insertProposalRow(db, { id: "flt-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-filt-a", title: "Filter A proposal", inputKey: "ik-flt-a" });
+		insertProposalRow(db, { id: "flt-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-filt-b", title: "Filter B proposal", inputKey: "ik-flt-b" });
+		db.close();
+
+		const res = await toolExec("flt", { action: "list_proposals", session_id: "sess-filt-b" }, signal, null, ctx);
+		const body = res.content[0]!.text;
+		assert.match(body, /Filter B proposal/);
+		assert.doesNotMatch(body, /Filter A proposal/);
 	});
 
 	it("#19 list_proposals filters by the severity param", async () => {

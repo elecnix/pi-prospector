@@ -3,6 +3,19 @@ import * as path from "node:path";
 import type { DiscoveredSession, SessionSource } from "../types.js";
 
 /**
+ * Optional filters that narrow which sessions discovery returns. Scoping lets a
+ * caller sync one project (or one harness) instead of walking every session on
+ * disk — the fresh-install case where a full sync ingests hundreds of files.
+ * Filters combine with AND.
+ */
+export interface DiscoverOptions {
+	/** Only sessions whose project (derived from the directory name) equals this. */
+	project?: string;
+	/** Only sessions from one coding harness ("pi" | "claude"). */
+	source?: SessionSource;
+}
+
+/**
  * Walk both session directories (Pi: `~/.pi/agent/sessions/`, Claude:
  * `~/.claude/projects/`) and discover all .jsonl files, grouped by project
  * directory name.
@@ -24,11 +37,14 @@ import type { DiscoveredSession, SessionSource } from "../types.js";
 export function discoverSessions(
 	sessionsDir: string,
 	claudeSessionsDir: string,
+	opts?: DiscoverOptions,
 ): DiscoveredSession[] {
-	return [
-		...discoverPiSessions(sessionsDir),
-		...discoverClaudeSessions(claudeSessionsDir),
-	];
+	const pi: DiscoveredSession[] = opts?.source && opts.source !== "pi" ? [] : discoverPiSessions(sessionsDir);
+	const claude: DiscoveredSession[] =
+		opts?.source && opts.source !== "claude" ? [] : discoverClaudeSessions(claudeSessionsDir);
+	const all = [...pi, ...claude];
+	if (opts?.project) return all.filter((s) => s.project === opts.project);
+	return all;
 }
 
 function discoverPiSessions(sessionsDir: string): DiscoveredSession[] {
