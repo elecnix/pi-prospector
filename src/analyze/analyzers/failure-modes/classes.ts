@@ -70,6 +70,17 @@ export interface FailureClassDef {
 	actionable: boolean;
 	/** Ordered; the first match wins, so put the specific before the general. */
 	matchers: FailureMatcher[];
+	/**
+	 * Matchers tested against the *command that was run*, rather than against
+	 * what came back.
+	 *
+	 * Some failures are only legible from the call. A `grep` that finds nothing
+	 * exits non-zero and prints nothing at all — the result carries no evidence
+	 * whatsoever, and the only way to know what happened is to look at what was
+	 * asked for. A class using these must sit late in the catalogue, so that a
+	 * command which *did* report a real error is named by that error first.
+	 */
+	commandMatchers?: FailureMatcher[];
 	/** What fixes this class without installing anything. */
 	remedy: string;
 	/** Hand-verified packages that address this class. Empty when none does. */
@@ -337,6 +348,21 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 
 export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 	{
+		id: "pending-background-task",
+		label: "still running",
+		axis: "tool",
+		// Not a failure at all. The host flags a poll of an unfinished background
+		// task as an error, and counting it as one inflates every failure rate in
+		// the session. Counted so the denominators stay honest, never proposed on
+		// — the same treatment an operator's abort gets on the turn axis.
+		actionable: false,
+		matchers: [
+			{ label: "background task has not finished", re: /^\(no output yet\)$|^\(still running\)$/i },
+		],
+		remedy: "No action — a poll of an unfinished background task is not a failure.",
+		extensions: [],
+	},
+	{
 		id: "edit-anchor-miss",
 		label: "edit anchor did not match",
 		axis: "tool",
@@ -462,14 +488,56 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		extensions: [],
 	},
 	{
-		id: "tool-exit-nonzero",
-		label: "command failed",
+		id: "command-failed",
+		label: "command reported an error",
 		axis: "tool",
 		actionable: true,
+		// The Unix convention: a program that fails says `prog: what went wrong`.
+		// The named programs come first so the cause label can say *which* program
+		// complained; the generic shape catches the rest. Both are anchored to the
+		// first or last non-empty line, because that is where a shell puts a
+		// diagnostic — matching the shape anywhere would read a line of ordinary
+		// output as the reason the command failed.
 		matchers: [
-			{ label: "non-zero exit", re: /exit(?:ed with)? (?:code|status) [1-9]|non-?zero exit/i },
+			{ label: "git reported an error", re: /^fatal: \S|^git: \S/m },
+			{ label: "a text tool reported an error", re: /^(?:sed|awk|grep|egrep|rg|jq|tr|cut|sort|uniq): \S/m },
+			{ label: "a file tool reported an error", re: /^(?:cat|ls|cp|mv|rm|mkdir|rmdir|ln|chmod|touch|head|tail|wc|find|xargs|du|df): \S/m },
+			{ label: "a build or package tool reported an error", re: /^(?:npm|npx|node|yarn|pnpm|make|cargo|go|python3?|pip3?|tsc|docker|gh|curl): \S/m },
+			{ label: "the shell reported an error", re: /^(?:bash|sh|zsh)(?:: line \d+)?: \S/m },
+			{ label: "usage error", re: /^usage: \S/im },
+			{ label: "exit status reported explicitly", re: /exit(?:ed with)? (?:code|status) [1-9]|non-?zero exit/i },
+			// Unnamed programs: the same shape, but only on the first or last line —
+			// no `m` flag, so these anchor to the whole text rather than to any line
+			// inside it. A `foo: bar` in the middle of a command's ordinary output is
+			// not why it failed, and reading it as such would name a confident wrong
+			// cause. (The named-program matchers above do search every line: for a
+			// known diagnostic prefix like `sed:` that is worth the small risk.)
+			{ label: "a command reported an error", re: /^[a-z][\w.+-]{0,30}: \S/ },
+			{ label: "a command reported an error", re: /(?:^|\n)[a-z][\w.+-]{0,30}: \S[^\n]*\s*$/ },
 		],
-		remedy: "The command ran and reported failure. Recurrent failures of the same command are worth encoding as a standing instruction about how to invoke it here.",
+		remedy:
+			"The command ran and reported its own failure. One is weather; the same command failing repeatedly is a standing instruction waiting to be written — how it is invoked on this machine, or what has to be true before it is.",
+		extensions: [],
+	},
+	{
+		id: "exit-status-signal",
+		label: "non-zero exit used as a signal",
+		axis: "tool",
+		actionable: true,
+		// Last, and matched on the *call*: these commands report a normal answer
+		// through their exit status and print nothing to explain themselves, so
+		// there is no evidence in the result at all. Anything that did leave a
+		// diagnostic has already been named by `command-failed` above.
+		matchers: [],
+		commandMatchers: [
+			{ label: "a search that found nothing", re: /(?:^|[|;&(]\s*|\n)\s*(?:grep|egrep|fgrep|rg|ag|ack)\b/ },
+			{ label: "git diff signalling a difference", re: /git\s+diff\b[^\n;|]*--(?:exit-code|quiet)\b/ },
+			{ label: "a comparison reporting a difference", re: /(?:^|[|;&(]\s*|\n)\s*(?:diff|cmp)\b/ },
+			{ label: "a conditional reporting false", re: /(?:^|[|;&(]\s*|\n)\s*(?:test|\[)\s/ },
+		],
+		remedy:
+			"These commands answer through their exit status: grep exits 1 when it finds nothing, diff exits 1 when files differ, test exits 1 for false. None of that is an error, but the harness marks it as one and the agent re-plans around a non-problem. " +
+			"Chain them with `|| true`, or with `;` instead of `&&`, and say so in the standing instructions — this is a rule the agent has to be told, because the shell will not tell it.",
 		extensions: [],
 	},
 ];
@@ -484,19 +552,36 @@ export interface Classification {
 }
 
 /**
+ * What the failure was in aid of, for the classes whose evidence is the call
+ * rather than the result.
+ */
+export interface FailureContext {
+	/** The command that was run, for a tool-axis failure. Empty when there is none. */
+	command: string;
+}
+
+/**
  * Classify one recorded error into the catalogue.
  *
  * Returns `unclassified` when nothing matches, which is a real answer: the
  * count of unclassified failures is what tells us the catalogue has a gap,
  * whereas forcing every error into the nearest class would hide that.
  */
-export function classifyFailure(text: string, axis: FailureAxis): Classification {
+export function classifyFailure(text: string, axis: FailureAxis, context?: FailureContext): Classification {
 	const classes = axis === "turn" ? TURN_FAILURE_CLASSES : TOOL_FAILURE_CLASSES;
 	const subject = boundForMatching(text);
-	if (!subject) return { classId: UNCLASSIFIED.classId, label: UNCLASSIFIED.label };
+	const command = context?.command ?? "";
+	if (!subject && !command) return { classId: UNCLASSIFIED.classId, label: UNCLASSIFIED.label };
 	for (const cls of classes) {
-		for (const matcher of cls.matchers) {
-			if (matcher.re.test(subject)) return { classId: cls.id, label: matcher.label };
+		if (subject) {
+			for (const matcher of cls.matchers) {
+				if (matcher.re.test(subject)) return { classId: cls.id, label: matcher.label };
+			}
+		}
+		if (command) {
+			for (const matcher of cls.commandMatchers ?? []) {
+				if (matcher.re.test(command)) return { classId: cls.id, label: matcher.label };
+			}
 		}
 	}
 	return { classId: UNCLASSIFIED.classId, label: UNCLASSIFIED.label };

@@ -69,8 +69,9 @@ export function groupFailures(stream: ToolStream): FailureGroup[] {
 		text: string,
 		messageId: string,
 		costUsd: number | null,
+		command = "",
 	): void => {
-		const { classId, label } = classifyFailure(text, axis);
+		const { classId, label } = classifyFailure(text, axis, { command });
 		const key = `${axis}|${classId}|${tool}`;
 		let group = groups.get(key);
 		if (!group) {
@@ -98,8 +99,11 @@ export function groupFailures(stream: ToolStream): FailureGroup[] {
 
 		// The fingerprint is of the *normalised* text so that two occurrences of
 		// the same error — differing only in a request id or a retry count — count
-		// as one cause rather than as two.
-		const fingerprint = shortHash(normalizeForFingerprint(text));
+		// as one cause rather than as two. When the result said nothing at all, the
+		// command is the only thing that distinguishes one occurrence from another,
+		// so it is fingerprinted instead — hashed, never stored, exactly like the
+		// error text it stands in for.
+		const fingerprint = shortHash(normalizeForFingerprint(text || command));
 		const cause = group.causes.find((c) => c.label === label && c.fingerprint === fingerprint);
 		if (cause) cause.count++;
 		else group.causes.push({ label, fingerprint, count: 1 });
@@ -115,7 +119,11 @@ export function groupFailures(stream: ToolStream): FailureGroup[] {
 		if (!inv.outcome?.isError) continue;
 		// A failed result whose text could not be attributed unambiguously still
 		// counts — as `unclassified`. Dropping it would understate the failure rate.
-		add("tool", inv.name, inv.outcome.errorText ?? "", inv.messageId, inv.costUsd);
+		//
+		// The command is passed alongside the result because some failures leave no
+		// trace in the result at all: a `grep` that finds nothing exits non-zero and
+		// prints nothing, so the call is the only evidence there is.
+		add("tool", inv.name, inv.outcome.errorText ?? "", inv.messageId, inv.costUsd, commandOf(inv.args));
 	}
 
 	// Deterministic order: the classes as catalogued, then by tool. An analyzer's
@@ -127,6 +135,12 @@ export function groupFailures(stream: ToolStream): FailureGroup[] {
 				? a.class_id.localeCompare(b.class_id)
 				: a.tool.localeCompare(b.tool),
 	);
+}
+
+/** The command a tool call ran, when it has one. Non-shell tools have none. */
+function commandOf(args: Record<string, unknown>): string {
+	const raw = args["command"];
+	return typeof raw === "string" ? raw : "";
 }
 
 /**
@@ -193,9 +207,17 @@ export function buildProposals(input: ProposalInputs): RawProposal[] {
 				? ` ${group.priced_count}/${group.count} priced occurrences sum to $${group.cost_usd!.toFixed(4)} (lower bound).`
 				: " None of these occurrences carried a recorded cost, so the money lost is unknown.";
 		const rateNote = rate === null ? "" : ` That is ${(rate * 100).toFixed(1)}% of the session's ${denominator} ${group.axis === "turn" ? "assistant turns" : "tool calls"}.`;
-		const causeNote = group.causes
+		// Merge causes by label for the reader. The node keeps one entry per
+		// distinct error (label + fingerprint), which is what makes "the same
+		// failure, forty times" distinguishable from "forty different failures" —
+		// but a fingerprint means nothing to a person, and listing it repeated
+		// reads as "a search that found nothing ×1; a search that found nothing ×1".
+		const byLabel = new Map<string, number>();
+		for (const c of group.causes) byLabel.set(c.label, (byLabel.get(c.label) ?? 0) + c.count);
+		const causeNote = [...byLabel.entries()]
+			.sort((a, b) => b[1] - a[1])
 			.slice(0, 3)
-			.map((c) => `${c.label} ×${c.count}`)
+			.map(([label, count]) => `${label} ×${count}`)
 			.join("; ");
 
 		const candidates = cls.extensions.filter((e) => !input.installed.names.has(e.pkg));
@@ -213,9 +235,9 @@ export function buildProposals(input: ProposalInputs): RawProposal[] {
 			proposals.push({
 				target_type: "extension",
 				target_path: `npm:${pick.pkg}`,
-				title: `${cls.label}: ${group.count} ${subject} failed — consider ${pick.pkg}`,
+				title: `${cls.label}: ${group.count} ${subject} — consider ${pick.pkg}`,
 				summary:
-					`${group.count} ${subject} in this session failed with ${cls.label}.${rateNote}${costNote}`,
+					`${group.count} ${subject} in this session ended in ${cls.label}.${rateNote}${costNote}`,
 				detail:
 					`${cls.remedy} ${pick.pkg} (v${pick.verifiedVersion}, ${pick.license}) ${lowerFirst(pick.note)}` +
 					(alternatives.length > 0
@@ -239,8 +261,8 @@ export function buildProposals(input: ProposalInputs): RawProposal[] {
 
 		proposals.push({
 			target_type: group.axis === "turn" ? "config" : "agents_md",
-			title: `${cls.label}: ${group.count} ${subject} failed`,
-			summary: `${group.count} ${subject} in this session failed with ${cls.label}.${rateNote}${costNote}`,
+			title: `${cls.label}: ${group.count} ${subject}`,
+			summary: `${group.count} ${subject} in this session ended in ${cls.label}.${rateNote}${costNote}`,
 			detail: cls.remedy + exhaustedNote,
 			evidence: `${causeNote}; ${group.count} occurrence(s) across ${new Set(group.message_ids).size} message(s)`,
 			confidence: confidenceFor(group.count, threshold),

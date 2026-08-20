@@ -185,6 +185,55 @@ describe("classifyFailure", () => {
 		assert.equal(classifyFailure(`${"output\n".repeat(500)}Permission denied`, "tool").classId, "permission-denied");
 	});
 
+	// The residual classes. A first run over a real day left 31% of failures
+	// unnamed; profiling what was left showed three genuinely different things
+	// hiding in it, and naming them took the residual to 10%.
+	it("does not call an unfinished background task a failure", () => {
+		const c = classifyFailure("(no output yet)", "tool");
+		assert.equal(c.classId, "pending-background-task");
+		assert.equal(failureClass("pending-background-task")!.actionable, false);
+	});
+
+	it("names a command that reported its own error, and says which kind of tool", () => {
+		assert.equal(classifyFailure("fatal: invalid reference: nope", "tool").classId, "command-failed");
+		assert.equal(classifyFailure("sed: 1: bad flag in substitute command", "tool").classId, "command-failed");
+		assert.equal(classifyFailure("cat: /tmp/x: Is a directory", "tool").classId, "command-failed");
+		assert.equal(
+			classifyFailure("sed: 1: bad flag", "tool").label,
+			"a text tool reported an error",
+		);
+	});
+
+	it("reads a diagnostic from an unnamed program only at the ends of the output", () => {
+		// The Unix shape in the middle of ordinary output is not why it failed.
+		assert.equal(classifyFailure("line one\nfrobnicator: something\nline three", "tool").classId, "unclassified");
+		assert.equal(classifyFailure("frobnicator: something\nline two", "tool").classId, "command-failed");
+		assert.equal(classifyFailure("line one\nfrobnicator: something", "tool").classId, "command-failed");
+	});
+
+	it("recognises a non-zero exit that was a signal, from the command alone", () => {
+		// grep exits 1 when it finds nothing and prints nothing to explain itself,
+		// so the result carries no evidence at all — only the call does.
+		const c = classifyFailure("", "tool", { command: "grep -n TODO src/*.ts" });
+		assert.equal(c.classId, "exit-status-signal");
+		assert.equal(c.label, "a search that found nothing");
+
+		assert.equal(classifyFailure("", "tool", { command: "git diff --exit-code" }).classId, "exit-status-signal");
+		assert.equal(classifyFailure("", "tool", { command: "diff a.txt b.txt" }).classId, "exit-status-signal");
+		assert.equal(classifyFailure("", "tool", { command: "test -f /tmp/x" }).classId, "exit-status-signal");
+		assert.equal(classifyFailure("", "tool", { command: "cat file | rg pattern" }).classId, "exit-status-signal");
+	});
+
+	it("prefers a real diagnostic over the exit-status reading when the command left one", () => {
+		// A grep that actually broke is a failure, not a search that found nothing.
+		const c = classifyFailure("grep: repetition-operator operand invalid", "tool", { command: "grep -n '*x' f" });
+		assert.equal(c.classId, "command-failed");
+	});
+
+	it("does not read an ordinary command's silence as a signal", () => {
+		assert.equal(classifyFailure("", "tool", { command: "npm run build" }).classId, "unclassified");
+	});
+
 	it("classifies tool-axis errors against the tool catalogue, not the turn one", () => {
 		assert.equal(classifyFailure("bash: frobnicate: command not found", "tool").classId, "tool-not-found");
 		assert.equal(classifyFailure("ENOENT: no such file or directory", "tool").classId, "path-not-found");
@@ -390,6 +439,30 @@ describe("groupFailures", () => {
 	});
 });
 
+describe("classification from the call", () => {
+	it("groups a silent grep failure under the signal class, keyed by the command", () => {
+		const rows: MessageRow[] = [];
+		for (const cmd of ["grep -n A f", "grep -n B f", "grep -n A f"]) {
+			const id = `c${rows.length}`;
+			rows.push(
+				msg({ id: `a-${id}`, role: "assistant", tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command: cmd } }]) }),
+				msg({
+					id: `r-${id}`,
+					role: "toolResult",
+					content_text: "",
+					tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError: true, textLength: 0 }]),
+				}),
+			);
+		}
+		const groups = groupFailures(buildToolStream(rows));
+		const g = groups.find((x) => x.class_id === "exit-status-signal")!;
+		assert.equal(g.count, 3);
+		// Two distinct commands, so two distinct causes — the repeat collapses.
+		assert.equal(g.causes.length, 2);
+		assert.ok(!JSON.stringify(g).includes("grep -n"), "the command is fingerprinted, never stored");
+	});
+});
+
 describe("normalizeForFingerprint", () => {
 	it("folds away request ids, counts, paths and parenthesised names", () => {
 		const a = normalizeForFingerprint("Internal Server Error (ref: aaaaaaaa1111) after 3 attempts at /var/run/x");
@@ -521,6 +594,62 @@ describe("buildProposals", () => {
 		]);
 		assert.ok(p!.summary.includes("unknown"));
 		assert.ok(!p!.summary.includes("$0.00"));
+	});
+
+	it("merges repeated causes in the evidence instead of listing them one by one", () => {
+		const rows: MessageRow[] = [];
+		for (const cmd of ["grep -n A f", "grep -n B f", "grep -n C f"]) {
+			const id = `c${rows.length}`;
+			rows.push(
+				msg({ id: `a-${id}`, role: "assistant", tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command: cmd } }]) }),
+				msg({
+					id: `r-${id}`,
+					role: "toolResult",
+					content_text: "",
+					tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError: true, textLength: 0 }]),
+				}),
+			);
+		}
+		const [p] = proposalsFor(rows);
+		assert.ok(p!.evidence.includes("a search that found nothing ×3"));
+		assert.ok(!p!.evidence.includes("×1;"), "three distinct commands, one cause the reader cares about");
+	});
+
+	it("does not say a call 'failed' when the class is that nothing failed", () => {
+		const rows: MessageRow[] = [];
+		for (let i = 0; i < 3; i++) {
+			const id = `c${i}`;
+			rows.push(
+				msg({ id: `a-${id}`, role: "assistant", tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command: `grep -n X${i} f` } }]) }),
+				msg({
+					id: `r-${id}`,
+					role: "toolResult",
+					content_text: "",
+					tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError: true, textLength: 0 }]),
+				}),
+			);
+		}
+		const [p] = proposalsFor(rows);
+		assert.ok(!p!.title.includes("failed"));
+		assert.ok(!p!.summary.includes("failed with"));
+		assert.ok(p!.detail.includes("|| true"));
+	});
+
+	it("never proposes on an unfinished background task", () => {
+		const rows: MessageRow[] = [];
+		for (let i = 0; i < 5; i++) {
+			const id = `c${i}`;
+			rows.push(
+				msg({ id: `a-${id}`, role: "assistant", tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command: "check" } }]) }),
+				msg({
+					id: `r-${id}`,
+					role: "toolResult",
+					content_text: "(no output yet)",
+					tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError: true, textLength: 15 }]),
+				}),
+			);
+		}
+		assert.deepEqual(proposalsFor(rows), []);
 	});
 
 	it("tells the reader nothing is installed for them", () => {

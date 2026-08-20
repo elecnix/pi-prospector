@@ -328,11 +328,31 @@ any session where one step issued several calls.
 - **Failure class** — the curated category a failure falls into: rate limit,
   transport failure, provider server error, malformed tool call, context
   ceiling, authentication, quota, model unavailable, abort; and on the tool side
-  invalid input, tool-or-command not found, path not found, permission denied,
-  timeout, non-zero exit. A class is decided by matching the recorded error text
-  against a hand-written catalogue. Anything that matches nothing is
-  **unclassified** — a real answer, and the honest measure of the catalogue's
-  gaps, where forcing a poor fit would hide them.
+  invalid input, edit-anchor miss, script error, guardrail block,
+  tool-or-command not found, path not found, permission denied, remote rate
+  limit, unavailable backing service, timeout, a command that reported its own
+  error, and a non-zero exit used as a signal. A class is decided by matching a
+  hand-written catalogue. Anything that matches nothing is **unclassified** — a
+  real answer, and the honest measure of the catalogue's gaps, where forcing a
+  poor fit would hide them. It is what the catalogue is *for*: the first run over
+  a real corpus left a third of failures unnamed, and profiling that residual is
+  what produced most of the classes above.
+- **Classifying from the call** — some failures leave no evidence in the result
+  at all. A `grep` that finds nothing exits non-zero and prints *nothing*; the
+  only way to know what happened is to look at what was asked for. So a class may
+  match on the invocation as well as on the result. Such a class sits late in the
+  catalogue, so a command that *did* report a real error is named by that error
+  first.
+- **Exit status as a signal** — a non-zero exit that is a normal answer rather
+  than a failure: `grep` found nothing, `diff` found a difference, `test`
+  evaluated false. The harness marks it as an error and the agent re-plans around
+  a non-problem. It is the single largest tool-side class on a real corpus, and
+  the remedy is a standing instruction, because the shell will never say so
+  itself.
+- **Not-a-failure classes** — an operator **abort**, and a poll of an unfinished
+  **background task**. Both arrive flagged as errors and neither is a defect.
+  They are counted, so every rate in the session keeps an honest denominator, and
+  never proposed on.
 - **Cause label** — the short, fixed description of *which* matcher fired. The
   label is what goes into the graph; the matched error text never does. Host
   error text quotes account names, organisation names, provider slugs, and
@@ -340,7 +360,11 @@ any session where one step issued several calls.
   reasoning that makes `secret-leak` store a redacted preview rather than the
   secret. Alongside the label sits a digest of the normalised text, so two
   occurrences of one failure count as one cause seen twice while genuinely
-  different errors stay apart, and neither is readable.
+  different errors stay apart, and neither is readable. When the result said
+  nothing at all, the *command* is fingerprinted in its place — hashed, never
+  stored, exactly like the error text it stands in for. Causes are merged by
+  label when a proposal quotes them: the fingerprint is identity, not something
+  a reader needs to see repeated.
 - **Remedy** — what a failure class is fixed by, written down in the catalogue
   beside it. Every class has one that requires installing nothing.
 - **Extension candidate** — a published package that addresses a class, listed
