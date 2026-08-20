@@ -67,7 +67,9 @@ GitHub Actions on every push and pull request to `main`. Two jobs:
 - `src/sync/` — session scanning and parsing (no LLM).
 - `src/db/` — all SQL lives here, nowhere else. Conversation and proposal queries in `db/queries.ts`; analysis-graph queries (nodes, edges, runs, configs, lineage) in `db/analysis-queries.ts`. Schema and the single migration in `db/schema.ts`.
 - `src/analyze/` — the analyzer framework. `framework.ts` (register / scan / run), `types.ts` (TypeBox schemas), `input-hash.ts` (recipe + idempotency hashing), `edge-kinds.ts` (typed-edge vocabulary and validation), `model-tiers.ts`, `proposal-materializer.ts`, `defaults.ts` (default analyzer registration). The LLM seam is `pi-llm.ts` (production, via Pi's provider system) and `mock-llm.ts` (deterministic test double).
-- `src/analyze/analyzers/<id>/` — one directory per analyzer (`turn-pair-core`, `turn-pair-llm`, `session-overview`, `tool-trajectory`, `secret-leak`), each with `index.ts`, its prompt(s), and `config.ts`.
+- `src/analyze/tool-stream.ts` — the session's action stream: tool calls paired with their results by tool-call id, plus the generations that failed. Shared by every analyzer that reads what the agent did, so they cannot disagree about it.
+- `src/analyze/analyzers/<id>/` — one directory per analyzer (`turn-pair-core`, `turn-pair-llm`, `session-overview`, `tool-trajectory`, `failure-modes`, `secret-leak`), each with `index.ts`, its prompt(s), and `config.ts`.
+- `src/analyze/analyzers/failure-modes/classes.ts` — the failure-class catalogue: every kind of problem the system can name, its remedy, and the hand-verified packages that address it. **This is the only place a package name may come from.** Adding a new kind of problem means adding an entry here, not writing another detector; adding a package means verifying it against the registry first and recording the version and licence you checked.
 - `src/commands/` — Pi slash commands and the `prospect` tool; registered from `src/index.ts`.
 - `src/config.ts` — config loading with env overrides (`PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CONFIG`).
 - `src/types.ts` — shared TypeBox schemas.

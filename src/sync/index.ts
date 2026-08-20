@@ -136,6 +136,8 @@ function syncPiSession(
 				model: entry.model,
 				cost_usd: entry.costUsd,
 				provider_message_id: entry.providerMessageId,
+				stop_reason: entry.stopReason,
+				error_message: entry.errorMessage,
 			});
 			msgCount++;
 		}
@@ -217,6 +219,8 @@ function syncClaudeSession(
 				model: entry.model,
 				cost_usd: entry.costUsd,
 				provider_message_id: entry.providerMessageId,
+				stop_reason: entry.stopReason,
+				error_message: entry.errorMessage,
 			});
 			msgCount++;
 		}

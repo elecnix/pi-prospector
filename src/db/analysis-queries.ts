@@ -354,7 +354,7 @@ export function getAllAnalysisNodes(db: Database.Database, asOf?: string, includ
 /** A session's messages in stream order — for reconstructing turns verbatim. */
 export function getSessionMessageRows(db: Database.Database, sessionId: string): MessageRow[] {
 	return prep(db,
-			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd " +
+			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message " +
 				"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
 		)
 		.all(sessionId) as MessageRow[];
@@ -452,7 +452,7 @@ export function getAnchoredMessageIds(db: Database.Database, nodeId: string): st
 
 export function getMessage(db: Database.Database, id: string): MessageRow | undefined {
 	return prep(db,
-			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd FROM messages WHERE id = ?",
+			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message FROM messages WHERE id = ?",
 		)
 		.get(id) as MessageRow | undefined;
 }

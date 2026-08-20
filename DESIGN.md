@@ -301,6 +301,99 @@ contribute to the session's friction score and surface in the digest.
   branch). Pre-flight gaps signal that the agent acted without checking or
   establishing prerequisites.
 
+### Failure analysis (deterministic, session-level)
+
+A trajectory signal is a pattern in what the agent *did*. This is the other
+half: what simply **failed**. Two things fail, and they are not the same thing.
+
+- **Tool failure** — the agent asked for a well-formed action and the tool
+  itself refused or errored. This has always been visible: the transcript
+  records the result and flags it as an error.
+- **Turn failure** — the agent's own generation never produced a usable result,
+  so no tool was ever reached. The provider refused the call, the connection
+  dropped mid-stream, the model emitted a tool call the host could not parse, the
+  context ceiling was hit. A turn failure is the most expensive kind of friction
+  there is — the tokens were billed and nothing came back — and it is also the
+  quietest: with no tool call to record, the turn reads as an ordinary short
+  reply. It was invisible until ingest kept the host's stop reason and error
+  text, which is why the corpus looked healthier than it was.
+
+Both are read from the same **action stream** — the session's tool calls paired
+with their results by the provider's tool-call id, alongside the generations
+that failed. One reconstruction serves every analyzer that needs it, so
+"the third call" and "that call failed" mean the same thing everywhere. Pairing
+by *position* instead, as an earlier version did, mis-attributed every error in
+any session where one step issued several calls.
+
+- **Failure class** — the curated category a failure falls into: rate limit,
+  transport failure, provider server error, malformed tool call, context
+  ceiling, authentication, quota, model unavailable, abort; and on the tool side
+  invalid input, edit-anchor miss, script error, guardrail block,
+  tool-or-command not found, path not found, permission denied, remote rate
+  limit, unavailable backing service, timeout, a command that reported its own
+  error, and a non-zero exit used as a signal. A class is decided by matching a
+  hand-written catalogue. Anything that matches nothing is **unclassified** — a
+  real answer, and the honest measure of the catalogue's gaps, where forcing a
+  poor fit would hide them. It is what the catalogue is *for*: the first run over
+  a real corpus left a third of failures unnamed, and profiling that residual is
+  what produced most of the classes above.
+- **Classifying from the call** — some failures leave no evidence in the result
+  at all. A `grep` that finds nothing exits non-zero and prints *nothing*; the
+  only way to know what happened is to look at what was asked for. So a class may
+  match on the invocation as well as on the result. Such a class sits late in the
+  catalogue, so a command that *did* report a real error is named by that error
+  first.
+- **Exit status as a signal** — a non-zero exit that is a normal answer rather
+  than a failure: `grep` found nothing, `diff` found a difference, `test`
+  evaluated false. The harness marks it as an error and the agent re-plans around
+  a non-problem. It is the single largest tool-side class on a real corpus, and
+  the remedy is a standing instruction, because the shell will never say so
+  itself.
+- **Not-a-failure classes** — an operator **abort**, and a poll of an unfinished
+  **background task**. Both arrive flagged as errors and neither is a defect.
+  They are counted, so every rate in the session keeps an honest denominator, and
+  never proposed on.
+- **Cause label** — the short, fixed description of *which* matcher fired. The
+  label is what goes into the graph; the matched error text never does. Host
+  error text quotes account names, organisation names, provider slugs, and
+  request ids, and the analysis graph is durable and widely readable — the same
+  reasoning that makes `secret-leak` store a redacted preview rather than the
+  secret. Alongside the label sits a digest of the normalised text, so two
+  occurrences of one failure count as one cause seen twice while genuinely
+  different errors stay apart, and neither is readable. When the result said
+  nothing at all, the *command* is fingerprinted in its place — hashed, never
+  stored, exactly like the error text it stands in for. Causes are merged by
+  label when a proposal quotes them: the fingerprint is identity, not something
+  a reader needs to see repeated.
+- **Remedy** — what a failure class is fixed by, written down in the catalogue
+  beside it. Every class has one that requires installing nothing.
+- **Extension candidate** — a published package that addresses a class, listed
+  in the catalogue with the version and licence that were checked against the
+  registry when it was curated. **Package names are only ever read from this
+  catalogue.** A language model asked to name a package will produce one that
+  sounds right, and recommending a package that does not exist is a supply-chain
+  hazard rather than a bad suggestion — so the synthesiser may only repeat a
+  package the deterministic layer already named for it.
+- **Extension proposal** — a proposal whose *target* is an extension: the thing
+  to change is the set of installed packages, not a file. Nothing is ever
+  installed; the proposal is a pointer with the measurement behind it. A class
+  whose candidates are all installed already falls back to the package-free
+  remedy, because recommending what the operator installed last week says the
+  analysis did not look. What is installed is therefore part of the analyzer's
+  **config** identity: installing a recommended extension marks the conclusions
+  drawn before it stale for the `config` reason.
+
+Not every failure is a defect. An **abort** is the operator stopping the agent;
+it is counted, so the other rates have an honest denominator, and never proposed
+on.
+
+Failure counts are stated with their **coverage**. A session indexed before the
+stop reason was captured cannot show a failed generation at all, so its count is
+reported as *unknown* rather than as zero — a silent zero would read as a clean
+session, which is precisely the mistake that hid this class in the first place.
+Costs follow the same rule as everywhere else: an unpriced failure contributes
+nothing, and a total that omits unpriced failures says so.
+
 ### Learned frustration lexicon (corpus-scoped)
 
 Friction is often stated in words, and the shipped correction patterns are
@@ -413,8 +506,10 @@ contain the new word have anything to compute.
   same target/evidence/confidence structure as friction proposals, but their
   intent is "keep doing X / encode the working pattern," not "fix what went wrong."
 - **Target** — what a proposal would change (a category such as a standing
-  instruction file, a skill, a tool description, or configuration, plus an
-  optional location within it).
+  instruction file, a skill, a tool description, configuration, or the set of
+  installed **extensions**, plus an optional location within it — for an
+  extension, the package spec). The categories are open by construction: a new
+  one is a new value, never new schema.
 - **Severity** — the nature of the signal behind a proposal (for example
   friction, correction, waste, suggestion, insight, or reinforcement). It
   describes *why the proposal exists*, not how urgent it is.
@@ -437,7 +532,10 @@ contain the new word have anything to compute.
   advisory only — it grounds confidence, it never edits anything — and it
   deliberately inherits the classifier's blind spots (text-only, no tool calls),
   so the score is labelled *replay-validated* rather than presented as ground
-  truth.
+  truth. Proposals whose target is an **extension** are skipped, not scored:
+  the test injects the proposal as a standing instruction, and "install this
+  package" is not something a text classifier can act on — scoring it would
+  produce a number out of noise. They stay *unvalidated*, which is what they are.
 - **Positive signal** — a deterministic or model-derived observation that
   something went *well* in a session: the task was completed without correction,
   a correction was followed by a clean recovery, or the tool-failure density was

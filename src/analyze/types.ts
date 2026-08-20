@@ -161,6 +161,10 @@ export const MessageRow = Type.Object({
 	model: Type.Union([Type.String(), Type.Null()]),
 	/** The billed dollar cost of this assistant message, or null when unrecorded. */
 	cost_usd: Type.Union([Type.Number(), Type.Null()]),
+	/** How the assistant generation ended, verbatim from the host, or null. */
+	stop_reason: Type.Union([Type.String(), Type.Null()]),
+	/** Why the generation failed, verbatim from the host, or null when it did not. */
+	error_message: Type.Union([Type.String(), Type.Null()]),
 });
 export type MessageRow = Static<typeof MessageRow>;
 
@@ -411,6 +415,23 @@ export interface Analyzer {
 	 * it into the fingerprint makes muting behave exactly like changing a threshold.
 	 */
 	consultsAssertions?: readonly string[];
+	/**
+	 * Facts about the machine's setup that this analyzer reads, reduced to stable
+	 * strings and folded into its config fingerprint.
+	 *
+	 * Some analyzers consult state that is neither their own parameters nor the
+	 * graph: what the host has installed, for instance. That state is `config` by
+	 * DESIGN.md's definition — the user set it — so changing it must mark the
+	 * affected nodes stale for the `config` reason rather than leaving a
+	 * conclusion standing that was drawn under a setup that no longer exists.
+	 * This is the general form of what `contentHash` and `consultsAssertions`
+	 * already do for two specific cases.
+	 *
+	 * Called during scan, so it must be cheap and must never throw: an
+	 * unreadable source of truth is a fact about the environment, and the
+	 * analyzer states it on the node instead of failing the run.
+	 */
+	identityExtras?: () => readonly string[];
 	/**
 	 * Files this analyzer can render from the finished graph.
 	 *

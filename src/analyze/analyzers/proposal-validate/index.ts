@@ -60,7 +60,12 @@ export const PROPOSAL_VALIDATE_DEF: AnalyzerDef = {
 export const PROPOSAL_VALIDATE_VERSION: AnalyzerVersion = {
 	analyzerId: PROPOSAL_VALIDATE_DEF.id,
 	major: 1,
-	minor: 1,
+	// 1.2 (issue #159): proposals targeting an `extension` are skipped rather
+	// than replayed. Injecting "install this package" as a standing instruction
+	// tests nothing a text classifier can see, so the old behaviour would have
+	// scored them on noise. Minor: fewer units planned, no change to how a
+	// replayed proposal is scored.
+	minor: 2,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/proposal-validate/index.ts",
 };
@@ -134,6 +139,14 @@ export const proposalValidateAnalyzer: Analyzer = {
 		const units: AnalysisUnit[] = [];
 
 		for (const p of proposals) {
+			// Replay validation asks "would this rule, injected as a standing
+			// instruction, have averted the friction?". That question is meaningless
+			// for a proposal whose action is installing software: the validator
+			// classifies turn text, so injecting "install @scope/pi-retry" tests
+			// nothing and would hand the proposal a fabricated score. Skipping is
+			// honest — the proposal keeps `unvalidated`, which is exactly what it is.
+			if (p.target_type === "extension") continue;
+
 			const allReplayIds = parseMessageIds(p.source_message_ids);
 			const replayMessageIds = cap === undefined ? allReplayIds : allReplayIds.slice(0, cap);
 			const summaryNode = p.source_node_id ? nodeById.get(p.source_node_id) : undefined;

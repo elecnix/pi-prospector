@@ -60,6 +60,13 @@ export function migrate(db: Database.Database): void {
 			model TEXT,
 			cost_usd REAL,
 			provider_message_id TEXT,
+			-- How an assistant generation ended, and why it failed when it did.
+			-- A *turn failure* (stop_reason = 'error') is the class of problem the
+			-- rest of the index could not see: the tokens were billed and nothing
+			-- usable came back. error_message is stored verbatim; classifying it
+			-- is an analyzer's job, not the ingest layer's.
+			stop_reason TEXT,
+			error_message TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
@@ -425,6 +432,20 @@ function addMissingColumns(db: Database.Database): void {
 	// this column existed — a full re-sync backfills them.
 	if (!hasColumn("messages", "provider_message_id")) {
 		db.exec("ALTER TABLE messages ADD COLUMN provider_message_id TEXT");
+	}
+
+	// messages: the host's stop reason and error text for an assistant generation.
+	// Until these existed the index could see a tool that ran and failed, but not
+	// a *turn* that failed — the model never produced a usable response at all.
+	// That is the larger class on a real corpus, and it is invisible without
+	// these two columns. NULL on rows indexed before they existed; a full re-sync
+	// backfills them, and the failure-modes analyzer states that coverage rather
+	// than reading an absent column as "nothing went wrong".
+	if (!hasColumn("messages", "stop_reason")) {
+		db.exec("ALTER TABLE messages ADD COLUMN stop_reason TEXT");
+	}
+	if (!hasColumn("messages", "error_message")) {
+		db.exec("ALTER TABLE messages ADD COLUMN error_message TEXT");
 	}
 
 	// proposals v2: check if it has v1 schema (has "target" instead of "title")
