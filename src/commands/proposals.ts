@@ -7,6 +7,7 @@ import { getNode } from "../db/analysis-queries.js";
 import { getDbPath } from "../config.js";
 import { parseFlags, resolveTimepoint } from "../timepoint.js";
 import type { Proposal, ProposalDecision } from "../types.js";
+import { parseHarnessSource, harnessLabel } from "../harness.js";
 import { homedir } from "node:os";
 
 function output(ctx: ExtensionCommandContext, text: string, level: "info" | "warning" | "error" = "info"): void {
@@ -244,24 +245,38 @@ export function sessionLabel(s: { project: string; cwd: string } | undefined, id
 	return id.slice(0, 8);
 }
 
+/**
+ * The group header for a session's proposals, with the coding harness shown as
+ * `[Pi]`/`[Claude]` so a reader always knows which host the proposals came from.
+ * A session with no recorded source shows `[unknown]` rather than being guessed.
+ */
+export function sessionGroupHeader(s: { project: string; cwd: string; source?: string } | undefined, id: string, count: number): string {
+	const harness = `[${harnessLabel(s?.source)}]`;
+	const label = sessionLabel(s, id);
+	return `═══ ${id.slice(0, 8)} ${harness} · ${label} · ${count} proposal(s) ═══`;
+}
+
 export async function prospectProposals(args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const db = new Database(getDbPath());
 	migrate(db);
 	try {
 		const { status, severity, full } = parseProposalsArgs(args);
 		const { flags } = parseFlags(args ?? "");
+		// Optional harness filter: --source pi|claude. Unknown values throw, so a
+		// typo fails loudly rather than silently matching nothing.
+		const source = parseHarnessSource(flags["source"]);
 		let asOfLabel: string | undefined;
 		let proposals: Proposal[] = [];
 		const tp = resolveTimepoint(db, flags);
 		if (tp) {
 			asOfLabel = tp.source;
-			const all = listProposalsAsOf(db, tp.at);
+			const all = listProposalsAsOf(db, tp.at, source);
 			proposals = all.filter((p) => (!status || p.status === status) && (!severity || p.severity === severity));
 		} else {
-			proposals = listProposals(db, status, severity);
+			proposals = listProposals(db, status, severity, undefined, undefined, source);
 		}
 		proposals = proposals.sort(rankProposals);
-		const filterDesc = [status, severity].filter(Boolean).join(" ");
+		const filterDesc = [status, severity, source ? `source ${source}` : undefined].filter(Boolean).join(" ");
 
 		if (proposals.length === 0) {
 			output(ctx, filterDesc ? `No ${filterDesc} proposals found.` : "No proposals found.");
@@ -285,8 +300,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			: (p: Proposal) => conciseEntry(p, getLatestDecision(db, p.input_key));
 		const blocks: string[] = [];
 		for (const [sessionId, group] of groups) {
-			const label = sessionLabel(labels.get(sessionId), sessionId);
-			const header = `═══ ${sessionId.slice(0, 8)} · ${label} · ${group.length} proposal(s) ═══`;
+			const header = sessionGroupHeader(labels.get(sessionId), sessionId, group.length);
 			blocks.push(`${header}\n${group.map(format).join("\n\n")}`);
 		}
 
@@ -358,7 +372,7 @@ export async function prospectRemediate(args: string, ctx: ExtensionCommandConte
 export function registerProposalsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-proposals", {
 		description:
-			"List proposals, ranked by trust tier (replay-validated) then billed cost, then confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, and --full for evidence/source.",
+			"List proposals, ranked by trust tier (replay-validated) then billed cost, then confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, --source <pi|claude>, and --full for evidence/source.",
 		handler: prospectProposals,
 	});
 

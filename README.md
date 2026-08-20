@@ -276,7 +276,7 @@ Index session files into the database. No LLM is called. Fast and cheap.
 
 Run it as often as you like. It's idempotent and incremental.
 
-### `/prospect-analyze [--revise <reasons>] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
+### `/prospect-analyze [--revise <reasons>] [--source pi|claude] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
 
 Build the analysis graph over synced sessions and materialise proposals. By default it does the cheapest useful thing: it **fills only missing work**. Nodes that are already current are skipped; nodes that are out of date are left alone unless you ask for them with `--revise`.
 
@@ -306,9 +306,9 @@ This reads the graph and never writes to it: it renders what analysis has alread
 
 Print a summary of the database: sessions indexed, messages and tool results, sessions analysed, proposals by status (`open`/`applied`/`rejected`/`duplicate`), and analysis-graph totals (nodes, edges, runs, and a breakdown of nodes by kind).
 
-### `/prospect-proposals [status]`
+### `/prospect-proposals [status] [--source pi|claude]`
 
-List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`). Each row shows its status, a score label, severity, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous). If you have decided a proposal, the row also shows your latest **decision** (verdict, disposition, and rationale).
+List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`) and by the coding harness that produced the session (`--source pi` or `--source claude`). Each group header shows the harness as `[Pi]`/`[Claude]`. Each row shows its status, a score label, severity, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous). If you have decided a proposal, the row also shows your latest **decision** (verdict, disposition, and rationale).
 
 - **Target** — what the proposal suggests changing (a category and optional path, e.g. a standing instruction file or a skill)
 - **Severity** — the nature of the signal: `friction` | `correction` | `waste` | `suggestion` | `reinforcement` (listed as `reinforce`)
@@ -422,7 +422,7 @@ When installed, pi-prospector registers a `prospect` tool the Pi coding agent ca
 |--------|-------------|
 | `sync` | Index new/modified sessions into the database |
 | `stats` | Return sync and proposal statistics |
-| `list_proposals` | List proposals, optionally filtered by status |
+| `list_proposals` | List proposals, optionally filtered by status, severity, and source (`pi`/`claude`) |
 | `accept` | Mark a proposal as applied; optional `rationale`, `disposition` (planned/done/done_differently), `actual_change` record a durable decision |
 | `reject` | Mark a proposal as rejected; optional `rationale` records a durable decision |
 | `remediate` | Accept many proposals (`proposal_ids`) at once under ONE shared remediation (`description`) instead of N duplicated rationales |

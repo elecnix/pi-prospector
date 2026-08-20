@@ -42,11 +42,11 @@ export function tempDb(): TempDb {
 }
 
 /** Insert a minimal session row so foreign keys on messages/proposals are satisfied. */
-export function insertSession(db: Database.Database, id: string, filePath = `/tmp/${id}.jsonl`, cwd = ""): void {
+export function insertSession(db: Database.Database, id: string, filePath = `/tmp/${id}.jsonl`, cwd = "", source = "pi"): void {
 	db.prepare(
 		"INSERT INTO sessions (id, file_path, project, source, cwd, started_at, last_line, last_modified, message_count, branch_count) " +
-			"VALUES (?, ?, '', 'pi', ?, ?, 0, 0, 0, 0)",
-	).run(id, filePath, cwd, new Date().toISOString());
+			"VALUES (?, ?, '', ?, ?, ?, 0, 0, 0, 0)",
+	).run(id, filePath, source, cwd, new Date().toISOString());
 }
 
 let messageSeq = 0;

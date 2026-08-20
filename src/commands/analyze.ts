@@ -8,6 +8,7 @@ import { registerAll } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
 import { parseReviseArg, reachLabel } from "../analyze/version.js";
+import { parseHarnessSource } from "../harness.js";
 import { createAnalyzeRun, finalizeAnalyzeRun } from "../db/analysis-queries.js";
 import { uuidv7 } from "../analyze/input-hash.js";
 import {
@@ -38,6 +39,8 @@ interface AnalyzeArgs {
 	/** Get the N most-recent sessions (by started_at DESC). */
 	recent?: number;
 	session?: string;
+	/** Restrict to sessions from one coding harness ("pi" | "claude"). */
+	source?: string;
 	analyzer?: string;
 	model?: string;
 	llmConcurrency?: number;
@@ -47,6 +50,8 @@ interface AnalyzeArgs {
 
 export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
 	const args = parseArgs(rawArgs ?? "");
+	// A --source typo fails loudly (throws) rather than silently matching nothing.
+	parseHarnessSource(args.source);
 	const reviseActive = args.revise.length > 0;
 	const reach = reachLabel(args.revise);
 	const config = loadConfig();
@@ -72,10 +77,10 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const sessions = args.session
 			? [{ id: args.session, file_path: "", started_at: "" }]
 			: args.recent
-				? getRecentSessions(db, args.recent)
+				? getRecentSessions(db, args.recent, args.source)
 			: reviseActive || args.all
-				? getAllSessions(db, args.limit)
-				: getUnanalyzedSessions(db, args.limit);
+				? getAllSessions(db, args.limit, args.source)
+				: getUnanalyzedSessions(db, args.limit, args.source);
 
 		if (sessions.length === 0) {
 			out(ctx, "No sessions to analyse. Run /prospect-sync first.", "info");
@@ -274,7 +279,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --source pi|claude (restrict to sessions from one coding harness), --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		handler: prospectAnalyze,
 	});
 }
@@ -315,6 +320,7 @@ function parseArgs(raw: string): AnalyzeArgs {
 			if (!Number.isNaN(n) && n > 0) result.recent = n;
 		} else if (p === "--all") result.all = true;
 		else if (p === "--session" && parts[i + 1]) result.session = parts[++i];
+		else if (p === "--source" && parts[i + 1]) result.source = parts[++i];
 		else if (p === "--analyzer" && parts[i + 1]) result.analyzer = parts[++i];
 		else if (p === "--analyzer-path" && parts[i + 1]) result.analyzerPaths.push(parts[++i]!);
 		else if (p === "--model" && parts[i + 1]) result.model = parts[++i];
