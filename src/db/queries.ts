@@ -153,7 +153,15 @@ export function getSessionMessages(db: Database.Database, sessionId: string): Ar
 
 // ── Proposals (v2) ──
 
-export function listProposals(db: Database.Database, status?: string, severity?: string, limit?: number, offset?: number, source?: string): Proposal[] {
+export function listProposals(
+	db: Database.Database,
+	status?: string,
+	severity?: string,
+	limit?: number,
+	offset?: number,
+	source?: string,
+	sessionId?: string,
+): Proposal[] {
 	const clauses: string[] = [];
 	const params: (string | number)[] = [];
 	if (status) {
@@ -164,15 +172,23 @@ export function listProposals(db: Database.Database, status?: string, severity?:
 		clauses.push("severity = ?");
 		params.push(severity);
 	}
+	if (sessionId) {
+		clauses.push("session_id = ?");
+		params.push(sessionId);
+	}
 	if (source) {
 		clauses.push("s.source = ?");
 		params.push(source);
 	}
 	// Join sessions when filtering by source, so a proposal is matched through the
 	// harness of the session it came from (the proposal row itself has no source).
+	// The join also disambiguates `session_id` (it lives on both tables), which is
+	// why the prefix mapping below qualifies every non-`s.` clause when joined.
 	const join = source ? " JOIN sessions s ON s.id = p.session_id" : "";
 	const prefix = source ? "p." : "";
-	const where = clauses.length ? ` WHERE ${clauses.map((c) => (source && !c.startsWith("s.") ? `${prefix}${c}` : c)).join(" AND ")}` : "";
+	const where = clauses.length
+		? ` WHERE ${clauses.map((c) => (source && !c.startsWith("s.") ? `${prefix}${c}` : c)).join(" AND ")}`
+		: "";
 	let sql = `SELECT ${source ? "p." : ""}* FROM proposals${source ? " p" : ""}${join}${where} ORDER BY ${source ? "p." : ""}created_at DESC`;
 	if (limit !== undefined) {
 		sql += ` LIMIT ?`;

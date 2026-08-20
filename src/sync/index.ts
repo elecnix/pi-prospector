@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { migrate } from "../db/schema.js";
 import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages } from "../db/queries.js";
-import { discoverSessions } from "./scanner.js";
+import { discoverSessions, type DiscoverOptions } from "./scanner.js";
 import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "./parser.js";
 import { resolveFork } from "./forks.js";
 import type { SyncResult, SessionSource } from "../types.js";
@@ -13,9 +13,18 @@ import type { SyncResult, SessionSource } from "../types.js";
  *
  * Both roots are required: see `discoverSessions` for why the Claude directory is
  * a parameter rather than an ambient lookup.
+ *
+ * An optional `opts` scope narrows the ingest to a project or harness — the
+ * fresh-install escape hatch that keeps a one-project sync from paying for
+ * every session on disk.
  */
-export function runSync(db: Database.Database, sessionsDir: string, claudeSessionsDir: string): SyncResult {
-	const discovered = discoverSessions(sessionsDir, claudeSessionsDir);
+export function runSync(
+	db: Database.Database,
+	sessionsDir: string,
+	claudeSessionsDir: string,
+	opts?: DiscoverOptions,
+): SyncResult {
+	const discovered = discoverSessions(sessionsDir, claudeSessionsDir, opts);
 	const result: SyncResult = { sessionsProcessed: 0, sessionsSkipped: 0, messagesInserted: 0, forksResolved: 0, errors: [] };
 
 	for (const disc of discovered) {

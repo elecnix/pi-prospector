@@ -4,13 +4,18 @@ import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
 import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
-export async function prospectSync(_args: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
 	const dbPath = getDbPath();
 	const db = new Database(dbPath);
 	migrate(db);
 
+	const args = parseSyncArgs(rawArgs ?? "");
+
 	try {
-		const result = runSync(db, getSessionsDir(), getClaudeSessionsDir());
+		const result = runSync(db, getSessionsDir(), getClaudeSessionsDir(), {
+			project: args.project,
+			source: args.source,
+		});
 		const lines = [
 			"⛏️ Prospect sync complete",
 			`  Sessions processed: ${result.sessionsProcessed}`,
@@ -18,6 +23,9 @@ export async function prospectSync(_args: string, ctx: ExtensionCommandContext):
 			`  Messages inserted:  ${result.messagesInserted}`,
 			`  Forks resolved:     ${result.forksResolved}`,
 		];
+		if (args.project || args.source) {
+			lines.push(`  Scope: ${[args.project && `project ${args.project}`, args.source && `source ${args.source}`].filter(Boolean).join(" + ")}`);
+		}
 		if (result.errors.length > 0) {
 			lines.push(`  Errors: ${result.errors.length}`);
 			for (const e of result.errors.slice(0, 5)) lines.push(`    ${e}`);
@@ -30,9 +38,30 @@ export async function prospectSync(_args: string, ctx: ExtensionCommandContext):
 	}
 }
 
+interface SyncArgs {
+	project?: string;
+	source?: "pi" | "claude";
+}
+
+function parseSyncArgs(raw: string): SyncArgs {
+	const result: SyncArgs = {};
+	const parts = raw.trim().split(/\s+/).filter((p) => p.length > 0);
+	for (let i = 0; i < parts.length; i++) {
+		const p = parts[i];
+		if (p === "--project" && parts[i + 1]) result.project = parts[++i]!;
+		else if (p === "--source" && parts[i + 1]) {
+			const v = parts[++i]!;
+			if (v !== "pi" && v !== "claude") throw new Error(`Unknown --source "${v}" — expected pi or claude`);
+			result.source = v;
+		}
+	}
+	return result;
+}
+
 export function registerSyncCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-sync", {
-		description: "Index session files into the prospector database (no LLM)",
+		description:
+			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude (restrict to one coding harness)",
 		handler: prospectSync,
 	});
 }

@@ -30,6 +30,62 @@ describe("discoverSessions", () => {
 	// real Claude sessions directory is simply unreachable from here.
 	const NO_CLAUDE_DIR = "/nonexistent-claude";
 
+	/** Build a Pi session dir tree with two distinct project directories. */
+	function twoProjects(): {
+		tmpDir: string;
+		projectDir: string;
+	} {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-scope-"));
+		for (const proj of ["projA", "projB"]) {
+			const d = path.join(tmpDir, `--Users-test--${proj}`);
+			fs.mkdirSync(d, { recursive: true });
+			fs.writeFileSync(path.join(d, `${proj}.jsonl`), '{"type":"session"}\n');
+		}
+		return { tmpDir, projectDir: tmpDir };
+	}
+
+	it("filters discovery to a single project", () => {
+		const { tmpDir } = twoProjects();
+		const origUser = process.env.USER;
+		process.env.USER = "test";
+		try {
+			const sessions = discoverSessions(tmpDir, NO_CLAUDE_DIR, { project: "projA" });
+			assert.equal(sessions.length, 1);
+			assert.ok(sessions[0]!.filePath.includes("projA.jsonl"));
+		} finally {
+			process.env.USER = origUser;
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		}
+	});
+
+	it("returns nothing when no session matches the project scope", () => {
+		const { tmpDir } = twoProjects();
+		const origUser = process.env.USER;
+		process.env.USER = "test";
+		try {
+			const sessions = discoverSessions(tmpDir, NO_CLAUDE_DIR, { project: "does-not-exist" });
+			assert.deepEqual(sessions, []);
+		} finally {
+			process.env.USER = origUser;
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		}
+	});
+
+	it("filters discovery to one harness via source", () => {
+		const { tmpDir } = twoProjects();
+		const origUser = process.env.USER;
+		process.env.USER = "test";
+		try {
+			const onlyClaude = discoverSessions(tmpDir, NO_CLAUDE_DIR, { source: "claude" });
+			assert.deepEqual(onlyClaude, []);
+			const onlyPi = discoverSessions(tmpDir, NO_CLAUDE_DIR, { source: "pi" });
+			assert.equal(onlyPi.length, 2);
+		} finally {
+			process.env.USER = origUser;
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		}
+	});
+
 	it("discovers .jsonl files in session dirs", () => {
 				const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-test-"));
 		try {

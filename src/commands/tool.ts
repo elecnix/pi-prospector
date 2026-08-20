@@ -62,6 +62,8 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			),
 			severity: Type.Optional(Type.String({ description: "Filter by severity: friction, correction, waste, suggestion, reinforcement" })),
 			source: Type.Optional(Type.String({ description: "Filter by coding harness: pi or claude." })),
+			session_id: Type.Optional(Type.String({ description: "Scope list_proposals to a single session (only that session's proposals)." })),
+			project: Type.Optional(Type.String({ description: "Scope sync to one project (derived from the session directory name) so a fresh install skips every other project on disk." })),
 			proposal_id: Type.Optional(Type.String()),
 			proposal_ids: Type.Optional(Type.Array(Type.String(), { description: "Proposal ids to accept/reject together (accept/reject/remediate actions)." })),
 			description: Type.Optional(Type.String({ description: "The one remediation action that addresses all proposal_ids (remediate action)." })),
@@ -89,7 +91,10 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			try {
 				switch (params.action) {
 					case "sync": {
-						const result = runSync(db, getSessionsDir(), getClaudeSessionsDir());
+						const result = runSync(db, getSessionsDir(), getClaudeSessionsDir(), {
+							project: params.project as string | undefined,
+							source: parseHarnessSource(params.source as string | undefined),
+						});
 						return text(JSON.stringify(result), result);
 					}
 					case "stats": {
@@ -102,8 +107,11 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						const status = params.status as string | undefined;
 						const severity = params.severity as string | undefined;
 						const source = parseHarnessSource(params.source as string | undefined);
-						const proposals = listProposals(db, status, severity, limit, offset, source).sort(rankProposals);
-						const filterDesc = [status, severity, source ? `source ${source}` : undefined].filter(Boolean).join(" ");
+						const sessionId = params.session_id as string | undefined;
+						const proposals = listProposals(db, status, severity, limit, offset, source, sessionId).sort(rankProposals);
+						const filterDesc = [status, severity, sessionId ? `session ${sessionId}` : undefined, source ? `source ${source}` : undefined]
+							.filter(Boolean)
+							.join(" ");
 						if (proposals.length === 0) {
 							return text(filterDesc ? `No ${filterDesc} proposals found.` : "No proposals found.", []);
 						}
@@ -207,10 +215,10 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						return text(`=== prospect tool ===
 
 Workflow:
-  1. sync   — index new sessions from disk
+  1. sync   — index new sessions from disk; scope with { project } and/or { source } to skip every other project on disk (the fresh-install escape hatch)
   2. stats  — see proposal counts, token ratios, analysis depth
   3. list_proposals [status] [severity] [limit] [offset] — ranked by confidence
-      (add --as-of <ts|7d> / --as-of-run <id> for a point-in-time view)
+      (add { session_id } to scope to one session; --as-of <ts|7d> / --as-of-run <id> for a point-in-time view)
   4. accept/reject — decide proposals singly or in bulk (proposal_ids array)
   5. remediate — accept many proposals under one shared remediation record
 
