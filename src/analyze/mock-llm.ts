@@ -32,6 +32,9 @@ export const MockLLMReplySchema = Type.Union([
 		model: Type.Optional(Type.String()),
 		costUsd: Type.Optional(Type.Number()),
 		tokensUsed: Type.Optional(Type.Number()),
+		inputTokens: Type.Optional(Type.Number()),
+		cachedInputTokens: Type.Optional(Type.Number()),
+		outputTokens: Type.Optional(Type.Number()),
 		durationMs: Type.Optional(Type.Number()),
 		stopReason: Type.Optional(Type.String()),
 	}),
@@ -47,6 +50,12 @@ export interface MockLLMOptions {
 	fallback?: MockLLMReply;
 	/** Simulated per-call token usage. */
 	tokensPerCall?: number;
+	/** Simulated per-call input (non-cached) tokens. */
+	inputTokensPerCall?: number;
+	/** Simulated per-call cached-input tokens. */
+	cachedInputTokensPerCall?: number;
+	/** Simulated per-call output tokens. */
+	outputTokensPerCall?: number;
 	/** Simulated per-call cost. */
 	costPerCall?: number;
 }
@@ -77,6 +86,12 @@ export function createMockLLM(options: MockLLMOptions = {}): MockLLM {
 			model: response.model ?? request.model,
 			costUsd: response.costUsd ?? options.costPerCall ?? 0,
 			tokensUsed: response.tokensUsed ?? options.tokensPerCall ?? 0,
+			// Default the split to the total when the mock didn't price one, so
+			// tokensUsed and the bucket sum always reconcile unless a test splits
+			// them explicitly.
+			inputTokens: response.inputTokens ?? options.inputTokensPerCall ?? options.tokensPerCall ?? 0,
+			cachedInputTokens: response.cachedInputTokens ?? options.cachedInputTokensPerCall ?? 0,
+			outputTokens: response.outputTokens ?? options.outputTokensPerCall ?? 0,
 			durationMs: response.durationMs ?? 0,
 			stopReason: response.stopReason ?? "stop",
 		};

@@ -57,6 +57,19 @@ describe("schema migration", () => {
 		}
 	});
 
+	it("analysis_nodes records compute-cost columns: wall-clock and token split", () => {
+		const { db, close } = tempDb();
+		try {
+			const cols = tableColumns(db, "analysis_nodes");
+			assert.ok(cols.has("duration_ms"), "expected wall-clock duration_ms column");
+			for (const col of ["input_tokens", "cached_input_tokens", "output_tokens"]) {
+				assert.ok(cols.has(col), `analysis_nodes missing ${col}`);
+			}
+		} finally {
+			close();
+		}
+	});
+
 	it("analysis_nodes enforces unique input_key", () => {
 		const { db, close } = tempDb();
 		try {

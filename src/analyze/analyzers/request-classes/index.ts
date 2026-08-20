@@ -258,6 +258,9 @@ export const requestClassesAnalyzer: Analyzer = {
 			modelUsed: response.model,
 			costUsd: response.costUsd,
 			tokensUsed: response.tokensUsed,
+			inputTokens: response.inputTokens,
+			cachedInputTokens: response.cachedInputTokens,
+			outputTokens: response.outputTokens,
 			durationMs: response.durationMs,
 			edges: [{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 }],
 		};

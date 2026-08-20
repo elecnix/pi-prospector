@@ -233,6 +233,16 @@ roughly the order concepts build on one another.
 - **Run** — one execution of an analyzer over a session. A run records its own
   provenance (status, cost, tokens, how many nodes it produced, skipped, or
   revised) so that execution history is itself auditable.
+- **Node cost** — the expense of computing one node, recorded on the node itself
+  as execution provenance: the **wall-clock duration** (how long it actually took
+  to produce, measured at the framework boundary around the analyzer call) and,
+  for nodes that reached a language model, the LLM **token split** — input,
+  cached input, and output token counts. The split is provider-priced, never
+  inferred: a node that used no model — or a call whose provider did not report a
+  split — carries nulls, not zeros, by the same rule as **Billed cost**. Node cost
+  is deliberately **not part of identity**: it is incidental to the run, never a
+  recipe input, so two otherwise-identical nodes computed at different speeds or
+  prices still share an `input_key`/`output_key` and stay idempotent.
 - **Analyze invocation** — one full `analyze` over many sessions. It keeps a
   completion record (`analyze_runs`): how many sessions it attempted, completed,
   and failed, plus node/proposal/cost tallies and representative errors. This is

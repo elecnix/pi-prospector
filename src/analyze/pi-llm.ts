@@ -177,6 +177,11 @@ export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, du
 		model: message.model || modelSpec,
 		costUsd: message.usage?.cost?.total ?? 0,
 		tokensUsed: message.usage?.totalTokens ?? 0,
+		// Token split of the call's inference cost, when the provider prices it.
+		// Cache read + cache write is folded into the cached-input bucket so the three buckets reconcile to totalTokens.
+		inputTokens: message.usage?.input ?? 0,
+		cachedInputTokens: (message.usage?.cacheRead ?? 0) + (message.usage?.cacheWrite ?? 0),
+		outputTokens: message.usage?.output ?? 0,
 		durationMs,
 		stopReason: message.stopReason,
 	};

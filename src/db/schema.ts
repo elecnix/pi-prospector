@@ -275,6 +275,14 @@ export function migrate(db: Database.Database): void {
 			model_used TEXT,
 			cost_usd REAL,
 			tokens_used INTEGER,
+			-- Token split for this node's LLM inference, when provider-priced: the
+			-- input bucket (non-cached), the cached-input bucket (cache read +
+			-- cache write), and the output bucket. NULL on deterministic nodes and on
+			-- calls that never priced them (cost is never inferred; see Billed cost).
+			-- Together with tokens_used they reconcile to totalTokens.
+			input_tokens INTEGER,
+			cached_input_tokens INTEGER,
+			output_tokens INTEGER,
 			duration_ms INTEGER,
 			created_at TEXT NOT NULL,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
@@ -467,6 +475,16 @@ function addMissingColumns(db: Database.Database): void {
 	if (!hasColumn("analysis_nodes", "config_fingerprint")) {
 		db.exec("ALTER TABLE analysis_nodes ADD COLUMN config_fingerprint TEXT DEFAULT ''");
 		db.exec("UPDATE analysis_nodes SET config_fingerprint = '' WHERE config_fingerprint IS NULL");
+	}
+
+	// analysis_nodes: token split for the node's LLM inference. Databases created
+	// before these existed keep NULL, never a guessed 0 -- the graph is disposable
+	// and rebuilt from transcripts, so an old DB's NULLs are honest about being
+	// unrecorded rather than claiming "no inference cost".
+	for (const col of ["input_tokens", "cached_input_tokens", "output_tokens"] as const) {
+		if (!hasColumn("analysis_nodes", col)) {
+			db.exec(`ALTER TABLE analysis_nodes ADD COLUMN ${col} INTEGER`);
+		}
 	}
 
 	// analyze_runs: whole-run overlay. `retried` counts throttled LLM calls that
