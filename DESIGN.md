@@ -49,6 +49,15 @@ roughly the order concepts build on one another.
 - **Session** — one recorded conversation between a user and a coding agent,
   from start to end. Sessions are the raw material. They are treated as
   **read-only**: the system observes them and never alters them.
+- **Coding harness** (or **harness**) — which host produced a session: **Pi** or
+  **Claude Code**. The sync layer records it as the session's **source**
+  (`pi` | `claude`) from which directory tree the session file was discovered.
+  It is a first-class attribute: filters (`--source`, the agent tool's
+  `source`), per-harness statistics, and the token report's “Agent” dimension
+  all read it, and a session whose source is absent or orphaned renders as
+  **unknown** — never a silent default to one host name, because assigning a
+  missing measurement a value it never had is the same lie as pricing an
+  unpriced message at zero.
 - **Message** — a single entry within a session: something the user said, one of
   the agent's replies, the agent's private reasoning, or the result of a tool the
   agent ran. Messages carry metadata (timing, model, token usage, error flags).

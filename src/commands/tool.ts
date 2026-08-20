@@ -5,10 +5,11 @@ import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
 import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposalsBulk, rejectProposalsBulk, acceptProposalsWithRemediation, getLatestDecision, getSessionLabels } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
-import { rankProposals, conciseEntry, sessionLabel } from "./proposals.js";
+import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
 import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
 import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
+import { parseHarnessSource } from "../harness.js";
 import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
 function text(body: string, details: unknown): ToolResult {
@@ -30,6 +31,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		label: "Prospect",
 		description:
 			"Index sessions, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, help. " +
+			"list_proposals accepts source (pi|claude) to filter by coding harness. " +
 			"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 			"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
 			"Use proposal_ids (string array) on accept/reject for bulk operations with a shared rationale. " +
@@ -59,6 +61,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				]),
 			),
 			severity: Type.Optional(Type.String({ description: "Filter by severity: friction, correction, waste, suggestion, reinforcement" })),
+			source: Type.Optional(Type.String({ description: "Filter by coding harness: pi or claude." })),
 			proposal_id: Type.Optional(Type.String()),
 			proposal_ids: Type.Optional(Type.Array(Type.String(), { description: "Proposal ids to accept/reject together (accept/reject/remediate actions)." })),
 			description: Type.Optional(Type.String({ description: "The one remediation action that addresses all proposal_ids (remediate action)." })),
@@ -98,8 +101,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						const offset = params.offset as number | undefined;
 						const status = params.status as string | undefined;
 						const severity = params.severity as string | undefined;
-						const proposals = listProposals(db, status, severity, limit, offset).sort(rankProposals);
-						const filterDesc = [status, severity].filter(Boolean).join(" ");
+						const source = parseHarnessSource(params.source as string | undefined);
+						const proposals = listProposals(db, status, severity, limit, offset, source).sort(rankProposals);
+						const filterDesc = [status, severity, source ? `source ${source}` : undefined].filter(Boolean).join(" ");
 						if (proposals.length === 0) {
 							return text(filterDesc ? `No ${filterDesc} proposals found.` : "No proposals found.", []);
 						}
@@ -114,8 +118,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						}
 						const blocks: string[] = [];
 						for (const [sessionId, group] of groups) {
-							const label = sessionLabel(labels.get(sessionId), sessionId);
-							const header = `═══ ${sessionId.slice(0, 8)} · ${label} · ${group.length} proposal(s) ═══`;
+							const header = sessionGroupHeader(labels.get(sessionId), sessionId, group.length);
 							blocks.push(`${header}\n${group.map((p) => conciseEntry(p, getLatestDecision(db, p.input_key))).join("\n\n")}`);
 						}
 						const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validated score then confidence:`;

@@ -17,6 +17,7 @@
 import type Database from "better-sqlite3";
 import type { AnalysisNodeRow } from "../../types.js";
 import { latestBySession } from "../../outputs.js";
+import { harnessLabel } from "../../../harness.js";
 import { emptyTotals, mergeTotals, scaleTotals, type TokenTotals, type TokenUnitsProperties } from "./fold.js";
 import type { RequestClassesProperties } from "../request-classes/index.js";
 
@@ -25,7 +26,7 @@ export const UNCLASSIFIED = "unclassified";
 
 export interface Leaf {
 	sessionId: string;
-	/** "pi" or "claude". */
+	/** "Pi" | "Claude", or "unknown" when the session's source is absent/orphaned. */
 	source: string;
 	project: string;
 	sessionLabel: string;
@@ -189,7 +190,9 @@ export function buildLeaves(opts: BuildLeavesOptions): BuildLeavesResult {
 
 		const session = sessions.get(node.session_id);
 		const project = projectLabel(session?.cwd ?? "", session?.project ?? "");
-		const source = session?.source ?? "pi";
+		// Go through the shared harness label: a session with no recorded source
+		// reads as "unknown", never silently as Pi.
+		const source = harnessLabel(session?.source);
 		const sessionLabel = `${node.session_id.slice(0, 8)} · ${project}`;
 		const byMessage = classesBySession.get(node.session_id);
 

@@ -68,23 +68,34 @@ export function markAnalyzed(db: Database.Database, sessionId: string): void {
 	prep(db, "UPDATE sessions SET analyzed_at = ? WHERE id = ?").run(new Date().toISOString(), sessionId);
 }
 
-export function getUnanalyzedSessions(db: Database.Database, limit?: number): Array<{ id: string; file_path: string; started_at: string }> {
+export function getUnanalyzedSessions(db: Database.Database, limit?: number, source?: string): Array<{ id: string; file_path: string; started_at: string }> {
+	const sourceClause = source ? " AND source = ?" : "";
+	const params = source ? [source] : [];
 	const sql = limit
-		? "SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL ORDER BY started_at ASC LIMIT ?"
-		: "SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL ORDER BY started_at ASC";
-	return (limit ? prep(db, sql).all(limit) : prep(db, sql).all()) as Array<{ id: string; file_path: string; started_at: string }>;
+		? `SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL${sourceClause} ORDER BY started_at ASC LIMIT ?`
+		: `SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL${sourceClause} ORDER BY started_at ASC`;
+	return (limit
+		? prep(db, sql).all(...[...params, limit]) as Array<{ id: string; file_path: string; started_at: string }>
+		: prep(db, sql).all(...params) as Array<{ id: string; file_path: string; started_at: string }>);
 }
 
-export function getAllSessions(db: Database.Database, limit?: number): Array<{ id: string; file_path: string; started_at: string }> {
+export function getAllSessions(db: Database.Database, limit?: number, source?: string): Array<{ id: string; file_path: string; started_at: string }> {
+	const sourceClause = source ? " WHERE source = ?" : "";
+	const params = source ? [source] : [];
 	const sql = limit
-		? "SELECT id, file_path, started_at FROM sessions ORDER BY started_at ASC LIMIT ?"
-		: "SELECT id, file_path, started_at FROM sessions ORDER BY started_at ASC";
-	return (limit ? prep(db, sql).all(limit) : prep(db, sql).all()) as Array<{ id: string; file_path: string; started_at: string }>;
+		? `SELECT id, file_path, started_at FROM sessions${sourceClause} ORDER BY started_at ASC LIMIT ?`
+		: `SELECT id, file_path, started_at FROM sessions${sourceClause} ORDER BY started_at ASC`;
+	return (limit
+		? prep(db, sql).all(...[...params, limit]) as Array<{ id: string; file_path: string; started_at: string }>
+		: prep(db, sql).all(...params) as Array<{ id: string; file_path: string; started_at: string }>);
 }
 
 /** Get the N most-recent sessions by started_at, useful for pilots. */
-export function getRecentSessions(db: Database.Database, limit: number): Array<{ id: string; file_path: string; started_at: string }> {
-	return prep(db, "SELECT id, file_path, started_at FROM sessions ORDER BY started_at DESC LIMIT ?").all(limit) as Array<{ id: string; file_path: string; started_at: string }>;
+export function getRecentSessions(db: Database.Database, limit: number, source?: string): Array<{ id: string; file_path: string; started_at: string }> {
+	if (!source) {
+		return prep(db, "SELECT id, file_path, started_at FROM sessions ORDER BY started_at DESC LIMIT ?").all(limit) as Array<{ id: string; file_path: string; started_at: string }>;
+	}
+	return prep(db, "SELECT id, file_path, started_at FROM sessions WHERE source = ? ORDER BY started_at DESC LIMIT ?").all(source, limit) as Array<{ id: string; file_path: string; started_at: string }>;
 }
 
 export interface SessionLabel {
@@ -92,11 +103,13 @@ export interface SessionLabel {
 	project: string;
 	cwd: string;
 	message_count: number;
+	/** The coding harness this session came from: "pi" | "claude". */
+	source: string;
 }
 
-/** Lightweight labels (project/cwd/message_count) for every session, for display. */
+/** Lightweight labels (project/cwd/message_count/source) for every session, for display. */
 export function getSessionLabels(db: Database.Database): SessionLabel[] {
-	return prep(db, "SELECT id, project, cwd, message_count FROM sessions").all() as SessionLabel[];
+	return prep(db, "SELECT id, project, cwd, message_count, source FROM sessions").all() as SessionLabel[];
 }
 
 // ── Messages ──
@@ -140,7 +153,7 @@ export function getSessionMessages(db: Database.Database, sessionId: string): Ar
 
 // ── Proposals (v2) ──
 
-export function listProposals(db: Database.Database, status?: string, severity?: string, limit?: number, offset?: number): Proposal[] {
+export function listProposals(db: Database.Database, status?: string, severity?: string, limit?: number, offset?: number, source?: string): Proposal[] {
 	const clauses: string[] = [];
 	const params: (string | number)[] = [];
 	if (status) {
@@ -151,8 +164,16 @@ export function listProposals(db: Database.Database, status?: string, severity?:
 		clauses.push("severity = ?");
 		params.push(severity);
 	}
-	const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
-	let sql = `SELECT * FROM proposals${where} ORDER BY created_at DESC`;
+	if (source) {
+		clauses.push("s.source = ?");
+		params.push(source);
+	}
+	// Join sessions when filtering by source, so a proposal is matched through the
+	// harness of the session it came from (the proposal row itself has no source).
+	const join = source ? " JOIN sessions s ON s.id = p.session_id" : "";
+	const prefix = source ? "p." : "";
+	const where = clauses.length ? ` WHERE ${clauses.map((c) => (source && !c.startsWith("s.") ? `${prefix}${c}` : c)).join(" AND ")}` : "";
+	let sql = `SELECT ${source ? "p." : ""}* FROM proposals${source ? " p" : ""}${join}${where} ORDER BY ${source ? "p." : ""}created_at DESC`;
 	if (limit !== undefined) {
 		sql += ` LIMIT ?`;
 		params.push(limit);
@@ -192,10 +213,12 @@ function latestDecisionsAsOf(db: Database.Database, at: string): Map<string, Pro
  * status derived by replaying decisions recorded up to T (latest per input_key).
  * This is the reconstructible, immutable projection of the mutable status column.
  */
-export function listProposalsAsOf(db: Database.Database, at: string): Proposal[] {
-	const proposals = db
-		.prepare("SELECT * FROM proposals WHERE created_at <= ? ORDER BY created_at DESC")
-		.all(at) as Proposal[];
+export function listProposalsAsOf(db: Database.Database, at: string, source?: string): Proposal[] {
+	const proposals = (source
+		? db.prepare(
+			"SELECT p.* FROM proposals p JOIN sessions s ON s.id = p.session_id WHERE p.created_at <= ? AND s.source = ? ORDER BY p.created_at DESC",
+		).all(at, source)
+		: db.prepare("SELECT * FROM proposals WHERE created_at <= ? ORDER BY created_at DESC").all(at)) as Proposal[];
 	const latest = latestDecisionsAsOf(db, at);
 	for (const p of proposals) {
 		const d = latest.get(p.input_key);

@@ -279,6 +279,29 @@ describe("slash commands", () => {
 			process.env["PROSPECTOR_DB_PATH"] = path.join(tmpDir, "cmd.db");
 		}
 	});
+
+	it("--source filters to one harness and tags the group header", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		insertSession(db, "src-pi", "/tmp/pi.jsonl", "/home/user/piProj", "pi");
+		insertSession(db, "src-cl", "/tmp/cl.jsonl", "/home/user/clProj", "claude");
+		insertProposalRow(db, { id: "s-pi-1", sessionId: "src-pi", title: "Pi proposal", inputKey: "ik-s-pi-1" });
+		insertProposalRow(db, { id: "s-cl-1", sessionId: "src-cl", title: "Claude proposal", inputKey: "ik-s-cl-1" });
+		db.close();
+
+		const all = await run("prospect-proposals");
+		assert.match(all, /Pi proposal/);
+		assert.match(all, /Claude proposal/);
+
+		const onlyClaude = await run("prospect-proposals", "--source claude");
+		assert.match(onlyClaude, /Claude proposal/);
+		assert.doesNotMatch(onlyClaude, /Pi proposal/);
+		assert.match(onlyClaude, /\[Claude\]/);
+
+		const onlyPi = await run("prospect-proposals", "--source=pi");
+		assert.match(onlyPi, /Pi proposal/);
+		assert.doesNotMatch(onlyPi, /Claude proposal/);
+	});
 });
 
 describe("prospect tool", () => {
@@ -319,6 +342,25 @@ describe("prospect tool", () => {
 		assert.ok(body.includes(fullId), `full 36-char id must appear; got:\n${body}`);
 		// The conciseEntry id line carries the full id with its hyphens.
 		assert.match(body, /id: 11111111-2222-4333-8444-555555555555\s+·\s+prospect show 11111111-2222-4333-8444-555555555555/);
+	});
+
+	it("list_proposals accepts a source param and the header shows the harness", async () => {
+		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		migrate(db);
+		insertSession(db, "tool-pi", "/tmp/tpi.jsonl", "/home/user/toolPiProj", "pi");
+		insertSession(db, "tool-cl", "/tmp/tcl.jsonl", "/home/user/toolClProj", "claude");
+		insertProposalRow(db, { id: "tp-1-0000-0000-4000-8000-000000000001", sessionId: "tool-pi", title: "Tool Pi proposal", inputKey: "ik-tp-1" });
+		insertProposalRow(db, { id: "tc-1-0000-0000-4000-8000-000000000002", sessionId: "tool-cl", title: "Tool Claude proposal", inputKey: "ik-tc-1" });
+		db.close();
+
+		const all = await toolExec("srcAll", { action: "list_proposals" }, signal, null, ctx);
+		assert.match(all.content[0]!.text, /Tool Pi proposal/);
+		assert.match(all.content[0]!.text, /Tool Claude proposal/);
+
+		const onlyClaude = await toolExec("srcCl", { action: "list_proposals", source: "claude" }, signal, null, ctx);
+		assert.match(onlyClaude.content[0]!.text, /Tool Claude proposal/);
+		assert.doesNotMatch(onlyClaude.content[0]!.text, /Tool Pi proposal/);
+		assert.match(onlyClaude.content[0]!.text, /\[Claude\]/);
 	});
 
 	it("#19 list_proposals filters by the severity param", async () => {
@@ -366,8 +408,8 @@ describe("prospect tool", () => {
 		// new proposals each land under their own session's header, with the
 		// slash-command header format and the conciseEntry id+show line.
 		assert.ok((body.match(/═══.*═══/g) ?? []).length >= 2, `expected >=2 session group headers; got:\n${body}`);
-		assert.ok(body.includes("═══ sess-too · /home/user/projA · 1 proposal(s) ═══"), `missing projA group header; got:\n${body}`);
-		assert.ok(body.includes("═══ sess-too · /home/user/projB · 1 proposal(s) ═══"), `missing projB group header; got:\n${body}`);
+		assert.ok(body.includes("═══ sess-too [Pi] · /home/user/projA · 1 proposal(s) ═══"), `missing projA group header; got:\n${body}`);
+		assert.ok(body.includes("═══ sess-too [Pi] · /home/user/projB · 1 proposal(s) ═══"), `missing projB group header; got:\n${body}`);
 		assert.match(body, /Group A proposal/);
 		assert.match(body, /Group B proposal/);
 		// The conciseEntry id+show line (matching the slash command) is present.

@@ -28,7 +28,7 @@ export const REPORT_CLIENT_SCRIPT = String.raw`
 	var L_SOURCE = 0, L_PROJECT = 1, L_CLASS = 2, L_SESSION = 3, L_MODEL = 4, L_HOUR = 5, L_MITE = 6, L_CALLS = 7, L_PREVIEW = 8;
 
 	var DIMS = {
-		source: { label: "Agent", get: function (r) { return r[L_SOURCE] === "claude" ? "Claude Code" : "pi"; } },
+		source: { label: "Agent", get: function (r) { return r[L_SOURCE]; } },
 		project: { label: "Project", get: function (r) { return r[L_PROJECT]; } },
 		class: { label: "Class", get: function (r) { return titleCase(r[L_CLASS]); } },
 		session: { label: "Session", get: function (r) { return r[L_SESSION]; } },

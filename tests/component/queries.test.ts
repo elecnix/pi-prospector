@@ -37,6 +37,24 @@ describe("proposal queries (v2)", () => {
 		}
 	});
 
+	it("filters by the session's harness source", () => {
+		const { db, close } = tempDb();
+		try {
+			insertSession(db, "s-pi", "/tmp/pi.jsonl", "", "pi");
+			insertSession(db, "s-claude", "/tmp/claude.jsonl", "", "claude");
+			insertProposalRow(db, { id: "pa", sessionId: "s-pi", title: "From Pi" });
+			insertProposalRow(db, { id: "pb", sessionId: "s-claude", title: "From Claude" });
+
+			const all = listProposals(db, undefined, undefined, undefined, undefined, undefined).map((p) => p.title);
+			assert.deepEqual(all.sort(), ["From Claude", "From Pi"]);
+
+			const pi = listProposals(db, undefined, undefined, undefined, undefined, "pi").map((p) => p.title);
+			assert.deepEqual(pi, ["From Pi"]);
+		} finally {
+			close();
+		}
+	});
+
 	it("filters by severity, and by status and severity together", () => {
 		const { db, close } = tempDb();
 		try {
