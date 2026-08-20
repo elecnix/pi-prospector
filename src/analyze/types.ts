@@ -141,6 +141,12 @@ export const AnalysisResult = Type.Object({
 	modelUsed: Type.Optional(Type.String()),
 	costUsd: Type.Optional(Type.Number()),
 	tokensUsed: Type.Optional(Type.Number()),
+	/** Non-cached input tokens billed for this node's LLM inference. Undefined for deterministic nodes. */
+	inputTokens: Type.Optional(Type.Number()),
+	/** Cached input tokens (cache read + cache write) billed for this node's LLM inference. */
+	cachedInputTokens: Type.Optional(Type.Number()),
+	/** Output tokens billed for this node's LLM inference. */
+	outputTokens: Type.Optional(Type.Number()),
 	durationMs: Type.Optional(Type.Number()),
 });
 export type AnalysisResult = Static<typeof AnalysisResult>;
@@ -184,6 +190,9 @@ export const AnalysisNodeRow = Type.Object({
 	model_used: Type.Union([Type.String(), Type.Null()]),
 	cost_usd: Type.Union([Type.Number(), Type.Null()]),
 	tokens_used: Type.Union([Type.Number(), Type.Null()]),
+	input_tokens: Type.Union([Type.Number(), Type.Null()]),
+	cached_input_tokens: Type.Union([Type.Number(), Type.Null()]),
+	output_tokens: Type.Union([Type.Number(), Type.Null()]),
 	duration_ms: Type.Union([Type.Number(), Type.Null()]),
 	created_at: Type.String(),
 	/** Retraction tombstone: NULL = live; an ISO instant hides it from live reads. */
@@ -316,6 +325,12 @@ export const LLMResponse = Type.Object({
 	model: Type.String(),
 	costUsd: Type.Number(),
 	tokensUsed: Type.Number(),
+	/** Input (non-cached) tokens billed for the call, when the provider reports them. */
+	inputTokens: Type.Optional(Type.Number()),
+	/** Cached input tokens (cache read + cache write) for the call, when reported. */
+	cachedInputTokens: Type.Optional(Type.Number()),
+	/** Output tokens billed for the call, when the provider reports them. */
+	outputTokens: Type.Optional(Type.Number()),
 	durationMs: Type.Number(),
 	stopReason: Type.String(),
 });

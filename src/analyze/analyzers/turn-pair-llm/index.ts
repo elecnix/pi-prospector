@@ -207,6 +207,9 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			modelUsed: response.model,
 			costUsd: response.costUsd,
 			tokensUsed: response.tokensUsed,
+			inputTokens: response.inputTokens,
+			cachedInputTokens: response.cachedInputTokens,
+			outputTokens: response.outputTokens,
 			durationMs: response.durationMs,
 			edges: [
 				{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },

@@ -294,8 +294,18 @@ export class AnalyzerFramework {
 				abandoned++;
 				return;
 			}
+			let analyzeStart = 0;
 			try {
-				const analysis = await analyzer.analyze(item.unit, runCtx);
+				analyzeStart = Date.now();
+				const analyzed = await analyzer.analyze(item.unit, runCtx);
+				// Wall-clock time to compute this node, measured at the framework boundary
+				// (prompt build + LLM call + parse), not trusting a caller-supplied value.
+				// This also covers deterministic nodes that never reach the LLM, so every
+				// computed node carries an honest duration_ms regardless of analyzer kind.
+				const analysis = {
+					...analyzed,
+					durationMs: Date.now() - analyzeStart,
+				};
 				// Cost is booked whether or not the node lands: the call was made.
 				result.costUsd += analysis.costUsd ?? 0;
 				result.tokensUsed += analysis.tokensUsed ?? 0;
@@ -314,7 +324,7 @@ export class AnalyzerFramework {
 				const message = err instanceof Error ? err.message : String(err);
 				result.status = "partial";
 				summary.errors.push(`${analyzer.def.id}: ${message}`);
-				this.persistErrorNode(resolved, runId, sessionId, item, message);
+				this.persistErrorNode(resolved, runId, sessionId, item, message, Date.now() - analyzeStart);
 				// A misconfiguration is not a per-unit failure. Every remaining unit will
 				// fail identically for one root cause that was knowable before the first
 				// one ran, so continuing turns a single typo into an error node per unit —
@@ -443,6 +453,9 @@ export class AnalyzerFramework {
 				modelUsed: analysis.modelUsed ?? null,
 				costUsd: analysis.costUsd ?? null,
 				tokensUsed: analysis.tokensUsed ?? null,
+				inputTokens: analysis.inputTokens ?? null,
+				cachedInputTokens: analysis.cachedInputTokens ?? null,
+				outputTokens: analysis.outputTokens ?? null,
 				durationMs: analysis.durationMs ?? null,
 				createdAt: now,
 			});
@@ -525,6 +538,7 @@ export class AnalyzerFramework {
 		sessionId: string,
 		item: ClassifiedUnit,
 		message: string,
+		durationMs?: number,
 	): void {
 		const { analyzer, config } = resolved;
 		const nodeId = uuidv7();
@@ -550,6 +564,7 @@ export class AnalyzerFramework {
 				inputKey: errorInputKey,
 				outputKey: computeOutputKey(errorInputKey, content),
 				configFingerprint: resolved.configFingerprint,
+				durationMs: durationMs ?? null,
 				createdAt: now,
 			});
 		} catch {

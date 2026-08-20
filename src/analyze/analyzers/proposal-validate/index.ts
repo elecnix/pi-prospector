@@ -196,6 +196,9 @@ export const proposalValidateAnalyzer: Analyzer = {
 		const replayTurns: ReplayTurnResult[] = [];
 		let costUsd = 0;
 		let tokensUsed = 0;
+		let inputTokens = 0;
+		let cachedInputTokens = 0;
+		let outputTokens = 0;
 
 		for (const messageId of meta.replayMessageIds) {
 			const pair = pairByUser.get(messageId);
@@ -211,6 +214,9 @@ export const proposalValidateAnalyzer: Analyzer = {
 			});
 			costUsd += baselineRes.costUsd;
 			tokensUsed += baselineRes.tokensUsed;
+			inputTokens += baselineRes.inputTokens ?? 0;
+			cachedInputTokens += baselineRes.cachedInputTokens ?? 0;
+			outputTokens += baselineRes.outputTokens ?? 0;
 
 			const withRuleRes = await ctx.llm({
 				model: validatorModel,
@@ -222,6 +228,9 @@ export const proposalValidateAnalyzer: Analyzer = {
 			});
 			costUsd += withRuleRes.costUsd;
 			tokensUsed += withRuleRes.tokensUsed;
+			inputTokens += withRuleRes.inputTokens ?? 0;
+			cachedInputTokens += withRuleRes.cachedInputTokens ?? 0;
+			outputTokens += withRuleRes.outputTokens ?? 0;
 
 			const baseline = baselineRes.structured
 				? parseClassifyObject(baselineRes.structured as Record<string, unknown>)
@@ -265,6 +274,9 @@ export const proposalValidateAnalyzer: Analyzer = {
 			modelUsed: validatorModel,
 			costUsd,
 			tokensUsed,
+			inputTokens,
+			cachedInputTokens,
+			outputTokens,
 			edges,
 		};
 	},

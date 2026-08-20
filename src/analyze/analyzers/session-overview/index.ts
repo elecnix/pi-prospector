@@ -190,6 +190,9 @@ export const sessionOverviewAnalyzer: Analyzer = {
 
 		let costUsd = 0;
 		let tokensUsed = 0;
+		let inputTokens = 0;
+		let cachedInputTokens = 0;
+		let outputTokens = 0;
 		let modelUsed: string | undefined;
 		const usedPromptHashes: string[] = [REDUCE_PROMPT_HASH];
 
@@ -208,6 +211,9 @@ export const sessionOverviewAnalyzer: Analyzer = {
 				});
 				costUsd += res.costUsd;
 				tokensUsed += res.tokensUsed;
+				inputTokens += res.inputTokens ?? 0;
+				cachedInputTokens += res.cachedInputTokens ?? 0;
+				outputTokens += res.outputTokens ?? 0;
 				modelUsed = res.model;
 				summaries.push(
 					res.structured
@@ -240,6 +246,9 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		});
 		costUsd += reduceRes.costUsd;
 		tokensUsed += reduceRes.tokensUsed;
+		inputTokens += reduceRes.inputTokens ?? 0;
+		cachedInputTokens += reduceRes.cachedInputTokens ?? 0;
+		outputTokens += reduceRes.outputTokens ?? 0;
 		modelUsed = reduceRes.model;
 
 		// Prefer the forced tool call's structured arguments; fall back to parsing
@@ -295,6 +304,9 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			modelUsed,
 			costUsd,
 			tokensUsed,
+			inputTokens,
+			cachedInputTokens,
+			outputTokens,
 			edges,
 		};
 	},

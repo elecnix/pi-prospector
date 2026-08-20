@@ -259,6 +259,9 @@ export function insertNode(
 		modelUsed?: string | null;
 		costUsd?: number | null;
 		tokensUsed?: number | null;
+		inputTokens?: number | null;
+		cachedInputTokens?: number | null;
+		outputTokens?: number | null;
 		durationMs?: number | null;
 		createdAt: string;
 	},
@@ -266,8 +269,9 @@ export function insertNode(
 	prep(db, `
 		INSERT INTO analysis_nodes
 			(id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind,
-			 content_json, source_set_hash, input_key, output_key, config_fingerprint, model_used, cost_usd, tokens_used, duration_ms, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 content_json, source_set_hash, input_key, output_key, config_fingerprint, model_used, cost_usd, tokens_used,
+			 input_tokens, cached_input_tokens, output_tokens, duration_ms, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(
 		node.id,
 		node.sessionId,
@@ -284,6 +288,9 @@ export function insertNode(
 		node.modelUsed ?? null,
 		node.costUsd ?? null,
 		node.tokensUsed ?? null,
+		node.inputTokens ?? null,
+		node.cachedInputTokens ?? null,
+		node.outputTokens ?? null,
 		node.durationMs ?? null,
 		node.createdAt,
 	);
