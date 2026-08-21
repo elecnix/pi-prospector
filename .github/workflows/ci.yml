@@ -41,3 +41,8 @@ jobs:
         with:
           fetch-depth: 0 # the merge-base has to be reachable
       - uses: elecnix/dupdelta@v0.1.0
+        with:
+          # actions/checkout with fetch-depth: 0 leaves HEAD detached, so the
+          # action's default `main` does not resolve; the remote-tracking ref
+          # from the full fetch does.
+          base: origin/main
