@@ -19,6 +19,7 @@ import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/inde
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
+import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
 
@@ -30,6 +31,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-llm",
 	"tool-trajectory",
 	"failure-modes",
+	"revive-chains",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -54,6 +56,11 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// tool-trajectory because the two read the same action stream — one for the
 	// shape of the sequence, the other for what went wrong in it.
 	failureModesAnalyzer,
+	// The orchestration-waste twin of failure-modes: both read the same action
+	// stream, but where failure-modes sees what broke, revive-chains sees the
+	// waste that no single call records — a chain of individually successful
+	// revives. Ordered next to it for the same reason.
+	reviveChainsAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,

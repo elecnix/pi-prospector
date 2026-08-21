@@ -174,6 +174,26 @@ export const MessageRow = Type.Object({
 });
 export type MessageRow = Static<typeof MessageRow>;
 
+/**
+ * One row of `subagent_runs`: a child-agent run's artifact metadata, ingested
+ * from `<project-dir>/subagent-artifacts/<runId>_<agent>_meta.json`. The JSON
+ * columns stay strings here; parsing them is the consumer's business, so a
+ * malformed blob surfaces where it is read rather than at ingest.
+ */
+export const SubagentRunRow = Type.Object({
+	run_id: Type.String(),
+	project: Type.String(),
+	agent: Type.Union([Type.String(), Type.Null()]),
+	task_excerpt: Type.Union([Type.String(), Type.Null()]),
+	exit_code: Type.Union([Type.Number(), Type.Null()]),
+	error: Type.Union([Type.String(), Type.Null()]),
+	model_attempts: Type.Union([Type.String(), Type.Null()]),
+	usage: Type.Union([Type.String(), Type.Null()]),
+	file_mtime: Type.Number(),
+	ingested_at: Type.String(),
+});
+export type SubagentRunRow = Static<typeof SubagentRunRow>;
+
 export const AnalysisNodeRow = Type.Object({
 	id: Type.String(),
 	session_id: Type.String(),
@@ -384,6 +404,14 @@ export interface AnalyzerRunContext {
 	 */
 	getGlobalDependencyNodes: (analyzerId: string) => AnalysisNodeRow[];
 	getSessionMessages: (sessionId: string) => MessageRow[];
+	/**
+	 * The subagent runs recorded for this session's project, joined by directory
+	 * nesting (the artifacts directory sits beside the parent session files).
+	 * These are the only record of a spawn-level child failure — the child wrote
+	 * no messages anywhere — so an analyzer that classifies failures reads them
+	 * alongside the transcript.
+	 */
+	getSubagentRuns: (sessionId: string) => SubagentRunRow[];
 	llm: LLMCaller;
 	config: AnalyzerConfig;
 	/** Prompt content keyed by prompt name. */

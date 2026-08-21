@@ -27,8 +27,31 @@
  *     agent. It is recorded, counted, and never proposed against.
  */
 
-/** Which of the two failure axes a class describes. */
-export type FailureAxis = "turn" | "tool";
+/** Which of the failure axes a class describes. */
+/**
+ * The axis a class lives on.
+ *
+ * `turn` and `tool` are read from the transcript; `child` is read from the
+ * subagent artifact metadata (`subagent_runs`), which is the only record a
+ * spawn-level child failure ever leaves — the child wrote no messages anywhere.
+ */
+export type FailureAxis = "turn" | "tool" | "child";
+
+/**
+ * What kind of fix a class's remedy is — the axis that keeps a diagnosis from
+ * being answered with the wrong kind of prescription.
+ *
+ * - `extension` — a published package may address the class; only these classes
+ *   may produce an install-extension proposal, and only from their curated list.
+ * - `environment` — the fix is PATH/install/credential/config on this machine.
+ *   No package fixes it, so `buildProposals` must never route one to an
+ *   extension target even if someone later pastes extensions into its entry:
+ *   recommending an npm package for a missing binary is a plausible-sounding
+ *   non-fix.
+ * - `prompt` — the fix is what the agent is told: standing instructions,
+ *   smaller steps, different anchoring. Expressed as prose guidance only.
+ */
+export type RemedyKind = "extension" | "environment" | "prompt";
 
 /**
  * A published extension that addresses a failure class.
@@ -58,6 +81,30 @@ export interface FailureMatcher {
 	re: RegExp;
 }
 
+/**
+ * What the analyzer knows about one child run, beyond any error text.
+ *
+ * Some child failures are only legible from the run's *shape*: every model
+ * attempt failing is a fact about the attempt list, not a string in it, and a
+ * non-zero exit with no diagnostic at all is a fact about the code. The text
+ * matchers still run first, so a specific message names the cause before a
+ * structural fact gets the chance.
+ */
+export interface ChildRunFacts {
+	/** The recorded error text, verbatim from the artifact. Empty when none. */
+	error: string;
+	/** The recorded exit code, or null when the artifact recorded none. */
+	exitCode: number | null;
+	/** True when at least one model attempt was recorded and none succeeded. */
+	allModelAttemptsFailed: boolean;
+}
+
+/** A child-run matcher that reads the run's shape rather than its error text. */
+export interface ChildRunMatcher {
+	label: string;
+	matches: (facts: ChildRunFacts) => boolean;
+}
+
 export interface FailureClassDef {
 	id: string;
 	/** Short human-readable name, used in proposal titles. */
@@ -81,6 +128,13 @@ export interface FailureClassDef {
 	 * command which *did* report a real error is named by that error first.
 	 */
 	commandMatchers?: FailureMatcher[];
+	/**
+	 * Matchers tested against a child run's *shape* (see {@link ChildRunFacts}),
+	 * after the text matchers. Only child-axis classes use them.
+	 */
+	childMatchers?: ChildRunMatcher[];
+	/** What kind of fix this class's remedy is. Gates extension proposals. */
+	remedyKind: RemedyKind;
 	/** What fixes this class without installing anything. */
 	remedy: string;
 	/** Hand-verified packages that address this class. Empty when none does. */
@@ -219,6 +273,7 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "aborted",
 		label: "aborted",
 		axis: "turn",
+		remedyKind: "prompt",
 		// Someone pressed stop. Counted so the other rates have an honest
 		// denominator; never proposed on, because there is nothing to fix.
 		actionable: false,
@@ -232,6 +287,7 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "malformed-tool-call",
 		label: "malformed tool call",
 		axis: "turn",
+		remedyKind: "extension",
 		actionable: true,
 		matchers: [
 			{ label: "unparseable tool-call JSON", re: /unexpected token|unterminated string|bad control character|invalid json|json parse/i },
@@ -246,6 +302,7 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "context-overflow",
 		label: "context ceiling",
 		axis: "turn",
+		remedyKind: "extension",
 		actionable: true,
 		matchers: [
 			{ label: "prompt token limit exceeded", re: /prompt tokens limit exceeded|context length exceeded|maximum context length|too many tokens/i },
@@ -259,6 +316,7 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "rate-limit",
 		label: "rate limit",
 		axis: "turn",
+		remedyKind: "extension",
 		actionable: true,
 		matchers: [
 			{ label: "account usage limit reached", re: /reached your (?:session|weekly|daily|monthly) usage limit|usage limit reached/i },
@@ -272,6 +330,7 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "quota",
 		label: "quota or credit exhausted",
 		axis: "turn",
+		remedyKind: "extension",
 		actionable: true,
 		matchers: [
 			{ label: "insufficient credits", re: /insufficient credits|payment required|^402\b/i },
@@ -291,6 +350,10 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "auth",
 		label: "authentication",
 		axis: "turn",
+		// A rejected credential is fixed on this machine — new key, corrected
+		// permissions — not by installing anything. Environment, deliberately:
+		// routing it to a package would recommend a retry extension that loops.
+		remedyKind: "environment",
 		actionable: true,
 		matchers: [
 			{ label: "api key rejected", re: /api key auth failed|invalid api key|unauthorized|^401\b/i },
@@ -306,6 +369,7 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "model-unavailable",
 		label: "model unavailable",
 		axis: "turn",
+		remedyKind: "extension",
 		actionable: true,
 		matchers: [
 			{ label: "no endpoint for the requested model", re: /no endpoints found|model not found|^404\b/i },
@@ -324,6 +388,7 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "provider-server",
 		label: "provider server error",
 		axis: "turn",
+		remedyKind: "extension",
 		actionable: true,
 		matchers: [
 			{ label: "provider returned 5xx", re: /^5\d\d\b|internal server error|bad gateway|service unavailable|gateway timeout/i },
@@ -335,6 +400,7 @@ export const TURN_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "provider-transport",
 		label: "transport failure",
 		axis: "turn",
+		remedyKind: "extension",
 		actionable: true,
 		matchers: [
 			{ label: "stream closed or stalled", re: /error reading stream|stream closed|stream idle timeout|upstream idle timeout|terminated/i },
@@ -351,6 +417,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "pending-background-task",
 		label: "still running",
 		axis: "tool",
+		remedyKind: "prompt",
 		// Not a failure at all. The host flags a poll of an unfinished background
 		// task as an error, and counting it as one inflates every failure rate in
 		// the session. Counted so the denominators stay honest, never proposed on
@@ -366,6 +433,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "edit-anchor-miss",
 		label: "edit anchor did not match",
 		axis: "tool",
+		remedyKind: "prompt",
 		actionable: true,
 		matchers: [
 			{ label: "anchor text not found in the file", re: /could not find (?:the exact text|edits\[)|no changes made to|text not found in file/i },
@@ -383,6 +451,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "script-error",
 		label: "the agent's own script failed",
 		axis: "tool",
+		remedyKind: "prompt",
 		actionable: true,
 		matchers: [
 			{ label: "unhandled exception in a script", re: /traceback \(most recent call last\)|^\s*at .+\(.+:\d+:\d+\)$/im },
@@ -397,6 +466,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "policy-blocked",
 		label: "blocked by a guardrail",
 		axis: "tool",
+		remedyKind: "prompt",
 		actionable: true,
 		matchers: [
 			{ label: "action refused by policy", re: /^blocked:|denied by policy|blocked by (?:hook|policy|guardrail)|is not allowed here/i },
@@ -410,6 +480,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "tool-input-invalid",
 		label: "invalid tool input",
 		axis: "tool",
+		remedyKind: "extension",
 		actionable: true,
 		matchers: [
 			{ label: "arguments failed validation", re: /inputvalidationerror|invalid input|validation (?:failed|error)|is required|expected .* but (?:got|received)|unrecognized (?:key|argument)/i },
@@ -422,6 +493,9 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "tool-not-found",
 		label: "tool or command not found",
 		axis: "tool",
+		// The fix is installing the missing binary on this machine — an environment
+		// change, not an extension. No package in the catalogue installs tooling.
+		remedyKind: "environment",
 		actionable: true,
 		matchers: [
 			{ label: "command not found", re: /command not found|: not found$|unknown command/i },
@@ -434,6 +508,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "path-not-found",
 		label: "path not found",
 		axis: "tool",
+		remedyKind: "prompt",
 		actionable: true,
 		matchers: [
 			{ label: "no such file or directory", re: /no such file or directory|enoent|does not exist|cannot find path/i },
@@ -445,6 +520,9 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "permission-denied",
 		label: "permission denied",
 		axis: "tool",
+		// Granting the permission is a machine configuration change first; the
+		// standing-instructions half of the remedy is what the agent can do itself.
+		remedyKind: "environment",
 		actionable: true,
 		matchers: [
 			{ label: "permission denied", re: /permission denied|eacces|operation not permitted|not permitted/i },
@@ -456,6 +534,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "remote-rate-limit",
 		label: "remote API rate limit",
 		axis: "tool",
+		remedyKind: "prompt",
 		actionable: true,
 		matchers: [
 			{ label: "third-party API rate limit", re: /api rate limit (?:already )?exceeded|rate limit exceeded|\b429\b|secondary rate limit/i },
@@ -468,6 +547,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "service-unavailable",
 		label: "backing service unavailable",
 		axis: "tool",
+		remedyKind: "environment",
 		actionable: true,
 		matchers: [
 			{ label: "not connected", re: /not connected|connection refused|econnrefused|protocol error|service unavailable|failed to connect/i },
@@ -480,6 +560,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "tool-timeout",
 		label: "tool timeout",
 		axis: "tool",
+		remedyKind: "prompt",
 		actionable: true,
 		matchers: [
 			{ label: "tool timed out", re: /timed out|etimedout|deadline exceeded/i },
@@ -491,6 +572,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "command-failed",
 		label: "command reported an error",
 		axis: "tool",
+		remedyKind: "prompt",
 		actionable: true,
 		// The Unix convention: a program that fails says `prog: what went wrong`.
 		// The named programs come first so the cause label can say *which* program
@@ -523,6 +605,7 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		id: "exit-status-signal",
 		label: "non-zero exit used as a signal",
 		axis: "tool",
+		remedyKind: "prompt",
 		actionable: true,
 		// Last, and matched on the *call*: these commands report a normal answer
 		// through their exit status and print nothing to explain themselves, so
@@ -538,6 +621,74 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		remedy:
 			"These commands answer through their exit status: grep exits 1 when it finds nothing, diff exits 1 when files differ, test exits 1 for false. None of that is an error, but the harness marks it as one and the agent re-plans around a non-problem. " +
 			"Chain them with `|| true`, or with `;` instead of `&&`, and say so in the standing instructions — this is a rule the agent has to be told, because the shell will not tell it.",
+		extensions: [],
+	},
+];
+
+/**
+ * Child-run failures, classified from `subagent_runs` artifact metadata.
+ *
+ * A spawn-level child failure leaves no transcript at all — zero turns, zero
+ * tokens, no assistant message anywhere — so these classes are read from the
+ * artifact's shape, not from a session. Order matters as everywhere else: a
+ * specific error message names the cause before a structural fact gets the
+ * chance, so "spawn pi ENOENT" reads as a spawn failure even though every
+ * model attempt also failed.
+ *
+ * None of these classes carries extensions, and none may: the first is an
+ * environment failure by definition, and dressing it up as a package
+ * recommendation would be a plausible-sounding non-fix for a missing binary.
+ */
+export const CHILD_FAILURE_CLASSES: readonly FailureClassDef[] = [
+	{
+		id: "spawn-failure",
+		label: "child spawn failure",
+		axis: "child",
+		actionable: true,
+		// The binary never ran. Nothing the model, a prompt, or a package could
+		// say or do changes the outcome; the fix is PATH/install/config on this
+		// machine, so this class must never route to an extension proposal.
+		remedyKind: "environment",
+		matchers: [
+			{ label: "the child binary could not be launched", re: /\bspawn\b[^\n]*\b(?:enoent|eacces|eperm)\b|\b(?:enoent|eacces)\b[^\n]*\bspawn\b/i },
+		],
+		childMatchers: [],
+		remedy:
+			"The child agent never started — its binary was not found where the host looked, or was not executable. " +
+			"Fix the environment: install the binary, correct PATH for the user the host runs as, and verify with the same launch command from a clean shell. " +
+			"No extension addresses this; the failure happens before any code the package could reach.",
+		extensions: [],
+	},
+	{
+		id: "model-attempt-exhaustion",
+		label: "every model attempt failed",
+		axis: "child",
+		actionable: true,
+		// Every configured model refused or failed. Retrying harder is not the fix;
+		// credentials, endpoints, and provider configuration are — environment work.
+		remedyKind: "environment",
+		matchers: [],
+		childMatchers: [
+			{ label: "every attempted model failed", matches: (f) => f.allModelAttemptsFailed },
+		],
+		remedy:
+			"Each model the child tried failed, so the run produced nothing regardless of model. " +
+			"Check what the attempts share rather than which model to try next: credentials, network egress, and provider configuration on this machine.",
+		extensions: [],
+	},
+	{
+		id: "child-nonzero-exit",
+		label: "child run exited non-zero",
+		axis: "child",
+		actionable: true,
+		remedyKind: "prompt",
+		matchers: [],
+		childMatchers: [
+			{ label: "non-zero exit code", matches: (f) => f.exitCode !== null && f.exitCode !== 0 },
+		],
+		remedy:
+			"The child ran and failed on its own terms — it got far enough to exit with a status, which makes this the child's task or instructions to fix, not the host's environment. " +
+			"Narrow what the child is asked to do, and say in the standing instructions what has to be true before the delegation is worth making.",
 		extensions: [],
 	},
 ];
@@ -587,6 +738,27 @@ export function classifyFailure(text: string, axis: FailureAxis, context?: Failu
 	return { classId: UNCLASSIFIED.classId, label: UNCLASSIFIED.label };
 }
 
+/**
+ * Classify one child run from its artifact facts.
+ *
+ * Text matchers run first (specific message before structural shape), then the
+ * child matchers, both in catalogue order. Returns `unclassified` for a run
+ * that exited cleanly and said nothing failed — which is not a gap in the
+ * catalogue but a healthy run, and is why the caller drops unclassified child
+ * runs instead of counting them.
+ */
+export function classifyChildRun(facts: ChildRunFacts): Classification {
+	for (const cls of CHILD_FAILURE_CLASSES) {
+		for (const matcher of cls.matchers) {
+			if (matcher.re.test(facts.error)) return { classId: cls.id, label: matcher.label };
+		}
+		for (const matcher of cls.childMatchers ?? []) {
+			if (matcher.matches(facts)) return { classId: cls.id, label: matcher.label };
+		}
+	}
+	return { classId: UNCLASSIFIED.classId, label: UNCLASSIFIED.label };
+}
+
 /** How much of a result's text is matched against the catalogue, at each end. */
 const MATCH_WINDOW_CHARS = 2000;
 
@@ -607,17 +779,19 @@ function boundForMatching(text: string): string {
 	return `${trimmed.slice(0, MATCH_WINDOW_CHARS)}\n…\n${trimmed.slice(-MATCH_WINDOW_CHARS)}`;
 }
 
-/** Look a class up by id, across both axes. */
+/** Look a class up by id, across all three axes. */
 export function failureClass(classId: string): FailureClassDef | undefined {
 	return (
-		TURN_FAILURE_CLASSES.find((c) => c.id === classId) ?? TOOL_FAILURE_CLASSES.find((c) => c.id === classId)
+		TURN_FAILURE_CLASSES.find((c) => c.id === classId) ??
+		TOOL_FAILURE_CLASSES.find((c) => c.id === classId) ??
+		CHILD_FAILURE_CLASSES.find((c) => c.id === classId)
 	);
 }
 
 /** Every package the catalogue may ever recommend. Nothing outside this set is proposable. */
 export function curatedPackages(): string[] {
 	const seen = new Set<string>();
-	for (const cls of [...TURN_FAILURE_CLASSES, ...TOOL_FAILURE_CLASSES]) {
+	for (const cls of [...TURN_FAILURE_CLASSES, ...TOOL_FAILURE_CLASSES, ...CHILD_FAILURE_CLASSES]) {
 		for (const ext of cls.extensions) seen.add(ext.pkg);
 	}
 	return [...seen].sort();
