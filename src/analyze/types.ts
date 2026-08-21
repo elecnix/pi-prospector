@@ -265,6 +265,45 @@ export const AnalysisRunRow = Type.Object({
 });
 export type AnalysisRunRow = Static<typeof AnalysisRunRow>;
 
+// ─────────────────────────── analyzer coverage ───────────────────────────
+
+// Coverage asks one question per (session, registered analyzer) pair: has this
+// analyzer ever produced analysis for this session? It is what makes a
+// newly-shipped or non-default analyzer discoverable against an already-analyzed
+// corpus (#195): the unanalysed queue only ever sees sessions that were never
+// analysed at all, so a session retired from that queue before an analyzer
+// existed would otherwise never meet it short of a full `--all` re-scan.
+
+/** Per-analyzer rollup over the considered sessions. */
+export const AnalyzerCoveragePerAnalyzer = Type.Object({
+	analyzerId: Type.String(),
+	/** Sessions the analyzer has been scanned against — a recorded run exists. */
+	sessionsCovered: Type.Number(),
+	/** Sessions where the analyzer emitted at least one live non-error node. */
+	sessionsWithNodes: Type.Number(),
+	/** Considered sessions with neither a run nor a node from this analyzer. */
+	sessionsMissing: Type.Number(),
+});
+export type AnalyzerCoveragePerAnalyzer = Static<typeof AnalyzerCoveragePerAnalyzer>;
+
+/** One session's coverage gaps: which registered analyzers have never run on it. */
+export const AnalyzerCoverageGap = Type.Object({
+	sessionId: Type.String(),
+	missingAnalyzers: Type.Array(Type.String()),
+});
+export type AnalyzerCoverageGap = Static<typeof AnalyzerCoverageGap>;
+
+export const AnalyzerCoverageSummary = Type.Object({
+	/** The analyzer ids the summary was computed over. */
+	analyzerIds: Type.Array(Type.String()),
+	/** How many sessions entered the computation (after the source/analyzed filter). */
+	sessionsConsidered: Type.Number(),
+	perAnalyzer: Type.Array(AnalyzerCoveragePerAnalyzer),
+	/** Considered sessions with at least one missing analyzer, ordered by session id. */
+	gaps: Type.Array(AnalyzerCoverageGap),
+});
+export type AnalyzerCoverageSummary = Static<typeof AnalyzerCoverageSummary>;
+
 // ─────────────────────────── LLM shapes ───────────────────────────
 
 /**

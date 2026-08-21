@@ -14,6 +14,9 @@ import type {
 	AnalysisNodeRow,
 	AnalysisRunRow,
 	AnalyzerConfig,
+	AnalyzerCoverageGap,
+	AnalyzerCoveragePerAnalyzer,
+	AnalyzerCoverageSummary,
 	AnalyzerDef,
 	AnalyzerVersion,
 	MessageRow,
@@ -743,6 +746,113 @@ export async function getAnalysisStats(db: AsyncDatabase, asOf?: string): Promis
 	const nodesByAnalyzer: Record<string, number> = {};
 	for (const r of analyzerRows) nodesByAnalyzer[r.analyzer_id] = r.c;
 	return { nodes, edges, runs, nodesByKind, nodesByAnalyzer };
+}
+
+// ───────────────────────── analyzer coverage ─────────────────────────
+
+/**
+ * Which registered analyzers have produced analysis for which sessions (#195).
+ *
+ * A pair (session, analyzer) is **covered** when the analyzer has ever been
+ * scanned against that session. The evidence is execution provenance already in
+ * the graph — a row in `analysis_runs` (written for every analyzer × session a
+ * run touches, even when nothing was computed) — unioned with live non-error
+ * nodes, so coverage never depends on side state and survives a wipe/rebuild
+ * like every other read.
+ *
+ * A pair is **missing** when it has neither. That is the back-fill target: the
+ * session was analysed before this analyzer registered (or under `--analyzer`
+	 * narrowing), the unanalysed queue has already retired it, and only a targeted
+	 * run will meet the two.
+ *
+ * Node counts are reported alongside because "has this analyzer emitted at
+ * least one non-retracted node for this session" is the visible half of
+ * coverage — but nodes alone must not *define* it: an analyzer that legitimately
+ * plans zero units for a session (the corpus-scoped frustration lexicon against
+ * a session with no new terms) correctly emits none, and node-based coverage
+ * would flag such sessions forever, so a backfill would never converge. The run
+ * record closes the gap after one cheap scan; idempotency keeps every run after
+ * that a no-op.
+ */
+export async function getAnalyzerCoverage(
+	db: AsyncDatabase,
+	analyzerIds: readonly string[],
+	opts: { source?: string; onlyAnalyzed?: boolean } = {},
+): Promise<AnalyzerCoverageSummary> {
+	const covered = new Map<string, Set<string>>();
+	const withNodes = new Map<string, Set<string>>();
+	for (const id of analyzerIds) {
+		covered.set(id, new Set());
+		withNodes.set(id, new Set());
+	}
+
+	const conditions: string[] = [];
+	const sessionParams: string[] = [];
+	if (opts.source) {
+		conditions.push("source = ?");
+		sessionParams.push(opts.source);
+	}
+	if (opts.onlyAnalyzed) conditions.push("analyzed_at IS NOT NULL");
+	const sessions = (await prep(
+			db,
+			`SELECT id FROM sessions${conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : ""}`,
+		)
+		.all(...sessionParams)) as Array<{ id: string }>;
+
+	if (analyzerIds.length > 0) {
+		const placeholders = analyzerIds.map(() => "?").join(", ");
+		const runRows = (await prep(
+				db,
+				`SELECT DISTINCT session_id, analyzer_id FROM analysis_runs WHERE analyzer_id IN (${placeholders})`,
+			).all(...analyzerIds)) as Array<{ session_id: string; analyzer_id: string }>;
+		for (const r of runRows) {
+			covered.get(r.analyzer_id)?.add(r.session_id);
+		}
+		const nodeRows = (await prep(
+				db,
+				`SELECT DISTINCT session_id, analyzer_id FROM live_nodes WHERE analyzer_id IN (${placeholders}) AND node_kind != 'error'`,
+			).all(...analyzerIds)) as Array<{ session_id: string; analyzer_id: string }>;
+		for (const r of nodeRows) {
+			covered.get(r.analyzer_id)?.add(r.session_id);
+			withNodes.get(r.analyzer_id)?.add(r.session_id);
+		}
+	}
+
+	const perAnalyzer: AnalyzerCoveragePerAnalyzer[] = [];
+	const missingBySession = new Map<string, string[]>();
+	for (const id of analyzerIds) {
+		const cov = covered.get(id) ?? new Set<string>();
+		let withN = 0;
+		let missing = 0;
+		for (const s of sessions) {
+			if ((withNodes.get(id) ?? new Set()).has(s.id)) withN++;
+			if (!cov.has(s.id)) {
+				missing++;
+				const list = missingBySession.get(s.id);
+				if (list) list.push(id);
+				else missingBySession.set(s.id, [id]);
+			}
+		}
+		perAnalyzer.push({
+			analyzerId: id,
+			sessionsCovered: sessions.length - missing,
+			sessionsWithNodes: withN,
+			sessionsMissing: missing,
+		});
+	}
+
+	const gaps: AnalyzerCoverageGap[] = [];
+	for (const s of sessions) {
+		const missing = missingBySession.get(s.id);
+		if (missing && missing.length > 0) gaps.push({ sessionId: s.id, missingAnalyzers: missing });
+	}
+
+	return {
+		analyzerIds: [...analyzerIds],
+		sessionsConsidered: sessions.length,
+		perAnalyzer,
+		gaps,
+	};
 }
 
 /** A compact, current read of the runs table for discoverability (`prospect runs`). */
