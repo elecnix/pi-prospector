@@ -22,10 +22,36 @@ import { shortHash } from "../input-hash.js";
 
 export type LeakSeverity = "medium" | "high" | "critical";
 
+/**
+ * Nosey Parker's passive/active confidence distinction, ported for every
+ * detector: a **passive** rule matches the secret's structure alone; an
+ * **active** rule additionally requires confirming context around it
+ * (an assignment, a keyword, a header), which is stronger evidence. Rules
+ * from the hand-written and gitleaks catalogues predate the field and read
+ * as `passive` when absent.
+ */
+export type LeakConfidence = "passive" | "active";
+
+/** Rank used to compare a rule's confidence against a configured floor. */
+export const CONFIDENCE_RANK: Record<LeakConfidence, number> = {
+	passive: 1,
+	active: 2,
+};
+
+/** Does `conf` meet the configured `minConfidence` floor? */
+export function meetsMinConfidence(conf: LeakConfidence, minConfidence: LeakConfidence): boolean {
+	return CONFIDENCE_RANK[conf] >= CONFIDENCE_RANK[minConfidence];
+}
+
 export interface SecretLeakRule {
 	id: string;
 	label: string;
 	severity: LeakSeverity;
+	/**
+	 * Rule confidence. Optional for catalogue compatibility: a rule without
+	 * one is a passive rule (structure alone).
+	 */
+	confidence?: LeakConfidence;
 	/**
 	 * Anchored, high-precision pattern. Must include the `g` flag for matchAll.
 	 * Patterns deliberately avoid bare high-entropy heuristics, which produce
@@ -46,6 +72,8 @@ export interface SecretLeakFinding {
 	rule_label: string;
 	/** Rule severity. */
 	severity: LeakSeverity;
+	/** Rule confidence (`passive` when the rule declares none). */
+	confidence: LeakConfidence;
 	/** Message id the leak appeared in. */
 	message_id: string;
 	/** Which message field contained the leak. */
@@ -100,6 +128,12 @@ export interface RuleScanConfig {
 	maxMatchesPerField: number;
 	/** Lowest severity to report. */
 	minSeverity: LeakSeverity;
+	/**
+	 * Lowest rule confidence to report. `passive` (the default when absent)
+	 * reports every rule; `active` reports only rules whose match carries
+	 * confirming context.
+	 */
+	minConfidence?: LeakConfidence;
 }
 
 /** Severity rank used to compare against `minSeverity`. */
@@ -189,9 +223,14 @@ export function scanMessages(
 	const allowPatterns = config.allowPatterns.map((src) => new RegExp(src, "u"));
 	const maxPerField = config.maxMatchesPerField;
 
-	// Filter to enabled, min-severity rules. Keep catalogue order for determinism.
+	// Filter to enabled, min-severity, min-confidence rules. Keep catalogue order
+	// for determinism. A rule (or config) without a confidence reads as passive.
+	const minConfidence = config.minConfidence ?? "passive";
 	const activeRules = rules.filter(
-		(r) => !disabled.has(r.id) && meetsMinSeverity(r.severity, config.minSeverity),
+		(r) =>
+			!disabled.has(r.id) &&
+			meetsMinSeverity(r.severity, config.minSeverity) &&
+			meetsMinConfidence(r.confidence ?? "passive", minConfidence),
 	);
 
 	const leaks: SecretLeakFinding[] = [];
@@ -227,6 +266,7 @@ export function scanMessages(
 					rule_id: hit.rule.id,
 					rule_label: hit.rule.label,
 					severity: hit.rule.severity,
+					confidence: hit.rule.confidence ?? "passive",
 					message_id: m.id,
 					field: label,
 					redacted_preview: redact(hit.value),

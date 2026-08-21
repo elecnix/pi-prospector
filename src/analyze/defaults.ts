@@ -19,6 +19,7 @@ import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/inde
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
+import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -36,6 +37,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"routing-opportunity",
 	"secret-leak",
 	"gitleaks",
+	"nosey-parker",
 	"token-units",
 	"request-classes",
 	"session-overview",
@@ -70,6 +72,13 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// fingerprints so the future proposal synthesiser can collapse the same leak
 	// into one proposal.
 	gitleaksAnalyzer,
+	// The ported Nosey Parker catalogue, same seam as the other detectors:
+	// session-level, standalone, deterministic, metric nodes only, redacted
+	// findings. Its rules capture the credential (so fingerprints cover exactly
+	// the secret) and carry a passive/active confidence with a config floor.
+	// Enabled by default; a user narrows it via config (disabledRules /
+	// minConfidence / allowlists), never by editing this list.
+	noseyParkerAnalyzer,
 	// Cost accounting. token-units is deterministic and depends on nothing;
 	// request-classes labels the same request segments it prices. Neither depends
 	// on the other — the report joins them at read time, through token-units'
