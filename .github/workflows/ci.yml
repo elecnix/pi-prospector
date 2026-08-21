@@ -41,3 +41,14 @@ jobs:
         with:
           fetch-depth: 0 # the merge-base has to be reachable
       - uses: elecnix/dupdelta@v0.2.0
+
+  pr-body-format:
+    # Flags a PR description that renders badly on GitHub: hard-wrapped
+    # paragraphs, broken list items, collapsed tables, unparsable mermaid.
+    if: github.event_name == 'pull_request'
+    runs-on: arc-runners
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: elecnix/gh-pr-body-action@v1
