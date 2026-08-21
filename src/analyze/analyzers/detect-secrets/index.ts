@@ -1,21 +1,34 @@
 /**
- * nosey-parker — deterministic session-level secret detection using the ported
- * Nosey Parker rule catalogue.
+ * detect-secrets — deterministic session-level secret detection using Yelp
+ * detect-secrets' method: plugin-based candidate generation (keyword-context,
+ * hex/base64 high-entropy) followed by its distinctive **false-positive
+ * filtering**, ported in-process (upstream v1.5.0, BSD-3-Clause — see
+ * `generators.ts` and `filters.ts` for per-heuristic provenance).
  *
- * Scans every message field of a session transcript with the Nosey Parker
- * rule set (see `rules.ts` for provenance: upstream v0.24.0, MIT OR
- * Apache-2.0) and emits one `metric` node per session recording what was
- * found. No LLM is used.
+ * detect-secrets' value on session prose is precision: transcripts are full of
+ * example tokens, placeholders, and quoted documentation, which bare regex
+ * catalogues flag in droves. Its heuristics are the best-available catalogue
+ * of "looks like a secret but isn't", so every candidate must survive the
+ * enabled exclusion filters (sequential strings, templated secrets, example
+ * placeholders, documentation URLs, code-sample contexts, low shannon
+ * entropy, …) before it becomes a finding.
+ *
+ * The **private-key and JWT plugins are deliberately skipped**: PEM keys and
+ * JWTs are already covered by the `secret-leak` catalogue, and the other
+ * provider-token plugins (AWS, GitHub, Slack, Stripe, GitLab, SendGrid,
+ * Twilio, Discord, npm, OpenAI, …) are covered by the `secret-leak` and
+ * gitleaks catalogues. This detector adds only what they lack — see
+ * `generators.ts` for the full skipped list.
+ *
+ * Scans the same four message fields as the other detectors (`content_text`,
+ * `content_thinking`, `tool_calls`, `tool_results`) through the shared
+ * secret-scanning engine, and emits one `metric` node per session. No LLM, no
+ * subprocess, no binary.
  *
  * The analyzer is **standalone** — it declares no dependencies and reads the
  * session's raw messages directly, so it runs even before turn-pair-core has.
  * Its unit identity folds in every message id in the session, so a session
  * that grows new turns re-identifies and is re-scanned on the next run.
- *
- * What distinguishes this detector: per-rule **captures** (the fingerprint
- * covers exactly the captured credential, not the surrounding match) and the
- * **passive/active confidence** distinction, with a config floor
- * (`minConfidence`) that can raise the bar to context-confirmed matches only.
  *
  * Findings never store the matched secret: each carries a redacted preview and
  * a short SHA-256 fingerprint, derived identically to the other detectors. Per
@@ -43,36 +56,37 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import {
-	DEFAULT_NOSEY_PARKER_CONFIG,
-	type NoseyParkerConfig,
+	DEFAULT_DETECT_SECRETS_CONFIG,
+	type DetectSecretsConfig,
 } from "./config.js";
 import {
-	detectNoseyParkerLeaks,
-	type SecretLeakScanResult,
+	detectDetectSecretsLeaks,
+	type DetectSecretsScanResult,
 } from "./detectors.js";
 
-export const NOSEY_PARKER_DEF: AnalyzerDef = {
-	id: "nosey-parker",
-	label: "Secret Leak Detection (Nosey Parker rules)",
+export const DETECT_SECRETS_DEF: AnalyzerDef = {
+	id: "detect-secrets",
+	label: "Secret Leak Detection (detect-secrets method)",
 	description:
-		"Scans session transcripts with the ported Nosey Parker rule catalogue (captured credentials, passive/active confidence) and records redacted findings. No LLM; never stores the matched secret.",
+		"Scans session transcripts with Yelp detect-secrets' method — keyword-context and high-entropy candidate generators followed by its false-positive exclusion heuristics — and records redacted findings. No LLM; never stores the matched secret.",
 	anchorSpan: "full_session",
 	dependencies: [],
 };
 
-export const NOSEY_PARKER_VERSION: AnalyzerVersion = {
-	analyzerId: NOSEY_PARKER_DEF.id,
-	// 1.0: initial port — a representative, high-signal subset of the Nosey
-	// Parker v0.24.0 built-in ruleset (MIT OR Apache-2.0): captured-secret
-	// rules with the passive/active confidence distinction. Standalone,
-	// deterministic, metric nodes only.
+export const DETECT_SECRETS_VERSION: AnalyzerVersion = {
+	analyzerId: DETECT_SECRETS_DEF.id,
+	// 1.0: initial port — detect-secrets v1.5.0 (BSD-3-Clause) plugin
+	// generators (keyword-context, hex/base64 high-entropy) plus its exclusion
+	// heuristics, as deterministic filters applied after candidate generation.
+	// Private-key and JWT plugins skipped as covered by the secret-leak
+	// catalogue. Standalone, deterministic, metric nodes only.
 	major: 1,
 	minor: 0,
 	implementationKind: "deterministic",
-	codeRef: "src/analyze/analyzers/nosey-parker/index.ts",
+	codeRef: "src/analyze/analyzers/detect-secrets/index.ts",
 };
 
-export interface NoseyParkerProperties extends SecretLeakScanResult {
+export interface DetectSecretsProperties extends DetectSecretsScanResult {
 	/** Session id this analysis covers. */
 	session_id: string;
 	/** Convenience boolean: were any leaks found? */
@@ -83,15 +97,15 @@ export interface NoseyParkerProperties extends SecretLeakScanResult {
 
 // ──────────────────────────── analyzer ────────────────────────────
 
-export const noseyParkerAnalyzer: Analyzer = {
-	def: NOSEY_PARKER_DEF,
-	version: NOSEY_PARKER_VERSION,
+export const detectSecretsAnalyzer: Analyzer = {
+	def: DETECT_SECRETS_DEF,
+	version: DETECT_SECRETS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
 	defaultConfig: {
 		id: "",
-		analyzerId: NOSEY_PARKER_DEF.id,
-		configHash: computeConfigHash(DEFAULT_NOSEY_PARKER_CONFIG),
-		configJson: DEFAULT_NOSEY_PARKER_CONFIG as unknown as Record<string, unknown>,
+		analyzerId: DETECT_SECRETS_DEF.id,
+		configHash: computeConfigHash(DEFAULT_DETECT_SECRETS_CONFIG),
+		configJson: DEFAULT_DETECT_SECRETS_CONFIG as unknown as Record<string, unknown>,
 		label: "default",
 	},
 
@@ -121,13 +135,13 @@ export const noseyParkerAnalyzer: Analyzer = {
 
 	analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
 		const config =
-			(ctx.config.configJson as unknown as NoseyParkerConfig) ?? DEFAULT_NOSEY_PARKER_CONFIG;
+			(ctx.config.configJson as unknown as DetectSecretsConfig) ?? DEFAULT_DETECT_SECRETS_CONFIG;
 		// Re-read messages from the DB rather than the (possibly stale) plan-time
 		// list, matching the other detectors' pattern.
 		const messages = ctx.getSessionMessages(ctx.sessionId);
-		const scan = detectNoseyParkerLeaks(messages, config);
+		const scan = detectDetectSecretsLeaks(messages, config);
 
-		const properties: NoseyParkerProperties = {
+		const properties: DetectSecretsProperties = {
 			session_id: ctx.sessionId,
 			has_leaks: scan.leak_count > 0,
 			leak_count: scan.leak_count,
@@ -135,6 +149,7 @@ export const noseyParkerAnalyzer: Analyzer = {
 			truncated_matches: scan.truncated_matches,
 			allowlisted_matches: scan.allowlisted_matches,
 			filtered_matches: scan.filtered_matches,
+			filter_counts: scan.filter_counts,
 			rule_counts: scan.rule_counts,
 			affected_message_ids: scan.affected_message_ids,
 			message_count: messages.length,
@@ -168,10 +183,33 @@ export const noseyParkerAnalyzer: Analyzer = {
 // Re-export the catalogue and helpers so consumers (and tests) can import the
 // analyzer's public surface from one place.
 export {
-	NOSEY_PARKER_RULES,
-	NOSEY_PARKER_UPSTREAM,
-	detectNoseyParkerLeaks,
-	matchedNoseyParkerRuleIds,
+	DETECT_SECRETS_GENERATORS,
+	DETECT_SECRETS_UPSTREAM,
+	DETECT_SECRETS_PLUGINS,
+	PLUGIN_RULE_IDS,
+	DEFAULT_ENTROPY_LIMITS,
+	calculateShannonEntropy,
+	calculateHexShannonEntropy,
+	detectDetectSecretsLeaks,
+	matchedDetectSecretsRuleIds,
 } from "./detectors.js";
+export {
+	EXCLUSION_FILTERS,
+	EXCLUSION_FILTER_IDS,
+	isTemplatedSecret,
+	isPrefixedWithDollarSign,
+	isNotAlphanumericString,
+	isSequentialString,
+	isPotentialUuid,
+	isLowEntropy,
+	isPlaceholderValue,
+	isLikelyIdString,
+	isIndirectReference,
+	isDocumentationUrlContext,
+	isInsideCodeSampleContext,
+} from "./filters.js";
 export { fingerprintOf, redact } from "../secret-scanner.js";
-export { DEFAULT_NOSEY_PARKER_CONFIG, type NoseyParkerConfig } from "./config.js";
+export {
+	DEFAULT_DETECT_SECRETS_CONFIG,
+	type DetectSecretsConfig,
+} from "./config.js";

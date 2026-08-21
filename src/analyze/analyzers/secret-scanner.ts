@@ -106,6 +106,8 @@ export interface SecretLeakScanResult {
 	truncated_matches: number;
 	/** Count of matches dropped by the allowlist (fingerprint or pattern). */
 	allowlisted_matches: number;
+	/** Count of matches dropped by the caller's exclusion filter, when one was supplied. */
+	filtered_matches: number;
 	/** Findings per rule id. */
 	rule_counts: Record<string, number>;
 	/** Distinct message ids that contained at least one leak. */
@@ -184,6 +186,39 @@ function matchedSecret(match: RegExpMatchArray): string {
 	return match[1] ?? match[0];
 }
 
+/** Everything an exclusion filter may look at for one candidate match. */
+export interface ScanExclusionContext {
+	/** The rule that produced the candidate. */
+	rule: SecretLeakRule;
+	/** The candidate secret value (group 1 for capture rules, else the match). */
+	value: string;
+	/** Character offset of the whole match within the field text. */
+	index: number;
+	/** The line of the field text that contains the match. */
+	line: string;
+	/** The full field text the candidate was found in. */
+	text: string;
+}
+
+/** Optional extras for {@link scanMessages}. */
+export interface ScanMessagesOptions {
+	/**
+	 * Deterministic exclusion predicate: return true to drop the candidate
+	 * (counted in `filtered_matches`). Applied after the allowlist and before
+	 * the per-field cap, so the cap counts survivors, not raw matches. Used by
+	 * the detect-secrets detector to run its ported false-positive heuristics
+	 * between candidate generation and findings.
+	 */
+	exclude?: (ctx: ScanExclusionContext) => boolean;
+}
+
+/** The line of `text` containing character offset `index`. */
+function lineContaining(text: string, index: number): string {
+	const start = text.lastIndexOf("\n", index - 1) + 1;
+	const end = text.indexOf("\n", index);
+	return text.slice(start, end === -1 ? undefined : end);
+}
+
 /**
  * Scan a single text field for all rule matches. A fresh regex is cloned per
  * field so the shared catalogue's `lastIndex` never leaks between calls.
@@ -217,6 +252,7 @@ export function scanMessages(
 	messages: readonly MessageRow[],
 	rules: readonly SecretLeakRule[],
 	config: RuleScanConfig,
+	opts: ScanMessagesOptions = {},
 ): SecretLeakScanResult {
 	const disabled = new Set(config.disabledRules);
 	const allowFp = new Set(config.allowFingerprints);
@@ -236,6 +272,7 @@ export function scanMessages(
 	const leaks: SecretLeakFinding[] = [];
 	let truncated = 0;
 	let allowlisted = 0;
+	let filtered = 0;
 	const ruleCounts: Record<string, number> = {};
 	const affected = new Set<string>();
 
@@ -246,13 +283,11 @@ export function scanMessages(
 
 			const hits = scanField(raw, activeRules);
 
-			// Cap per field; record how many were dropped.
+			// Cap per field; record how many were dropped. The exclusion filter
+			// runs before the cap so the cap counts survivors, not raw matches.
 			let emitted = 0;
-			for (const hit of hits) {
-				if (emitted >= maxPerField) {
-					truncated += hits.length - emitted;
-					break;
-				}
+			for (let h = 0; h < hits.length; h++) {
+				const hit = hits[h]!;
 				const fp = fingerprintOf(hit.value);
 				if (allowFp.has(fp)) {
 					allowlisted++;
@@ -261,6 +296,14 @@ export function scanMessages(
 				if (allowPatterns.some((re) => re.test(hit.value))) {
 					allowlisted++;
 					continue;
+				}
+				if (opts.exclude?.({ rule: hit.rule, value: hit.value, index: hit.index, line: lineContaining(raw, hit.index), text: raw })) {
+					filtered++;
+					continue;
+				}
+				if (emitted >= maxPerField) {
+					truncated += hits.length - h;
+					break;
 				}
 				leaks.push({
 					rule_id: hit.rule.id,
@@ -286,6 +329,7 @@ export function scanMessages(
 		leaks,
 		truncated_matches: truncated,
 		allowlisted_matches: allowlisted,
+		filtered_matches: filtered,
 		rule_counts: ruleCounts,
 		affected_message_ids: [...affected].sort(),
 	};

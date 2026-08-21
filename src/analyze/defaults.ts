@@ -20,6 +20,7 @@ import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
+import { detectSecretsAnalyzer } from "./analyzers/detect-secrets/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -38,6 +39,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"secret-leak",
 	"gitleaks",
 	"nosey-parker",
+	"detect-secrets",
 	"token-units",
 	"request-classes",
 	"session-overview",
@@ -79,6 +81,15 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// Enabled by default; a user narrows it via config (disabledRules /
 	// minConfidence / allowlists), never by editing this list.
 	noseyParkerAnalyzer,
+	// The detect-secrets method, same seam as the other detectors: session-level,
+	// standalone, deterministic, metric nodes only, redacted findings. Its value
+	// is precision on session prose: candidate generators (keyword-context,
+	// hex/base64 high-entropy) followed by detect-secrets' false-positive
+	// exclusion heuristics (placeholders, documentation URLs, code-sample
+	// contexts, sequential/low-entropy strings). Enabled by default; a user
+	// narrows it via config (disabledPlugins / disabledFilters / allowlists),
+	// never by editing this list.
+	detectSecretsAnalyzer,
 	// Cost accounting. token-units is deterministic and depends on nothing;
 	// request-classes labels the same request segments it prices. Neither depends
 	// on the other — the report joins them at read time, through token-units'

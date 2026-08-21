@@ -119,6 +119,7 @@ export const gitleaksAnalyzer: Analyzer = {
 			leaks: scan.leaks,
 			truncated_matches: scan.truncated_matches,
 			allowlisted_matches: scan.allowlisted_matches,
+			filtered_matches: scan.filtered_matches,
 			rule_counts: scan.rule_counts,
 			affected_message_ids: scan.affected_message_ids,
 			message_count: messages.length,
