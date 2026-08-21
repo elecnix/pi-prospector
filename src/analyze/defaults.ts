@@ -23,6 +23,7 @@ import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
 import { detectSecretsAnalyzer } from "./analyzers/detect-secrets/index.js";
 import { trufflehogAnalyzer } from "./analyzers/trufflehog/index.js";
 import { secretScannerAnalyzer } from "./analyzers/secret-scanner/index.js";
+import { presidioAnalyzer } from "./analyzers/presidio/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -44,6 +45,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"detect-secrets",
 	"trufflehog",
 	"secret-scanner",
+	"presidio",
 	"token-units",
 	"request-classes",
 	"session-overview",
@@ -114,6 +116,18 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// Enabled by default; a user narrows it via config (extraction toggles /
 	// disabledRules / allowlists), never by editing this list.
 	secretScannerAnalyzer,
+	// The Presidio-method PII detector, same seam as the other detectors:
+	// session-level, standalone, deterministic, metric nodes only. The first
+	// PII detector in the stack (the previous five find credentials): pattern
+	// recognizers with mandatory checksum validators (Luhn credit cards, mod-97
+	// IBANs), SSN validity rules, and fingerprint-based allow/deny lists.
+	// NER (names, addresses) is deferred — v1 is fully deterministic at zero
+	// model cost; the recognizer registry is shaped for a later LLM-seam NER
+	// recognizer without reshaping config identity. Implements Microsoft
+	// Presidio's method only (Apache-2.0); nothing was vendored. Findings carry
+	// identically derived fingerprints so the future proposal synthesiser can
+	// collapse the same leak into one proposal across detectors.
+	presidioAnalyzer,
 	// Cost accounting. token-units is deterministic and depends on nothing;
 	// request-classes labels the same request segments it prices. Neither depends
 	// on the other — the report joins them at read time, through token-units'
