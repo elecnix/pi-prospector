@@ -7,6 +7,8 @@ import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposal
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
 import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
+import { prospectAnalyze } from "./analyze.js";
+import { getLatestAnalyzeRuns } from "../db/analysis-queries.js";
 import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
 import { readSessionSummary } from "./show.js";
 import { readLeaks, type LeaksQuery } from "./leaks.js";
@@ -53,7 +55,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		name: "prospect",
 		label: "Prospect",
 		description:
-			"Index sessions, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, help. " +
+			"Index sessions, run analysis, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, analyze, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, help. " +
 			"list_proposals accepts source (pi|claude) to filter by coding harness. " +
 			"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 			"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
@@ -61,7 +63,11 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			"Use remediate when ONE action addresses MANY proposals: pass proposal_ids and a description, and all of them " +
 			"are accepted linked to a single shared remediation record instead of N duplicated rationales. " +
 			"For muting: the reviewing agent performs the mute after operator feedback — pass the muted term and an optional reason; " +
-			"the term stops matching new turns and its prior hit nodes become stale/config, cleanly recomputed by analyze --revise config. " +
+			"the term stops matching new turns and its prior hit nodes become stale/config, cleanly recomputed by analyze with revise=[\"config\"]. " +
+			"Use action analyze to run the analyzer framework over sessions: a frugal plain fill by default (only missing work), " +
+			"revise widens the reach to recompute stale nodes (major/minor analyzer bumps, config = user setup changed), " +
+			"analyzer restricts the run to one analyzer, model pins every tier to one model for the run (part of node identity), " +
+			"and all=true back-fills every session (use after the frustration lexicon learns new words). " +
 			"Use action nodes to read analyzer output from the surface (filter by analyzer/node-kind/content, counts over a property, " +
 			"latest-per-key for newest verdict per term) and action node with output_key for one node's detail plus its resolved outgoing edges. " +
 			"Use action session_summary with session_id for the session-level summary with its evidence: what happened, what went well, " +
@@ -71,6 +77,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
+				Type.Literal("analyze"),
 				Type.Literal("stats"),
 				Type.Literal("list_proposals"),
 				Type.Literal("accept"),
@@ -95,7 +102,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			),
 			severity: Type.Optional(Type.String({ description: "list_proposals: filter by severity (friction, correction, waste, suggestion, reinforcement). leaks: minimum severity floor — report this severity (medium|high|critical) and above." })),
 			source: Type.Optional(Type.String({ description: "Filter by coding harness: pi or claude." })),
-			session_id: Type.Optional(Type.String({ description: "Scope list_proposals to a single session (only that session's proposals)." })),
+			session_id: Type.Optional(Type.String({ description: "Scope list_proposals to a single session (only that session's proposals); analyze runs just that one session." })),
 			project: Type.Optional(Type.String({ description: "Scope sync to one project (derived from the session directory name) so a fresh install skips every other project on disk." })),
 			proposal_id: Type.Optional(Type.String()),
 			proposal_ids: Type.Optional(Type.Array(Type.String(), { description: "Proposal ids to accept/reject together (accept/reject/remediate actions)." })),
@@ -111,8 +118,16 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			actual_change: Type.Optional(Type.String({ description: "Commit sha / path / note of what was actually done." })),
 			term: Type.Optional(Type.String({ description: "The lexicon term to mute or unmute (mute/unmute actions)." })),
 			reason: Type.Optional(Type.String({ description: "Operator's free-text reason for muting a term (mute action)." })),
-			analyzer: Type.Optional(Type.String({ description: "Analyzer id to read (nodes action; required unless all=true)." })),
-			all: Type.Optional(Type.Boolean({ description: "Read nodes of every analyzer (nodes action)." })),
+			revise: Type.Optional(
+				Type.Array(
+					Type.Union([Type.Literal("major"), Type.Literal("minor"), Type.Literal("config"), Type.Literal("all")]),
+					{ description: "analyze: revise reasons — which stale nodes the run may recompute (major/minor = analyzer version bumps graded by the author, config = user setup changed, all = every reason). Omit for a frugal plain fill that only fills missing work." },
+				),
+			),
+			recent: Type.Optional(Type.Number({ description: "analyze: run over the N most-recent sessions (by started_at DESC), e.g. for pilots." })),
+			model: Type.Optional(Type.String({ description: "analyze: provider/model pinning every tier to one model for this run (the resolved model is part of node identity)." })),
+			analyzer: Type.Optional(Type.String({ description: "Analyzer id to read (nodes action; required unless all=true) or to run (analyze action)." })),
+			all: Type.Optional(Type.Boolean({ description: "Read nodes of every analyzer (nodes action); analyze: plain-fill every session, not just unanalysed ones." })),
 			node_kind: Type.Optional(
 				Type.Union([Type.Literal("metric"), Type.Literal("classification"), Type.Literal("summary"), Type.Literal("proposal"), Type.Literal("validation"), Type.Literal("error")], {
 					description: "Restrict nodes to one kind (nodes action).",
@@ -129,7 +144,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			params: Record<string, unknown>,
 			_signal: AbortSignal,
 			_onUpdate: unknown,
-			_ctx: ExtensionCommandContext,
+			ctx: ExtensionCommandContext,
 		): Promise<ToolResult> {
 			const db = openAsyncDatabase(getDbPath());
 			await migrate(db);
@@ -141,6 +156,27 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 							source: parseHarnessSource(params.source as string | undefined),
 						});
 						return text(JSON.stringify(result), result);
+					}
+					case "analyze": {
+						// Thin exposure of /prospect-analyze (#193): translate params into the
+						// same flag string the slash command parses, then report the run record
+						// so the caller gets the tallies without re-parsing human output.
+						const parts: string[] = [];
+						const revise = params.revise as string[] | undefined;
+						if (revise && revise.length > 0) parts.push(`--revise ${revise.join(",")}`);
+						if (params.all === true) parts.push("--all");
+						if (typeof params.limit === "number") parts.push(`--limit ${params.limit}`);
+						if (typeof params.recent === "number") parts.push(`--recent ${params.recent}`);
+						if (params.session_id) parts.push(`--session ${params.session_id}`);
+						if (params.source) parts.push(`--source ${params.source}`);
+						if (params.analyzer) parts.push(`--analyzer ${params.analyzer}`);
+						if (params.model) parts.push(`--model ${params.model}`);
+						await prospectAnalyze(parts.join(" "), ctx);
+						const runs = getLatestAnalyzeRuns(db, 1);
+						const run = runs[0];
+						return run
+							? text(`Analyze complete. Run record:\n${JSON.stringify(run, null, 2)}`, run)
+							: text("Analyze complete (no run record found).", {});
 					}
 					case "stats": {
 						const stats = await getStats(db);
@@ -314,11 +350,13 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 
 Workflow:
   1. sync   — index new sessions from disk; scope with { project } and/or { source } to skip every other project on disk (the fresh-install escape hatch)
-  2. stats  — see proposal counts, token ratios, analysis depth
-  3. list_proposals [status] [severity] [limit] [offset] — ranked by confidence
+  2. analyze — run the analyzer framework over sessions; a frugal plain fill by default, { revise: ["config"] } recomputes stale nodes,
+      { all: true } back-fills every session, { analyzer } restricts to one analyzer, { recent }/ { limit }/ { session_id }/ { source } scope the run
+  3. stats  — see proposal counts, token ratios, analysis depth
+  4. list_proposals [status] [severity] [limit] [offset] — ranked by confidence
       (add { session_id } to scope to one session; --as-of <ts|7d> / --as-of-run <id> for a point-in-time view)
-  4. accept/reject — decide proposals singly or in bulk (proposal_ids array)
-  5. remediate — accept many proposals under one shared remediation record
+  5. accept/reject — decide proposals singly or in bulk (proposal_ids array)
+  6. remediate — accept many proposals under one shared remediation record
 
 Analysis-graph & point-in-time commands (slash commands):
   - prospect tool actions: nodes (--analyzer <id> | all=true, node_kind, filter[], counts, latest_per_key, limit, offset) and node (output_key) — read analyzer output from the surface

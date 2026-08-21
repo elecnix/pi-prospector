@@ -327,6 +327,29 @@ describe("prospect tool", () => {
 		assert.match(unknown.content[0]!.text, /Unknown action/);
 	});
 
+	it("analyze action runs the analyzer and returns the run record (#193)", async () => {
+		const res = await toolExec("tana", { action: "analyze", analyzer: "turn-pair-core" }, signal, null, ctx);
+		assert.match(res.content[0]!.text, /Analyze complete/);
+		// The run record is surfaced in the body and as details.
+		assert.match(res.content[0]!.text, /analyze_runs|"mode"/);
+		const details = res.details as Record<string, unknown>;
+		assert.equal(details["status"], "ok");
+		assert.equal(details["session_attempted"], details["session_completed"]);
+	});
+
+	it("analyze action maps revise reasons to the run's reach", async () => {
+		const res = await toolExec(
+			"tana2",
+			{ action: "analyze", analyzer: "turn-pair-core", revise: ["all"] },
+			signal,
+			null,
+			ctx,
+		);
+		assert.match(res.content[0]!.text, /Analyze complete/);
+		const details = res.details as Record<string, unknown>;
+		assert.equal(details["mode"], "revise:config+major+minor");
+	});
+
 	it("sync accepts a project scope and only indexes that project", async () => {
 		// Point the sessions dir at a temp tree with two projects; only the scoped
 		// one may be indexed. (Claude dir stays absent.)
