@@ -1,5 +1,4 @@
 import Database from "better-sqlite3";
-import { createHash } from "node:crypto";
 import { migrateDecisionsToAssertions } from "./assertions.js";
 
 /**
@@ -192,7 +191,6 @@ export function migrate(db: Database.Database): void {
 			hash TEXT PRIMARY KEY,
 			content TEXT NOT NULL,
 			role TEXT,
-			full_hash TEXT,
 			created_at TEXT NOT NULL
 		);
 
@@ -497,22 +495,15 @@ function addMissingColumns(db: Database.Database): void {
 		}
 	}
 
-	// prompt_registry: restore the full_hash column (full SHA-256 of the prompt
-	// content). Databases created before v0.2.0 carry it as NOT NULL — registerPrompt
-	// always supplies a value so those inserts succeed — while v0.2.0 databases lack
-	// the column entirely and get it added here, with existing rows backfilled from
-	// their content.
-	if (!hasColumn("prompt_registry", "full_hash")) {
-		db.exec("ALTER TABLE prompt_registry ADD COLUMN full_hash TEXT");
-		const sha256 = (content: string): string => createHash("sha256").update(content).digest("hex");
-		const rows = db
-			.prepare("SELECT hash, content FROM prompt_registry WHERE full_hash IS NULL")
-			.all() as Array<{ hash: string; content: string }>;
-		const update = db.prepare("UPDATE prompt_registry SET full_hash = ? WHERE hash = ?");
-		const backfill = db.transaction(() => {
-			for (const row of rows) update.run(sha256(row.content), row.hash);
-		});
-		backfill();
+	// prompt_registry: legacy (pre-0.2.0) databases declare full_hash TEXT NOT
+	// NULL, which breaks registerPrompt — v0.2.0 no longer supplies the column,
+	// so the first prompt registration fails with "NOT NULL constraint failed:
+	// prompt_registry.full_hash". Nothing reads full_hash (hash is derived in
+	// code from the content), so rather than carry the dead column forward we
+	// drop it where it exists. SQLite ≥ 3.35 supports DROP COLUMN for a plain
+	// column like this one.
+	if (hasColumn("prompt_registry", "full_hash")) {
+		db.exec("ALTER TABLE prompt_registry DROP COLUMN full_hash");
 	}
 }
 

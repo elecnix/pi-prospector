@@ -187,10 +187,11 @@ describe("schema migration", () => {
 });
 
 describe("prompt_registry full_hash", () => {
-	it("registers prompts into a legacy DB whose full_hash column is NOT NULL", () => {
+	it("drops the legacy NOT NULL full_hash column and registers prompts afterwards", () => {
 		// Reproduces the field failure: databases created by the pre-0.2.0
-		// analyzer-framework build carry prompt_registry.full_hash as NOT NULL.
-		// registerPrompt must always supply full_hash so the insert succeeds.
+		// analyzer-framework build carry prompt_registry.full_hash as NOT NULL,
+		// which broke the first registerPrompt insert. Nothing reads full_hash,
+		// so migrate drops the dead column instead of feeding it.
 		const db = new Database(":memory:");
 		try {
 			db.exec(`CREATE TABLE prompt_registry (
@@ -207,17 +208,18 @@ describe("prompt_registry full_hash", () => {
 				.run(legacyFull.slice(0, 16), legacyContent, null, legacyFull, new Date().toISOString());
 
 			migrate(db);
+			assert.ok(!tableColumns(db, "prompt_registry").has("full_hash"), "full_hash should be dropped");
+			const legacyRow = db.prepare("SELECT hash, content FROM prompt_registry").get() as { hash: string; content: string };
+			assert.equal(legacyRow.content, legacyContent);
 			assert.doesNotThrow(() => {
 				registerPrompt(db, { hash: "abc123", content: "hello world" });
 			});
-			const row = db.prepare("SELECT full_hash FROM prompt_registry WHERE hash = 'abc123'").get() as { full_hash: string };
-			assert.equal(row.full_hash, createHash("sha256").update("hello world").digest("hex"));
 		} finally {
 			db.close();
 		}
 	});
 
-	it("adds full_hash to a prompt_registry missing the column and backfills sha256(content)", () => {
+	it("leaves a prompt_registry without the column alone", () => {
 		const db = new Database(":memory:");
 		try {
 			db.exec(`CREATE TABLE prompt_registry (
@@ -226,26 +228,21 @@ describe("prompt_registry full_hash", () => {
 				role TEXT,
 				created_at TEXT NOT NULL
 			)`);
-			const content = "backfill me";
-			db.prepare("INSERT INTO prompt_registry (hash, content, role, created_at) VALUES (?, ?, ?, ?)")
-				.run("deadbeef", content, null, new Date().toISOString());
-
 			migrate(db);
-			assert.ok(tableColumns(db, "prompt_registry").has("full_hash"));
-			const row = db.prepare("SELECT full_hash FROM prompt_registry WHERE hash = 'deadbeef'").get() as { full_hash: string };
-			assert.equal(row.full_hash, createHash("sha256").update(content).digest("hex"));
+			assert.ok(!tableColumns(db, "prompt_registry").has("full_hash"));
+			assert.doesNotThrow(() => {
+				registerPrompt(db, { hash: "deadbeef", content: "no legacy column" });
+			});
 		} finally {
 			db.close();
 		}
 	});
 
-	it("creates prompt_registry with a full_hash column on fresh databases", () => {
+	it("creates prompt_registry without a full_hash column on fresh databases", () => {
 		const { db, close } = tempDb();
 		try {
-			assert.ok(tableColumns(db, "prompt_registry").has("full_hash"));
+			assert.ok(!tableColumns(db, "prompt_registry").has("full_hash"));
 			registerPrompt(db, { hash: "abc123", content: "fresh" });
-			const row = db.prepare("SELECT full_hash FROM prompt_registry WHERE hash = 'abc123'").get() as { full_hash: string };
-			assert.equal(row.full_hash, createHash("sha256").update("fresh").digest("hex"));
 		} finally {
 			close();
 		}

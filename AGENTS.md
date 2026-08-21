@@ -65,7 +65,7 @@ GitHub Actions on every push and pull request to `main`. Two jobs:
 ## Code organization
 
 - `src/sync/` — session scanning and parsing (no LLM).
-- `src/db/` — all SQL lives here, nowhere else. Conversation and proposal queries in `db/queries.ts`; analysis-graph queries (nodes, edges, runs, configs, lineage) in `db/analysis-queries.ts`. Schema and the single migration in `db/schema.ts`.
+- `src/db/` — all SQL lives here, nowhere else. Conversation and proposal queries in `db/queries.ts`; analysis-graph queries (nodes, edges, runs, configs, lineage) in `db/analysis-queries.ts`. Schema and the single migration in `db/schema.ts`. Don't carry dead schema forward: when a column is no longer read, drop it in the migration rather than writing it "for compatibility".
 - `src/analyze/` — the analyzer framework. `framework.ts` (register / scan / run), `types.ts` (TypeBox schemas), `input-hash.ts` (recipe + idempotency hashing), `edge-kinds.ts` (typed-edge vocabulary and validation), `model-tiers.ts`, `proposal-materializer.ts`, `defaults.ts` (default analyzer registration). The LLM seam is `pi-llm.ts` (production, via Pi's provider system) and `mock-llm.ts` (deterministic test double).
 - `src/analyze/analyzers/<id>/` — one directory per analyzer (`turn-pair-core`, `turn-pair-llm`, `session-overview`, `tool-trajectory`, `secret-leak`), each with `index.ts`, its prompt(s), and `config.ts`.
 - `src/commands/` — Pi slash commands and the `prospect` tool; registered from `src/index.ts`.
