@@ -1,8 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import Database from "better-sqlite3";
 import { tempDb } from "./helpers.js";
 import { migrate } from "../../src/db/schema.js";
+import { registerPrompt } from "../../src/db/analysis-queries.js";
 
 function tableColumns(db: import("better-sqlite3").Database, table: string): Set<string> {
 	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -180,6 +182,72 @@ describe("schema migration", () => {
 			assert.equal(row.cost_usd, null);
 		} finally {
 			db.close();
+		}
+	});
+});
+
+describe("prompt_registry full_hash", () => {
+	it("registers prompts into a legacy DB whose full_hash column is NOT NULL", () => {
+		// Reproduces the field failure: databases created by the pre-0.2.0
+		// analyzer-framework build carry prompt_registry.full_hash as NOT NULL.
+		// registerPrompt must always supply full_hash so the insert succeeds.
+		const db = new Database(":memory:");
+		try {
+			db.exec(`CREATE TABLE prompt_registry (
+				hash TEXT PRIMARY KEY,
+				content TEXT NOT NULL,
+				role TEXT,
+				full_hash TEXT NOT NULL,
+				created_at TEXT NOT NULL
+			)`);
+			// A legacy row: hash was the 16-char prefix of sha256(content).
+			const legacyContent = "legacy prompt";
+			const legacyFull = createHash("sha256").update(legacyContent).digest("hex");
+			db.prepare("INSERT INTO prompt_registry (hash, content, role, full_hash, created_at) VALUES (?, ?, ?, ?, ?)")
+				.run(legacyFull.slice(0, 16), legacyContent, null, legacyFull, new Date().toISOString());
+
+			migrate(db);
+			assert.doesNotThrow(() => {
+				registerPrompt(db, { hash: "abc123", content: "hello world" });
+			});
+			const row = db.prepare("SELECT full_hash FROM prompt_registry WHERE hash = 'abc123'").get() as { full_hash: string };
+			assert.equal(row.full_hash, createHash("sha256").update("hello world").digest("hex"));
+		} finally {
+			db.close();
+		}
+	});
+
+	it("adds full_hash to a prompt_registry missing the column and backfills sha256(content)", () => {
+		const db = new Database(":memory:");
+		try {
+			db.exec(`CREATE TABLE prompt_registry (
+				hash TEXT PRIMARY KEY,
+				content TEXT NOT NULL,
+				role TEXT,
+				created_at TEXT NOT NULL
+			)`);
+			const content = "backfill me";
+			db.prepare("INSERT INTO prompt_registry (hash, content, role, created_at) VALUES (?, ?, ?, ?)")
+				.run("deadbeef", content, null, new Date().toISOString());
+
+			migrate(db);
+			assert.ok(tableColumns(db, "prompt_registry").has("full_hash"));
+			const row = db.prepare("SELECT full_hash FROM prompt_registry WHERE hash = 'deadbeef'").get() as { full_hash: string };
+			assert.equal(row.full_hash, createHash("sha256").update(content).digest("hex"));
+		} finally {
+			db.close();
+		}
+	});
+
+	it("creates prompt_registry with a full_hash column on fresh databases", () => {
+		const { db, close } = tempDb();
+		try {
+			assert.ok(tableColumns(db, "prompt_registry").has("full_hash"));
+			registerPrompt(db, { hash: "abc123", content: "fresh" });
+			const row = db.prepare("SELECT full_hash FROM prompt_registry WHERE hash = 'abc123'").get() as { full_hash: string };
+			assert.equal(row.full_hash, createHash("sha256").update("fresh").digest("hex"));
+		} finally {
+			close();
 		}
 	});
 });

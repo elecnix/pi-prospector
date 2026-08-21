@@ -7,6 +7,7 @@
  * rows (snake_case) typed by the schemas in `../analyze/types.ts`.
  */
 
+import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import { prep } from "./prepared.js";
 import type {
@@ -59,11 +60,16 @@ export function upsertAnalyzerVersion(db: Database.Database, version: AnalyzerVe
 }
 
 export function registerPrompt(db: Database.Database, prompt: PromptVersion): void {
+	// full_hash is the full SHA-256 of the prompt content. Legacy (pre-0.2.0)
+	// databases declare this column NOT NULL, so it must always be supplied —
+	// omitting it fails the insert with "NOT NULL constraint failed:
+	// prompt_registry.full_hash".
+	const fullHash = createHash("sha256").update(prompt.content).digest("hex");
 	prep(db, `
-		INSERT INTO prompt_registry (hash, content, role, created_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO prompt_registry (hash, content, role, full_hash, created_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(hash) DO NOTHING
-	`).run(prompt.hash, prompt.content, prompt.role ?? null, new Date().toISOString());
+	`).run(prompt.hash, prompt.content, prompt.role ?? null, fullHash, new Date().toISOString());
 }
 
 /**
