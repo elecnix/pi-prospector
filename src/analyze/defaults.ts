@@ -24,6 +24,7 @@ import { detectSecretsAnalyzer } from "./analyzers/detect-secrets/index.js";
 import { trufflehogAnalyzer } from "./analyzers/trufflehog/index.js";
 import { secretScannerAnalyzer } from "./analyzers/secret-scanner/index.js";
 import { presidioAnalyzer } from "./analyzers/presidio/index.js";
+import { piicatcherAnalyzer } from "./analyzers/piicatcher/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -46,6 +47,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"trufflehog",
 	"secret-scanner",
 	"presidio",
+	"piicatcher",
 	"token-units",
 	"request-classes",
 	"session-overview",
@@ -128,6 +130,22 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// identically derived fingerprints so the future proposal synthesiser can
 	// collapse the same leak into one proposal across detectors.
 	presidioAnalyzer,
+	// The PIICatcher-method column-semantics PII detector, same seam as the
+	// other detectors: session-level, standalone, deterministic, metric nodes
+	// only, redacted findings. Its distinctive half is **column semantics**:
+	// tabular fragments flowing through sessions (CSV blocks with delimiter
+	// sniffing and header inference, JSON arrays of homogeneous records, SQL
+	// result tables — box-drawing, pipe-bordered, aligned columns) are
+	// segmented into logical columns and each column judged by sampling its
+	// values against the recognizer stack shared with presidio (pure functions
+	// reused; no analysis dependency declared). A column whose sampled values
+	// match sensitive shapes above `sensitivityThreshold` IS a sensitive
+	// column — frequency analysis, not repeated row scanning. Implements Tokern
+	// PIICatcher's method only (Apache-2.0, verified against upstream; nothing
+	// was vendored). Findings carry identically derived fingerprints so the
+	// future proposal synthesiser can collapse the same leak into one proposal
+	// across detectors.
+	piicatcherAnalyzer,
 	// Cost accounting. token-units is deterministic and depends on nothing;
 	// request-classes labels the same request segments it prices. Neither depends
 	// on the other — the report joins them at read time, through token-units'
