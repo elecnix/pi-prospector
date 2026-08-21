@@ -59,7 +59,20 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { DEFAULT_SECRET_SCANNER_CONFIG, type SecretScannerConfig } from "./config.js";
-import { detectArtifactLeaks, type SecretScannerFinding, type SecretScannerScanResult } from "./detectors.js";
+import { detectArtifactLeaks, SecretScannerScanResult } from "./detectors.js";
+import { Type, type Static } from "typebox";
+
+/** The node content: the artifact scan result plus the session-level envelope fields. */
+export const SecretScannerProperties = Type.Object({
+	...SecretScannerScanResult.properties,
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any leaks found? */
+	has_leaks: Type.Boolean(),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+});
+export type SecretScannerProperties = Static<typeof SecretScannerProperties>;
 
 export const SECRET_SCANNER_DEF: AnalyzerDef = {
 	id: "secret-scanner",
@@ -68,6 +81,7 @@ export const SECRET_SCANNER_DEF: AnalyzerDef = {
 		"Extracts container and filesystem artifact contexts from session transcripts (Dockerfiles, compose env blocks, .env entries, build logs, CI logs, shell exports), segments them into key/value candidates, and detects secrets with the bundled catalogue families plus a structural name/shape check. Implements Deepfence SecretScanner's method only — no upstream code or rules. No LLM; never stores the matched secret.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: SecretScannerProperties,
 };
 
 export const SECRET_SCANNER_VERSION: AnalyzerVersion = {
@@ -82,28 +96,6 @@ export const SECRET_SCANNER_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/secret-scanner/index.ts",
 };
 
-export interface SecretScannerProperties {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any leaks found? */
-	has_leaks: boolean;
-	/** Total findings, after allowlisting and per-field capping. */
-	leak_count: number;
-	/** The findings, capped at `maxMatchesPerField` per field. */
-	leaks: SecretScannerFinding[];
-	/** Count of matches dropped for exceeding `maxMatchesPerField` in a field. */
-	truncated_matches: number;
-	/** Count of matches dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_matches: number;
-	/** Findings per rule id. */
-	rule_counts: Record<string, number>;
-	/** Findings per artifact kind. */
-	artifact_counts: Record<string, number>;
-	/** Distinct message ids that contained at least one leak. */
-	affected_message_ids: string[];
-	/** Total messages scanned. */
-	message_count: number;
-}
 
 // ──────────────────────────── analyzer ────────────────────────────
 

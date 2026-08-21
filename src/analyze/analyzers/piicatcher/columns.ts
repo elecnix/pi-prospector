@@ -24,37 +24,40 @@
  */
 
 import { PII_RECOGNIZERS, judge } from "../presidio/recognizers.js";
-import { fingerprintOf, redact, type LeakField } from "../secret-scanner.js";
+import { Type, type Static } from "typebox";
+import { FragmentKindSchema } from "./fragments.js";
+import { fingerprintOf, redact, LeakField } from "../secret-scanner.js";
 import type { PiicatcherConfig } from "./config.js";
 import type { TabularFragment } from "./fragments.js";
 
 /** One column-level finding. Never carries the full matched value. */
-export interface ColumnFinding {
+export const ColumnFinding = Type.Object({
 	/** Fragment kind the column came from (`csv` | `json` | `sql-table`). */
-	fragment_kind: TabularFragment["kind"];
+	fragment_kind: FragmentKindSchema,
 	/** 1-based line the fragment starts on within its message field. */
-	fragment_start_line: number;
+	fragment_start_line: Type.Number(),
 	/** Ordinal of the fragment within its message field (detection order). */
-	fragment_index: number;
+	fragment_index: Type.Number(),
 	/** Column name: inferred header cell or `column_N`. */
-	column_name: string;
+	column_name: Type.String(),
 	/** Message id carrying the fragment. */
-	message_id: string;
+	message_id: Type.String(),
 	/** Which message field contained the fragment. */
-	field: LeakField;
+	field: LeakField,
 	/** Number of non-empty values sampled (≤ `sampleSizePerColumn`). */
-	sample_size: number;
+	sample_size: Type.Number(),
 	/** Sampled values that matched a sensitive shape above the score floor. */
-	match_count: number;
+	match_count: Type.Number(),
 	/** `match_count / sample_size`. */
-	match_ratio: number;
+	match_ratio: Type.Number(),
 	/** Entity types matched, with per-type counts over the sample. */
-	entity_types: Record<string, number>;
+	entity_types: Type.Record(Type.String(), Type.Number()),
 	/** Redacted preview of the first matching value (sample order). */
-	redacted_preview: string;
+	redacted_preview: Type.String(),
 	/** Short SHA-256 fingerprint of that value — dedup/allow/deny key. */
-	fingerprint: string;
-}
+	fingerprint: Type.String(),
+});
+export type ColumnFinding = Static<typeof ColumnFinding>;
 
 export interface ColumnClassificationResult {
 	findings: ColumnFinding[];

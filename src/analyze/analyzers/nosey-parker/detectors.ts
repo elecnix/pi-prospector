@@ -28,12 +28,12 @@ export {
 	meetsMinConfidence,
 	SEVERITY_RANK,
 	CONFIDENCE_RANK,
-	type LeakField,
-	type LeakSeverity,
-	type LeakConfidence,
-	type SecretLeakFinding,
+	LeakField,
+	LeakSeverity,
+	LeakConfidence,
+	SecretLeakFinding,
 	type SecretLeakRule,
-	type SecretLeakScanResult,
+	SecretLeakScanResult,
 } from "../secret-scanner.js";
 export { NOSEY_PARKER_RULES, NOSEY_PARKER_UPSTREAM } from "./rules.js";
 export { DEFAULT_NOSEY_PARKER_CONFIG, type NoseyParkerConfig } from "./config.js";

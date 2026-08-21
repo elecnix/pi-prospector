@@ -14,16 +14,18 @@
  */
 
 import type { MessageRow } from "../../types.js";
+import { Type, type Static } from "typebox";
 import {
 	scanMessages,
 	scanFieldCandidates,
-	type LeakField,
-	type SecretLeakFinding,
-	type SecretLeakScanResult,
+	LeakField,
+	SecretLeakFinding,
+	SecretLeakScanResult,
 } from "../secret-scanner.js";
 import { TRUFFLEHOG_RULES } from "./rules.js";
 import { DEFAULT_TRUFFLEHOG_CONFIG, assertKnownRuleAndVerifierIds, type TruffleHogConfig } from "./config.js";
 import type { CredentialVerifier, VerificationOutcome } from "./verifiers.js";
+import { VERIFICATION_OUTCOME_SCHEMA } from "./verifiers.js";
 
 // Re-export the shared engine surface so consumers import the detector
 // vocabulary from this module.
@@ -32,10 +34,11 @@ export {
 	redact,
 	meetsMinSeverity,
 	SEVERITY_RANK,
-	type LeakField,
+	LeakField,
 	type LeakSeverity,
-	type SecretLeakFinding,
-	type SecretLeakScanResult,
+	SecretLeakFinding,
+	type SecretLeakRule,
+	SecretLeakScanResult,
 } from "../secret-scanner.js";
 export { TRUFFLEHOG_RULES, TRUFFLEHOG_RULE_IDS, TRUFFLEHOG_CONCEPT } from "./rules.js";
 export {
@@ -57,10 +60,12 @@ export {
 export { createMockVerifier, type MockVerifier, type MockVerifierCall } from "./mock-verifiers.js";
 
 /** A finding, optionally carrying its live-verification outcome. */
-export interface TruffleHogFinding extends SecretLeakFinding {
+export const TruffleHogFinding = Type.Object({
+	...SecretLeakFinding.properties,
 	/** Present only when `verify` was on and a verifier claimed the value's shape. */
-	verification?: VerificationOutcome;
-}
+	verification: Type.Optional(VERIFICATION_OUTCOME_SCHEMA),
+});
+export type TruffleHogFinding = Static<typeof TruffleHogFinding>;
 
 /**
  * Detect secret leaks across a session's messages with the self-written
@@ -116,18 +121,19 @@ function recoverCandidateValues(
 }
 
 /** Summary of one verification pass over a scan's findings. */
-export interface VerificationSummary {
+export const VerificationSummary = Type.Object({
 	/** Findings the provider confirmed as live credentials. */
-	verified_true: number;
+	verified_true: Type.Number(),
 	/** Findings the provider explicitly rejected. */
-	verified_false: number;
+	verified_false: Type.Number(),
 	/** Findings whose verification could not be determined (network error, timeout, unexpected status). */
-	verified_unknown: number;
+	verified_unknown: Type.Number(),
 	/** Findings with a shape no enabled verifier claims. */
-	unverified: number;
+	unverified: Type.Number(),
 	/** Actual network probes issued (distinct value+verifier pairs; repeats reuse the first outcome). */
-	probes_issued: number;
-}
+	probes_issued: Type.Number(),
+});
+export type VerificationSummary = Static<typeof VerificationSummary>;
 
 /**
  * Verify a scan's findings against their issuing providers.

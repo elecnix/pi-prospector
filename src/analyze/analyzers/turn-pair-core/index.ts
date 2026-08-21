@@ -18,11 +18,29 @@ import type {
 	PromptVersion,
 	SourceRef,
 } from "../../types.js";
+import { Type, type Static } from "typebox";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { buildTurnPairs, type TurnPair } from "./build.js";
 import { classifyCorrection, detectRepetition } from "./patterns.js";
 import { DEFAULT_TURN_PAIR_CORE_CONFIG, type TurnPairCoreConfig } from "./config.js";
+
+export const TurnPairCoreProperties = Type.Object({
+	pair_index: Type.Number(),
+	user_message_id: Type.String(),
+	correction_detected: Type.Boolean(),
+	correction_type: Type.Union([Type.String(), Type.Null()]),
+	correction_patterns: Type.Array(Type.String()),
+	correction_text: Type.Union([Type.String(), Type.Null()]),
+	tool_call_count: Type.Number(),
+	tool_failure_count: Type.Number(),
+	tool_result_bytes: Type.Number(),
+	tool_waste_bytes: Type.Number(),
+	empty_response: Type.Boolean(),
+	friction_score: Type.Number(),
+	high_signal: Type.Boolean(),
+});
+export type TurnPairCoreProperties = Static<typeof TurnPairCoreProperties>;
 
 export const TURN_PAIR_CORE_DEF: AnalyzerDef = {
 	id: "turn-pair-core",
@@ -31,6 +49,7 @@ export const TURN_PAIR_CORE_DEF: AnalyzerDef = {
 		"Scores every user→assistant turn pair deterministically (corrections, tool failures, empty replies, wasted tool output) and extracts a compact tool-action trace — call names, truncated arguments, and failed-result error heads — for downstream analyzers. No LLM; flags high-signal pairs.",
 	anchorSpan: "pair",
 	dependencies: [],
+	outputSchema: TurnPairCoreProperties,
 };
 
 export const TURN_PAIR_CORE_VERSION: AnalyzerVersion = {
@@ -40,22 +59,6 @@ export const TURN_PAIR_CORE_VERSION: AnalyzerVersion = {
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-pair-core/index.ts",
 };
-
-export interface TurnPairCoreProperties {
-	pair_index: number;
-	user_message_id: string;
-	correction_detected: boolean;
-	correction_type: string | null;
-	correction_patterns: string[];
-	correction_text: string | null;
-	tool_call_count: number;
-	tool_failure_count: number;
-	tool_result_bytes: number;
-	tool_waste_bytes: number;
-	empty_response: boolean;
-	friction_score: number;
-	high_signal: boolean;
-}
 
 export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairCoreProperties {
 	const isRepetition = detectRepetition(pair.userText, pair.priorUserText);

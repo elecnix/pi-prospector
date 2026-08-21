@@ -14,13 +14,16 @@
  * corpus. Tokens are recorded everywhere.
  */
 
+import { Type, type Static } from "typebox";
+
 /** Input-token equivalents per token of each kind. */
-export interface UnitWeights {
-	input: number;
-	output: number;
-	cache_read: number;
-	cache_write: number;
-}
+export const UnitWeights = Type.Object({
+	input: Type.Number(),
+	output: Type.Number(),
+	cache_read: Type.Number(),
+	cache_write: Type.Number(),
+});
+export type UnitWeights = Static<typeof UnitWeights>;
 
 /** Equivalents in one MITE. */
 export const EQUIVALENTS_PER_MITE = 1_000_000;

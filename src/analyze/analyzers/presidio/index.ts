@@ -56,7 +56,20 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { DEFAULT_PRESIDIO_CONFIG, type PresidioConfig } from "./config.js";
-import { detectPii, type PiiFinding, type PiiScanResult } from "./detectors.js";
+import { detectPii, PiiScanResult } from "./detectors.js";
+import { Type, type Static } from "typebox";
+
+/** The node content: the presidio scan result plus the session-level envelope fields. */
+export const PresidioProperties = Type.Object({
+	...PiiScanResult.properties,
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any PII findings recorded? */
+	has_pii: Type.Boolean(),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+});
+export type PresidioProperties = Static<typeof PresidioProperties>;
 
 export const PRESIDIO_DEF: AnalyzerDef = {
 	id: "presidio",
@@ -65,6 +78,7 @@ export const PRESIDIO_DEF: AnalyzerDef = {
 		"Detects personally identifiable information in session transcripts with Presidio-method pattern recognizers and mandatory checksum validators (Luhn credit cards, mod-97 IBANs, SSN validity rules), scored and filtered per entity type. NER deferred — deterministic only. Apache-2.0 method port; no upstream code. Never stores the matched value.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: PresidioProperties,
 };
 
 export const PRESIDIO_VERSION: AnalyzerVersion = {
@@ -80,32 +94,6 @@ export const PRESIDIO_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/presidio/index.ts",
 };
 
-export interface PresidioProperties {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any PII findings recorded? */
-	has_pii: boolean;
-	/** Total findings, after deny/allow/score filtering and capping. */
-	pii_count: number;
-	/** The findings, capped at `maxMatchesPerField` per field. */
-	piis: PiiFinding[];
-	/** Matches dropped for exceeding `maxMatchesPerField` in a field. */
-	truncated_matches: number;
-	/** Matches dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_matches: number;
-	/** Matches below the configured score floor (deny-listed values excepted). */
-	below_score_matches: number;
-	/** Candidates dropped by a mandatory checksum validator. */
-	invalid_matches: number;
-	/** Candidates subsumed by a longer overlapping match. */
-	overlap_matches: number;
-	/** Findings per entity type. */
-	entity_counts: Record<string, number>;
-	/** Distinct message ids that contained at least one finding. */
-	affected_message_ids: string[];
-	/** Total messages scanned. */
-	message_count: number;
-}
 
 // ──────────────────────────── analyzer ────────────────────────────
 

@@ -24,6 +24,8 @@
  * `detectors.ts`.
  */
 
+import { Type, type Static } from "typebox";
+
 // ──────────────────────────── kinds ────────────────────────────
 
 /**
@@ -31,13 +33,15 @@
  * recognise more than one kind (the containerfile extractor yields both
  * `dockerfile` and `compose` candidates).
  */
-export type ArtifactKind =
-	| "dockerfile"
-	| "compose"
-	| "dotenv"
-	| "build-log"
-	| "ci-log"
-	| "shell-export";
+export const ArtifactKind = Type.Union([
+	Type.Literal("dockerfile"),
+	Type.Literal("compose"),
+	Type.Literal("dotenv"),
+	Type.Literal("build-log"),
+	Type.Literal("ci-log"),
+	Type.Literal("shell-export"),
+]);
+export type ArtifactKind = Static<typeof ArtifactKind>;
 
 /** All artifact kinds, in stable order (for counts and config validation). */
 export const ARTIFACT_KINDS: readonly ArtifactKind[] = [

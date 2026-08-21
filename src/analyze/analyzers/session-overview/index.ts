@@ -37,7 +37,7 @@ import {
 	buildReducePrompt,
 	parseReduceResponse,
 	parseReduceObject,
-	type SessionOverviewProperties,
+	SessionOverviewProperties,
 } from "./prompt-reduce.js";
 import { DEFAULT_SESSION_OVERVIEW_CONFIG, type SessionOverviewConfig } from "./config.js";
 import {
@@ -53,6 +53,7 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, tool-trajectory, failure-modes, turn-frustration, and user-reply-acts nodes; always emits a node, even for clean sessions.",
 	anchorSpan: "full_session",
 	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id, FAILURE_MODES_DEF.id, TURN_FRUSTRATION_DEF.id, "user-reply-acts"],
+	outputSchema: SessionOverviewProperties,
 };
 
 export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {

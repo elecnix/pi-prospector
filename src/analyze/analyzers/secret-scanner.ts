@@ -16,11 +16,17 @@
  */
 
 import type { MessageRow } from "../types.js";
+import { Type, type Static } from "typebox";
 import { shortHash } from "../input-hash.js";
 
 // ──────────────────────────── rules ────────────────────────────
 
-export type LeakSeverity = "medium" | "high" | "critical";
+export const LeakSeverity = Type.Union([
+	Type.Literal("medium"),
+	Type.Literal("high"),
+	Type.Literal("critical"),
+]);
+export type LeakSeverity = Static<typeof LeakSeverity>;
 
 /**
  * Nosey Parker's passive/active confidence distinction, ported for every
@@ -30,7 +36,8 @@ export type LeakSeverity = "medium" | "high" | "critical";
  * from the hand-written and gitleaks catalogues predate the field and read
  * as `passive` when absent.
  */
-export type LeakConfidence = "passive" | "active";
+export const LeakConfidence = Type.Union([Type.Literal("passive"), Type.Literal("active")]);
+export type LeakConfidence = Static<typeof LeakConfidence>;
 
 /** Rank used to compare a rule's confidence against a configured floor. */
 export const CONFIDENCE_RANK: Record<LeakConfidence, number> = {
@@ -63,56 +70,64 @@ export interface SecretLeakRule {
 }
 
 /** Which message field a secret was found in. */
-export type LeakField = "content_text" | "content_thinking" | "tool_calls" | "tool_results";
+export const LeakField = Type.Union([
+	Type.Literal("content_text"),
+	Type.Literal("content_thinking"),
+	Type.Literal("tool_calls"),
+	Type.Literal("tool_results"),
+]);
+export type LeakField = Static<typeof LeakField>;
 
-export interface SecretLeakFinding {
+export const SecretLeakFinding = Type.Object({
 	/** The rule that matched. */
-	rule_id: string;
+	rule_id: Type.String(),
 	/** Human-readable rule label. */
-	rule_label: string;
+	rule_label: Type.String(),
 	/** Rule severity. */
-	severity: LeakSeverity;
+	severity: LeakSeverity,
 	/** Rule confidence (`passive` when the rule declares none). */
-	confidence: LeakConfidence;
+	confidence: LeakConfidence,
 	/** Message id the leak appeared in. */
-	message_id: string;
+	message_id: Type.String(),
 	/** Which message field contained the leak. */
-	field: LeakField;
+	field: LeakField,
 	/**
 	 * First and last few characters of the matched value, middle truncated.
 	 * Never the full secret.
 	 */
-	redacted_preview: string;
+	redacted_preview: Type.String(),
 	/**
 	 * Short SHA-256 fingerprint (16 hex chars) of the full matched value, for
 	 * deduplication and allowlisting without storing the secret.
 	 */
-	fingerprint: string;
+	fingerprint: Type.String(),
 	/** Character offset of the match within the field (for `prospect show`). */
-	match_index: number;
+	match_index: Type.Number(),
 	/**
 	 * Byte length of the matched value, so the magnitude is visible without the
 	 * content. For capture-group rules this is the captured group length.
 	 */
-	match_length: number;
-}
+	match_length: Type.Number(),
+});
+export type SecretLeakFinding = Static<typeof SecretLeakFinding>;
 
-export interface SecretLeakScanResult {
+export const SecretLeakScanResult = Type.Object({
 	/** Total findings, after allowlisting and severity filtering. */
-	leak_count: number;
+	leak_count: Type.Number(),
 	/** The findings, capped at `maxMatchesPerField` per field. */
-	leaks: SecretLeakFinding[];
+	leaks: Type.Array(SecretLeakFinding),
 	/** Count of matches dropped for exceeding `maxMatchesPerField` in a field. */
-	truncated_matches: number;
+	truncated_matches: Type.Number(),
 	/** Count of matches dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_matches: number;
+	allowlisted_matches: Type.Number(),
 	/** Count of matches dropped by the caller's exclusion filter, when one was supplied. */
-	filtered_matches: number;
+	filtered_matches: Type.Number(),
 	/** Findings per rule id. */
-	rule_counts: Record<string, number>;
+	rule_counts: Type.Record(Type.String(), Type.Number()),
 	/** Distinct message ids that contained at least one leak. */
-	affected_message_ids: string[];
-}
+	affected_message_ids: Type.Array(Type.String()),
+});
+export type SecretLeakScanResult = Static<typeof SecretLeakScanResult>;
 
 /**
  * The config surface every detector analyzer exposes. Structurally satisfied

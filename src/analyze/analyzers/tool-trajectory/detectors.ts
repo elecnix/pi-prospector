@@ -7,30 +7,38 @@
  */
 
 import type { NormalizedToolCall } from "./arg-parser.js";
+import { Type, type Static } from "typebox";
 
-export type TrajectoryPattern = "stuck-loop" | "polling-loop" | "oscillation" | "pre-flight-gap";
+export const TrajectoryPattern = Type.Union([
+	Type.Literal("stuck-loop"),
+	Type.Literal("polling-loop"),
+	Type.Literal("oscillation"),
+	Type.Literal("pre-flight-gap"),
+]);
+export type TrajectoryPattern = Static<typeof TrajectoryPattern>;
 
-export interface TrajectorySignal {
+export const TrajectorySignal = Type.Object({
 	/** Which pattern was detected. */
-	pattern: TrajectoryPattern;
+	pattern: TrajectoryPattern,
 	/** The tool name involved. */
-	tool: string;
+	tool: Type.String(),
 	/** Normalised arguments of the representative call. */
-	normalizedArgs: string;
+	normalizedArgs: Type.String(),
 	/** How many times the pattern repeated. */
-	count: number;
+	count: Type.Number(),
 	/** Message ids of the participating tool calls. */
-	messageIds: string[];
+	messageIds: Type.Array(Type.String()),
 	/**
 	 * The billed dollar cost of the participating assistant turns, summed
 	 * (issue #71). Null when none of the participants has a recorded cost — a
 	 * missing cost is never invented, and a total of 0 reads as "no amount"
 	 * (see src/sync/parser.ts extractCostUsd).
 	 */
-	cost_usd: number | null;
+	cost_usd: Type.Union([Type.Number(), Type.Null()]),
 	/** Human-readable description. */
-	description: string;
-}
+	description: Type.String(),
+});
+export type TrajectorySignal = Static<typeof TrajectorySignal>;
 
 export interface ToolCallWithResult {
 	call: NormalizedToolCall;

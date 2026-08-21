@@ -27,8 +27,40 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { buildToolStream } from "../../tool-stream.js";
 import { normalizeToolCall } from "./arg-parser.js";
-import { detectAllSignals, type TrajectorySignal, type ToolCallWithResult } from "./detectors.js";
+import { detectAllSignals, TrajectorySignal, type ToolCallWithResult } from "./detectors.js";
 import { DEFAULT_TOOL_TRAJECTORY_CONFIG, type ToolTrajectoryConfig } from "./config.js";
+import { Type, type Static } from "typebox";
+
+export const ToolTrajectoryProperties = Type.Object({
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** All trajectory signals detected. */
+	signals: Type.Array(TrajectorySignal),
+	/** Aggregate friction contribution from trajectory signals. */
+	trajectory_friction_score: Type.Number(),
+	/**
+	 * The sum of the billed dollar cost of the signals that could be priced (the
+	 * sum of each priced signal's `cost_usd`), or null when none could be priced.
+	 * Money is never guessed: an unpriced signal contributes nothing.
+	 * When `unpriced_signal_count > 0` this is a LOWER BOUND of the session's true
+	 * trajectory cost — it is never presented as a complete total when any signal
+	 * is unpriced. See `priced_signal_count`/`unpriced_signal_count` for coverage.
+	 */
+	trajectory_cost_usd: Type.Union([Type.Number(), Type.Null()]),
+	/**
+	 * How many of `signals` carry a recorded cost. Together with
+	 * `unpriced_signal_count` this states what fraction of the trajectory could
+	 * be priced, so a partial pricing is visible rather than silently omitted.
+	 */
+	priced_signal_count: Type.Number(),
+	/** How many of `signals` could not be priced (no recorded cost on the turns). */
+	unpriced_signal_count: Type.Number(),
+	/** Counts per pattern. */
+	pattern_counts: Type.Record(Type.String(), Type.Number()),
+	/** Total number of tool calls analysed. */
+	tool_call_count: Type.Number(),
+});
+export type ToolTrajectoryProperties = Static<typeof ToolTrajectoryProperties>;
 
 export const TOOL_TRAJECTORY_DEF: AnalyzerDef = {
 	id: "tool-trajectory",
@@ -37,6 +69,7 @@ export const TOOL_TRAJECTORY_DEF: AnalyzerDef = {
 		"Detects stuck-loops, polling-loops, oscillation, and pre-flight gaps in the ordered tool-call stream. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [TURN_PAIR_CORE_DEF.id],
+	outputSchema: ToolTrajectoryProperties,
 };
 
 export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
@@ -67,36 +100,6 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
 };
-
-export interface ToolTrajectoryProperties {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** All trajectory signals detected. */
-	signals: TrajectorySignal[];
-	/** Aggregate friction contribution from trajectory signals. */
-	trajectory_friction_score: number;
-	/**
-	 * The sum of the billed dollar cost of the signals that could be priced (the
-	 * sum of each priced signal's `cost_usd`), or null when none could be priced.
-	 * Money is never guessed: an unpriced signal contributes nothing.
-	 * When `unpriced_signal_count > 0` this is a LOWER BOUND of the session's true
-	 * trajectory cost — it is never presented as a complete total when any signal
-	 * is unpriced. See `priced_signal_count`/`unpriced_signal_count` for coverage.
-	 */
-	trajectory_cost_usd: number | null;
-	/**
-	 * How many of `signals` carry a recorded cost. Together with
-	 * `unpriced_signal_count` this states what fraction of the trajectory could
-	 * be priced, so a partial pricing is visible rather than silently omitted.
-	 */
-	priced_signal_count: number;
-	/** How many of `signals` could not be priced (no recorded cost on the turns). */
-	unpriced_signal_count: number;
-	/** Counts per pattern. */
-	pattern_counts: Record<string, number>;
-	/** Total number of tool calls analysed. */
-	tool_call_count: number;
-}
 
 // ──────────────────────────── the action stream ────────────────────────────
 

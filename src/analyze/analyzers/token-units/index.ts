@@ -24,7 +24,7 @@ import type {
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { computeConfigHash } from "../../input-hash.js";
 import { DEFAULT_TOKEN_UNITS_CONFIG, DEFAULT_WEIGHTS, type TokenUnitsConfig } from "./config.js";
-import { foldSessionUnits, type UsageRow } from "./fold.js";
+import { foldSessionUnits, TokenUnitsProperties, type UsageRow } from "./fold.js";
 import { classCostsOutput, reportOutput } from "./report.js";
 
 export * from "./config.js";
@@ -42,6 +42,7 @@ export const tokenUnitsAnalyzer: Analyzer = {
 			"Prices a session in MITE (Million Input-Token Equivalents): input x1, output x15, cache-read x0.1, cache-write x1.25. De-duplicates Claude Code's per-content-block rows by provider_message_id so one API call counts once, and attributes spend to request segments. Renders the daily report and the class-cost list. No LLM.",
 		anchorSpan: "full_session",
 		dependencies: [],
+		outputSchema: TokenUnitsProperties,
 	},
 	version: {
 		analyzerId: "token-units",

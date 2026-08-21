@@ -34,7 +34,7 @@ import {
 	buildClassifyPrompt,
 	parseClassifyResponse,
 	parseClassifyObject,
-	type TurnPairLLMProperties,
+	TurnPairLLMProperties,
 	type ToolCallEvidence,
 	type ToolResultEvidence,
 } from "./prompt.js";
@@ -47,6 +47,7 @@ export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 		"Classifies sentiment and friction type for high-signal turn pairs with a cheap model, given the user/assistant text plus the turn's actual tool calls and error heads so attribution lands on the command at fault.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_FRUSTRATION_DEF.id],
+	outputSchema: TurnPairLLMProperties,
 };
 
 export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {

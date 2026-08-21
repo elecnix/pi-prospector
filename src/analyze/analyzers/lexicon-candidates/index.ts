@@ -26,8 +26,21 @@ import type {
 } from "../../types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { rankTerms, tokenize, type TermCount } from "./tokenize.js";
+import { rankTerms, tokenize, TermCount } from "./tokenize.js";
 import { DEFAULT_LEXICON_CANDIDATES_CONFIG, type LexiconCandidatesConfig } from "./config.js";
+import { Type, type Static } from "typebox";
+
+export const LexiconCandidatesProperties = Type.Object({
+	/** Nominated single terms, most frequent first. */
+	terms: Type.Array(TermCount),
+	/** How many user messages were read. */
+	user_message_count: Type.Number(),
+	/** Distinct tokens seen before the cap was applied. */
+	distinct_token_count: Type.Number(),
+	/** Total token occurrences, for a sense of how much text backed the nomination. */
+	total_token_count: Type.Number(),
+});
+export type LexiconCandidatesProperties = Static<typeof LexiconCandidatesProperties>;
 
 export const LEXICON_CANDIDATES_DEF: AnalyzerDef = {
 	id: "lexicon-candidates",
@@ -36,6 +49,7 @@ export const LEXICON_CANDIDATES_DEF: AnalyzerDef = {
 		"Tokenises a session's user messages and nominates the distinct terms worth adjudicating for the frustration lexicon, ranked by frequency and capped per session. Language-blind: no stopwords, no stemming, only a shape filter that drops code, paths, and identifiers. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: LexiconCandidatesProperties,
 };
 
 export const LEXICON_CANDIDATES_VERSION: AnalyzerVersion = {
@@ -52,17 +66,6 @@ export const LEXICON_CANDIDATES_VERSION: AnalyzerVersion = {
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/lexicon-candidates/index.ts",
 };
-
-export interface LexiconCandidatesProperties {
-	/** Nominated single terms, most frequent first. */
-	terms: TermCount[];
-	/** How many user messages were read. */
-	user_message_count: number;
-	/** Distinct tokens seen before the cap was applied. */
-	distinct_token_count: number;
-	/** Total token occurrences, for a sense of how much text backed the nomination. */
-	total_token_count: number;
-}
 
 /** Roles whose text counts as the user's own words. */
 const USER_ROLES = new Set<string>(["user", "custom_message"]);

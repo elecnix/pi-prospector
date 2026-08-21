@@ -46,6 +46,27 @@ import {
 } from "../frustration-lexicon/index.js";
 import { DEFAULT_TURN_FRUSTRATION_CONFIG, type TurnFrustrationConfig } from "./config.js";
 import { getMutedTerms } from "../../../db/assertions.js";
+import { Type, type Static } from "typebox";
+
+/** Where a hit came from. */
+export const SignalSource = Type.Union([Type.Literal("lexicon"), Type.Literal("paralinguistic")]);
+export type SignalSource = Static<typeof SignalSource>;
+
+export const TurnFrustrationProperties = Type.Object({
+	user_message_id: Type.String(),
+	pair_index: Type.Number(),
+	signal_source: SignalSource,
+	/** The matched term, or the marker name for a paralinguistic hit. */
+	signal: Type.String(),
+	polarity: Type.String(),
+	category: Type.String(),
+	language: Type.String(),
+	/** Occurrences within the turn (always 1 for a paralinguistic marker). */
+	count: Type.Number(),
+	/** Friction weight this hit contributes. */
+	weight: Type.Number(),
+});
+export type TurnFrustrationProperties = Static<typeof TurnFrustrationProperties>;
 
 export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 	id: "turn-frustration",
@@ -54,6 +75,7 @@ export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 		"Matches each turn's user text against the corpus-wide learned lexicon and against lexicon-free markers (shouting, repeated punctuation, elongation), emitting one node per (turn, signal). No LLM. Detects verbal frustration in any language, including from users whose vocabulary the lexicon has never seen.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id, FRUSTRATION_LEXICON_DEF.id],
+	outputSchema: TurnFrustrationProperties,
 };
 
 export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
@@ -68,24 +90,6 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
 
-/** Where a hit came from. */
-export type SignalSource = "lexicon" | "paralinguistic";
-
-export interface TurnFrustrationProperties {
-	user_message_id: string;
-	pair_index: number;
-	signal_source: SignalSource;
-	/** The matched term, or the marker name for a paralinguistic hit. */
-	signal: string;
-	polarity: string;
-	category: string;
-	language: string;
-	/** Occurrences within the turn (always 1 for a paralinguistic marker). */
-	count: number;
-	/** Friction weight this hit contributes. */
-	weight: number;
-}
-
 /**
  * The `term`-kind source id for a lexicon-free marker. Marker hits are keyed the
  * same way lexicon hits are, so a marker's identity is stable corpus-wide even
@@ -99,7 +103,6 @@ interface HitMeta extends TurnFrustrationProperties {
 	/** Output key of the lexicon node that justified a lexicon hit. */
 	termOutputKey: string | null;
 }
-
 /** The usable lexicon: confident, non-neutral verdicts, newest per term. */
 function usableLexicon(
 	nodes: readonly AnalysisNodeRow[],

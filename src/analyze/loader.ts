@@ -152,6 +152,23 @@ export async function loadCustomAnalyzers(opts: LoadOptions): Promise<LoadResult
 	return { loaded, errors };
 }
 
+/**
+ * Shape-check a declared outputSchema. It must be a JSON-Schema object shape:
+ * `type: "object"` with a `properties` map. Returns an error string, or null
+ * when the declaration is well-formed.
+ */
+export function validateOutputSchema(schema: unknown): string | null {
+	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+		return "must be a TypeBox object schema (Type.Object({...}))";
+	}
+	const s = schema as Record<string, unknown>;
+	if (s["type"] !== "object") return `'type' must be "object" (wrap the properties in Type.Object)`;
+	if (typeof s["properties"] !== "object" || s["properties"] === null || Array.isArray(s["properties"])) {
+		return "must declare a `properties` map (the node content properties it emits)";
+	}
+	return null;
+}
+
 /** Dynamically import an analyzer module with an mtime cache-busting query. */
 async function importAnalyzer(file: string): Promise<Analyzer> {
 	const mtime = fs.statSync(file).mtimeMs;
@@ -175,6 +192,13 @@ export function validateAnalyzer(a: Analyzer): string | null {
 	const id = (a.def as { id?: unknown }).id;
 	const idLabel = typeof id === "string" && id.length > 0 ? id : "?";
 	if (!Check(AnalyzerDef, a.def)) return `invalid \`def\` (needs id, label, description, anchorSpan, dependencies[]) for '${idLabel}'`;
+	// A declared outputSchema is the analyzer's promise about what its nodes
+	// carry; checking it here turns a malformed declaration into a load-time
+	// error instead of a shape drift discovered later by sampling the graph.
+	if (a.def.outputSchema !== undefined) {
+		const schemaError = validateOutputSchema(a.def.outputSchema);
+		if (schemaError) return `analyzer '${a.def.id}': invalid \`def.outputSchema\` — ${schemaError}`;
+	}
 	if (!a.version || typeof a.version !== "object") return `missing \`version\` for '${a.def.id}'`;
 	if (!Check(AnalyzerVersion, a.version)) return `invalid \`version\` (needs analyzerId, major, minor, implementationKind) for '${a.def.id}'`;
 	if (a.version.analyzerId !== a.def.id) return `version.analyzerId '${a.version.analyzerId}' does not match def.id '${a.def.id}'`;

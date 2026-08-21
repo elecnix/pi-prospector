@@ -61,8 +61,21 @@ import {
 } from "./config.js";
 import {
 	detectDetectSecretsLeaks,
-	type DetectSecretsScanResult,
+	DetectSecretsScanResult,
 } from "./detectors.js";
+import { Type, type Static } from "typebox";
+
+/** The node content: the detect-secrets scan result plus the session-level envelope fields. */
+export const DetectSecretsProperties = Type.Object({
+	...DetectSecretsScanResult.properties,
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any leaks found? */
+	has_leaks: Type.Boolean(),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+});
+export type DetectSecretsProperties = Static<typeof DetectSecretsProperties>;
 
 export const DETECT_SECRETS_DEF: AnalyzerDef = {
 	id: "detect-secrets",
@@ -71,6 +84,7 @@ export const DETECT_SECRETS_DEF: AnalyzerDef = {
 		"Scans session transcripts with Yelp detect-secrets' method — keyword-context and high-entropy candidate generators followed by its false-positive exclusion heuristics — and records redacted findings. No LLM; never stores the matched secret.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: DetectSecretsProperties,
 };
 
 export const DETECT_SECRETS_VERSION: AnalyzerVersion = {
@@ -86,14 +100,6 @@ export const DETECT_SECRETS_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/detect-secrets/index.ts",
 };
 
-export interface DetectSecretsProperties extends DetectSecretsScanResult {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any leaks found? */
-	has_leaks: boolean;
-	/** Total messages scanned. */
-	message_count: number;
-}
 
 // ──────────────────────────── analyzer ────────────────────────────
 

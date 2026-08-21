@@ -22,12 +22,20 @@
  * a pipe table is never re-reported as a `|`-delimited CSV block.
  */
 
+import { Type } from "typebox";
+
 import type { LeakField } from "../secret-scanner.js";
 import type { PiicatcherConfig } from "./config.js";
 
 /** The tabular fragment kinds a finding can name. */
 export const FRAGMENT_KINDS = ["csv", "json", "sql-table"] as const;
 export type FragmentKind = (typeof FRAGMENT_KINDS)[number];
+
+export const FragmentKindSchema = Type.Union([
+	Type.Literal("csv"),
+	Type.Literal("json"),
+	Type.Literal("sql-table"),
+]);
 
 /** One detected structured-data block. Carries positions, never raw PII onward — rows hold field text by design of the caller (in-memory only). */
 export interface TabularFragment {

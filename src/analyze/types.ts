@@ -64,6 +64,19 @@ export const AnalyzerDef = Type.Object({
 	description: Type.String(),
 	anchorSpan: AnchorSpan,
 	dependencies: Type.Array(Type.String()),
+	/**
+	 * The shape of what this analyzer emits: a TypeBox object schema whose
+	 * properties are exactly the top-level properties its nodes' `contentJson`
+	 * carry. Declaration data, not behaviour — the framework never enforces it
+	 * at write time; it exists so the surface can describe itself
+	 * (`prospect analyzers list --schema <id>`) and so the custom-analyzer
+	 * authoring loop can catch a malformed declaration at load/validate time
+	 * instead of leaving shape drift to be discovered by sampling the DB.
+	 *
+	 * Optional for backward compatibility with already-registered out-of-tree
+	 * analyzers; every built-in declares one.
+	 */
+	outputSchema: Type.Optional(Type.Object({}, { additionalProperties: true })),
 });
 export type AnalyzerDef = Static<typeof AnalyzerDef>;
 

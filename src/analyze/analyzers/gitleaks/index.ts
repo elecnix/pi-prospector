@@ -37,7 +37,20 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { DEFAULT_GITLEAKS_CONFIG, type GitleaksConfig } from "./config.js";
-import { detectGitleaksLeaks, type SecretLeakScanResult } from "./detectors.js";
+import { detectGitleaksLeaks, SecretLeakScanResult } from "./detectors.js";
+import { Type, type Static } from "typebox";
+
+/** The node content: the shared scan result plus the session-level envelope fields. */
+export const GitleaksProperties = Type.Object({
+	...SecretLeakScanResult.properties,
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any leaks found? */
+	has_leaks: Type.Boolean(),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+});
+export type GitleaksProperties = Static<typeof GitleaksProperties>;
 
 export const GITLEAKS_DEF: AnalyzerDef = {
 	id: "gitleaks",
@@ -46,6 +59,7 @@ export const GITLEAKS_DEF: AnalyzerDef = {
 		"Scans session transcripts with the ported gitleaks rule catalogue (provider tokens, assignment-context secrets) and records redacted findings. No LLM; never stores the matched secret.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: GitleaksProperties,
 };
 
 export const GITLEAKS_VERSION: AnalyzerVersion = {
@@ -59,15 +73,7 @@ export const GITLEAKS_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/gitleaks/index.ts",
 };
 
-export interface GitleaksProperties extends SecretLeakScanResult {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any leaks found? */
-	has_leaks: boolean;
-	/** Total messages scanned. */
-	message_count: number;
-}
-
+// ──────────────────────────── analyzer ────────────────────────────
 // ──────────────────────────── analyzer ────────────────────────────
 
 export const gitleaksAnalyzer: Analyzer = {

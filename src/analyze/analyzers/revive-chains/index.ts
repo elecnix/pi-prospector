@@ -59,9 +59,10 @@ import {
 	chainLengthHistogram,
 	detectReviveChains,
 	rollupDelegatedUsage,
-	type DelegatedUsageRollup,
-	type ReviveChain,
+	DelegatedUsageRollup,
+	ReviveChain,
 } from "./detect.js";
+import { Type, type Static } from "typebox";
 
 export * from "./config.js";
 export * from "./detect.js";
@@ -79,6 +80,44 @@ const SELF_ROWS_SELECT =
 	"SELECT id, role, timestamp, usage, model, provider_message_id, cost_usd " +
 	"FROM messages WHERE session_id = ? ORDER BY rowid ASC";
 
+/** The parent session's own spend, read from its transcript — the `self` column. */
+export const SelfUsage = Type.Object({
+	input: Type.Number(),
+	output: Type.Number(),
+	cache_read: Type.Number(),
+	cache_write: Type.Number(),
+	/** Billed parent calls after de-duplication by provider message id. */
+	calls: Type.Number(),
+	/** Parent calls whose transcript recorded no usage — unknown, never zero. */
+	calls_without_usage: Type.Number(),
+	/**
+	 * De-duplicated recorded cost, or null when no parent call recorded one.
+	 * De-duplicated the same way the token fold de-duplicates: one response,
+	 * many content-block rows, counted once.
+	 */
+	cost_usd: Type.Union([Type.Number(), Type.Null()]),
+});
+export type SelfUsage = Static<typeof SelfUsage>;
+
+export const ReviveChainsProperties = Type.Object({
+	session_id: Type.String(),
+	chain_count: Type.Number(),
+	chains: Type.Array(ReviveChain),
+	chain_length_histogram: Type.Record(Type.String(), Type.Number()),
+	/** Revived results across all chains. */
+	revived_result_count: Type.Number(),
+	/** Sum of every chain's redundant spawns — the headline waste figure. */
+	redundant_spawn_count: Type.Number(),
+	max_chain_length: Type.Number(),
+	usage_split: Type.Object({
+		self: SelfUsage,
+		delegated: DelegatedUsageRollup,
+	}),
+	/** The proposed remedy, in prose. Present when any chain reached the config threshold. */
+	remedy: Type.Union([Type.String(), Type.Null()]),
+});
+export type ReviveChainsProperties = Static<typeof ReviveChainsProperties>;
+
 export const REVIVE_CHAINS_DEF: AnalyzerDef = {
 	id: "revive-chains",
 	label: "Revive Chains (deterministic)",
@@ -91,6 +130,7 @@ export const REVIVE_CHAINS_DEF: AnalyzerDef = {
 		"never suggests installing anything. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: ReviveChainsProperties,
 };
 
 export const REVIVE_CHAINS_VERSION: AnalyzerVersion = {
@@ -102,42 +142,6 @@ export const REVIVE_CHAINS_VERSION: AnalyzerVersion = {
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/revive-chains/index.ts",
 };
-
-/** The parent session's own spend, read from its transcript — the `self` column. */
-export interface SelfUsage {
-	input: number;
-	output: number;
-	cache_read: number;
-	cache_write: number;
-	/** Billed parent calls after de-duplication by provider message id. */
-	calls: number;
-	/** Parent calls whose transcript recorded no usage — unknown, never zero. */
-	calls_without_usage: number;
-	/**
-	 * De-duplicated recorded cost, or null when no parent call recorded one.
-	 * De-duplicated the same way the token fold de-duplicates: one response,
-	 * many content-block rows, counted once.
-	 */
-	cost_usd: number | null;
-}
-
-export interface ReviveChainsProperties {
-	session_id: string;
-	chain_count: number;
-	chains: ReviveChain[];
-	chain_length_histogram: Record<string, number>;
-	/** Revived results across all chains. */
-	revived_result_count: number;
-	/** Sum of every chain's redundant spawns — the headline waste figure. */
-	redundant_spawn_count: number;
-	max_chain_length: number;
-	usage_split: {
-		self: SelfUsage;
-		delegated: DelegatedUsageRollup;
-	};
-	/** The proposed remedy, in prose. Present when any chain reached the config threshold. */
-	remedy: string | null;
-}
 
 function resolveConfig(raw: unknown): ReviveChainsConfig {
 	return (raw as ReviveChainsConfig) ?? DEFAULT_REVIVE_CHAINS_CONFIG;

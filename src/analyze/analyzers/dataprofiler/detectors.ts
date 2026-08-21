@@ -24,11 +24,12 @@ import {
 	DEFAULT_DATAPROFILER_CONFIG,
 	type DataprofilerConfig,
 } from "./config.js";
-import { detectFileTouches, type FileFormat } from "./file-touches.js";
-import { parseTable, profileTable, VERDICT_SEVERITY, type SensitiveColumn } from "./profile.js";
+import { detectFileTouches, FileFormatSchema, type FileFormat } from "./file-touches.js";
+import { parseTable, profileTable, VERDICT_SEVERITY, SensitiveColumn, type SensitiveColumn as TSensitiveColumn } from "./profile.js";
+import { Type, type Static } from "typebox";
 
 export { DEFAULT_DATAPROFILER_CONFIG, DataprofilerConfigSchema, type DataprofilerConfig } from "./config.js";
-export { detectFileTouches, FILE_FORMATS, type FileFormat, type FileTouch } from "./file-touches.js";
+export { detectFileTouches, FILE_FORMATS, FileFormatSchema, type FileFormat, type FileTouch } from "./file-touches.js";
 export {
 	parseTable,
 	profileTable,
@@ -36,64 +37,66 @@ export {
 	VERDICT_SEVERITY,
 	type ColumnVerdict,
 	type ProfiledTable,
-	type SensitiveColumn,
+	SensitiveColumn,
 } from "./profile.js";
 export { HEADER_LABEL_RULES, inferHeaderLabels } from "./headers.js";
 
 /** One file-level finding: which file, how touched, which columns carry PII. */
-export interface FileProfileFinding {
+export const FileProfileFinding = Type.Object({
 	/** The file path, verbatim from the tool-call arguments. */
-	path: string;
+	path: Type.String(),
 	/** Read or write. */
-	direction: "read" | "write";
+	direction: Type.Union([Type.Literal("read"), Type.Literal("write")]),
 	/** The tabular format implied by the extension. */
-	format: FileFormat;
+	format: FileFormatSchema,
 	/** Tool that performed the touch. */
-	tool: string;
+	tool: Type.String(),
 	/** Assistant message whose tool call read/wrote the file — the anchor. */
-	message_id: string;
+	message_id: Type.String(),
 	/** Message carrying the paired result, when one arrived. */
-	result_message_id: string | null;
+	result_message_id: Type.Union([Type.String(), Type.Null()]),
 	/** Data rows in the parsed table. */
-	row_count: number;
+	row_count: Type.Number(),
 	/** Columns in the parsed table. */
-	column_count: number;
+	column_count: Type.Number(),
 	/** The sensitive columns, in column order. */
-	sensitive_columns: SensitiveColumn[];
+	sensitive_columns: Type.Array(SensitiveColumn),
 	/** Highest severity across the columns' verdicts. */
-	severity: "low" | "medium" | "high";
-}
+	severity: Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
+});
+export type FileProfileFinding = Static<typeof FileProfileFinding>;
 
-export interface DataprofilerScanResult {
+export const DataprofilerScanResult = Type.Object({
 	/** Total file findings, after per-message capping. */
-	finding_count: number;
+	finding_count: Type.Number(),
 	/** The findings, capped at `maxMatchesPerField` per message. */
-	findings: FileProfileFinding[];
+	findings: Type.Array(FileProfileFinding),
 	/** Distinct tabular files touched (any format, before profiling). */
-	files_touched: number;
+	files_touched: Type.Number(),
 	/** Touches whose content parsed into a profiled table. */
-	files_profiled: number;
+	files_profiled: Type.Number(),
 	/** Tabular-binary paths seen and deliberately not extracted. */
-	files_skipped_binary: number;
+	files_skipped_binary: Type.Number(),
 	/** Touches with no unambiguously captured content. */
-	touches_without_content: number;
+	touches_without_content: Type.Number(),
 	/** Columns examined across all profiled tables. */
-	columns_classified: number;
+	columns_classified: Type.Number(),
 	/** Columns flagged sensitive. */
-	sensitive_columns: number;
+	sensitive_columns: Type.Number(),
 	/** Columns downgraded to `label-only`. */
-	label_only_columns: number;
+	label_only_columns: Type.Number(),
 	/** Columns below every flagging rule. */
-	below_threshold_columns: number;
+	below_threshold_columns: Type.Number(),
 	/** Values dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_values: number;
+	allowlisted_values: Type.Number(),
 	/** Findings dropped for exceeding `maxMatchesPerField` on a message. */
-	truncated_matches: number;
+	truncated_matches: Type.Number(),
 	/** Profiled tables per format kind. */
-	format_counts: Record<FileFormat, number>;
+	format_counts: Type.Record(Type.String(), Type.Number()),
 	/** Distinct messages whose tool calls produced at least one finding. */
-	affected_message_ids: string[];
-}
+	affected_message_ids: Type.Array(Type.String()),
+});
+export type DataprofilerScanResult = Static<typeof DataprofilerScanResult>;
 
 function emptyFormatCounts(): Record<FileFormat, number> {
 	return { csv: 0, tsv: 0, json: 0 };

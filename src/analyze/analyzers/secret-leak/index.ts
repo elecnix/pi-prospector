@@ -39,7 +39,24 @@ import {
 	DEFAULT_SECRET_LEAK_CONFIG,
 	type SecretLeakConfig,
 } from "./config.js";
-import { detectSecretLeaks, type SecretLeakScanResult } from "./detectors.js";
+import { detectSecretLeaks, SecretLeakScanResult } from "./detectors.js";
+import { Type, type Static } from "typebox";
+
+/**
+ * The node content: the shared scan result plus the session-level envelope
+ * fields every detector analyzer adds. The scan-result properties are spread
+ * from the engine's schema so the declaration cannot drift from the engine.
+ */
+export const SecretLeakProperties = Type.Object({
+	...SecretLeakScanResult.properties,
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any leaks found? */
+	has_leaks: Type.Boolean(),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+});
+export type SecretLeakProperties = Static<typeof SecretLeakProperties>;
 
 export const SECRET_LEAK_DEF: AnalyzerDef = {
 	id: "secret-leak",
@@ -48,6 +65,7 @@ export const SECRET_LEAK_DEF: AnalyzerDef = {
 		"Scans session transcripts for high-confidence credential patterns (provider API keys, PEM private keys, signed JWTs) and records redacted findings. No LLM; never stores the matched secret.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: SecretLeakProperties,
 };
 
 export const SECRET_LEAK_VERSION: AnalyzerVersion = {
@@ -60,15 +78,7 @@ export const SECRET_LEAK_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/secret-leak/index.ts",
 };
 
-export interface SecretLeakProperties extends SecretLeakScanResult {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any leaks found? */
-	has_leaks: boolean;
-	/** Total messages scanned. */
-	message_count: number;
-}
-
+// ──────────────────────────── analyzer ────────────────────────────
 // ──────────────────────────── analyzer ────────────────────────────
 
 export const secretLeakAnalyzer: Analyzer = {

@@ -58,7 +58,20 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { DEFAULT_PIICATCHER_CONFIG, type PiicatcherConfig } from "./config.js";
-import { detectTabularPii, type ColumnFinding, type PiicatcherScanResult } from "./detectors.js";
+import { detectTabularPii, PiicatcherScanResult } from "./detectors.js";
+import { Type, type Static } from "typebox";
+
+/** The node content: the piicatcher scan result plus the session-level envelope fields. */
+export const PiicatcherProperties = Type.Object({
+	...PiicatcherScanResult.properties,
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any column findings recorded? */
+	has_findings: Type.Boolean(),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+});
+export type PiicatcherProperties = Static<typeof PiicatcherProperties>;
 
 export const PIICATCHER_DEF: AnalyzerDef = {
 	id: "piicatcher",
@@ -67,6 +80,7 @@ export const PIICATCHER_DEF: AnalyzerDef = {
 		"Detects structured PII flowing through sessions with PIICatcher's column-semantics method: tabular fragments in tool results and message text (CSV blocks, JSON record arrays, SQL result tables) are segmented into columns, each column is judged by sampling its values against the shared recognizer stack, and columns whose values match sensitive shapes above the configured ratio are reported. Apache-2.0 method port (verified against upstream); no upstream code. Never stores the matched value.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: PiicatcherProperties,
 };
 
 export const PIICATCHER_VERSION: AnalyzerVersion = {
@@ -83,32 +97,6 @@ export const PIICATCHER_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/piicatcher/index.ts",
 };
 
-export interface PiicatcherProperties {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any column findings recorded? */
-	has_findings: boolean;
-	/** Total findings, after filtering and capping. */
-	finding_count: number;
-	/** The findings, capped at `maxMatchesPerField` per field. */
-	findings: ColumnFinding[];
-	/** Findings dropped for exceeding `maxMatchesPerField` in a field. */
-	truncated_matches: number;
-	/** Sampled values dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_values: number;
-	/** Columns whose match ratio stayed below `sensitivityThreshold`. */
-	below_threshold_columns: number;
-	/** Tabular fragments detected across all scanned fields. */
-	fragments_scanned: number;
-	/** Columns examined across all fragments. */
-	columns_classified: number;
-	/** Fragments detected per format kind. */
-	format_counts: Record<string, number>;
-	/** Distinct message ids that carried at least one finding. */
-	affected_message_ids: string[];
-	/** Total messages scanned. */
-	message_count: number;
-}
 
 // ──────────────────────────── analyzer ────────────────────────────
 

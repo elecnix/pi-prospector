@@ -70,9 +70,21 @@ import {
 } from "./config.js";
 import {
 	profileSessionFiles,
-	type DataprofilerScanResult,
-	type FileProfileFinding,
+	DataprofilerScanResult,
 } from "./detectors.js";
+import { Type, type Static } from "typebox";
+
+/** The node content: the dataprofiler scan result plus the session-level envelope fields. */
+export const DataprofilerProperties = Type.Object({
+	...DataprofilerScanResult.properties,
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any file findings recorded? */
+	has_findings: Type.Boolean(),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+});
+export type DataprofilerProperties = Static<typeof DataprofilerProperties>;
 
 export const DATAPROFILER_DEF: AnalyzerDef = {
 	id: "dataprofiler",
@@ -81,6 +93,7 @@ export const DATAPROFILER_DEF: AnalyzerDef = {
 		"Detects PII in the tabular FILES a session read or wrote, with Capital One DataProfiler's method: a tool call's normalized arguments name a tabular path, the paired tool result captured its content, and the content is profiled — header labels flag sensitive columns independent of values, value-distribution validation confirms or downgrades each label, and the finding is about the file (path in metadata, anchored to the touching message). Apache-2.0 method port (verified against upstream); no upstream code. Never stores the file content or a matched value.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: DataprofilerProperties,
 };
 
 export const DATAPROFILER_VERSION: AnalyzerVersion = {
@@ -98,42 +111,6 @@ export const DATAPROFILER_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/dataprofiler/index.ts",
 };
 
-export interface DataprofilerProperties {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any file findings recorded? */
-	has_findings: boolean;
-	/** Total file findings, after per-message capping. */
-	finding_count: number;
-	/** The findings, capped at `maxMatchesPerField` per message. */
-	findings: FileProfileFinding[];
-	/** Findings dropped for exceeding `maxMatchesPerField` on a message. */
-	truncated_matches: number;
-	/** Distinct tabular files touched (any format, before profiling). */
-	files_touched: number;
-	/** Touches whose content parsed into a profiled table. */
-	files_profiled: number;
-	/** Tabular-binary paths seen and deliberately not extracted. */
-	files_skipped_binary: number;
-	/** Touches with no unambiguously captured content. */
-	touches_without_content: number;
-	/** Columns examined across all profiled tables. */
-	columns_classified: number;
-	/** Columns flagged sensitive. */
-	sensitive_columns: number;
-	/** Columns downgraded to `label-only`. */
-	label_only_columns: number;
-	/** Columns below every flagging rule. */
-	below_threshold_columns: number;
-	/** Values dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_values: number;
-	/** Profiled tables per format kind. */
-	format_counts: Record<string, number>;
-	/** Distinct messages whose tool calls produced at least one finding. */
-	affected_message_ids: string[];
-	/** Total messages scanned. */
-	message_count: number;
-}
 
 // ──────────────────────────── analyzer ────────────────────────────
 
