@@ -8,6 +8,7 @@ import { registerOutputCommand } from "./commands/output.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 import { registerValidateCommand } from "./commands/validate.js";
 import { registerShowCommand } from "./commands/show.js";
+import { registerNodesCommands } from "./commands/nodes.js";
 import { registerDiffCommand } from "./commands/diff.js";
 import { registerRunsCommand } from "./commands/runs.js";
 import { registerGcCommand } from "./commands/gc.js";
@@ -27,6 +28,7 @@ export default function (pi: ExtensionAPI) {
 	registerVerifyCommand(pi);
 	registerValidateCommand(pi);
 	registerShowCommand(pi);
+	registerNodesCommands(pi);
 	registerDiffCommand(pi);
 	registerRunsCommand(pi);
 	registerGcCommand(pi);

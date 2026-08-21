@@ -361,6 +361,92 @@ export async function getSessionNodes(db: AsyncDatabase, sessionId: string, asOf
 	return (await prep(db, "SELECT * FROM live_nodes WHERE session_id = ? ORDER BY created_at ASC, id ASC").all(sessionId)) as AnalysisNodeRow[];
 }
 
+export interface NodeListFilter {
+	analyzerId?: string;
+	nodeKind?: string;
+	sessionId?: string;
+	/** When set, read the graph as it stood at this instant (see src/timepoint.ts). */
+	asOf?: string;
+	limit?: number;
+	offset?: number;
+}
+
+/**
+ * The surface read for `prospect nodes`: live nodes matching an analyzer /
+ * node-kind / session filter, newest first, paged. This is a *read* of what
+ * analysis already found — it writes nothing and declares no dependencies
+ * (outputs are exempt from the dependency rule, see DESIGN.md).
+ */
+export function listAnalysisNodes(db: Database.Database, filter: NodeListFilter = {}): AnalysisNodeRow[] {
+	const asOf = filter.asOf;
+	const table = asOf ? "analysis_nodes" : "live_nodes";
+	const where: string[] = [];
+	const params: Array<string | number> = [];
+	if (filter.analyzerId) {
+		where.push("analyzer_id = ?");
+		params.push(filter.analyzerId);
+	}
+	if (filter.nodeKind) {
+		where.push("node_kind = ?");
+		params.push(filter.nodeKind);
+	}
+	if (filter.sessionId) {
+		where.push("session_id = ?");
+		params.push(filter.sessionId);
+	}
+	if (asOf) {
+		where.push("created_at <= ?");
+		where.push("(retracted_at IS NULL OR retracted_at > ?)");
+		params.push(asOf, asOf);
+	}
+	const sql =
+		`SELECT * FROM ${table}${where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""} ` +
+		"ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?";
+	params.push(filter.limit ?? 200, filter.offset ?? 0);
+	return prep(db, sql).all(...params) as AnalysisNodeRow[];
+}
+
+/** How many live nodes match a {@link NodeListFilter}, ignoring limit/offset — the denominator for paging. */
+export function countAnalysisNodes(db: Database.Database, filter: NodeListFilter = {}): number {
+	const asOf = filter.asOf;
+	const table = asOf ? "analysis_nodes" : "live_nodes";
+	const where: string[] = [];
+	const params: Array<string | number> = [];
+	if (filter.analyzerId) {
+		where.push("analyzer_id = ?");
+		params.push(filter.analyzerId);
+	}
+	if (filter.nodeKind) {
+		where.push("node_kind = ?");
+		params.push(filter.nodeKind);
+	}
+	if (filter.sessionId) {
+		where.push("session_id = ?");
+		params.push(filter.sessionId);
+	}
+	if (asOf) {
+		where.push("created_at <= ?");
+		where.push("(retracted_at IS NULL OR retracted_at > ?)");
+		params.push(asOf, asOf);
+	}
+	const sql = `SELECT COUNT(*) AS c FROM ${table}${where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""}`;
+	return (prep(db, sql).get(...params) as { c: number }).c;
+}
+
+/**
+ * Resolve nodes by an *output_key prefix* — the surface twin of id-prefix
+ * resolution in `prospect show`. Output keys are content-addressed hashes, so a
+ * short prefix is usually unambiguous; when it is not, every match is returned
+ * and the caller asks for a longer prefix.
+ */
+export function getNodesByOutputKeyPrefix(db: Database.Database, prefix: string): AnalysisNodeRow[] {
+	if (!prefix) return [];
+	// Escape LIKE metacharacters so a hash prefix is matched literally.
+	const escaped = prefix.replace(/[\\%_]/g, (c) => `\\${c}`);
+	return prep(db, "SELECT * FROM live_nodes WHERE output_key LIKE ? ESCAPE '\\' ORDER BY created_at DESC, id DESC")
+		.all(`${escaped}%`) as AnalysisNodeRow[];
+}
+
 /**
  * Every analysis node, for integrity verification. Retracted nodes are still
  * nodes and their content must still hash correctly, so pass `includeRetracted`

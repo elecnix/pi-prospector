@@ -8,6 +8,7 @@ import { prospectOutput } from "./output.js";
 import { prospectVerify } from "./verify.js";
 import { prospectValidate } from "./validate.js";
 import { prospectShow } from "./show.js";
+import { prospectNodes, prospectNode } from "./nodes.js";
 import { prospectDiff } from "./diff.js";
 import { prospectRuns } from "./runs.js";
 import { prospectGc } from "./gc.js";
@@ -26,6 +27,8 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 	stats: prospectStats,
 	proposals: prospectProposals,
 	show: prospectShow,
+	nodes: prospectNodes,
+	node: prospectNode,
 	diff: prospectDiff,
 	runs: prospectRuns,
 	gc: prospectGc,
@@ -42,7 +45,7 @@ export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
 
 const USAGE =
 	'Usage: pi -e <prospector>/src/index.ts --prospect "<command> [args]"\n' +
-	"  commands: sync | analyze [flags] | analyzers [list|list --schema <id>|validate <path>] | output [list|<analyzer>:<output> [--out DIR] [--key value]] | stats [--as-of <ts>] | proposals [status] [--full] [--as-of <ts>] | show <id> | verify | validate [flags] | runs | diff --unit <a> <sset> | diff --runs <A> <B> | diff --as-of <T1> <T2> | gc --run <id> | gc --analyzer <id> | gc --since <ts> [--apply] | retract --list | retract --undo <id> | retract --purge --retracted-before <ts> | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale] | remediate <id> <id>... [--planned|--done|--done-differently] <description> | mute <term> [--reason \"why\"] | unmute <term> | mutes";
+	"  commands: sync | analyze [flags] | analyzers [list|list --schema <id>|validate <path>] | output [list|<analyzer>:<output> [--out DIR] [--key value]] | stats [--as-of <ts>] | proposals [status] [--full] [--as-of <ts>] | show <id> | node <output-key> | nodes (--analyzer <id> | --all) [--node-kind <kind>] [--filter k=v]... [--counts <prop>] [--latest-per-key <prop>] [--limit n] [--offset n] | verify | validate [flags] | runs | diff --unit <a> <sset> | diff --runs <A> <B> | diff --as-of <T1> <T2> | gc --run <id> | gc --analyzer <id> | gc --since <ts> [--apply] | retract --list | retract --undo <id> | retract --purge --retracted-before <ts> | accept <id> [--planned|--done|--done-differently] [rationale] | reject <id> [rationale] | remediate <id> <id>... [--planned|--done|--done-differently] <description> | mute <term> [--reason \"why\"] | unmute <term> | mutes";
 
 /** Split a `--prospect` flag value into a command name and the remaining args. */
 export function splitProspectSpec(spec: string): { command: string; args: string } {
@@ -84,7 +87,7 @@ export async function runProspectSpec(
 export function registerHeadlessFlag(pi: ExtensionAPI): void {
 	pi.registerFlag("prospect", {
 		description:
-			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | verify | validate | runs | diff | gc | retract | accept <id> [rationale] | reject <id> [rationale] | remediate <id> <id>... <description> | mute <term> [--reason "why"] | unmute <term> | mutes',
+			'Run a prospector command non-interactively and exit, e.g. --prospect "analyze --limit 3" or --prospect "proposals --full". Commands: sync | analyze | stats | proposals | show <id> | node <output-key> | nodes --analyzer <id> | verify | validate | runs | diff | gc | retract | accept <id> [rationale] | reject <id> [rationale] | remediate <id> <id>... <description> | mute <term> [--reason "why"] | unmute <term> | mutes',
 		type: "string",
 	});
 

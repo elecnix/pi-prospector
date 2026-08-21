@@ -7,13 +7,34 @@ import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposal
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
 import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
+import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
 import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
+import type { AnalysisNodeRow } from "../analyze/types.js";
 import { parseHarnessSource } from "../harness.js";
 import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
 function text(body: string, details: unknown): ToolResult {
 	return { content: [{ type: "text", text: body }], details };
+}
+
+/** A compact JSON-safe summary of one node row for tool `details`. */
+function serialiseNodeSummary(n: AnalysisNodeRow): Record<string, unknown> {
+	let content: unknown;
+	try {
+		content = JSON.parse(n.content_json) as unknown;
+	} catch {
+		content = n.content_json;
+	}
+	return {
+		output_key: n.output_key,
+		input_key: n.input_key,
+		analyzer_id: n.analyzer_id,
+		node_kind: n.node_kind,
+		session_id: n.session_id,
+		created_at: n.created_at,
+		content,
+	};
 }
 
 /** Build the optional decision payload from tool params (all fields optional). */
@@ -38,7 +59,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			"Use remediate when ONE action addresses MANY proposals: pass proposal_ids and a description, and all of them " +
 			"are accepted linked to a single shared remediation record instead of N duplicated rationales. " +
 			"For muting: the reviewing agent performs the mute after operator feedback — pass the muted term and an optional reason; " +
-			"the term stops matching new turns and its prior hit nodes become stale/config, cleanly recomputed by analyze --revise config.",
+			"the term stops matching new turns and its prior hit nodes become stale/config, cleanly recomputed by analyze --revise config. " +
+			"Use action nodes to read analyzer output from the surface (filter by analyzer/node-kind/content, counts over a property, " +
+			"latest-per-key for newest verdict per term) and action node with output_key for one node's detail plus its resolved outgoing edges.",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
@@ -50,6 +73,8 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				Type.Literal("mute"),
 				Type.Literal("unmute"),
 				Type.Literal("mutes"),
+				Type.Literal("nodes"),
+				Type.Literal("node"),
 				Type.Literal("help"),
 			]),
 			status: Type.Optional(
@@ -78,6 +103,17 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			actual_change: Type.Optional(Type.String({ description: "Commit sha / path / note of what was actually done." })),
 			term: Type.Optional(Type.String({ description: "The lexicon term to mute or unmute (mute/unmute actions)." })),
 			reason: Type.Optional(Type.String({ description: "Operator's free-text reason for muting a term (mute action)." })),
+			analyzer: Type.Optional(Type.String({ description: "Analyzer id to read (nodes action; required unless all=true)." })),
+			all: Type.Optional(Type.Boolean({ description: "Read nodes of every analyzer (nodes action)." })),
+			node_kind: Type.Optional(
+				Type.Union([Type.Literal("metric"), Type.Literal("classification"), Type.Literal("summary"), Type.Literal("proposal"), Type.Literal("validation"), Type.Literal("error")], {
+					description: "Restrict nodes to one kind (nodes action).",
+				}),
+			),
+			filter: Type.Optional(Type.Array(Type.String(), { description: "key=value content filters, repeatable (nodes action); typed against the analyzer's declared outputSchema when it declares one." })),
+			counts: Type.Optional(Type.String({ description: "Group counts over this top-level content property across all matching nodes (nodes action)." })),
+			latest_per_key: Type.Optional(Type.String({ description: "Keep only the newest node per distinct value of this content property, e.g. 'term' for the newest lexicon verdict per term (nodes action)." })),
+			output_key: Type.Optional(Type.String({ description: "The node's content-addressed output key, or an unambiguous prefix (node action)." })),
 		}),
 		async execute(
 			_toolCallId: string,
@@ -213,7 +249,35 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						const active = rows.filter((r) => r.superseded_at === null).length;
 						return text(`Term assertions (${rows.length} total, ${active} active):\n${rows.map(formatAssertion).join("\n")}`, rows);
 					}
-					case "help": {
+					case "nodes": {
+					const q: NodesQuery = {
+						analyzerId: params.analyzer as string | undefined,
+						all: params.all as boolean | undefined,
+						nodeKind: params.node_kind as string | undefined,
+						filters: Array.isArray(params.filter) ? (params.filter as string[]) : [],
+						counts: params.counts as string | undefined,
+						latestPerKey: params.latest_per_key as string | undefined,
+						limit: params.limit as number | undefined,
+						offset: params.offset as number | undefined,
+						sessionId: params.session_id as string | undefined,
+					};
+					try {
+						const result = await readNodes(db, q);
+						return text(result.text, { total: result.total, nodes: result.rows.map(serialiseNodeSummary) });
+					} catch (err) {
+						return text(`prospect nodes: ${err instanceof Error ? err.message : String(err)}`, {});
+					}
+				}
+				case "node": {
+					if (!params.output_key) return text("output_key required (use action nodes to find one)", {});
+					try {
+						const result = await readNodeDetail(db, params.output_key as string);
+						return text(result.text, { node: serialiseNodeSummary(result.node) });
+					} catch (err) {
+						return text(`prospect node: ${err instanceof Error ? err.message : String(err)}`, {});
+					}
+				}
+				case "help": {
 						return text(`=== prospect tool ===
 
 Workflow:
@@ -225,6 +289,9 @@ Workflow:
   5. remediate — accept many proposals under one shared remediation record
 
 Analysis-graph & point-in-time commands (slash commands):
+  - prospect tool actions: nodes (--analyzer <id> | all=true, node_kind, filter[], counts, latest_per_key, limit, offset) and node (output_key) — read analyzer output from the surface
+  - /prospect-nodes --analyzer <id> [--node-kind <k>] [--filter k=v]... [--counts <prop>] [--latest-per-key <prop>] [--limit n] [--offset n]
+  - /prospect-node <output-key> — one node + resolved outgoing edges (consumes/anchors/produces/revises)
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)
