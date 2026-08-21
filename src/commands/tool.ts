@@ -9,6 +9,7 @@ import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js"
 import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
 import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
 import { readSessionSummary } from "./show.js";
+import { readLeaks, type LeaksQuery } from "./leaks.js";
 import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
 import type { AnalysisNodeRow } from "../analyze/types.js";
@@ -64,7 +65,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			"Use action nodes to read analyzer output from the surface (filter by analyzer/node-kind/content, counts over a property, " +
 			"latest-per-key for newest verdict per term) and action node with output_key for one node's detail plus its resolved outgoing edges. " +
 			"Use action session_summary with session_id for the session-level summary with its evidence: what happened, what went well, " +
-			"what caused friction (textual gradients), the verbatim consumed turns behind it, the proposals it produced, and its cross-session contrast siblings.",
+			"what caused friction (textual gradients), the verbatim consumed turns behind it, the proposals it produced, and its cross-session contrast siblings. " +
+			"Use action leaks to report which sessions contain detected secrets: findings from the credential-detector analyzers with severity, rule, " +
+			"redacted preview, fingerprint, and message anchor (params: severity floor, limit, source).",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
@@ -79,6 +82,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				Type.Literal("nodes"),
 				Type.Literal("node"),
 				Type.Literal("session_summary"),
+				Type.Literal("leaks"),
 				Type.Literal("help"),
 			]),
 			status: Type.Optional(
@@ -89,7 +93,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					Type.Literal("duplicate"),
 				]),
 			),
-			severity: Type.Optional(Type.String({ description: "Filter by severity: friction, correction, waste, suggestion, reinforcement" })),
+			severity: Type.Optional(Type.String({ description: "list_proposals: filter by severity (friction, correction, waste, suggestion, reinforcement). leaks: minimum severity floor — report this severity (medium|high|critical) and above." })),
 			source: Type.Optional(Type.String({ description: "Filter by coding harness: pi or claude." })),
 			session_id: Type.Optional(Type.String({ description: "Scope list_proposals to a single session (only that session's proposals)." })),
 			project: Type.Optional(Type.String({ description: "Scope sync to one project (derived from the session directory name) so a fresh install skips every other project on disk." })),
@@ -282,6 +286,19 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						return text(`prospect node: ${err instanceof Error ? err.message : String(err)}`, {});
 					}
 				}
+				case "leaks": {
+					const q: LeaksQuery = {
+						minSeverity: params.severity as string | undefined,
+						limit: params.limit as number | undefined,
+						source: params.source as string | undefined,
+					};
+					try {
+						const { text: body, report } = readLeaks(db, q);
+						return text(body, report);
+					} catch (err) {
+						return text(`prospect leaks: ${err instanceof Error ? err.message : String(err)}`, {});
+					}
+				}
 				case "session_summary": {
 				const sessionId = params.session_id as string | undefined;
 				if (!sessionId) return text("session_id required (use list_proposals or nodes to find one)", {});
@@ -309,6 +326,7 @@ Analysis-graph & point-in-time commands (slash commands):
   - /prospect-node <output-key> — one node + resolved outgoing edges (consumes/anchors/produces/revises)
   - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
   - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
+  - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)

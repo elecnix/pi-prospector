@@ -363,6 +363,10 @@ export async function getSessionNodes(db: AsyncDatabase, sessionId: string, asOf
 
 export interface NodeListFilter {
 	analyzerId?: string;
+	/** Match any of these analyzer ids (used together with, not instead of, `analyzerId`). */
+	analyzerIds?: string[];
+	/** Restrict to sessions whose harness source matches (`pi` | `claude`). */
+	source?: string;
 	nodeKind?: string;
 	sessionId?: string;
 	/** When set, read the graph as it stood at this instant (see src/timepoint.ts). */
@@ -385,6 +389,14 @@ export async function listAnalysisNodes(db: AsyncDatabase, filter: NodeListFilte
 	if (filter.analyzerId) {
 		where.push("analyzer_id = ?");
 		params.push(filter.analyzerId);
+	}
+	if (filter.analyzerIds && filter.analyzerIds.length > 0) {
+		where.push(`analyzer_id IN (${filter.analyzerIds.map(() => "?").join(", ")})`);
+		params.push(...filter.analyzerIds);
+	}
+	if (filter.source) {
+		where.push("session_id IN (SELECT id FROM sessions WHERE source = ?)");
+		params.push(filter.source);
 	}
 	if (filter.nodeKind) {
 		where.push("node_kind = ?");
@@ -415,6 +427,14 @@ export async function countAnalysisNodes(db: AsyncDatabase, filter: NodeListFilt
 	if (filter.analyzerId) {
 		where.push("analyzer_id = ?");
 		params.push(filter.analyzerId);
+	}
+	if (filter.analyzerIds && filter.analyzerIds.length > 0) {
+		where.push(`analyzer_id IN (${filter.analyzerIds.map(() => "?").join(", ")})`);
+		params.push(...filter.analyzerIds);
+	}
+	if (filter.source) {
+		where.push("session_id IN (SELECT id FROM sessions WHERE source = ?)");
+		params.push(filter.source);
 	}
 	if (filter.nodeKind) {
 		where.push("node_kind = ?");

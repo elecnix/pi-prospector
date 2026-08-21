@@ -160,6 +160,25 @@ export const SEVERITY_RANK: Record<LeakSeverity, number> = {
 	critical: 3,
 };
 
+/**
+ * The credential-detector family: the built-in analyzers that emit session-level
+ * `metric` nodes whose content carries the shared {@link SecretLeakScanResult}
+ * shape (a `leaks` array of {@link SecretLeakFinding}). This list is the
+ * read-side vocabulary of that family — the leak report (issue #196) queries
+ * these analyzer ids and nothing else — while the write side lives in
+ * `defaults.ts` (`BUILTIN_ANALYZERS`). A new detector analyzer joins this list
+ * when it adopts the shared engine, so its findings become reportable without
+ * any report-side change.
+ */
+export const DETECTOR_ANALYZER_IDS: readonly string[] = [
+	"secret-leak",
+	"gitleaks",
+	"nosey-parker",
+	"detect-secrets",
+	"trufflehog",
+	"secret-scanner",
+];
+
 /** Does `sev` meet the configured `minSeverity` floor? */
 export function meetsMinSeverity(sev: LeakSeverity, minSeverity: LeakSeverity): boolean {
 	return SEVERITY_RANK[sev] >= SEVERITY_RANK[minSeverity];
