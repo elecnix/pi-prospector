@@ -681,6 +681,8 @@ export interface AnalysisStats {
 	edges: number;
 	runs: number;
 	nodesByKind: Record<string, number>;
+	/** Non-retracted node count per analyzer_id (#155). */
+	nodesByAnalyzer: Record<string, number>;
 }
 
 export async function getAnalysisStats(db: AsyncDatabase, asOf?: string): Promise<AnalysisStats> {
@@ -708,7 +710,19 @@ export async function getAnalysisStats(db: AsyncDatabase, asOf?: string): Promis
 			}>);
 	const nodesByKind: Record<string, number> = {};
 	for (const r of kindRows) nodesByKind[r.node_kind] = r.c;
-	return { nodes, edges, runs, nodesByKind };
+	// Same aggregation over analyzer_id — served by idx_nodes_analyzer.
+	const analyzerRows = asOf
+		? (prep(db, "SELECT analyzer_id, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) GROUP BY analyzer_id").all(asOf, asOf) as Array<{
+				analyzer_id: string;
+				c: number;
+			}>)
+		: (prep(db, "SELECT analyzer_id, COUNT(*) AS c FROM live_nodes GROUP BY analyzer_id").all() as Array<{
+				analyzer_id: string;
+				c: number;
+			}>);
+	const nodesByAnalyzer: Record<string, number> = {};
+	for (const r of analyzerRows) nodesByAnalyzer[r.analyzer_id] = r.c;
+	return { nodes, edges, runs, nodesByKind, nodesByAnalyzer };
 }
 
 /** A compact, current read of the runs table for discoverability (`prospect runs`). */

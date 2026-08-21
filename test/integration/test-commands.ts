@@ -110,6 +110,15 @@ assert(s1.analysis.nodes > 0, "analysis nodes recorded");
 assert((s1.analysis.nodesByKind["summary"] ?? 0) >= 1, "summary nodes present");
 assert((s1.analysis.nodesByKind["metric"] ?? 0) >= 1, "metric nodes present");
 
+console.log("\nPer-analyzer node counts (#155):");
+{
+	const byAnalyzer = s1.analysis.nodesByAnalyzer;
+	const analyzerTotal = Object.values(byAnalyzer).reduce((a, b) => a + b, 0);
+	assert(Object.keys(byAnalyzer).length > 0, "nodesByAnalyzer is populated", JSON.stringify(byAnalyzer));
+	assert(analyzerTotal === s1.analysis.nodes, "per-analyzer counts sum to the live node count", `${analyzerTotal} vs ${s1.analysis.nodes}`);
+	assert((byAnalyzer["turn-pair-core"] ?? 0) >= 1, "turn-pair-core nodes counted per analyzer");
+}
+
 console.log("\nIdempotent re-run (fill):");
 let reRunNodes = 0;
 for (const session of sessions) {
@@ -182,6 +191,17 @@ console.log("\nDecisions/remediations replay through the assertions relation (#7
 	assert(r.missingDecisions.length === 0, "no decision without a matching assertion", `missing: ${r.missingDecisions.join(", ")}`);
 	assert(r.extraAssertions.length === 0, "no assertion decision without a legacy row", `extra: ${r.extraAssertions.join(", ")}`);
 	assert(r.missingRemediations.length === 0, "every remediation has an assertion", `missing: ${r.missingRemediations.join(", ")}`);
+}
+
+console.log("\nRetraction excluded from per-analyzer stats (#155, end of run — keeps earlier assertions untouched):");
+{
+	const { getAnalysisStats } = await import("../../src/db/analysis-queries.js");
+	const before = await getAnalysisStats(db);
+	const beforeCount = before.nodesByAnalyzer["turn-pair-core"] ?? 0;
+	await db.prepare("UPDATE analysis_nodes SET retracted_at = ? WHERE id = (SELECT id FROM live_nodes WHERE analyzer_id = 'turn-pair-core' LIMIT 1)").run(new Date().toISOString());
+	const after = await getAnalysisStats(db);
+	assert((after.nodesByAnalyzer["turn-pair-core"] ?? 0) === beforeCount - 1, "retracted nodes are excluded from nodesByAnalyzer");
+	assert(after.nodes === before.nodes - 1, "total node count drops with the retraction");
 }
 
 await db.close();
