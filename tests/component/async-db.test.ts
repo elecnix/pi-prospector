@@ -80,4 +80,37 @@ describe("AsyncDatabase worker bridge", () => {
 			await db.close();
 		}
 	});
+
+	it("nested transactions use savepoints and commit independently", async () => {
+		const dbPath = tempDbPath();
+		const db = new AsyncDatabase(dbPath);
+		try {
+			await db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+
+			// Outer tx commits an inner tx and rolls back an inner savepoint; the
+			// outer commits its own insert, and the savepoint rollback must not
+			// undo the outer tx or the committed inner tx (better-sqlite3 nesting).
+			const outer = db.transaction(async () => {
+				await db.prepare("INSERT INTO t (id, v) VALUES (1, 'outer')").run();
+				const inner = db.transaction(async () => {
+					await db.prepare("INSERT INTO t (id, v) VALUES (2, 'committed')").run();
+				});
+				await inner();
+				const rolled = db.transaction(async () => {
+					await db.prepare("INSERT INTO t (id, v) VALUES (3, 'rolled')").run();
+					throw new Error("inner rollback");
+				});
+				await assert.rejects(() => rolled());
+			});
+			await outer();
+
+			const rows = ((await db.prepare("SELECT id, v FROM t ORDER BY id").all()) as Array<{ id: number; v: string }>);
+			assert.deepEqual(rows, [
+				{ id: 1, v: "outer" },
+				{ id: 2, v: "committed" },
+			]);
+		} finally {
+			await db.close();
+		}
+	});
 });

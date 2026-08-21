@@ -179,7 +179,7 @@ describe("remediations (one action addressing many proposals)", () => {
 			await insertProposalRow(db, { id: "p2", sessionId: "s1", title: "B", inputKey: "ik-2" });
 			await insertProposalRow(db, { id: "p3", sessionId: "s1", title: "C", inputKey: "ik-3" });
 
-			const res = acceptProposalsWithRemediation(
+			const res = await acceptProposalsWithRemediation(
 				db,
 				["p1", "p2", "p3"],
 				{ description: "consolidated polling guidance into AGENTS.md", actual_change: "commit abc123" },
@@ -249,7 +249,7 @@ describe("remediations (one action addressing many proposals)", () => {
 			await insertSession(db, "s1");
 			await insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", inputKey: "ik-1" });
 
-			const res = acceptProposalsWithRemediation(
+			const res = await acceptProposalsWithRemediation(
 				db,
 				["p1"],
 				{ description: "capped iterations" },

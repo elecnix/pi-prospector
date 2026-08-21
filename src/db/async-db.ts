@@ -78,6 +78,7 @@ export class AsyncDatabase {
 	#pending = new Map<number, Pending>();
 	/** Single-flight promise chain; the tail of the currently-running work. */
 	#tail: Promise<unknown> = Promise.resolve();
+	#spSeq = 0;
 
 	constructor(path: string) {
 		// The worker script is this module's sibling in both source (tsx) and dist.
@@ -89,7 +90,7 @@ export class AsyncDatabase {
 		this.#worker = new Worker(workerFile, {
 			workerData: { dbPath: path },
 		});
-		this.#worker.on("message", (msg: { id: number; ok: boolean; value?: unknown; error?: { message: string; stack?: string } }) => {
+		this.#worker.on("message", (msg: { id: number; ok: boolean; value?: unknown; error?: { message: string; stack?: string; code?: string } }) => {
 			const p = this.#pending.get(msg.id);
 			if (!p) return;
 			this.#pending.delete(msg.id);
@@ -97,6 +98,9 @@ export class AsyncDatabase {
 			else {
 				const e = new Error(msg.error?.message ?? "sqlite worker error");
 				if (msg.error?.stack) e.stack = msg.error.stack;
+				// Preserve the driver code (SQLITE_CONSTRAINT_UNIQUE etc.) so callers can
+				// recognise idempotency collisions; was already an Error, so carry it.
+				if (msg.error?.code) (e as Error & { code?: string }).code = msg.error.code;
 				p.reject(e);
 			}
 		});
@@ -125,23 +129,50 @@ export class AsyncDatabase {
 	 * can enter the open transaction; on throw it rolls back.
 	 */
 	transaction<R>(fn: () => Promise<R>): () => Promise<R> {
-		return () => this.#exclusive(() =>
-			// The whole transaction (begin, body, commit/rollback) runs inside the
-			// IN_TX context, so every statement bypasses the outer mutex the tx
-			// already holds. An ordered invoke inside the tx must not chain onto
-			// the tail again — that would wait on its own completion.
-			IN_TX.run(true, async () => {
-				await this.invoke("begin", undefined);
-				let ok = false;
-				try {
-					const result = await fn();
-					ok = true;
-					return result;
-				} finally {
-					await this.invoke(ok ? "commit" : "rollback");
-				}
-			}),
-		);
+		return () => {
+			// Nested transaction: we are already inside an open transaction (the
+			// IN_TX context is set and the outer tx holds the mutex). better-sqlite3
+			// nests these with savepoints; we must too, and must NOT re-acquire the
+			// outer mutex here — `#exclusive` chains onto `#tail`, which the outer
+			// transaction already holds while waiting for its body, so re-entering it
+			// would self-deadlock. The worker's `exec` op runs the savepoint SQL.
+			if (IN_TX.getStore()) {
+				const name = `sp${++this.#spSeq}`;
+				return IN_TX.run(true, async () => {
+					await this.invoke("exec", `SAVEPOINT ${name}`);
+					let ok = false;
+					try {
+						const result = await fn();
+						ok = true;
+						return result;
+					} finally {
+						if (ok) await this.invoke("exec", `RELEASE ${name}`);
+						else {
+							await this.invoke("exec", `ROLLBACK TO ${name}`);
+							await this.invoke("exec", `RELEASE ${name}`);
+						}
+					}
+				});
+			}
+			// Top-level transaction: hold the whole body under the exclusive mutex so
+			// no outside statement can land between BEGIN and COMMIT/ROLLBACK. The
+			// IN_TX context makes every inner statement bypass the mutex the tx
+			// already holds — an ordered invoke inside the tx must not chain onto
+			// the tail again, or it would wait on its own completion.
+			return this.#exclusive(() =>
+				IN_TX.run(true, async () => {
+					await this.invoke("begin", undefined);
+					let ok = false;
+					try {
+						const result = await fn();
+						ok = true;
+						return result;
+					} finally {
+						await this.invoke(ok ? "commit" : "rollback");
+					}
+				}),
+			);
+		};
 	}
 
 	async close(): Promise<void> {
