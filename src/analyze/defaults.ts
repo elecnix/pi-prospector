@@ -25,6 +25,7 @@ import { trufflehogAnalyzer } from "./analyzers/trufflehog/index.js";
 import { secretScannerAnalyzer } from "./analyzers/secret-scanner/index.js";
 import { presidioAnalyzer } from "./analyzers/presidio/index.js";
 import { piicatcherAnalyzer } from "./analyzers/piicatcher/index.js";
+import { dataprofilerAnalyzer } from "./analyzers/dataprofiler/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -48,6 +49,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"secret-scanner",
 	"presidio",
 	"piicatcher",
+	"dataprofiler",
 	"token-units",
 	"request-classes",
 	"session-overview",
@@ -146,6 +148,22 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// future proposal synthesiser can collapse the same leak into one proposal
 	// across detectors.
 	piicatcherAnalyzer,
+	// The DataProfiler-method tabular file PII detector, same seam as the other
+	// detectors: session-level, standalone, deterministic, metric nodes only,
+	// redacted findings. Its distinctive half is the **file-profiling path**:
+	// where piicatcher reads structured fragments inline, this analyzer profiles
+	// the FILES a session read or wrote — a tool call's normalized arguments name
+	// a tabular path (.csv/.tsv/.json; binary formats skipped), the paired tool
+	// result captured the content (paired by tool-call id through the shared
+	// action stream), and header-label inference plus value-distribution
+	// validation combine into per-column verdicts. The finding is about the file
+	// (path in metadata) anchored to the touching message. Reuses the recognizer
+	// stack shared with presidio via piicatcher's pure functions (no analysis
+	// dependency declared). Implements Capital One DataProfiler's method only
+	// (Apache-2.0, verified against upstream; nothing was vendored). Findings
+	// carry identically derived fingerprints so the future proposal synthesiser
+	// can collapse the same leak into one proposal across detectors.
+	dataprofilerAnalyzer,
 	// Cost accounting. token-units is deterministic and depends on nothing;
 	// request-classes labels the same request segments it prices. Neither depends
 	// on the other — the report joins them at read time, through token-units'
