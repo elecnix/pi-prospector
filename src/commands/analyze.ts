@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getAllSessions, getRecentSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
 import { getAnalyzerConfigOverrides, getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, loadConfig } from "../config.js";
@@ -60,8 +60,8 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 	// model actually used always matches the model folded into node identity.
 	const modelTiers = applyModelOverride(getModelTiers(config), args.model);
 
-	const db = new Database(getDbPath(config));
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath(config));
+	await migrate(db);
 	const startedAt = new Date().toISOString();
 
 	try {
@@ -77,10 +77,10 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const sessions = args.session
 			? [{ id: args.session, file_path: "", started_at: "" }]
 			: args.recent
-				? getRecentSessions(db, args.recent, args.source)
+				? await getRecentSessions(db, args.recent, args.source)
 			: reviseActive || args.all
-				? getAllSessions(db, args.limit, args.source)
-				: getUnanalyzedSessions(db, args.limit, args.source);
+				? await getAllSessions(db, args.limit, args.source)
+				: await getUnanalyzedSessions(db, args.limit, args.source);
 
 		if (sessions.length === 0) {
 			out(ctx, "No sessions to analyse. Run /prospect-sync first.", "info");
@@ -169,7 +169,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		// returns. This is what makes "10 of 320 sessions, run continued" a visible,
 		// queryable fact instead of something indistinguishable from "little to say".
 		const runId = uuidv7();
-		createAnalyzeRun(db, { id: runId, mode: reach, sessionAttempted: sessions.length });
+		await createAnalyzeRun(db, { id: runId, mode: reach, sessionAttempted: sessions.length });
 
 		let accounting = emptyAccounting();
 		let lastProgressAt = 0;
@@ -231,7 +231,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 
 		// The terminal state of the whole run: persisted locally so it survives the
 		// process, and surfaced to the operator with the failure examples.
-		finalizeAnalyzeRun(db, runId, {
+		await finalizeAnalyzeRun(db, runId, {
 			status: runStatus(accounting),
 			sessionCompleted: accounting.completed,
 			sessionFailed: accounting.failed,
@@ -245,7 +245,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			errorExamples: accounting.errorExamples,
 		});
 
-		const newTerms = countNewLexiconTerms(db, startedAt);
+		const newTerms = await countNewLexiconTerms(db, startedAt);
 		const lines = [
 			`Done [${reach}]. ${accounting.attempted} session(s) scanned — ` +
 				`${accounting.completed} completed, ${accounting.failed} failed.`,
@@ -289,12 +289,12 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
  * the corpus now knows words it did not know before, so sessions analysed
  * earlier may be carrying friction that is newly visible.
  */
-function countNewLexiconTerms(db: Database.Database, since: string): number {
-	const row = db
+async function countNewLexiconTerms(db: AsyncDatabase, since: string): Promise<number> {
+	const row = (await db
 		.prepare(
 			"SELECT COUNT(*) AS n FROM analysis_nodes WHERE analyzer_id = 'frustration-lexicon' AND node_kind = 'classification' AND created_at >= ?",
 		)
-		.get(since) as { n: number } | undefined;
+		.get(since)) as { n: number } | undefined;
 	return row?.n ?? 0;
 }
 

@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import Database from "better-sqlite3";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { tempDb, insertSession } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
@@ -40,8 +40,8 @@ interface Row {
 }
 
 /** Insert messages carrying the failure columns the shared helper predates. */
-function insertRows(db: Database.Database, sessionId: string, rows: Row[]): string[] {
-	const stmt = db.prepare(
+async function insertRows(db: AsyncDatabase, sessionId: string, rows: Row[]): Promise<string[]> {
+	const stmt = await db.prepare(
 		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message) " +
 			"VALUES (?, ?, 'pi', ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?)",
 	);
@@ -49,7 +49,7 @@ function insertRows(db: Database.Database, sessionId: string, rows: Row[]): stri
 	let parent: string | null = null;
 	for (const r of rows) {
 		const id = r.id ?? `fm-${sessionId}-${seq++}`;
-		stmt.run(
+		await stmt.run(
 			id,
 			sessionId,
 			parent,
@@ -68,21 +68,21 @@ function insertRows(db: Database.Database, sessionId: string, rows: Row[]): stri
 	return ids;
 }
 
-function newFramework(db: Database.Database, configOverrides?: Record<string, Record<string, unknown>>) {
+async function newFramework(db: AsyncDatabase, configOverrides?: Record<string, Record<string, unknown>>) {
 	const fw = new AnalyzerFramework({
 		db,
 		llm: createMockLLM({ fallback: "" }).caller,
 		modelTiers: DEFAULT_MODEL_TIERS,
 		configOverrides,
 	});
-	fw.register(failureModesAnalyzer);
+	await fw.register(failureModesAnalyzer);
 	return fw;
 }
 
-function readNode(db: Database.Database): { row: Record<string, unknown>; props: FailureModesProperties } {
-	const rows = db
+async function readNode(db: AsyncDatabase): Promise<{ row: Record<string, unknown>; props: FailureModesProperties }> {
+	const rows = (await db
 		.prepare("SELECT * FROM analysis_nodes WHERE analyzer_id = ? ORDER BY created_at ASC, id ASC")
-		.all(FAILURE_MODES_DEF.id) as Array<Record<string, unknown>>;
+		.all(FAILURE_MODES_DEF.id)) as Array<Record<string, unknown>>;
 	assert.ok(rows.length >= 1, "expected at least one failure-modes node");
 	const row = rows[rows.length - 1]!;
 	return { row, props: JSON.parse(row["content_json"] as string) as FailureModesProperties };
@@ -123,15 +123,15 @@ const THREE_RATE_LIMITS: Row[] = [
 
 describe("failure-modes component test", () => {
 	it("detects failed generations, prices them, and proposes a verified extension", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
-			const ids = insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertSession(db, "s1");
+			const ids = await insertRows(db, "s1", THREE_RATE_LIMITS);
 
-			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
+			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 
-			const { row, props } = readNode(db);
+			const { row, props } = await readNode(db);
 			assert.equal(row["node_kind"], "proposal");
 			assert.equal(props.turn_failure_count, 3);
 			assert.equal(props.assistant_turn_count, 3);
@@ -149,168 +149,168 @@ describe("failure-modes component test", () => {
 			assert.ok(curatedPackages().includes(proposal!.target_path!.slice("npm:".length)));
 
 			// The finding walks back to the exact turns that failed.
-			const anchors = db
+			const anchors = (await db
 				.prepare("SELECT to_ref_id FROM analysis_edges WHERE edge_kind = 'anchors' AND to_ref_kind = 'message'")
-				.all() as Array<{ to_ref_id: string }>;
+				.all()) as Array<{ to_ref_id: string }>;
 			assert.deepEqual(anchors.map((a) => a.to_ref_id).sort(), ids.slice(1).sort());
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("materialises the extension proposal into the proposal store with its package spec", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
-			insertRows(db, "s1", THREE_RATE_LIMITS);
-			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
+			await insertSession(db, "s1");
+			await insertRows(db, "s1", THREE_RATE_LIMITS);
+			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 
-			const proposals = db
+			const proposals = (await db
 				.prepare("SELECT target_type, target_path, severity, title FROM proposals")
-				.all() as Array<{ target_type: string; target_path: string | null; severity: string; title: string }>;
+				.all()) as Array<{ target_type: string; target_path: string | null; severity: string; title: string }>;
 			assert.equal(proposals.length, 1);
 			assert.equal(proposals[0]!.target_type, "extension");
 			assert.match(proposals[0]!.target_path!, /^npm:/);
 			assert.equal(proposals[0]!.severity, "waste");
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("does not recommend a package the host already has", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertSession(db, "s1");
+			await insertRows(db, "s1", THREE_RATE_LIMITS);
 
 			// Every package the catalogue knows is installed, so the only honest
 			// answer left is the remedy that is not a package.
 			const settings = settingsWith(curatedPackages().map((p) => `npm:${p}`));
 			try {
-				await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
+				await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 			} finally {
 				fs.unlinkSync(settings);
 			}
 
-			const { props } = readNode(db);
+			const { props } = await readNode(db);
 			const [proposal] = props.improvement_proposals;
 			assert.ok(proposal, "the measurement survives even when there is nothing to install");
 			assert.notEqual(proposal!.target_type, "extension");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("keeps the diagnosis but drops every package pointer when extensions are turned off", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
-			insertRows(db, "s1", THREE_RATE_LIMITS);
-			await withSettings(settings, () =>
-				newFramework(db, { "failure-modes": { recommendExtensions: false } }).run("s1", { analyzerIds: ["failure-modes"] }),
+			await insertSession(db, "s1");
+			await insertRows(db, "s1", THREE_RATE_LIMITS);
+			await withSettings(settings, async () =>
+				(await newFramework(db, { "failure-modes": { recommendExtensions: false } })).run("s1", { analyzerIds: ["failure-modes"] }),
 			);
 
-			const { props } = readNode(db);
+			const { props } = await readNode(db);
 			assert.equal(props.turn_failure_count, 3);
 			const [proposal] = props.improvement_proposals;
 			assert.notEqual(proposal!.target_type, "extension");
 			assert.ok(!JSON.stringify(props.improvement_proposals).includes("npm:"));
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("says the capture is absent rather than reporting a clean session", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			// Rows as an older sync wrote them: no stop reason at all.
-			insertRows(db, "s1", [
+			await insertRows(db, "s1", [
 				{ role: "user", text: "hi" },
 				{ role: "assistant", text: "ok" },
 			]);
-			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
+			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 
-			const { props } = readNode(db);
+			const { props } = await readNode(db);
 			assert.equal(props.turn_failure_capture, "absent");
 			assert.equal(props.turn_failure_count, 0);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("is idempotent: a second run produces no second node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
-			insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertSession(db, "s1");
+			await insertRows(db, "s1", THREE_RATE_LIMITS);
 			await withSettings(settings, async () => {
-				await newFramework(db).run("s1", { analyzerIds: ["failure-modes"] });
-				await newFramework(db).run("s1", { analyzerIds: ["failure-modes"] });
+				await (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] });
+				await (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] });
 			});
 			const count = (
-				db.prepare("SELECT COUNT(*) c FROM analysis_nodes WHERE analyzer_id = ?").get(FAILURE_MODES_DEF.id) as { c: number }
+				await db.prepare("SELECT COUNT(*) c FROM analysis_nodes WHERE analyzer_id = ?").get(FAILURE_MODES_DEF.id) as { c: number }
 			).c;
 			assert.equal(count, 1);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("re-identifies when a re-sync fills in error text the first pass never saw", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
-			const ids = insertRows(db, "s1", [
+			await insertSession(db, "s1");
+			const ids = await insertRows(db, "s1", [
 				{ role: "user", text: "go" },
 				{ role: "assistant", text: "" },
 				{ role: "assistant", text: "" },
 				{ role: "assistant", text: "" },
 			]);
-			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
-			assert.equal(readNode(db).props.turn_failure_count, 0);
+			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
+			assert.equal((await readNode(db)).props.turn_failure_count, 0);
 
 			// The message ids are unchanged, so a source set of ids alone would call
 			// this unit `current` and keep serving the empty conclusion.
-			const upd = db.prepare("UPDATE messages SET stop_reason = 'error', error_message = ? WHERE id = ?");
+			const upd = await db.prepare("UPDATE messages SET stop_reason = 'error', error_message = ? WHERE id = ?");
 			for (const id of ids.slice(1)) upd.run("429: rate limit exceeded", id);
 
-			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
-			assert.equal(readNode(db).props.turn_failure_count, 3);
+			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
+			assert.equal((await readNode(db)).props.turn_failure_count, 3);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("marks nodes stale for the config reason once a recommended package is installed", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertSession(db, "s1");
+			await insertRows(db, "s1", THREE_RATE_LIMITS);
 
 			const before = settingsWith([]);
 			let recommended: string;
 			try {
-				await withSettings(before, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
-				recommended = readNode(db).props.improvement_proposals[0]!.target_path!;
+				await withSettings(before, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
+				recommended = (await readNode(db)).props.improvement_proposals[0]!.target_path!;
 			} finally {
 				fs.unlinkSync(before);
 			}
 
 			const after = settingsWith([recommended]);
 			try {
-				const scan = await withSettings(after, () => newFramework(db).scan("s1", ["failure-modes"]));
+				const scan = await withSettings(after, async () => (await newFramework(db)).scan("s1", ["failure-modes"]));
 				assert.ok(
 					scan.some((u) => u.status === "stale" && u.reasons?.includes("config")),
 					"installing what was recommended is a config change, not a silent no-op",
@@ -319,15 +319,15 @@ describe("failure-modes component test", () => {
 				fs.unlinkSync(after);
 			}
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("classifies failed tool calls per tool, and never stores the raw error text", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			const rows: Row[] = [{ role: "user", text: "go" }];
 			for (let i = 0; i < 3; i++) {
 				rows.push({
@@ -341,10 +341,10 @@ describe("failure-modes component test", () => {
 					toolResults: [{ toolCallId: `c${i}`, toolName: "bash", isError: true, textLength: 60 }],
 				});
 			}
-			insertRows(db, "s1", rows);
-			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
+			await insertRows(db, "s1", rows);
+			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 
-			const { props } = readNode(db);
+			const { props } = await readNode(db);
 			assert.equal(props.tool_failure_count, 3);
 			assert.equal(props.tool_call_count, 3);
 			const group = props.groups.find((g) => g.class_id === "permission-denied");
@@ -353,30 +353,30 @@ describe("failure-modes component test", () => {
 			assert.ok(!JSON.stringify(props).includes("private-name-here"), "host error text must never reach the graph");
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("records an abort without proposing anything about it", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
-			insertRows(db, "s1", [
+			await insertSession(db, "s1");
+			await insertRows(db, "s1", [
 				{ role: "user", text: "go" },
 				{ role: "assistant", stopReason: "aborted", errorMessage: "This operation was aborted" },
 				{ role: "assistant", stopReason: "aborted", errorMessage: "This operation was aborted" },
 				{ role: "assistant", stopReason: "aborted", errorMessage: "This operation was aborted" },
 			]);
-			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
+			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 
-			const { row, props } = readNode(db);
+			const { row, props } = await readNode(db);
 			assert.equal(props.turn_failure_count, 3, "an abort is still counted");
 			assert.deepEqual(props.improvement_proposals, [], "but there is nothing to fix");
 			assert.equal(row["node_kind"], "metric");
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 });

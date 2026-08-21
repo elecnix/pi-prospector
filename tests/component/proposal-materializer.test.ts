@@ -1,12 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { tempDb, insertSession } from "./helpers.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { computeProposalInputKey, materializeProposalsFromNode } from "../../src/analyze/proposal-materializer.js";
 import { insertNode } from "../../src/db/analysis-queries.js";
 import { listProposals } from "../../src/db/queries.js";
 
-function seedNode(db: import("better-sqlite3").Database, id: string): void {
-	insertNode(db, {
+async function seedNode(db: AsyncDatabase, id: string): Promise<void> {
+	await insertNode(db, {
 		id,
 		sessionId: "s1",
 		analyzerId: "session-overview",
@@ -42,12 +43,12 @@ describe("computeProposalInputKey", () => {
 });
 
 describe("materializeProposalsFromNode", () => {
-	it("inserts valid proposals and links them with produces edges", () => {
-		const { db, close } = tempDb();
+	it("inserts valid proposals and links them with produces edges", async () => {
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			seedNode(db, "node1");
-			const created = materializeProposalsFromNode(db, {
+			await insertSession(db, "s1");
+			await seedNode(db, "node1");
+			const created = await materializeProposalsFromNode(db, {
 				sessionId: "s1",
 				analyzerId: "session-overview",
 				sourceNodeId: "node1",
@@ -63,77 +64,77 @@ describe("materializeProposalsFromNode", () => {
 			});
 			assert.equal(created, 1);
 
-			const proposals = listProposals(db);
+			const proposals = await listProposals(db);
 			assert.equal(proposals.length, 1);
 			assert.equal(proposals[0]!.target_type, "agents_md");
 			assert.equal(proposals[0]!.status, "open");
 
-			const edge = db
+			const edge = (await db
 				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'produces'")
-				.get("node1") as { to_ref_id: string } | undefined;
+				.get("node1")) as { to_ref_id: string } | undefined;
 			assert.ok(edge);
 			assert.equal(edge!.to_ref_id, proposals[0]!.id);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("is idempotent for the same source node, but keeps duplicates from distinct sources", () => {
-		const { db, close } = tempDb();
+	it("is idempotent for the same source node, but keeps duplicates from distinct sources", async () => {
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			seedNode(db, "n1");
-			seedNode(db, "n2");
+			await insertSession(db, "s1");
+			await seedNode(db, "n1");
+			await seedNode(db, "n2");
 			const payload = {
 				improvement_proposals: [{ target_type: "config", title: "Same thing", summary: "s", severity: "friction" }],
 			};
 			// Same source node, materialised twice → idempotent (keyed on source output_key + ordinal).
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: payload }), 1);
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: payload }), 0);
+			assert.equal(await materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: payload }), 1);
+			assert.equal(await materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: payload }), 0);
 			// Distinct source node with byte-identical text → intentionally retained.
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n2", sourceOutputKey: "ok-n2", now: new Date().toISOString(), contentJson: payload }), 1);
-			assert.equal(listProposals(db).length, 2);
+			assert.equal(await materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n2", sourceOutputKey: "ok-n2", now: new Date().toISOString(), contentJson: payload }), 1);
+			assert.equal((await listProposals(db)).length, 2);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("does not resurrect a decided proposal on re-materialise (status preserved)", () => {
-		const { db, close } = tempDb();
+	it("does not resurrect a decided proposal on re-materialise (status preserved)", async () => {
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			seedNode(db, "n1");
+			await insertSession(db, "s1");
+			await seedNode(db, "n1");
 			const payload = {
 				improvement_proposals: [{ target_type: "agents_md", title: "Add a rule", summary: "s", severity: "friction" }],
 			};
 			const mk = () => ({ sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: payload });
-			assert.equal(materializeProposalsFromNode(db, mk()), 1);
-			const p = listProposals(db)[0]!;
+			assert.equal(await materializeProposalsFromNode(db, mk()), 1);
+			const p = (await listProposals(db))[0]!;
 
 			// Human decides on it: flip out of 'open'.
-			db.prepare("UPDATE proposals SET status = 'rejected', updated_at = ? WHERE id = ?").run(new Date().toISOString(), p.id);
+			await db.prepare("UPDATE proposals SET status = 'rejected', updated_at = ? WHERE id = ?").run(new Date().toISOString(), p.id);
 
 			// A later analysis run re-materialises the same source node. The decided
 			// proposal must NOT be re-created as a fresh 'open' row.
-			assert.equal(materializeProposalsFromNode(db, mk()), 0, "must not re-create a decided proposal");
-			const all = listProposals(db);
+			assert.equal(await materializeProposalsFromNode(db, mk()), 0, "must not re-create a decided proposal");
+			const all = await listProposals(db);
 			assert.equal(all.length, 1, "exactly one row for the input_key");
 			assert.equal(all[0]!.id, p.id, "same row preserved");
 			assert.equal(all[0]!.status, "rejected", "human decision preserved across recompute");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("returns 0 when there are no proposals", () => {
-		const { db, close } = tempDb();
+	it("returns 0 when there are no proposals", async () => {
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			seedNode(db, "n1");
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: {} }), 0);
-			assert.equal(materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: { improvement_proposals: "not-an-array" } }), 0);
+			await insertSession(db, "s1");
+			await seedNode(db, "n1");
+			assert.equal(await materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: {} }), 0);
+			assert.equal(await materializeProposalsFromNode(db, { sessionId: "s1", analyzerId: "a", sourceNodeId: "n1", sourceOutputKey: "ok-n1", now: new Date().toISOString(), contentJson: { improvement_proposals: "not-an-array" } }), 0);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });
@@ -141,21 +142,21 @@ describe("materializeProposalsFromNode", () => {
 describe("proposal pricing (issue #71)", () => {
 	// Session stream: u0 → a1($0.2) a2($0.3) → u1 → a3($0.1). Turn costs are the
 	// sum of assistant billing from a user message up to the next one.
-	function seedPaidSession(db: import("better-sqlite3").Database): void {
-		insertSession(db, "s1");
+	async function seedPaidSession(db: AsyncDatabase): Promise<void> {
+		await insertSession(db, "s1");
 		const insert = db.prepare(
 			"INSERT INTO messages (id, session_id, role, cost_usd) VALUES (?, 's1', ?, ?)",
 		);
-		insert.run("u0", "user", null);
-		insert.run("a1", "assistant", 0.2);
-		insert.run("a2", "assistant", 0.3);
-		insert.run("u1", "user", null);
-		insert.run("a3", "assistant", 0.1);
+		await insert.run("u0", "user", null);
+		await insert.run("a1", "assistant", 0.2);
+		await insert.run("a2", "assistant", 0.3);
+		await insert.run("u1", "user", null);
+		await insert.run("a3", "assistant", 0.1);
 	}
 
-	function materializeWith(db: import("better-sqlite3").Database, sourceIds: string[] | undefined): number | null {
-		seedNode(db, "n1");
-		const created = materializeProposalsFromNode(db, {
+	async function materializeWith(db: AsyncDatabase, sourceIds: string[] | undefined): Promise<number | null> {
+		await seedNode(db, "n1");
+		const created = await materializeProposalsFromNode(db, {
 			sessionId: "s1",
 			analyzerId: "session-overview",
 			sourceNodeId: "n1",
@@ -166,49 +167,49 @@ describe("proposal pricing (issue #71)", () => {
 			},
 		});
 		assert.equal(created, 1);
-		return listProposals(db)[0]!.cost_usd;
+		return (await listProposals(db))[0]!.cost_usd;
 	}
 
-	it("prices a proposal as the billed cost of its source turns", () => {
-		const { db, close } = tempDb();
+	it("prices a proposal as the billed cost of its source turns", async () => {
+		const { db, close } = await tempDb();
 		try {
-			seedPaidSession(db);
-			assert.equal(materializeWith(db, ["u1"]), 0.1);
+			await seedPaidSession(db);
+			assert.equal(await materializeWith(db, ["u1"]), 0.1);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("sums all assistant turns in a multi-step source turn", () => {
-		const { db, close } = tempDb();
+	it("sums all assistant turns in a multi-step source turn", async () => {
+		const { db, close } = await tempDb();
 		try {
-			seedPaidSession(db);
-			assert.equal(materializeWith(db, ["u0"]), 0.5); // a1 + a2, stops at the next user
+			await seedPaidSession(db);
+			assert.equal(await materializeWith(db, ["u0"]), 0.5); // a1 + a2, stops at the next user
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("leaves a proposal unpriced (null) when it carries no source turns", () => {
-		const { db, close } = tempDb();
+	it("leaves a proposal unpriced (null) when it carries no source turns", async () => {
+		const { db, close } = await tempDb();
 		try {
-			seedPaidSession(db);
-			assert.equal(materializeWith(db, undefined), null);
+			await seedPaidSession(db);
+			assert.equal(await materializeWith(db, undefined), null);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("leaves a proposal unpriced (null) when its source turns have no recorded cost", () => {
-		const { db, close } = tempDb();
+	it("leaves a proposal unpriced (null) when its source turns have no recorded cost", async () => {
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1"); // seedNode's node session
-			insertSession(db, "s2");
+			await insertSession(db, "s1"); // seedNode's node session
+			await insertSession(db, "s2");
 			const stmt = db.prepare("INSERT INTO messages (id, session_id, role) VALUES (?, 's2', ?)");
-			stmt.run("u0", "user");
-			stmt.run("a1", "assistant");
-			seedNode(db, "n2");
-			const created = materializeProposalsFromNode(db, {
+			await stmt.run("u0", "user");
+			await stmt.run("a1", "assistant");
+			await seedNode(db, "n2");
+			const created = await materializeProposalsFromNode(db, {
 				sessionId: "s2",
 				analyzerId: "session-overview",
 				sourceNodeId: "n2",
@@ -217,9 +218,9 @@ describe("proposal pricing (issue #71)", () => {
 				contentJson: { improvement_proposals: [{ target_type: "prompt", title: "T", summary: "s", source_message_ids: ["u0"] }] },
 			});
 			assert.equal(created, 1);
-			assert.equal(listProposals(db)[0]!.cost_usd, null);
+			assert.equal((await listProposals(db))[0]!.cost_usd, null);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

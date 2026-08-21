@@ -17,6 +17,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { AsyncDatabase } from "../src/db/async-db.js";
 import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
@@ -38,8 +39,8 @@ const IBAN = "GB82 WEST 1234 5698 7654 32"; // worked mod-97 example
 const SSN = "876-54-3210"; // valid shape, invented
 
 /** Framework with the presidio analyzer registered. */
-function newFramework(
-	db: import("better-sqlite3").Database,
+async function newFramework(
+	db: AsyncDatabase,
 	configOverrides?: Record<string, Record<string, unknown>>,
 ) {
 	const fw = new AnalyzerFramework({
@@ -49,18 +50,18 @@ function newFramework(
 		modelTiers: DEFAULT_MODEL_TIERS,
 		configOverrides,
 	});
-	fw.register(presidioAnalyzer);
+	await fw.register(presidioAnalyzer);
 	return fw;
 }
 
-function readNodes(db: import("better-sqlite3").Database): Array<Record<string, unknown>> {
-	return db
+async function readNodes(db: AsyncDatabase): Promise<Array<Record<string, unknown>>>  {
+	return await db
 		.prepare("SELECT * FROM analysis_nodes WHERE analyzer_id = ? ORDER BY created_at ASC")
 		.all(PRESIDIO_DEF.id) as Array<Record<string, unknown>>;
 }
 
-function newestProps(db: import("better-sqlite3").Database): PresidioProperties {
-	const rows = readNodes(db);
+async function newestProps(db: AsyncDatabase): PresidioProperties  {
+	const rows = await readNodes(db);
 	assert.ok(rows.length >= 1, "presidio analyzer should produce at least one node");
 	const row = rows[rows.length - 1]!; // newest (append-only graph)
 	return JSON.parse(row["content_json"] as string) as PresidioProperties;
@@ -68,10 +69,10 @@ function newestProps(db: import("better-sqlite3").Database): PresidioProperties 
 
 describe("presidio component test", () => {
 	it("detects PII across fields, anchors correctly, stores no full value", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "pii-1");
-			const ids = insertMessages(db, "pii-1", [
+			await insertSession(db, "pii-1");
+			const ids = await insertMessages(db, "pii-1", [
 				// User pastes contact details into prose.
 				{ role: "user", text: `reach me at ${EMAIL} or ${PHONE}, box ${PUBLIC_IP}` },
 				// Card number surfaces in the assistant's private reasoning.
@@ -85,12 +86,12 @@ describe("presidio component test", () => {
 				{ role: "user", text: `dev server ${PRIVATE_IP}` },
 			] satisfies TestMessage[]);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("pii-1", { analyzerIds: ["presidio"] });
 			assert.equal(first.nodesProduced, 1);
 			assert.equal(first.errors.length, 0);
 
-			const rows = readNodes(db);
+			const rows = await readNodes(db);
 			const row = rows[rows.length - 1]!;
 			assert.equal(row["node_kind"], "metric");
 			const props = JSON.parse(row["content_json"] as string) as PresidioProperties;
@@ -132,7 +133,7 @@ describe("presidio component test", () => {
 			}
 
 			// Anchors: one to the session, one per message with a finding.
-			const edges = db
+			const edges = await db
 				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
 				.all(row["id"]) as Array<Record<string, unknown>>;
 			const anchors = edges.filter((e) => e["edge_kind"] === "anchors");
@@ -140,67 +141,67 @@ describe("presidio component test", () => {
 			const targets = anchors.map((e) => `${e["to_ref_kind"]}:${e["to_ref_id"]}`).sort();
 			assert.deepEqual(targets, [`message:${ids[0]}`, `message:${ids[1]}`, `message:${ids[2]}`, "session:pii-1"]);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("is idempotent: a second run produces no new node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "pii-2");
-			insertMessages(db, "pii-2", [{ role: "user", text: `mail ${EMAIL}` }] satisfies TestMessage[]);
+			await insertSession(db, "pii-2");
+			await insertMessages(db, "pii-2", [{ role: "user", text: `mail ${EMAIL}` }] satisfies TestMessage[]);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("pii-2", { analyzerIds: ["presidio"] });
 			assert.equal(first.nodesProduced, 1);
 			const second = await fw.run("pii-2", { analyzerIds: ["presidio"] });
 			assert.equal(second.nodesProduced, 0);
 			assert.equal(second.nodesSkipped, 1);
 
-			const count = (db
+			const count = ((await db
 				.prepare("SELECT COUNT(*) as c FROM analysis_nodes WHERE analyzer_id = ?")
-				.get(PRESIDIO_DEF.id) as { c: number }).c;
+				.get(PRESIDIO_DEF.id)) as { c: number }).c;
 			assert.equal(count, 1);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("config overrides apply: entity filter, allowlist, denylist", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "pii-3");
-			insertMessages(db, "pii-3", [
+			await insertSession(db, "pii-3");
+			await insertMessages(db, "pii-3", [
 				{ role: "user", text: `mail ${EMAIL} card ${CARD} ip ${PUBLIC_IP}` },
 			] satisfies TestMessage[]);
 
 			// Baseline: three findings.
-			const fw1 = newFramework(db);
+			const fw1 = await newFramework(db);
 			await fw1.run("pii-3", { analyzerIds: ["presidio"] });
-			assert.equal(newestProps(db).pii_count, 3);
+			assert.equal((await newestProps(db)).pii_count, 3);
 
 			// Entity-type filter: cards only. Config change → stale/config → revise.
-			const fw2 = newFramework(db, { presidio: { entityTypes: ["CREDIT_CARD"] } });
+			const fw2 = await newFramework(db, { presidio: { entityTypes: ["CREDIT_CARD"] } });
 			await fw2.run("pii-3", { analyzerIds: ["presidio"], revise: ["config"] });
-			const filtered = newestProps(db);
+			const filtered = await newestProps(db);
 			assert.deepEqual(filtered.piis.map((p) => p.entity_type), ["CREDIT_CARD"]);
 
 			// Allowlist the card by its fingerprint (dropped); force-flag the public
 			// IP via the deny list. Email is untouched and stays an ordinary finding.
 			const cardFp = fingerprintOf(CARD);
 			const ipFp = fingerprintOf(PUBLIC_IP);
-			const fw3 = newFramework(db, {
+			const fw3 = await newFramework(db, {
 				presidio: { allowFingerprints: [cardFp], denyFingerprints: [ipFp] },
 			});
 			await fw3.run("pii-3", { analyzerIds: ["presidio"], revise: ["config"] });
-			const final = newestProps(db);
+			const final = await newestProps(db);
 			assert.deepEqual(final.piis.map((p) => p.entity_type).sort(), ["EMAIL_ADDRESS", "IP_ADDRESS"]);
 			const ip = final.piis.find((p) => p.entity_type === "IP_ADDRESS")!;
 			assert.equal(ip.denied, true);
 			const email = final.piis.find((p) => p.entity_type === "EMAIL_ADDRESS")!;
 			assert.equal(email.denied, false);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

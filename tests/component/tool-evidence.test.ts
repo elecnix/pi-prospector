@@ -51,9 +51,9 @@ function respond(req: LLMRequest): string {
 }
 
 /** Seed the fork-PR turn: correct push + gh pr create with no --repo (the bug). */
-function seed(db: import("better-sqlite3").Database, id: string): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+async function seed(db: AsyncDatabase, id: string): Promise<void> {
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		// The user's imprecise correction (a high-signal turn) — historically this
 		// wording alone steered the analyzer to blame the git push target.
 		{ id: `${id}-u`, role: "user", text: "YOU SHOULD HAVE PUSHED TO v2nic/gh-pr-review, that's wrong" },
@@ -75,12 +75,12 @@ function seed(db: import("better-sqlite3").Database, id: string): void {
 
 describe("tool-evidence channel (fork-PR regression)", () => {
 	it("carries `gh pr create (no --repo)` evidence into the classifier and digest prompts", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			seed(db, "fork1");
+			await seed(db, "fork1");
 			const mock = createMockLLM({ responder: respond, tokensPerCall: 100, costPerCall: 0.001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw);
+			await registerDefaults(fw);
 			const summary = await fw.run("fork1", {});
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
@@ -101,7 +101,7 @@ describe("tool-evidence channel (fork-PR regression)", () => {
 			assert.ok(reduceReq!.user.includes("tool=bash"), "digest carries a tool-evidence fragment");
 			assert.ok(!reduceReq!.user.includes("gh pr create --repo"), "digest evidence shows no --repo on the failing command");
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

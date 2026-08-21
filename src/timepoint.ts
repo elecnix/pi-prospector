@@ -14,7 +14,7 @@
  * wall-clock instant that could land mid-run).
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "./db/async-db.js";
 
 export interface ParsedArgs {
 	positionals: string[];
@@ -100,7 +100,7 @@ export interface Timepoint {
  * interleave and a mid-run instant yields a partial view. When both flags are
  * absent, returns undefined (i.e. live/current graph).
  */
-export function resolveTimepoint(db: Database.Database, flags: Record<string, string>): Timepoint | undefined {
+export async function resolveTimepoint(db: AsyncDatabase, flags: Record<string, string>): Promise<Timepoint | undefined> {
 	const asOf = flags["as-of"];
 	const asOfRun = flags["as-of-run"];
 	if (asOf !== undefined && asOfRun !== undefined) {
@@ -111,7 +111,7 @@ export function resolveTimepoint(db: Database.Database, flags: Record<string, st
 		return { at, source: `as of ${at}` };
 	}
 	if (asOfRun !== undefined) {
-		const run = resolveRunBoundary(db, asOfRun);
+		const run = await resolveRunBoundary(db, asOfRun);
 		if (!run) throw new Error(`no run matches '${asOfRun}'`);
 		return { at: run.at, source: `as of run ${run.id} (${run.at})` };
 	}
@@ -123,10 +123,10 @@ interface RunBoundary {
 	at: string;
 }
 
-function resolveRunBoundary(db: Database.Database, ref: string): RunBoundary | undefined {
-	const rows = (db.prepare(
+async function resolveRunBoundary(db: AsyncDatabase, ref: string): Promise<RunBoundary | undefined> {
+	const rows = ((await db.prepare(
 		"SELECT id, started_at, finished_at FROM analysis_runs WHERE id = ? OR id LIKE ? ORDER BY started_at DESC",
-	).all(ref, `${ref}%`) as Array<{ id: string; started_at: string; finished_at: string | null }>);
+	).all(ref, `${ref}%`)) as Array<{ id: string; started_at: string; finished_at: string | null }>);
 	if (rows.length === 0) return undefined;
 	const run = rows[0]!;
 	return { id: run.id, at: run.finished_at ?? run.started_at };

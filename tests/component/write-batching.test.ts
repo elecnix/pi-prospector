@@ -53,10 +53,10 @@ function verdictLLM() {
 
 describe("node and edges are written atomically", () => {
 	it("leaves no node behind when an edge is invalid", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			const ids = insertMessages(db, "s1", [{ role: "user", text: "hello" }]);
+			await insertSession(db, "s1");
+			const ids = await insertMessages(db, "s1", [{ role: "user", text: "hello" }]);
 
 			// An analyzer that emits a structurally invalid edge: `consumes` may only
 			// target an analysis_node, never a message. Defined standalone so its def,
@@ -82,85 +82,85 @@ describe("node and edges are written atomically", () => {
 			};
 
 			const framework = new AnalyzerFramework({ db, llm: async () => { throw new Error("no llm"); }, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(bad);
+			await framework.register(bad);
 			const summary = await framework.run("s1", { analyzerIds: ["bad-edges"] });
 
 			assert.ok(summary.errors.length > 0, "the invalid edge is reported");
-			const orphans = getNodesByAnalyzer(db, "bad-edges", "s1").filter((n) => n.node_kind !== "error");
+			const orphans = (await getNodesByAnalyzer(db, "bad-edges", "s1")).filter((n) => n.node_kind !== "error");
 			assert.equal(orphans.length, 0, "a node whose edges failed must not survive — it could never be traced");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("writes the node and all its edges when they are valid", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 			const framework = new AnalyzerFramework({ db, llm: verdictLLM().caller, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
 
-			const node = getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")[0]!;
-			const edges = db.prepare("SELECT edge_kind FROM analysis_edges WHERE from_node_id = ?").all(node.id);
+			const node = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1"))[0]!;
+			const edges = (await db.prepare("SELECT edge_kind FROM analysis_edges WHERE from_node_id = ?").all(node.id)) as unknown as Array<{ edge_kind: string }>;
 			assert.ok(edges.length >= 3, `expected anchors + uses_prompt + uses_config, got ${edges.length}`);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });
 
 describe("corpus-wide dependency reads are cached and invalidated", () => {
 	it("sees a term judged during the same run in a later session", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			// s1 teaches the corpus `putain`; s2 must match it on the very same run,
 			// which only holds if the cache is invalidated when the lexicon is written.
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: "putain again" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain again" }, { role: "assistant", text: "ok" }]);
 
 			const framework = new AnalyzerFramework({ db, llm: verdictLLM().caller, modelTiers: DEFAULT_MODEL_TIERS });
 			for (const a of [turnPairCoreAnalyzer, lexiconCandidatesAnalyzer, frustrationLexiconAnalyzer, turnFrustrationAnalyzer]) {
-				framework.register(a);
+				await framework.register(a);
 			}
 			await framework.run("s1");
 			await framework.run("s2");
 
-			const hits = getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s2")
+			const hits = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s2"))
 				.map((n) => (JSON.parse(n.content_json) as { signal: string }).signal);
 			assert.ok(hits.includes("putain"), `s2 must see the term s1 judged; got ${JSON.stringify(hits)}`);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("still matches terms judged in an earlier run", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
 
-			const build = () => {
+			const build = async () => {
 				const f = new AnalyzerFramework({ db, llm: verdictLLM().caller, modelTiers: DEFAULT_MODEL_TIERS });
-				for (const a of [turnPairCoreAnalyzer, lexiconCandidatesAnalyzer, frustrationLexiconAnalyzer, turnFrustrationAnalyzer]) f.register(a);
+				for (const a of [turnPairCoreAnalyzer, lexiconCandidatesAnalyzer, frustrationLexiconAnalyzer, turnFrustrationAnalyzer]) await f.register(a);
 				return f;
 			};
-			await build().run("s1");
+			await (await build()).run("s1");
 
 			// A fresh framework has an empty cache and must read from the database.
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
-			await build().run("s2");
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+			await (await build()).run("s2");
 
-			const hits = getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s2")
+			const hits = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s2"))
 				.map((n) => (JSON.parse(n.content_json) as { signal: string }).signal);
 			assert.ok(hits.includes("putain"));
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

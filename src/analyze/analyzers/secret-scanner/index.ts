@@ -154,7 +154,7 @@ export function makeSecretScannerAnalyzer(): Analyzer {
 				(ctx.config.configJson as unknown as SecretScannerConfig) ?? DEFAULT_SECRET_SCANNER_CONFIG;
 			// Re-read messages from the DB rather than the (possibly stale) plan-time
 			// list, matching the other detectors' pattern.
-			const messages = ctx.getSessionMessages(ctx.sessionId);
+			const messages = await ctx.getSessionMessages(ctx.sessionId);
 			const scan: SecretScannerScanResult = detectArtifactLeaks(messages, config);
 
 			const properties: SecretScannerProperties = {

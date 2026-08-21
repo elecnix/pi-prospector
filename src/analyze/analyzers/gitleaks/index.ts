@@ -105,11 +105,11 @@ export const gitleaksAnalyzer: Analyzer = {
 		];
 	},
 
-	analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
+	async analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = (ctx.config.configJson as unknown as GitleaksConfig) ?? DEFAULT_GITLEAKS_CONFIG;
 		// Re-read messages from the DB rather than the (possibly stale) plan-time
 		// list, matching secret-leak's pattern.
-		const messages = ctx.getSessionMessages(ctx.sessionId);
+		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const scan = detectGitleaksLeaks(messages, config);
 
 		const properties: GitleaksProperties = {

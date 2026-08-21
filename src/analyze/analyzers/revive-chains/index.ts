@@ -208,7 +208,7 @@ export const reviveChainsAnalyzer: Analyzer = {
 		label: "default",
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		if (ctx.messages.length === 0) return [];
 		const stream = buildToolStream(ctx.messages);
 		// No orchestration traffic → no chains, and the rollup has no markers to
@@ -221,7 +221,7 @@ export const reviveChainsAnalyzer: Analyzer = {
 		// the unit's identity inputs (via the fingerprint below), so a re-sync
 		// that backfills parent usage produces a fresh unit rather than leaving a
 		// stale self column standing.
-		const selfRows = ctx.db.prepare(SELF_ROWS_SELECT).all(ctx.sessionId) as SelfRow[];
+		const selfRows = (await ctx.db.prepare(SELF_ROWS_SELECT).all(ctx.sessionId)) as SelfRow[];
 		const { self } = foldSelfUsage(ctx.sessionId, selfRows);
 
 		// Identity folds in the chain-bearing content, not merely which messages
@@ -229,7 +229,7 @@ export const reviveChainsAnalyzer: Analyzer = {
 		// result (or ingests a child artifact's usage) changes the inputs, and the
 		// unit must re-identify as missing and recompute rather than keep serving
 		// a conclusion drawn from thinner data.
-		const childRuns = getSubagentRunsForSession(ctx.db, ctx.sessionId);
+		const childRuns = await getSubagentRunsForSession(ctx.db, ctx.sessionId);
 
 		const fingerprint = shortHash(
 			[
@@ -262,12 +262,12 @@ export const reviveChainsAnalyzer: Analyzer = {
 		];
 	},
 
-	analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
+	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = resolveConfig(ctx.config.configJson);
-		const messages = ctx.getSessionMessages(ctx.sessionId);
+		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const stream = buildToolStream(messages);
 		const chains = detectReviveChains(stream);
-		const childRuns = ctx.getSubagentRuns(ctx.sessionId);
+		const childRuns = await ctx.getSubagentRuns(ctx.sessionId);
 		const delegated = rollupDelegatedUsage(chains, childRuns);
 
 		// Computed in plan() — see the note there. A unit planned by an older

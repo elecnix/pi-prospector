@@ -180,8 +180,8 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	sessionOverviewAnalyzer,
 ];
 
-export function registerDefaults(framework: AnalyzerFramework): void {
-	for (const a of BUILTIN_ANALYZERS) framework.register(a);
+export async function registerDefaults(framework: AnalyzerFramework): Promise<void> {
+	for (const a of BUILTIN_ANALYZERS) await framework.register(a);
 }
 
 export interface RegisterAllOptions {
@@ -209,13 +209,13 @@ export async function registerAll(
 	opts: RegisterAllOptions = {},
 ): Promise<RegisterAllResult> {
 	const builtins = opts.builtins ?? BUILTIN_ANALYZERS;
-	for (const a of builtins) framework.register(a);
+	for (const a of builtins) await framework.register(a);
 
 	const builtinIds = builtins.map((a) => a.def.id);
 	const { loaded, errors } = await loadCustomAnalyzers({ paths: opts.paths ?? [], builtinIds });
 	const customRegistered: string[] = [];
 	for (const a of loaded) {
-		framework.register(a);
+		await framework.register(a);
 		customRegistered.push(a.def.id);
 	}
 	return { customRegistered, errors };

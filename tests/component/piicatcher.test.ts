@@ -16,6 +16,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { AsyncDatabase } from "../src/db/async-db.js";
 import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
@@ -43,8 +44,8 @@ const JSON_BLOCK = [
 ].join("\n");
 
 /** Framework with the piicatcher analyzer registered. */
-function newFramework(
-	db: import("better-sqlite3").Database,
+async function newFramework(
+	db: AsyncDatabase,
 	configOverrides?: Record<string, Record<string, unknown>>,
 ) {
 	const fw = new AnalyzerFramework({
@@ -54,18 +55,18 @@ function newFramework(
 		modelTiers: DEFAULT_MODEL_TIERS,
 		configOverrides,
 	});
-	fw.register(piicatcherAnalyzer);
+	await fw.register(piicatcherAnalyzer);
 	return fw;
 }
 
-function readNodes(db: import("better-sqlite3").Database): Array<Record<string, unknown>> {
-	return db
+async function readNodes(db: AsyncDatabase): Promise<Array<Record<string, unknown>>>  {
+	return await db
 		.prepare("SELECT * FROM analysis_nodes WHERE analyzer_id = ? ORDER BY created_at ASC")
 		.all(PIICATCHER_DEF.id) as Array<Record<string, unknown>>;
 }
 
-function newestProps(db: import("better-sqlite3").Database): PiicatcherProperties {
-	const rows = readNodes(db);
+async function newestProps(db: AsyncDatabase): PiicatcherProperties  {
+	const rows = await readNodes(db);
 	assert.ok(rows.length >= 1, "piicatcher analyzer should produce at least one node");
 	const row = rows[rows.length - 1]!; // newest (append-only graph)
 	return JSON.parse(row["content_json"] as string) as PiicatcherProperties;
@@ -73,10 +74,10 @@ function newestProps(db: import("better-sqlite3").Database): PiicatcherPropertie
 
 describe("piicatcher component test", () => {
 	it("detects column findings across fields, anchors correctly, stores no full value", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "piic-1");
-			const ids = insertMessages(db, "piic-1", [
+			await insertSession(db, "piic-1");
+			const ids = await insertMessages(db, "piic-1", [
 				// CSV block surfaced through a read tool's result.
 				{ role: "user", toolResults: [{ toolName: "db-query", isError: false, textLength: CSV_BLOCK.length }] },
 				// JSON records pasted into user prose.
@@ -86,14 +87,14 @@ describe("piicatcher component test", () => {
 			] satisfies TestMessage[]);
 			// The helper serialises toolResults as a JSON envelope; write the raw
 			// CSV block directly into the tool_results field for message 0.
-			db.prepare("UPDATE messages SET tool_results = ? WHERE id = ?").run(CSV_BLOCK, ids[0]!);
+			await db.prepare("UPDATE messages SET tool_results = ? WHERE id = ?").run(CSV_BLOCK, ids[0]!);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("piic-1", { analyzerIds: ["piicatcher"] });
 			assert.equal(first.nodesProduced, 1);
 			assert.equal(first.errors.length, 0);
 
-			const row = readNodes(db).at(-1)!;
+			const row = (await readNodes(db)).at(-1)!;
 			assert.equal(row["node_kind"], "metric");
 			const props = JSON.parse(row["content_json"] as string) as PiicatcherProperties;
 
@@ -138,7 +139,7 @@ describe("piicatcher component test", () => {
 			}
 
 			// Anchors: one to the session, one per message with a finding.
-			const edges = db
+			const edges = await db
 				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
 				.all(row["id"]) as Array<Record<string, unknown>>;
 			const anchors = edges.filter((e) => e["edge_kind"] === "anchors");
@@ -146,75 +147,75 @@ describe("piicatcher component test", () => {
 			const targets = anchors.map((e) => `${e["to_ref_kind"]}:${e["to_ref_id"]}`).sort();
 			assert.deepEqual(targets, [`message:${ids[0]}`, `message:${ids[1]}`, "session:piic-1"]);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("is idempotent: a second run produces no new node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "piic-2");
-			const ids = insertMessages(db, "piic-2", [
+			await insertSession(db, "piic-2");
+			const ids = await insertMessages(db, "piic-2", [
 				{ role: "user", toolResults: [{ toolName: "db-query", isError: false, textLength: CSV_BLOCK.length }] },
 			] satisfies TestMessage[]);
-			db.prepare("UPDATE messages SET tool_results = ? WHERE id = ?").run(CSV_BLOCK, ids[0]!);
+			await db.prepare("UPDATE messages SET tool_results = ? WHERE id = ?").run(CSV_BLOCK, ids[0]!);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("piic-2", { analyzerIds: ["piicatcher"] });
 			assert.equal(first.nodesProduced, 1);
 			const second = await fw.run("piic-2", { analyzerIds: ["piicatcher"] });
 			assert.equal(second.nodesProduced, 0);
 			assert.equal(second.nodesSkipped, 1);
 
-			const count = (db
+			const count = ((await db
 				.prepare("SELECT COUNT(*) as c FROM analysis_nodes WHERE analyzer_id = ?")
-				.get(PIICATCHER_DEF.id) as { c: number }).c;
+				.get(PIICATCHER_DEF.id)) as { c: number }).c;
 			assert.equal(count, 1);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("config overrides apply: format toggle marks stale and revises", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "piic-3");
-			const ids = insertMessages(db, "piic-3", [
+			await insertSession(db, "piic-3");
+			const ids = await insertMessages(db, "piic-3", [
 				{ role: "user", toolResults: [{ toolName: "db-query", isError: false, textLength: CSV_BLOCK.length }] },
 				{ role: "user", text: JSON_BLOCK },
 			] satisfies TestMessage[]);
-			db.prepare("UPDATE messages SET tool_results = ? WHERE id = ?").run(CSV_BLOCK, ids[0]!);
+			await db.prepare("UPDATE messages SET tool_results = ? WHERE id = ?").run(CSV_BLOCK, ids[0]!);
 
 			// Baseline: three findings (csv email+card, json ip).
-			const fw1 = newFramework(db);
+			const fw1 = await newFramework(db);
 			await fw1.run("piic-3", { analyzerIds: ["piicatcher"] });
-			assert.equal(newestProps(db).finding_count, 3);
+			assert.equal((await newestProps(db)).finding_count, 3);
 
 			// Disable the csv format: config change → stale/config → revise; only
 			// the JSON ip finding survives.
-			const fw2 = newFramework(db, {
+			const fw2 = await newFramework(db, {
 				piicatcher: { formats: { csv: false, json: true, sql: true } },
 			});
 			await fw2.run("piic-3", { analyzerIds: ["piicatcher"], revise: ["config"] });
-			const revised = newestProps(db);
+			const revised = await newestProps(db);
 			assert.equal(revised.finding_count, 1);
 			assert.equal(revised.findings[0]!.fragment_kind, "json");
 
 			// Allowlist the TEST-NET addresses by fingerprint: the ip column no
 			// longer matches, so no finding remains.
-			const fw3 = newFramework(db, {
+			const fw3 = await newFramework(db, {
 				piicatcher: {
 					formats: { csv: false, json: true, sql: true },
 					allowFingerprints: [fingerprintOf("203.0.113.5"), fingerprintOf("203.0.113.6"), fingerprintOf("203.0.113.7")],
 				},
 			});
 			await fw3.run("piic-3", { analyzerIds: ["piicatcher"], revise: ["config"] });
-			const final = newestProps(db);
+			const final = await newestProps(db);
 			assert.equal(final.finding_count, 0);
 			assert.equal(final.has_findings, false);
 			assert.ok(final.allowlisted_values >= 3);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

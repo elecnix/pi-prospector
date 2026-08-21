@@ -33,7 +33,7 @@
  * converges with no special handling.
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "../db/async-db.js";
 import type {
 	Analyzer,
 	AnalyzerConfig,
@@ -91,7 +91,7 @@ import { materializeProposalsFromNode, applyValidationFromNode } from "./proposa
 import { mapWithConcurrency } from "./concurrency.js";
 
 export interface FrameworkDeps {
-	db: Database.Database;
+	db: AsyncDatabase;
 	llm: LLMCaller;
 	modelTiers: ModelTierConfig;
 	/**
@@ -140,11 +140,11 @@ export class AnalyzerFramework {
 	constructor(private readonly deps: FrameworkDeps) {}
 
 	/** Register an analyzer and persist its def, version, prompts, and default config. */
-	register(analyzer: Analyzer): void {
-		upsertAnalyzerDef(this.deps.db, analyzer.def);
-		upsertAnalyzerVersion(this.deps.db, analyzer.version);
+	async register(analyzer: Analyzer): Promise<void> {
+		await upsertAnalyzerDef(this.deps.db, analyzer.def);
+		await upsertAnalyzerVersion(this.deps.db, analyzer.version);
 		for (const prompt of Object.values(analyzer.prompts)) {
-			registerPrompt(this.deps.db, prompt);
+			await registerPrompt(this.deps.db, prompt);
 		}
 		this.analyzers.set(analyzer.def.id, analyzer);
 	}
@@ -166,11 +166,11 @@ export class AnalyzerFramework {
 		const order = this.topologicalSort(analyzerIds);
 		const out: ClassifiedUnit[] = [];
 		for (const analyzerId of order) {
-			const resolved = this.resolve(analyzerId);
-			const planCtx = this.buildPlanContext(resolved.analyzer, resolved.config, sessionId);
+			const resolved = await this.resolve(analyzerId);
+			const planCtx = await this.buildPlanContext(resolved.analyzer, resolved.config, sessionId);
 			const units = await resolved.analyzer.plan(planCtx);
 			for (const unit of units) {
-				out.push(this.classify(resolved, unit));
+				out.push(await this.classify(resolved, unit));
 			}
 		}
 		return out;
@@ -217,13 +217,13 @@ export class AnalyzerFramework {
 		modelSpec: string | undefined,
 		summary: RunSummary,
 	): Promise<AnalyzerRunResult> {
-		const resolved = this.resolve(analyzerId);
+		const resolved = await this.resolve(analyzerId);
 		const { analyzer, config, promptBundleHash } = resolved;
 
-		const planCtx = this.buildPlanContext(analyzer, config, sessionId);
+		const planCtx = await this.buildPlanContext(analyzer, config, sessionId);
 		const units = await analyzer.plan(planCtx);
 
-		const classified = units.map((unit) => this.classify(resolved, unit));
+		const classified = await Promise.all(units.map((unit) => this.classify(resolved, unit)));
 		// Within-run dedup by input_key. `scan()` snapshots every unit *before* any
 		// insert, so if an analyzer plans two units that resolve to the same
 		// source_set_hash (e.g. two byte-identical turn-pairs, or identical map/reduce
@@ -310,7 +310,7 @@ export class AnalyzerFramework {
 				// Cost is booked whether or not the node lands: the call was made.
 				result.costUsd += analysis.costUsd ?? 0;
 				result.tokensUsed += analysis.tokensUsed ?? 0;
-				const created = this.persistNode(resolved, runId, sessionId, item, analysis);
+				const created = await this.persistNode(resolved, runId, sessionId, item, analysis);
 				if (created === null) {
 					// A peer run produced this exact recipe first. Identity *is* the recipe,
 					// so the work is done — that is idempotency, not a failure. Reachable
@@ -325,7 +325,7 @@ export class AnalyzerFramework {
 				const message = err instanceof Error ? err.message : String(err);
 				result.status = "partial";
 				summary.errors.push(`${analyzer.def.id}: ${message}`);
-				this.persistErrorNode(resolved, runId, sessionId, item, message, Date.now() - analyzeStart);
+				await this.persistErrorNode(resolved, runId, sessionId, item, message, Date.now() - analyzeStart);
 				// A misconfiguration is not a per-unit failure. Every remaining unit will
 				// fail identically for one root cause that was knowable before the first
 				// one ran, so continuing turns a single typo into an error node per unit —
@@ -363,7 +363,7 @@ export class AnalyzerFramework {
 
 	// ───────────────────────── classification ─────────────────────────
 
-	private classify(resolved: ResolvedAnalyzer, unit: AnalysisUnit): ClassifiedUnit {
+	private async classify(resolved: ResolvedAnalyzer, unit: AnalysisUnit): Promise<ClassifiedUnit> {
 		const { analyzer, configFingerprint } = resolved;
 		const inputKey = computeInputKey({
 			analyzerId: analyzer.def.id,
@@ -376,11 +376,11 @@ export class AnalyzerFramework {
 		// only a successful result at this exact recipe, and `findLatestNodeBySourceSet`
 		// skips errors. A unit whose only history is failures therefore classifies as
 		// `missing` and is recomputed on the next scan that reaches it.
-		if (findNodeByInputKey(this.deps.db, inputKey)) {
+		if (await findNodeByInputKey(this.deps.db, inputKey)) {
 			return { analyzerId: analyzer.def.id, unit, status: "current", inputKey, reasons: [] };
 		}
 
-		const prior = findLatestNodeBySourceSet(this.deps.db, analyzer.def.id, unit.sourceSetHash);
+		const prior = await findLatestNodeBySourceSet(this.deps.db, analyzer.def.id, unit.sourceSetHash);
 		if (prior) {
 			const reasons = this.gradeStale(resolved, prior);
 			return { analyzerId: analyzer.def.id, unit, status: "stale", inputKey, priorNodeId: prior.id, priorOutputKey: prior.output_key, reasons };
@@ -413,13 +413,13 @@ export class AnalyzerFramework {
 	 * run already wrote a node for this exact recipe — see the caller for why that
 	 * is a skip rather than an error.
 	 */
-	private persistNode(
+	private async persistNode(
 		resolved: ResolvedAnalyzer,
 		runId: string,
 		sessionId: string,
 		item: ClassifiedUnit,
 		analysis: AnalysisResult,
-	): { nodeId: string; proposalsCreated: number } | null {
+	): Promise<{ nodeId: string; proposalsCreated: number } | null> {
 		const { analyzer, config } = resolved;
 		const nodeId = uuidv7();
 		const now = new Date().toISOString();
@@ -437,8 +437,8 @@ export class AnalyzerFramework {
 		// already inserted with no edges, producing a node that exists but can never
 		// be traced back to anything. That silently violates "a proposal can always be
 		// traced, via edges, back to the conversation evidence that justifies it".
-		const writeNodeAndEdges = this.deps.db.transaction(() => {
-			insertNode(this.deps.db, {
+		const writeNodeAndEdges = this.deps.db.transaction(async () => {
+			await insertNode(this.deps.db, {
 				id: nodeId,
 				sessionId,
 				analyzerId: analyzer.def.id,
@@ -460,11 +460,11 @@ export class AnalyzerFramework {
 				durationMs: analysis.durationMs ?? null,
 				createdAt: now,
 			});
-			this.persistEdges(nodeId, config, analysis);
+			await this.persistEdges(nodeId, config, analysis);
 		});
 
 		try {
-			writeNodeAndEdges();
+			await writeNodeAndEdges();
 		} catch (err) {
 			if (isDuplicateInputKey(err)) return null;
 			throw err;
@@ -474,7 +474,7 @@ export class AnalyzerFramework {
 		// references the predecessor's content-addressed output_key (not its uuid), so
 		// lineage edges reproduce across a wipe/rebuild like every other identity.
 		if (item.status === "stale" && item.priorOutputKey) {
-			insertEdge(this.deps.db, {
+			await insertEdge(this.deps.db, {
 				fromNodeId: nodeId,
 				toRefKind: REF_KINDS.ANALYSIS_NODE,
 				toRefId: item.priorOutputKey,
@@ -488,7 +488,7 @@ export class AnalyzerFramework {
 
 		let proposalsCreated = 0;
 		if (analysis.nodeKind === "summary" || analysis.nodeKind === "proposal") {
-			proposalsCreated = materializeProposalsFromNode(this.deps.db, {
+			proposalsCreated = await materializeProposalsFromNode(this.deps.db, {
 				sessionId,
 				analyzerId: analyzer.def.id,
 				sourceNodeId: nodeId,
@@ -499,7 +499,7 @@ export class AnalyzerFramework {
 		} else if (analysis.nodeKind === "validation") {
 			// Symmetric to materialisation: a validation node writes its grounded
 			// replay score back onto the proposal it scored (matched by input_key).
-			applyValidationFromNode(this.deps.db, {
+			await applyValidationFromNode(this.deps.db, {
 				validationNodeId: nodeId,
 				contentJson: analysis.contentJson,
 				now,
@@ -509,11 +509,11 @@ export class AnalyzerFramework {
 		return { nodeId, proposalsCreated };
 	}
 
-	private persistEdges(nodeId: string, config: AnalyzerConfig, analysis: AnalysisResult): void {
+	private async persistEdges(nodeId: string, config: AnalyzerConfig, analysis: AnalysisResult): Promise<void> {
 		let ordinal = 0;
 		for (const edge of analysis.edges) {
 			validateEdge(edge.edgeKind, edge.toRefKind);
-			insertEdge(this.deps.db, {
+			await insertEdge(this.deps.db, {
 				fromNodeId: nodeId,
 				toRefKind: edge.toRefKind,
 				toRefId: edge.toRefId,
@@ -524,7 +524,7 @@ export class AnalyzerFramework {
 		}
 
 		// Always record the config provenance edge.
-		insertEdge(this.deps.db, {
+		await insertEdge(this.deps.db, {
 			fromNodeId: nodeId,
 			toRefKind: REF_KINDS.CONFIG_VERSION,
 			toRefId: config.id,
@@ -533,14 +533,14 @@ export class AnalyzerFramework {
 		});
 	}
 
-	private persistErrorNode(
+	private async persistErrorNode(
 		resolved: ResolvedAnalyzer,
 		runId: string,
 		sessionId: string,
 		item: ClassifiedUnit,
 		message: string,
 		durationMs?: number,
-	): void {
+	): Promise<void> {
 		const { analyzer, config } = resolved;
 		const nodeId = uuidv7();
 		const now = new Date().toISOString();
@@ -552,7 +552,7 @@ export class AnalyzerFramework {
 		const errorInputKey = shortHash(`error(${item.inputKey}|${message}|${now}|${nodeId})`);
 		const content = { error: message, anchor: item.unit.anchorRef, timestamp: now };
 		try {
-			insertNode(this.deps.db, {
+			await insertNode(this.deps.db, {
 				id: nodeId,
 				sessionId,
 				analyzerId: analyzer.def.id,
@@ -575,9 +575,9 @@ export class AnalyzerFramework {
 
 	// ───────────────────────── contexts ─────────────────────────
 
-	private buildPlanContext(analyzer: Analyzer, config: AnalyzerConfig, sessionId: string): AnalyzerPlanContext {
-		const messages = this.loadMessages(sessionId);
-		const allNodes = getSessionNodes(this.deps.db, sessionId);
+	private async buildPlanContext(analyzer: Analyzer, config: AnalyzerConfig, sessionId: string): Promise<AnalyzerPlanContext> {
+		const messages = await this.loadMessages(sessionId);
+		const allNodes = await getSessionNodes(this.deps.db, sessionId);
 		const ownNodes = allNodes.filter((n) => n.analyzer_id === analyzer.def.id);
 		const dependencyNodes: Record<string, AnalysisNodeRow[]> = {};
 		for (const depId of analyzer.def.dependencies) {
@@ -600,7 +600,7 @@ export class AnalyzerFramework {
 	 * the same declared-dependency rule as the session-scoped reads — only the
 	 * session scope is lifted, never the dependency scope.
 	 */
-	private globalDependencyNodes(analyzer: Analyzer, depId: string): AnalysisNodeRow[] {
+	private async globalDependencyNodes(analyzer: Analyzer, depId: string): Promise<AnalysisNodeRow[]> {
 		if (!analyzer.def.dependencies.includes(depId)) {
 			throw new Error(
 				`Analyzer '${analyzer.def.id}' read dependency '${depId}' without declaring it. ` +
@@ -609,7 +609,7 @@ export class AnalyzerFramework {
 		}
 		const cached = this.globalNodeCache.get(depId);
 		if (cached) return cached;
-		const rows = getLatestNodesByAnalyzerAcrossSessions(this.deps.db, depId);
+		const rows = await getLatestNodesByAnalyzerAcrossSessions(this.deps.db, depId);
 		this.globalNodeCache.set(depId, rows);
 		return rows;
 	}
@@ -642,13 +642,13 @@ export class AnalyzerFramework {
 		};
 	}
 
-	private loadMessages(sessionId: string): MessageRow[] {
+	private async loadMessages(sessionId: string): Promise<MessageRow[]> {
 		return db_loadMessages(this.deps.db, sessionId);
 	}
 
 	// ───────────────────────── helpers ─────────────────────────
 
-	private resolve(analyzerId: string): ResolvedAnalyzer {
+	private async resolve(analyzerId: string): Promise<ResolvedAnalyzer> {
 		const analyzer = this.analyzers.get(analyzerId);
 		if (!analyzer) throw new Error(`Analyzer not registered: ${analyzerId}`);
 		// Shipped defaults first, then the user's overrides for this analyzer. A
@@ -658,7 +658,7 @@ export class AnalyzerFramework {
 		const configJson = override
 			? { ...analyzer.defaultConfig.configJson, ...override }
 			: analyzer.defaultConfig.configJson;
-		const config = resolveConfig(this.deps.db, {
+		const config = await resolveConfig(this.deps.db, {
 			analyzerId: analyzer.def.id,
 			configJson,
 			label: analyzer.defaultConfig.label,
@@ -682,7 +682,7 @@ export class AnalyzerFramework {
 		// reverts to the prior fingerprint so the old nodes classify `current` again.
 		// Content-addressed, so the fingerprint survives a wipe/recompute.
 		if (analyzer.consultsAssertions?.length) {
-			const active = getActiveAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
+			const active = await getActiveAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
 			extra.push(`assertions:${computeAssertionFingerprint(active)}`);
 		}
 		// Setup the analyzer reads but does not own (what the host has installed, …).
@@ -717,11 +717,11 @@ export class AnalyzerFramework {
 	}
 
 	/** Expose anchored-message lookup for analyzers that need raw turn content. */
-	getAnchoredMessages(nodeId: string): MessageRow[] {
-		const ids = getAnchoredMessageIds(this.deps.db, nodeId);
+	async getAnchoredMessages(nodeId: string): Promise<MessageRow[]> {
+		const ids = await getAnchoredMessageIds(this.deps.db, nodeId);
 		const out: MessageRow[] = [];
 		for (const id of ids) {
-			const m = getMessage(this.deps.db, id);
+			const m = await getMessage(this.deps.db, id);
 			if (m) out.push(m);
 		}
 		return out;
@@ -763,15 +763,15 @@ function isDuplicateInputKey(err: unknown): boolean {
 	return code === "SQLITE_CONSTRAINT_UNIQUE" && err.message.includes("analysis_nodes.input_key");
 }
 
-function db_loadMessages(db: Database.Database, sessionId: string): MessageRow[] {
+async function db_loadMessages(db: AsyncDatabase, sessionId: string): Promise<MessageRow[]> {
 	// Static SQL (two adjacent string literals) — stable text, so safe to cache.
 	// The full message shape (including model and cost_usd) is carried so every
 	// downstream per-message-cost consumer sees the recorded value. Cost is
 	// money and is never guessed: an unrecorded cost stays null here, not a
 	// silent 0 (see src/sync/parser.ts extractCostUsd).
-	return prep(db,
+	return (await prep(db,
 			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message " +
 			"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
 		)
-		.all(sessionId) as MessageRow[];
+		.all(sessionId)) as MessageRow[];
 }

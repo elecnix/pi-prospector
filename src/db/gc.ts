@@ -17,7 +17,7 @@
  * remediations are never touched.
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "./async-db.js";
 import { uuidv7 } from "../analyze/input-hash.js";
 
 export type GcTarget =
@@ -39,20 +39,20 @@ function chunk<T>(arr: readonly T[], size = 400): T[][] {
 	return out;
 }
 
-function selectNodes(db: Database.Database, target: GcTarget): Array<{ id: string; analyzer_id: string; node_kind: string }> {
+async function selectNodes(db: AsyncDatabase, target: GcTarget): Promise<Array<{ id: string; analyzer_id: string; node_kind: string }>> {
 	switch (target.kind) {
 		case "run":
-			return db.prepare("SELECT id, analyzer_id, node_kind FROM analysis_nodes WHERE run_id = ?").all(target.runId) as Array<{ id: string; analyzer_id: string; node_kind: string }>;
+			return (await db.prepare("SELECT id, analyzer_id, node_kind FROM analysis_nodes WHERE run_id = ?").all(target.runId)) as Array<{ id: string; analyzer_id: string; node_kind: string }>;
 		case "analyzer":
-			return db.prepare("SELECT id, analyzer_id, node_kind FROM analysis_nodes WHERE analyzer_id = ?").all(target.analyzerId) as Array<{ id: string; analyzer_id: string; node_kind: string }>;
+			return (await db.prepare("SELECT id, analyzer_id, node_kind FROM analysis_nodes WHERE analyzer_id = ?").all(target.analyzerId)) as Array<{ id: string; analyzer_id: string; node_kind: string }>;
 		case "since":
-			return db.prepare("SELECT id, analyzer_id, node_kind FROM analysis_nodes WHERE created_at > ?").all(target.since) as Array<{ id: string; analyzer_id: string; node_kind: string }>;
+			return (await db.prepare("SELECT id, analyzer_id, node_kind FROM analysis_nodes WHERE created_at > ?").all(target.since)) as Array<{ id: string; analyzer_id: string; node_kind: string }>;
 	}
 }
 
 /** Compute the nodes a gc target names, and the proposals materialised from them. Pure read. */
-export function computeDeletionSet(db: Database.Database, target: GcTarget): GcCatalog {
-	const nodeRows = selectNodes(db, target);
+export async function computeDeletionSet(db: AsyncDatabase, target: GcTarget): Promise<GcCatalog> {
+	const nodeRows = await selectNodes(db, target);
 	const nodes = nodeRows.map((r) => ({ id: r.id, analyzerId: r.analyzer_id, nodeKind: r.node_kind }));
 	const nodeIds = nodes.map((n) => n.id);
 
@@ -66,7 +66,7 @@ export function computeDeletionSet(db: Database.Database, target: GcTarget): GcC
 	const proposalIds: Array<{ id: string; inputKey: string }> = [];
 	for (const c of chunk(nodeIds)) {
 		const placeholders = c.map(() => "?").join(",");
-		const rows = db.prepare(`SELECT id, input_key FROM proposals WHERE source_node_id IN (${placeholders})`).all(...c) as Array<{ id: string; input_key: string }>;
+		const rows = (await db.prepare(`SELECT id, input_key FROM proposals WHERE source_node_id IN (${placeholders})`).all(...c)) as Array<{ id: string; input_key: string }>;
 		for (const r of rows) proposalIds.push({ id: r.id, inputKey: r.input_key });
 	}
 
@@ -86,25 +86,25 @@ export interface GcResult {
  * materialised from them plus the produces edges to those proposals. Nodes and
  * other edges stay, so the graph remains referentially intact and reversible.
  */
-export function retractNodes(db: Database.Database, catalog: GcCatalog, gcRunId: string, now: string): GcResult {
-	const tx = db.transaction(() => {
+export async function retractNodes(db: AsyncDatabase, catalog: GcCatalog, gcRunId: string, now: string): Promise<GcResult> {
+	const tx = db.transaction(async () => {
 		const nodeIds = catalog.nodes.map((n) => n.id);
 		for (const c of chunk(nodeIds)) {
 			const ph = c.map(() => "?").join(",");
-			db.prepare(`UPDATE analysis_nodes SET retracted_at = ?, retracted_by_run = ? WHERE id IN (${ph})`).run(now, gcRunId, ...c);
+			await db.prepare(`UPDATE analysis_nodes SET retracted_at = ?, retracted_by_run = ? WHERE id IN (${ph})`).run(now, gcRunId, ...c);
 		}
 		const proposalIds = catalog.proposalIds.map((p) => p.id);
 		for (const c of chunk(proposalIds)) {
 			const ph = c.map(() => "?").join(",");
-			db.prepare(`DELETE FROM proposals WHERE id IN (${ph})`).run(...c);
+			await db.prepare(`DELETE FROM proposals WHERE id IN (${ph})`).run(...c);
 		}
 		// Drop produces edges from the retracted nodes to the removed proposals.
 		for (const c of chunk(nodeIds)) {
 			const ph = c.map(() => "?").join(",");
-			db.prepare(`DELETE FROM analysis_edges WHERE from_node_id IN (${ph}) AND to_ref_kind = 'proposal'`).run(...c);
+			await db.prepare(`DELETE FROM analysis_edges WHERE from_node_id IN (${ph}) AND to_ref_kind = 'proposal'`).run(...c);
 		}
 	});
-	tx();
+	await tx();
 	return {
 		gcRunId,
 		retractedNodes: catalog.nodes.length,
@@ -114,15 +114,15 @@ export function retractNodes(db: Database.Database, catalog: GcCatalog, gcRunId:
 }
 
 /** Retracted nodes (with their provenance), oldest retraction first. */
-export function listRetracted(db: Database.Database): Array<{ id: string; analyzer_id: string; node_kind: string; created_at: string; retracted_at: string; retracted_by_run: string }> {
-	return db
+export async function listRetracted(db: AsyncDatabase): Promise<Array<{ id: string; analyzer_id: string; node_kind: string; created_at: string; retracted_at: string; retracted_by_run: string }>> {
+	return (await db
 		.prepare("SELECT id, analyzer_id, node_kind, created_at, retracted_at, retracted_by_run FROM analysis_nodes WHERE retracted_at IS NOT NULL ORDER BY retracted_at ASC, rowid ASC")
-		.all() as Array<{ id: string; analyzer_id: string; node_kind: string; created_at: string; retracted_at: string; retracted_by_run: string }>;
+		.all()) as Array<{ id: string; analyzer_id: string; node_kind: string; created_at: string; retracted_at: string; retracted_by_run: string }>;
 }
 
 /** Reverse a retraction: clear the tombstone for every node retracted by `gcRunId`. Returns count. */
-export function unretract(db: Database.Database, gcRunId: string): number {
-	const res = db.prepare("UPDATE analysis_nodes SET retracted_at = NULL, retracted_by_run = NULL WHERE retracted_by_run = ?").run(gcRunId);
+export async function unretract(db: AsyncDatabase, gcRunId: string): Promise<number> {
+	const res = await db.prepare("UPDATE analysis_nodes SET retracted_at = NULL, retracted_by_run = NULL WHERE retracted_by_run = ?").run(gcRunId);
 	return res.changes;
 }
 
@@ -132,18 +132,18 @@ export function unretract(db: Database.Database, gcRunId: string): number {
  * the deliberate, separate act that reclaims the storage retraction deliberately
  * does not. Never touches decisions/remediations.
  */
-export function purgeRetractedBefore(db: Database.Database, ts: string): { nodes: number; edges: number; proposals: number } {
+export async function purgeRetractedBefore(db: AsyncDatabase, ts: string): Promise<{ nodes: number; edges: number; proposals: number }> {
 	let edges = 0;
 	let proposals = 0;
-	const tx = db.transaction(() => {
+	const tx = db.transaction(async () => {
 		const eligible = "retracted_at IS NOT NULL AND retracted_at < ?";
-		edges += db.prepare(`DELETE FROM analysis_edges WHERE from_node_id IN (SELECT id FROM analysis_nodes WHERE ${eligible})`).run(ts).changes;
-		edges += db.prepare(`DELETE FROM analysis_edges WHERE to_ref_kind = 'analysis_node' AND to_ref_id IN (SELECT output_key FROM analysis_nodes WHERE ${eligible})`).run(ts).changes;
-		proposals += db.prepare(`DELETE FROM proposals WHERE source_node_id IN (SELECT id FROM analysis_nodes WHERE ${eligible})`).run(ts).changes;
-		const nodeDel = db.prepare(`DELETE FROM analysis_nodes WHERE ${eligible}`).run(ts);
+		edges += (await db.prepare(`DELETE FROM analysis_edges WHERE from_node_id IN (SELECT id FROM analysis_nodes WHERE ${eligible})`).run(ts)).changes;
+		edges += (await db.prepare(`DELETE FROM analysis_edges WHERE to_ref_kind = 'analysis_node' AND to_ref_id IN (SELECT output_key FROM analysis_nodes WHERE ${eligible})`).run(ts)).changes;
+		proposals += (await db.prepare(`DELETE FROM proposals WHERE source_node_id IN (SELECT id FROM analysis_nodes WHERE ${eligible})`).run(ts)).changes;
+		const nodeDel = await db.prepare(`DELETE FROM analysis_nodes WHERE ${eligible}`).run(ts);
 		return nodeDel.changes;
 	});
-	const nodes = tx();
+	const nodes = await tx();
 	return { nodes, edges, proposals };
 }
 

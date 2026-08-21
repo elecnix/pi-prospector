@@ -180,38 +180,40 @@ const analyzer: Analyzer = {
 		];
 	},
 
-	analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
-		const depNodes = ctx.getDependencyNodes(USER_REPLY_ACTS_ID);
-		const replies: UserReplyActsProperties[] = [];
-		const consumedKeys: string[] = [];
-		for (const n of depNodes) {
-			if (n.node_kind !== "classification") continue;
-			try {
-				const p = JSON.parse(n.content_json) as UserReplyActsProperties;
-				replies.push(p);
-				consumedKeys.push(n.output_key);
-			} catch {
-				/* skip malformed */
+	analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
+		return (async () => {
+			const depNodes = await ctx.getDependencyNodes(USER_REPLY_ACTS_ID);
+			const replies: UserReplyActsProperties[] = [];
+			const consumedKeys: string[] = [];
+			for (const n of depNodes) {
+				if (n.node_kind !== "classification") continue;
+				try {
+					const p = JSON.parse(n.content_json) as UserReplyActsProperties;
+					replies.push(p);
+					consumedKeys.push(n.output_key);
+				} catch {
+					/* skip malformed */
+				}
 			}
-		}
-		const dist = rollUp(ctx.sessionId, replies);
-		// Replace the placeholder refs with the real consumed output keys.
-		dist.source_output_keys = consumedKeys;
+			const dist = rollUp(ctx.sessionId, replies);
+			// Replace the placeholder refs with the real consumed output keys.
+			dist.source_output_keys = consumedKeys;
 
-		const edges: EdgeSpec[] = [
-			{ toRefKind: REF_KINDS.SESSION, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
-		];
-		for (let i = 0; i < consumedKeys.length; i++) {
-			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: consumedKeys[i]!, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 + i });
-		}
+			const edges: EdgeSpec[] = [
+				{ toRefKind: REF_KINDS.SESSION, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
+			];
+			for (let i = 0; i < consumedKeys.length; i++) {
+				edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: consumedKeys[i]!, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 + i });
+			}
 
-		return {
-			nodeKind: "metric",
-			contentJson: dist as unknown as Record<string, unknown>,
-			anchorKind: "session",
-			anchorRef: unit.anchorRef,
-			edges,
-		};
+			return {
+				nodeKind: "metric",
+				contentJson: dist as unknown as Record<string, unknown>,
+				anchorKind: "session",
+				anchorRef: unit.anchorRef,
+				edges,
+			};
+		})();
 	},
 };
 

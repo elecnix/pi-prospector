@@ -41,30 +41,30 @@ describe("analyzer-owned reasoning level", () => {
 	});
 
 	it("carries the analyzer's level through to the request", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
 			const llm = createMockLLM({ responder: verdict });
 			const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
 
 			const termCalls = llm.calls.filter((c: LLMRequest) => c.tool?.name === "classify_term");
 			assert.ok(termCalls.length > 0);
 			assert.equal(termCalls.every((c) => c.reasoning === "off"), true);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("honours a per-analyzer override of the level", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
 			const llm = createMockLLM({ responder: verdict });
 			const framework = new AnalyzerFramework({
@@ -73,25 +73,25 @@ describe("analyzer-owned reasoning level", () => {
 				modelTiers: DEFAULT_MODEL_TIERS,
 				configOverrides: { [FRUSTRATION_LEXICON_DEF.id]: { reasoning: "low" } },
 			});
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
 
 			const termCalls = llm.calls.filter((c: LLMRequest) => c.tool?.name === "classify_term");
 			assert.equal(termCalls.every((c) => c.reasoning === "low"), true);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });
 
 describe("failing fast on a broken model configuration", () => {
 	it("stops after the first unit instead of writing one error per unit", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			// Plenty of distinct vocabulary, so a per-unit failure would be very visible.
-			insertMessages(db, "s1", [{ role: "user", text: Array.from({ length: 60 }, (_, i) => `word${String.fromCharCode(97 + i % 26)}${String.fromCharCode(97 + Math.floor(i / 26))}`).join(" ").replace(/\d/g, "") }]);
+			await insertMessages(db, "s1", [{ role: "user", text: Array.from({ length: 60 }, (_, i) => `word${String.fromCharCode(97 + i % 26)}${String.fromCharCode(97 + Math.floor(i / 26))}`).join(" ").replace(/\d/g, "") }]);
 
 			let calls = 0;
 			const llm = async () => {
@@ -99,24 +99,26 @@ describe("failing fast on a broken model configuration", () => {
 				throw new Error("Model not found in Pi registry: inclusionai/ling-2.6-flash. Configure it via Pi or set modelTiers in prospector.json.");
 			};
 			const framework = new AnalyzerFramework({ db, llm, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			const summary = await framework.run("s1");
 
 			assert.ok(summary.errors.length > 0, "the failure is reported");
 			assert.equal(calls, 1, "the model is only asked once — the fault is not per-unit");
-			const errorNodes = getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1").filter((n) => n.node_kind === "error");
+			const errorNodes = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).filter(
+				(n) => n.node_kind === "error",
+			);
 			assert.ok(errorNodes.length <= 1, `expected at most one error node, got ${errorNodes.length}`);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("keeps going when a failure is genuinely per-unit", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "alpha bravo charlie delta" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "alpha bravo charlie delta" }]);
 
 			let calls = 0;
 			const llm = async (req: LLMRequest) => {
@@ -134,14 +136,14 @@ describe("failing fast on a broken model configuration", () => {
 				};
 			};
 			const framework = new AnalyzerFramework({ db, llm, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			const summary = await framework.run("s1");
 
 			assert.ok(calls > 2, "a single unit's failure does not abort the analyzer");
 			assert.ok(summary.nodesProduced > 1, "the other terms were still judged");
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

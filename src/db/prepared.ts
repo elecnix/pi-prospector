@@ -1,36 +1,15 @@
-import type Database from "better-sqlite3";
-import type { Statement } from "better-sqlite3";
+import type { AsyncDatabase, AsyncStatement } from "./async-db.js";
 
 /**
- * Prepared-statement cache, keyed per `Database` connection.
+ * Prepared-statement access for the async SQLite driver.
  *
- * better-sqlite3 `Statement`s are bound to the connection they were prepared
- * on, so the cache must be per-instance rather than module-global: a statement
- * prepared on a closed database must never be handed to a later connection
- * (tests create a fresh temp DB per case, so a module-level `Map<sql, Statement>`
- * would leak across cases). We key a WeakMap by the `Database` object, and each
- * connection lazily grows its own `Map<sql, Statement>` on first use.
- *
- * Population is lazy and every caller runs after `migrate()`, so the cache is
- * only ever filled once the schema is final — a cached statement can never
- * capture a pre-migration query plan. There is deliberately no
- * `initializeStatementCache(db)` hook to call after migration: because the map
- * fills on first use, there is simply nothing for a new connection path to
- * forget, and no init call that could be omitted.
+ * better-sqlite3 bound `Statement`s to the connection and had to be cached
+ * per-instance; the worker-thread driver instead caches prepared statements
+ * by SQL string inside the worker (`async-db-worker.ts`), so on the main side
+ * `prep` is just a typed passthrough to `AsyncDatabase.prepare`. Keeping the
+ * `prep(db, sql)` call shape means the query layer's await migration is
+ * mechanical: `prep(db, sql).all(...)` becomes `(await prep(db, sql).all(...))`.
  */
-const statementCache = new WeakMap<Database.Database, Map<string, Statement>>();
-
-/** Return a cached, connection-bound prepared statement, preparing on miss. */
-export function prep(db: Database.Database, sql: string): Statement {
-	let cache = statementCache.get(db);
-	if (!cache) {
-		cache = new Map();
-		statementCache.set(db, cache);
-	}
-	let stmt = cache.get(sql);
-	if (!stmt) {
-		stmt = db.prepare(sql);
-		cache.set(sql, stmt);
-	}
-	return stmt;
+export function prep(db: AsyncDatabase, sql: string): AsyncStatement {
+	return db.prepare(sql);
 }

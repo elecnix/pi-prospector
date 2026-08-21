@@ -13,6 +13,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { AsyncDatabase } from "../src/db/async-db.js";
 import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
@@ -52,8 +53,8 @@ const MOCK_VERIFIER = createMockVerifier({
 });
 
 /** Framework with the trufflehog analyzer registered under injected verifiers. */
-function newFramework(
-	db: import("better-sqlite3").Database,
+async function newFramework(
+	db: AsyncDatabase,
 	configOverrides?: Record<string, Record<string, unknown>>,
 ) {
 	const fw = new AnalyzerFramework({
@@ -63,18 +64,18 @@ function newFramework(
 		modelTiers: DEFAULT_MODEL_TIERS,
 		configOverrides,
 	});
-	fw.register(makeTruffleHogAnalyzer([MOCK_VERIFIER]));
+	await fw.register(makeTruffleHogAnalyzer([MOCK_VERIFIER]));
 	return fw;
 }
 
-function readNodes(db: import("better-sqlite3").Database): Array<Record<string, unknown>> {
-	return db
+async function readNodes(db: AsyncDatabase): Promise<Array<Record<string, unknown>>>  {
+	return await db
 		.prepare("SELECT * FROM analysis_nodes WHERE analyzer_id = ? ORDER BY created_at ASC")
 		.all(TRUFFLEHOG_DEF.id) as Array<Record<string, unknown>>;
 }
 
-function newestProps(db: import("better-sqlite3").Database): TruffleHogProperties {
-	const rows = readNodes(db);
+async function newestProps(db: AsyncDatabase): TruffleHogProperties  {
+	const rows = await readNodes(db);
 	assert.ok(rows.length >= 1, "trufflehog analyzer should produce at least one node");
 	const row = rows[rows.length - 1]!; // newest (append-only graph)
 	return JSON.parse(row["content_json"] as string) as TruffleHogProperties;
@@ -82,20 +83,20 @@ function newestProps(db: import("better-sqlite3").Database): TruffleHogPropertie
 
 describe("trufflehog component test", () => {
 	it("detects a self-written pattern in a user message, anchors correctly, stores no full secret", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "th-1");
-			const ids = insertMessages(db, "th-1", [
+			await insertSession(db, "th-1");
+			const ids = await insertMessages(db, "th-1", [
 				{ role: "user", text: `deploy uses this figma token: ${FIGD}` },
 				{ role: "assistant", text: "noted" },
 			] satisfies TestMessage[]);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("th-1", { analyzerIds: ["trufflehog"] });
 			assert.equal(first.nodesProduced, 1);
 			assert.equal(first.errors.length, 0);
 
-			const rows = readNodes(db);
+			const rows = await readNodes(db);
 			const row = rows[rows.length - 1]!;
 			assert.equal(row["node_kind"], "metric");
 			const props = JSON.parse(row["content_json"] as string) as TruffleHogProperties;
@@ -115,7 +116,7 @@ describe("trufflehog component test", () => {
 			assert.ok(!contentJson.includes(FIGD.slice(4, -4)), "middle of secret must not be persisted");
 
 			// Anchors: one to the session, one to the leaked message.
-			const edges = db
+			const edges = await db
 				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
 				.all(row["id"]) as Array<Record<string, unknown>>;
 			const anchors = edges.filter((e) => e["edge_kind"] === "anchors");
@@ -123,48 +124,48 @@ describe("trufflehog component test", () => {
 			const targets = anchors.map((e) => `${e["to_ref_kind"]}:${e["to_ref_id"]}`).sort();
 			assert.deepEqual(targets, [`message:${ids[0]}`, "session:th-1"]);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("is idempotent: a second run produces no new node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "th-2");
-			insertMessages(db, "th-2", [
+			await insertSession(db, "th-2");
+			await insertMessages(db, "th-2", [
 				{ role: "user", text: `token ${FIGD}` },
 			] satisfies TestMessage[]);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("th-2", { analyzerIds: ["trufflehog"] });
 			assert.equal(first.nodesProduced, 1);
 			const second = await fw.run("th-2", { analyzerIds: ["trufflehog"] });
 			assert.equal(second.nodesProduced, 0);
 			assert.equal(second.nodesSkipped, 1);
 
-			const count = (db
+			const count = ((await db
 				.prepare("SELECT COUNT(*) as c FROM analysis_nodes WHERE analyzer_id = ?")
-				.get(TRUFFLEHOG_DEF.id) as { c: number }).c;
+				.get(TRUFFLEHOG_DEF.id)) as { c: number }).c;
 			assert.equal(count, 1);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("with verify:true, findings carry verification outcomes and the mock is probed once per credential", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "th-3");
-			insertMessages(db, "th-3", [
+			await insertSession(db, "th-3");
+			await insertMessages(db, "th-3", [
 				{ role: "user", text: `key one ${FIGD}` },
 			] satisfies TestMessage[]);
 
-			const fw = newFramework(db, { trufflehog: { verify: true } });
+			const fw = await newFramework(db, { trufflehog: { verify: true } });
 			const run = await fw.run("th-3", { analyzerIds: ["trufflehog"] });
 			assert.equal(run.errors.length, 0);
 			assert.equal(run.nodesProduced, 1);
 
-			const props = newestProps(db);
+			const props = await newestProps(db);
 			assert.equal(props.verify_enabled, true);
 			assert.equal(props.leaks[0]!.verification!.verified, true);
 			assert.equal(props.leaks[0]!.verification!.reason, "mock-live");
@@ -181,34 +182,34 @@ describe("trufflehog component test", () => {
 			const contentJson = JSON.stringify(props);
 			assert.ok(!contentJson.includes(FIGD));
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("enabling verify marks prior nodes stale/config; a config-reason run revises them, preserving lineage", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "th-4");
-			insertMessages(db, "th-4", [
+			await insertSession(db, "th-4");
+			await insertMessages(db, "th-4", [
 				{ role: "user", text: `key ${FIGD}` },
 			] satisfies TestMessage[]);
 
 			// Detection-only run first.
-			const plain = newFramework(db);
+			const plain = await newFramework(db);
 			await plain.run("th-4", { analyzerIds: ["trufflehog"] });
-			assert.equal(readNodes(db).length, 1);
+			assert.equal((await readNodes(db)).length, 1);
 
 			// A frugal run under verify:true does NOT silently reuse or rewrite:
 			// the unit is stale/config and stays untouched without the reason.
-			const verifying = newFramework(db, { trufflehog: { verify: true } });
+			const verifying = await newFramework(db, { trufflehog: { verify: true } });
 			const frugal = await verifying.run("th-4", { analyzerIds: ["trufflehog"] });
 			assert.equal(frugal.nodesProduced, 0);
-			assert.equal(readNodes(db).length, 1);
+			assert.equal((await readNodes(db)).length, 1);
 
 			// With the `config` revise reason it recomputes into a NEW version.
 			const revised = await verifying.run("th-4", { analyzerIds: ["trufflehog"], revise: ["config"] });
 			assert.equal(revised.nodesProduced, 1);
-			const rows = readNodes(db);
+			const rows = await readNodes(db);
 			assert.equal(rows.length, 2, "append-only: old node preserved beside the new one");
 
 			const oldProps = JSON.parse(rows[0]!["content_json"] as string) as TruffleHogProperties;
@@ -220,35 +221,35 @@ describe("trufflehog component test", () => {
 			// Lineage: the new node revises its predecessor (referenced by its
 			// content-addressed output_key, like every typed edge).
 			const priorOutputKey = rows[0]!["output_key"] as string;
-			const revises = db
+			const revises = ((await db
 				.prepare(
 					"SELECT COUNT(*) as c FROM analysis_edges WHERE edge_kind = 'revises' AND to_ref_id = ?",
 				)
-				.get(priorOutputKey) as { c: number };
+				.get(priorOutputKey)) as { c: number });
 			assert.equal(revises.c, 1);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("clean session produces a node with has_leaks=false and no verification", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "th-5");
-			insertMessages(db, "th-5", [
+			await insertSession(db, "th-5");
+			await insertMessages(db, "th-5", [
 				{ role: "user", text: "please refactor the scanner helpers" },
 				{ role: "assistant", text: "splitting by concern" },
 			] satisfies TestMessage[]);
 
-			const summary = await newFramework(db).run("th-5", { analyzerIds: ["trufflehog"] });
+			const summary = await (await newFramework(db)).run("th-5", { analyzerIds: ["trufflehog"] });
 			assert.equal(summary.errors.length, 0);
 			assert.equal(summary.nodesProduced, 1);
-			const props = newestProps(db);
+			const props = await newestProps(db);
 			assert.equal(props.has_leaks, false);
 			assert.equal(props.leak_count, 0);
 			assert.equal(props.verify_enabled, false);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

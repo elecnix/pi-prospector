@@ -149,11 +149,11 @@ export const failureModesAnalyzer: Analyzer = {
 		return [`installed:${shortHash(relevant.join(","))}`];
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		// Child runs are ingested beside the sessions they belong to; a session of a
 		// project with failed child runs is worth a node even if its own transcript
 		// is empty, because the artifacts are its corpus's evidence.
-		const childRuns = getSubagentRunsForSession(ctx.db, ctx.sessionId);
+		const childRuns = await getSubagentRunsForSession(ctx.db, ctx.sessionId);
 		if (ctx.messages.length === 0 && childRuns.length === 0) return [];
 
 		const stream = buildToolStream(ctx.messages);
@@ -188,11 +188,11 @@ export const failureModesAnalyzer: Analyzer = {
 		];
 	},
 
-	analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
+	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = resolveConfig(ctx.config.configJson);
-		const messages = ctx.getSessionMessages(ctx.sessionId);
+		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const stream = buildToolStream(messages);
-		const childRuns = ctx.getSubagentRuns(ctx.sessionId);
+		const childRuns = await ctx.getSubagentRuns(ctx.sessionId);
 		const groups = [...groupFailures(stream), ...groupChildRunFailures(childRuns)].sort(compareGroups);
 
 		// `recommendExtensions: false` is expressed by making every curated package

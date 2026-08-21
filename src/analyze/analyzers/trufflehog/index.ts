@@ -161,7 +161,7 @@ export function makeTruffleHogAnalyzer(
 				(ctx.config.configJson as unknown as TruffleHogConfig) ?? DEFAULT_TRUFFLEHOG_CONFIG;
 			// Re-read messages from the DB rather than the (possibly stale) plan-time
 			// list, matching the other detectors' pattern.
-			const messages = ctx.getSessionMessages(ctx.sessionId);
+			const messages = await ctx.getSessionMessages(ctx.sessionId);
 			const scan = detectTrufflehogLeaks(messages, config);
 
 			let leaks: TruffleHogFinding[] = scan.leaks;

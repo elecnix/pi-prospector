@@ -14,7 +14,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getDbPath } from "../config.js";
 import {
@@ -63,24 +63,24 @@ export function normaliseTerm(raw: string): string {
  * `mutes` edge so the mute is reachable from the graph. Returns the recorded
  * outcome for reuse by the tool and tests.
  */
-export function muteTerm(
-	db: Database.Database,
+export async function muteTerm(
+	db: AsyncDatabase,
 	args: { term: string; reason?: string | null; by?: string | null },
-): { muted: boolean; assertionId: string } {
+): Promise<{ muted: boolean; assertionId: string }> {
 	const term = normaliseTerm(args.term);
-	const assertionId = upsertAssertion(db, {
+	const assertionId = await upsertAssertion(db, {
 		subjectKind: "term",
 		subjectKey: term,
 		verdict: "muted",
 		reason: args.reason ?? null,
 		assertedBy: args.by ?? "operator",
 	});
-	attachMuteEdge(db, term, assertionId);
+	await attachMuteEdge(db, term, assertionId);
 	return { muted: true, assertionId };
 }
 
 /** Unmute a lexicon term (append-only via superseded_at). Returns rows superseded. */
-export function unmuteTerm(db: Database.Database, term: string): number {
+export async function unmuteTerm(db: AsyncDatabase, term: string): Promise<number> {
 	return supersedeAssertion(db, {
 		subjectKind: "term",
 		subjectKey: normaliseTerm(term),
@@ -102,10 +102,10 @@ export async function prospectMute(args: string, ctx: ExtensionCommandContext): 
 		output(ctx, 'Usage: /prospect-mute <term> [--reason "why"] [--by operator|agent]', "warning");
 		return;
 	}
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const { assertionId } = muteTerm(db, { term, reason, by });
+		const { assertionId } = await muteTerm(db, { term, reason, by });
 		const note = reason ? ` — ${reason}` : "";
 		output(
 			ctx,
@@ -114,7 +114,7 @@ export async function prospectMute(args: string, ctx: ExtensionCommandContext): 
 				`\n  Assertion ${assertionId}${note}`,
 		);
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 
@@ -124,21 +124,21 @@ export async function prospectUnmute(args: string, ctx: ExtensionCommandContext)
 		output(ctx, "Usage: /prospect-unmute <term>", "warning");
 		return;
 	}
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const n = unmuteTerm(db, term);
+		const n = await unmuteTerm(db, term);
 		output(ctx, n > 0 ? `Unmuted '${term}'. Its prior hit nodes classify current again.` : `'${term}' was not muted.`, n > 0 ? "info" : "warning");
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 
 export async function prospectMutes(args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const rows = listAssertions(db, "term");
+		const rows = await listAssertions(db, "term");
 		if (rows.length === 0) {
 			output(ctx, "No term assertions recorded.");
 			return;
@@ -149,7 +149,7 @@ export async function prospectMutes(args: string, ctx: ExtensionCommandContext):
 			`Term assertions (${rows.length} total, ${active} active; the mute corpus is the training input for the classifier prompt):\n${rows.map(formatAssertion).join("\n")}`,
 		);
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

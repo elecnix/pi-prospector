@@ -182,7 +182,7 @@ export function makeDataprofilerAnalyzer(): Analyzer {
 				(ctx.config.configJson as unknown as DataprofilerConfig) ?? DEFAULT_DATAPROFILER_CONFIG;
 			// Re-read messages from the DB rather than the (possibly stale) plan-time
 			// list, matching the other detectors' pattern.
-			const messages = ctx.getSessionMessages(ctx.sessionId);
+			const messages = await ctx.getSessionMessages(ctx.sessionId);
 			const scan: DataprofilerScanResult = profileSessionFiles(messages, config);
 
 			const properties: DataprofilerProperties = {

@@ -9,6 +9,7 @@ import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core
 import { turnPairLLMAnalyzer } from "../../src/analyze/analyzers/turn-pair-llm/index.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { listProposals } from "../../src/db/queries.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
 function respond(req: LLMRequest): string {
@@ -165,9 +166,9 @@ function respondCleanSession(req: LLMRequest): string {
 	});
 }
 
-function seedSession(db: import("better-sqlite3").Database, id: string): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+async function seedSession(db: AsyncDatabase, id: string): Promise<void> {
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		{ role: "user", text: "fix the login bug" },
 		{ role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] },
@@ -178,24 +179,24 @@ function seedSession(db: import("better-sqlite3").Database, id: string): void {
 
 describe("analyzers end-to-end", () => {
 	it("runs the full pipeline and materialises proposals", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			seedSession(db, "s1");
+			await seedSession(db, "s1");
 			const mock = createMockLLM({ responder: respond, tokensPerCall: 100, costPerCall: 0.001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw);
+			await registerDefaults(fw);
 
 			const summary = await fw.run("s1", {});
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const kinds = db.prepare("SELECT node_kind, COUNT(*) AS c FROM analysis_nodes GROUP BY node_kind").all() as Array<{ node_kind: string; c: number }>;
+			const kinds = await db.prepare("SELECT node_kind, COUNT(*) AS c FROM analysis_nodes GROUP BY node_kind").all() as Array<{ node_kind: string; c: number }>;
 			const byKind = Object.fromEntries(kinds.map((k) => [k.node_kind, k.c]));
 			assert.ok(byKind["metric"] >= 2, "expected turn-pair-core metric nodes");
 			assert.ok(byKind["classification"] >= 1, "expected at least one llm classification node");
 			assert.equal(byKind["summary"], 1, "expected one session-overview summary node");
 
 			assert.ok(summary.proposalsCreated >= 1);
-			const proposals = listProposals(db);
+			const proposals = await listProposals(db);
 			assert.equal(proposals.length, 1);
 			assert.equal(proposals[0]!.target_type, "agents_md");
 			assert.ok(summary.costUsd > 0);
@@ -203,59 +204,59 @@ describe("analyzers end-to-end", () => {
 			// The LLM was only consulted for high-signal pairs + the overview.
 			assert.ok(mock.calls.length >= 2);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("consumes structured tool-call replies from the mock instead of text JSON", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			seedSession(db, "s-structured");
+			await seedSession(db, "s-structured");
 			const mock = createMockLLM({ responder: respondStructuredToolCalls, tokensPerCall: 100, costPerCall: 0.001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw);
+			await registerDefaults(fw);
 
 			const summary = await fw.run("s-structured", {});
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const classificationRows = db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='turn-pair-llm'").all() as Array<{ content_json: string }>;
+			const classificationRows = await db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='turn-pair-llm'").all() as Array<{ content_json: string }>;
 			assert.ok(classificationRows.length >= 1, "expected at least one structured classification node");
 			const classification = JSON.parse(classificationRows[0]!.content_json) as Record<string, unknown>;
 			assert.equal(classification["friction_type"], "tool_misuse");
 			assert.equal(classification["rationale"], "structured classify output was used");
 
-			const summaryRows = db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='session-overview'").all() as Array<{ content_json: string }>;
+			const summaryRows = await db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='session-overview'").all() as Array<{ content_json: string }>;
 			assert.equal(summaryRows.length, 1, "expected one structured session overview node");
 			const content = JSON.parse(summaryRows[0]!.content_json) as Record<string, unknown>;
 			assert.equal(content["session_summary"], "Structured reduce output was used for the session overview.");
 			assert.equal((content["friction_points"] as Array<Record<string, unknown>>)[0]!["description"], "tool misuse");
 
-			const proposals = listProposals(db);
+			const proposals = await listProposals(db);
 			assert.equal(proposals.length, 1);
 			assert.equal(proposals[0]!.title, "Document the correct tool path");
 			assert.equal(proposals[0]!.severity, "correction");
 			assert.ok(mock.calls.some((c) => c.tool?.name === "classify_turn"));
 			assert.ok(mock.calls.some((c) => c.tool?.name === "submit_session_analysis"));
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("enforces the length-aware enrich cap (minPairFraction * ceiling), enriching highest-friction turns first", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s3");
+			await insertSession(db, "s3");
 			const msgs = [];
 			for (let i = 0; i < 6; i++) {
 				msgs.push({ role: "user", text: `no, that's wrong, do approach number ${i} instead please` });
 				msgs.push({ role: "assistant", text: `ok approach ${i}`, toolCalls: [{ name: "read" }] });
 				msgs.push({ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] });
 			}
-			insertMessages(db, "s3", msgs);
+			await insertMessages(db, "s3", msgs);
 
 			const mock = createMockLLM({ responder: respond, tokensPerCall: 10, costPerCall: 0.0001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			fw.register(turnPairCoreAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
 			// turn-pair-llm variant whose length-aware cap limits to exactly 2 enrichments.
 			// With minPairFraction=0.5 and 6 high-signal pairs: round(0.5 * 6) = 3.
 			// With maxPairsHardCeiling=2, min(3, 2) = 2.
@@ -266,34 +267,34 @@ describe("analyzers end-to-end", () => {
 					configJson: { ...turnPairLLMAnalyzer.defaultConfig.configJson, minPairFraction: 0.5, maxPairsHardCeiling: 2 },
 				},
 			};
-			fw.register(cappedLLM);
+			await fw.register(cappedLLM);
 
 			await fw.run("s3", {});
 
-			const coreRows = db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='turn-pair-core'").all() as Array<{ content_json: string }>;
+			const coreRows = await db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='turn-pair-core'").all() as Array<{ content_json: string }>;
 			const highSignal = coreRows.filter((r) => (JSON.parse(r.content_json) as { high_signal: boolean }).high_signal).length;
 			assert.ok(highSignal > 2, `expected more than the cap of high-signal pairs, got ${highSignal}`);
 
-			const classifications = (db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id='turn-pair-llm'").get() as { c: number }).c;
+			const classifications = (await db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id='turn-pair-llm'").get() as { c: number }).c;
 			assert.equal(classifications, 2, "llm enrichment is capped at the length-aware ceiling");
 			const classifyCalls = mock.calls.filter((c) => (c.system ?? "").includes("classify a single turn"));
 			assert.equal(classifyCalls.length, 2, "the model is called only for the capped set");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("exercises the map-reduce path when the digest is large", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s2");
+			await insertSession(db, "s2");
 			// Many corrective turns so the digest exceeds the (tiny) threshold.
 			const msgs = [];
 			for (let i = 0; i < 6; i++) {
 				msgs.push({ role: "user", text: `no, that's wrong, do approach number ${i} instead please` });
 				msgs.push({ role: "assistant", text: `ok approach ${i}` });
 			}
-			insertMessages(db, "s2", msgs);
+			await insertMessages(db, "s2", msgs);
 
 			const mock = createMockLLM({ responder: respond, tokensPerCall: 10, costPerCall: 0.0001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -313,9 +314,9 @@ describe("analyzers end-to-end", () => {
 					},
 				},
 			};
-			fw.register(turnPairCoreAnalyzer);
-			fw.register(turnPairLLMAnalyzer);
-			fw.register(tinyOverview);
+			await fw.register(turnPairCoreAnalyzer);
+			await fw.register(turnPairLLMAnalyzer);
+			await fw.register(tinyOverview);
 
 			const summary = await fw.run("s2", {});
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
@@ -324,16 +325,16 @@ describe("analyzers end-to-end", () => {
 			const mapCalls = mock.calls.filter((c) => (c.system ?? "").includes("summarise one segment"));
 			assert.ok(mapCalls.length >= 1, "expected map-phase calls");
 		} finally {
-			close();
+			await close();
 		}
 		});
 
 	it("clean-recovery session yields a reinforcement proposal", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s-recovery");
+			await insertSession(db, "s-recovery");
 			// Turn 1: correction (high friction), turn 2+: clean recovery
-			insertMessages(db, "s-recovery", [
+			await insertMessages(db, "s-recovery", [
 				{ role: "user", text: "no, that's wrong, use the auth module" },
 				{ role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 				{ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] },
@@ -343,31 +344,31 @@ describe("analyzers end-to-end", () => {
 
 			const mock = createMockLLM({ responder: respondCleanRecovery, tokensPerCall: 100, costPerCall: 0.001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw);
+			await registerDefaults(fw);
 
 			const summary = await fw.run("s-recovery", {});
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
 			// Must produce a summary node
-			const summaryNodes = db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE node_kind='summary'").get() as { c: number };
+			const summaryNodes = await db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE node_kind='summary'").get() as { c: number };
 			assert.equal(summaryNodes.c, 1, "expected one session-overview summary node");
 
 			// Must produce at least one proposal, and at least one should be reinforcement
-			const proposals = listProposals(db);
+			const proposals = await listProposals(db);
 			assert.ok(proposals.length >= 1, "expected at least one proposal");
 			const reinforcementProposals = proposals.filter((p) => p.severity === "reinforcement");
 			assert.ok(reinforcementProposals.length >= 1, "expected at least one reinforcement proposal");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("clean session yields a non-empty overview node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s-clean");
+			await insertSession(db, "s-clean");
 			// A completely clean session: no corrections, no tool failures, low friction
-			insertMessages(db, "s-clean", [
+			await insertMessages(db, "s-clean", [
 				{ role: "user", text: "help me set up the project" },
 				{ role: "assistant", text: "I'll set it up for you.", toolCalls: [{ name: "write" }] },
 				{ role: "toolResult", toolResults: [{ toolName: "write", isError: false, textLength: 50 }] },
@@ -377,13 +378,13 @@ describe("analyzers end-to-end", () => {
 
 			const mock = createMockLLM({ responder: respondCleanSession, tokensPerCall: 100, costPerCall: 0.001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw);
+			await registerDefaults(fw);
 
 			const summary = await fw.run("s-clean", {});
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
 			// Must produce a summary node even for a clean session
-			const summaryRows = db.prepare("SELECT * FROM analysis_nodes WHERE node_kind='summary'").all();
+			const summaryRows = await db.prepare("SELECT * FROM analysis_nodes WHERE node_kind='summary'").all();
 			const summaryNodes: Record<string, unknown>[] = summaryRows as Record<string, unknown>[];
 			assert.equal(summaryNodes.length, 1, "expected one session-overview summary node for clean session");
 
@@ -397,7 +398,7 @@ describe("analyzers end-to-end", () => {
 			assert.ok(Array.isArray(positiveSignals), "key_positive_signals should be an array");
 			assert.ok(positiveSignals.length >= 1, "clean session should have at least one positive signal");
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

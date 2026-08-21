@@ -9,22 +9,23 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { tempDb, insertSession, insertMessages } from "./helpers.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { getNodesByAnalyzer } from "../../src/db/analysis-queries.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import type { Analyzer, AnalysisResult, AnalyzerRunContext } from "../../src/analyze/types.js";
 
-function seed(db: import("better-sqlite3").Database, sessionId = "s1"): void {
-	insertSession(db, sessionId);
-	insertMessages(db, sessionId, [{ role: "user", text: "hello" }]);
+async function seed(db: AsyncDatabase, sessionId = "s1"): Promise<void> {
+	await insertSession(db, sessionId);
+	await insertMessages(db, sessionId, [{ role: "user", text: "hello" }]);
 }
 
 describe("node compute cost & wall-clock timing", () => {
 	it("records the wall-clock duration on deterministic nodes (no LLM costs)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			seed(db);
+			await seed(db);
 			// A slow deterministic analyzer. It never calls the LLM, so its token
 			// split must stay null -- but it must still carry a measured wall-clock
 			// duration_ms, recorded by the framework boundary not by itself.
@@ -40,10 +41,10 @@ describe("node compute cost & wall-clock timing", () => {
 				},
 			};
 			const framework = new AnalyzerFramework({ db, llm: createMockLLM().caller, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(slow);
+			await framework.register(slow);
 
 			await framework.run("s1");
-			const nodes = getNodesByAnalyzer(db, "slow", "s1");
+			const nodes = await getNodesByAnalyzer(db, "slow", "s1");
 			assert.equal(nodes.length, 1);
 			assert.equal(typeof nodes[0]!.duration_ms, "number");
 			assert.ok(nodes[0]!.duration_ms! >= 10, `wall-clock elapsed should be recorded, got ${nodes[0]!.duration_ms}`);
@@ -51,14 +52,14 @@ describe("node compute cost & wall-clock timing", () => {
 			assert.equal(nodes[0]!.cached_input_tokens, null);
 			assert.equal(nodes[0]!.output_tokens, null);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("records the token split (input / cached input / output) on LLM nodes", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			seed(db);
+			await seed(db);
 			const mock = createMockLLM({
 				responder: () => ({
 					text: "x",
@@ -96,10 +97,10 @@ describe("node compute cost & wall-clock timing", () => {
 				modelsForIdentity: () => ["anthropic/clip"],
 			};
 			const framework = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(llm);
+			await framework.register(llm);
 
 			await framework.run("s1");
-			const nodes = getNodesByAnalyzer(db, "llm", "s1");
+			const nodes = await getNodesByAnalyzer(db, "llm", "s1");
 			assert.equal(nodes.length, 1);
 			const n = nodes[0]!;
 			assert.equal(n.tokens_used, 200, "total token count is preserved");
@@ -111,7 +112,7 @@ describe("node compute cost & wall-clock timing", () => {
 			assert.equal(typeof n.duration_ms, "number");
 			assert.ok(n.duration_ms! >= 0, "LLM node still records measured wall-clock");
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

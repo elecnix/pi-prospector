@@ -11,6 +11,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { AsyncDatabase } from "../src/db/async-db.js";
 import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
@@ -49,8 +50,8 @@ const DOCKERFILE = ["FROM node:22-alpine", `ENV GITHUB_TOKEN=${GHP}`].join("\n")
 const ENV_FILE = ["$ cat .env", `DEPLOY_TOKEN=${RANDOM_SECRET}`].join("\n");
 
 /** Framework with the secret-scanner analyzer registered. */
-function newFramework(
-	db: import("better-sqlite3").Database,
+async function newFramework(
+	db: AsyncDatabase,
 	configOverrides?: Record<string, Record<string, unknown>>,
 ) {
 	const fw = new AnalyzerFramework({
@@ -60,18 +61,18 @@ function newFramework(
 		modelTiers: DEFAULT_MODEL_TIERS,
 		configOverrides,
 	});
-	fw.register(secretScannerAnalyzer);
+	await fw.register(secretScannerAnalyzer);
 	return fw;
 }
 
-function readNodes(db: import("better-sqlite3").Database): Array<Record<string, unknown>> {
-	return db
+async function readNodes(db: AsyncDatabase): Promise<Array<Record<string, unknown>>>  {
+	return await db
 		.prepare("SELECT * FROM analysis_nodes WHERE analyzer_id = ? ORDER BY created_at ASC")
 		.all(SECRET_SCANNER_DEF.id) as Array<Record<string, unknown>>;
 }
 
-function newestProps(db: import("better-sqlite3").Database): SecretScannerProperties {
-	const rows = readNodes(db);
+async function newestProps(db: AsyncDatabase): SecretScannerProperties  {
+	const rows = await readNodes(db);
 	assert.ok(rows.length >= 1, "secret-scanner analyzer should produce at least one node");
 	const row = rows[rows.length - 1]!; // newest (append-only graph)
 	return JSON.parse(row["content_json"] as string) as SecretScannerProperties;
@@ -79,10 +80,10 @@ function newestProps(db: import("better-sqlite3").Database): SecretScannerProper
 
 describe("secret-scanner component test", () => {
 	it("detects leaks in container evidence across fields, anchors correctly, stores no full secret", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "ss-1");
-			const ids = insertMessages(db, "ss-1", [
+			await insertSession(db, "ss-1");
+			const ids = await insertMessages(db, "ss-1", [
 				// Dockerfile content pasted into a user message.
 				{ role: "user", text: `here is my Dockerfile:\n${DOCKERFILE}` },
 				// .env content captured through a write tool's arguments (JSON field).
@@ -93,12 +94,12 @@ describe("secret-scanner component test", () => {
 				{ role: "user", text: "thanks" },
 			] satisfies TestMessage[]);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("ss-1", { analyzerIds: ["secret-scanner"] });
 			assert.equal(first.nodesProduced, 1);
 			assert.equal(first.errors.length, 0);
 
-			const rows = readNodes(db);
+			const rows = await readNodes(db);
 			const row = rows[rows.length - 1]!;
 			assert.equal(row["node_kind"], "metric");
 			const props = JSON.parse(row["content_json"] as string) as SecretScannerProperties;
@@ -135,7 +136,7 @@ describe("secret-scanner component test", () => {
 			}
 
 			// Anchors: one to the session, one per leaked message.
-			const edges = db
+			const edges = await db
 				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
 				.all(row["id"]) as Array<Record<string, unknown>>;
 			const anchors = edges.filter((e) => e["edge_kind"] === "anchors");
@@ -143,82 +144,83 @@ describe("secret-scanner component test", () => {
 			const targets = anchors.map((e) => `${e["to_ref_kind"]}:${e["to_ref_id"]}`).sort();
 			assert.deepEqual(targets, [`message:${ids[0]}`, `message:${ids[1]}`, "session:ss-1"]);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("is idempotent: a second run produces no new node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "ss-2");
-			insertMessages(db, "ss-2", [
+			await insertSession(db, "ss-2");
+			await insertMessages(db, "ss-2", [
 				{ role: "user", text: `Dockerfile:\n${DOCKERFILE}` },
 			] satisfies TestMessage[]);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("ss-2", { analyzerIds: ["secret-scanner"] });
 			assert.equal(first.nodesProduced, 1);
 			const second = await fw.run("ss-2", { analyzerIds: ["secret-scanner"] });
 			assert.equal(second.nodesProduced, 0);
 			assert.equal(second.nodesSkipped, 1);
 
-			const count = (db
+			const count = ((await db
 				.prepare("SELECT COUNT(*) as c FROM analysis_nodes WHERE analyzer_id = ?")
-				.get(SECRET_SCANNER_DEF.id) as { c: number }).c;
+				.get(SECRET_SCANNER_DEF.id)) as { c: number }).c;
 			assert.equal(count, 1);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("config overrides apply: allowlisting by fingerprint and disabling an extractor", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "ss-3");
-			insertMessages(db, "ss-3", [
+			await insertSession(db, "ss-3");
+			await insertMessages(db, "ss-3", [
 				{ role: "user", text: `Dockerfile:\n${DOCKERFILE}\n${ENV_FILE}` },
 			] satisfies TestMessage[]);
 
-			const propsBefore = (() => {
-				const fw = newFramework(db);
-				return fw.run("ss-3", { analyzerIds: ["secret-scanner"] }).then(() => newestProps(db));
+			const propsBefore = (async () => {
+				const fw = await newFramework(db);
+				await fw.run("ss-3", { analyzerIds: ["secret-scanner"] });
+				return await newestProps(db);
 			})();
 			const base = await propsBefore;
 			assert.equal(base.leak_count, 2);
 
 			// Allowlist the structural finding's fingerprint via config override.
 			const fp = base.leaks.find((l) => l.key_name === "DEPLOY_TOKEN")!.fingerprint;
-			const fw2 = newFramework(db, {
+			const fw2 = await newFramework(db, {
 				"secret-scanner": { allowFingerprints: [fp], extractDotenv: false },
 			});
 			// A config change makes the unit stale/config; revise to recompute.
 			await fw2.run("ss-3", { analyzerIds: ["secret-scanner"], revise: ["config"] });
-			const after = newestProps(db);
+			const after = await newestProps(db);
 			assert.equal(after.leak_count, 1);
 			assert.equal(after.leaks[0]!.key_name, "GITHUB_TOKEN");
 			assert.equal(after.allowlisted_matches, 0); // dotenv extractor off → candidate never generated
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("clean session produces a node with has_leaks=false", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "ss-4");
-			insertMessages(db, "ss-4", [
+			await insertSession(db, "ss-4");
+			await insertMessages(db, "ss-4", [
 				{ role: "user", text: "please refactor the scanner helpers" },
 				{ role: "assistant", text: "splitting by concern" },
 			] satisfies TestMessage[]);
 
-			const summary = await newFramework(db).run("ss-4", { analyzerIds: ["secret-scanner"] });
+			const summary = await (await newFramework(db)).run("ss-4", { analyzerIds: ["secret-scanner"] });
 			assert.equal(summary.errors.length, 0);
 			assert.equal(summary.nodesProduced, 1);
-			const props = newestProps(db);
+			const props = await newestProps(db);
 			assert.equal(props.has_leaks, false);
 			assert.equal(props.leak_count, 0);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

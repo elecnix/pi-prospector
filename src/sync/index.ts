@@ -1,5 +1,5 @@
-import Database from "better-sqlite3";
-import * as fs from "node:fs";
+import { type AsyncDatabase } from "../db/async-db.js";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { migrate } from "../db/schema.js";
 import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages } from "../db/queries.js";
@@ -19,18 +19,18 @@ import type { SyncResult, SessionSource } from "../types.js";
  * fresh-install escape hatch that keeps a one-project sync from paying for
  * every session on disk.
  */
-export function runSync(
-	db: Database.Database,
+export async function runSync(
+	db: AsyncDatabase,
 	sessionsDir: string,
 	claudeSessionsDir: string,
 	opts?: DiscoverOptions,
-): SyncResult {
-	const discovered = discoverSessions(sessionsDir, claudeSessionsDir, opts);
+): Promise<SyncResult> {
+	const discovered = await discoverSessions(sessionsDir, claudeSessionsDir, opts);
 	const result: SyncResult = { sessionsProcessed: 0, sessionsSkipped: 0, messagesInserted: 0, forksResolved: 0, subagentRunsProcessed: 0, subagentRunsSkipped: 0, errors: [] };
 
 	for (const disc of discovered) {
 		try {
-			const cursor = getCursor(db, disc.filePath);
+			const cursor = await getCursor(db, disc.filePath);
 
 			// Skip unchanged files
 			if (cursor && cursor.last_modified >= disc.mtime) {
@@ -38,13 +38,13 @@ export function runSync(
 				continue;
 			}
 
-			const content = fs.readFileSync(disc.filePath, "utf-8");
+			const content = await fs.readFile(disc.filePath, "utf-8");
 			const lines = content.split("\n");
 
 			if (disc.source === "claude") {
-				syncClaudeSession(db, disc, lines, cursor, result);
+				await syncClaudeSession(db, disc, lines, cursor, result);
 			} else {
-				syncPiSession(db, disc, lines, cursor, sessionsDir, result);
+				await syncPiSession(db, disc, lines, cursor, sessionsDir, result);
 			}
 		} catch (err) {
 			result.errors.push(`${disc.filePath}: ${err instanceof Error ? err.message : String(err)}`);
@@ -55,7 +55,7 @@ export function runSync(
 	// the same pass — and under the same project scope — so one `/prospect-sync`
 	// fills everything the analyzers read, and a spawn-level child failure is in
 	// the index by the time anyone looks for it.
-	const artifacts = ingestSubagentArtifacts(db, sessionsDir, opts?.project);
+	const artifacts = await ingestSubagentArtifacts(db, sessionsDir, opts?.project);
 	result.subagentRunsProcessed = artifacts.processed;
 	result.subagentRunsSkipped = artifacts.skipped;
 	result.errors.push(...artifacts.errors);
@@ -63,14 +63,14 @@ export function runSync(
 	return result;
 }
 
-function syncPiSession(
-	db: Database.Database,
+async function syncPiSession(
+	db: AsyncDatabase,
 	disc: { filePath: string; project: string; mtime: number; source: SessionSource },
 	lines: string[],
 	cursor: { last_line: number; last_modified: number } | undefined,
 	sessionsDir: string,
 	result: SyncResult,
-): void {
+): Promise<void> {
 	// Parse session header (must be first non-empty line)
 	let sessionId = "";
 	let parentSession: string | null = null;
@@ -98,7 +98,7 @@ function syncPiSession(
 	// Resolve fork
 	let branchCount = 0;
 	if (parentSession) {
-		const forkInfo = resolveFork(parentSession, sessionsDir);
+		const forkInfo = await resolveFork(parentSession, sessionsDir);
 		if (forkInfo) {
 			branchCount = 1;
 			result.forksResolved++;
@@ -114,9 +114,9 @@ function syncPiSession(
 	const resumeLine = cursor?.last_line ?? 0;
 	let msgCount = 0;
 
-	const syncSession = db.transaction(() => {
+	const syncSession = db.transaction(async () => {
 		// Upsert session
-		upsertSession(db, {
+		await upsertSession(db, {
 			id: sessionId,
 			file_path: disc.filePath,
 			project: disc.project,
@@ -140,7 +140,7 @@ function syncPiSession(
 			if (!parsed || parsed.kind === "session") continue;
 
 			const entry = parsed.entry;
-			insertMessage(db, {
+			await insertMessage(db, {
 				id: entry.id,
 				session_id: sessionId,
 				source: disc.source,
@@ -162,23 +162,23 @@ function syncPiSession(
 		}
 
 		// Update cursor and message count
-		updateCursor(db, sessionId, lines.length, disc.mtime);
-		const total = countMessages(db, sessionId);
-		updateMessageCount(db, sessionId, total);
+		await updateCursor(db, sessionId, lines.length, disc.mtime);
+		const total = await countMessages(db, sessionId);
+		await updateMessageCount(db, sessionId, total);
 	});
-	syncSession();
+	await syncSession();
 
 	result.sessionsProcessed++;
 	result.messagesInserted += msgCount;
 }
 
-function syncClaudeSession(
-	db: Database.Database,
+async function syncClaudeSession(
+	db: AsyncDatabase,
 	disc: { filePath: string; project: string; mtime: number; source: SessionSource },
 	lines: string[],
 	cursor: { last_line: number; last_modified: number } | undefined,
 	result: SyncResult,
-): void {
+): Promise<void> {
 	// Derive session ID from file name (UUID)
 	const sessionId = path.basename(disc.filePath, ".jsonl");
 
@@ -197,9 +197,9 @@ function syncClaudeSession(
 	const resumeLine = cursor?.last_line ?? 0;
 	let msgCount = 0;
 
-	const syncSession = db.transaction(() => {
+	const syncSession = db.transaction(async () => {
 		// Upsert session
-		upsertSession(db, {
+		await upsertSession(db, {
 			id: sessionId,
 			file_path: disc.filePath,
 			project: disc.project,
@@ -223,7 +223,7 @@ function syncClaudeSession(
 			if (!parsed || parsed.kind !== "message") continue;
 
 			const entry = parsed.entry;
-			insertMessage(db, {
+			await insertMessage(db, {
 				id: entry.id,
 				session_id: sessionId,
 				source: disc.source,
@@ -245,11 +245,11 @@ function syncClaudeSession(
 		}
 
 		// Update cursor and message count
-		updateCursor(db, sessionId, lines.length, disc.mtime);
-		const total = countMessages(db, sessionId);
-		updateMessageCount(db, sessionId, total);
+		await updateCursor(db, sessionId, lines.length, disc.mtime);
+		const total = await countMessages(db, sessionId);
+		await updateMessageCount(db, sessionId, total);
 	});
-	syncSession();
+	await syncSession();
 
 	result.sessionsProcessed++;
 	result.messagesInserted += msgCount;

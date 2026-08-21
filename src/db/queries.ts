@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+	import { type AsyncDatabase } from "./async-db.js";
 import { prep } from "./prepared.js";
 import {
 	ASSERTION_SUBJECT_KINDS,
@@ -41,8 +41,8 @@ export interface SessionInsert {
 	branch_count: number;
 }
 
-export function upsertSession(db: Database.Database, s: SessionInsert): void {
-	prep(db, `
+export async function upsertSession(db: AsyncDatabase, s: SessionInsert): Promise<void> {
+	await prep(db, `
 		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -53,50 +53,50 @@ export function upsertSession(db: Database.Database, s: SessionInsert): void {
 	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count);
 }
 
-export function getCursor(db: Database.Database, filePath: string): { last_line: number; last_modified: number } | undefined {
-	return prep(db, "SELECT last_line, last_modified FROM sessions WHERE file_path = ?").get(filePath) as { last_line: number; last_modified: number } | undefined;
+export async function getCursor(db: AsyncDatabase, filePath: string): Promise<{ last_line: number; last_modified: number } | undefined> {
+	return (await prep(db, "SELECT last_line, last_modified FROM sessions WHERE file_path = ?").get(filePath)) as { last_line: number; last_modified: number } | undefined;
 }
 
-export function updateCursor(db: Database.Database, sessionId: string, lastLine: number, lastModified: number): void {
-	prep(db, "UPDATE sessions SET last_line = ?, last_modified = ? WHERE id = ?").run(lastLine, lastModified, sessionId);
+export async function updateCursor(db: AsyncDatabase, sessionId: string, lastLine: number, lastModified: number): Promise<void> {
+	await prep(db, "UPDATE sessions SET last_line = ?, last_modified = ? WHERE id = ?").run(lastLine, lastModified, sessionId);
 }
 
-export function updateMessageCount(db: Database.Database, sessionId: string, count: number): void {
-	prep(db, "UPDATE sessions SET message_count = ? WHERE id = ?").run(count, sessionId);
+export async function updateMessageCount(db: AsyncDatabase, sessionId: string, count: number): Promise<void> {
+	await prep(db, "UPDATE sessions SET message_count = ? WHERE id = ?").run(count, sessionId);
 }
 
-export function markAnalyzed(db: Database.Database, sessionId: string): void {
-	prep(db, "UPDATE sessions SET analyzed_at = ? WHERE id = ?").run(new Date().toISOString(), sessionId);
+export async function markAnalyzed(db: AsyncDatabase, sessionId: string): Promise<void> {
+	await prep(db, "UPDATE sessions SET analyzed_at = ? WHERE id = ?").run(new Date().toISOString(), sessionId);
 }
 
-export function getUnanalyzedSessions(db: Database.Database, limit?: number, source?: string): Array<{ id: string; file_path: string; started_at: string }> {
+export async function getUnanalyzedSessions(db: AsyncDatabase, limit?: number, source?: string): Promise<Array<{ id: string; file_path: string; started_at: string }>> {
 	const sourceClause = source ? " AND source = ?" : "";
 	const params = source ? [source] : [];
 	const sql = limit
 		? `SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL${sourceClause} ORDER BY started_at ASC LIMIT ?`
 		: `SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL${sourceClause} ORDER BY started_at ASC`;
-	return (limit
-		? prep(db, sql).all(...[...params, limit]) as Array<{ id: string; file_path: string; started_at: string }>
-		: prep(db, sql).all(...params) as Array<{ id: string; file_path: string; started_at: string }>);
+	return (await (limit
+		? prep(db, sql).all(...[...params, limit])
+		: prep(db, sql).all(...params))) as Array<{ id: string; file_path: string; started_at: string }>;
 }
 
-export function getAllSessions(db: Database.Database, limit?: number, source?: string): Array<{ id: string; file_path: string; started_at: string }> {
+export async function getAllSessions(db: AsyncDatabase, limit?: number, source?: string): Promise<Array<{ id: string; file_path: string; started_at: string }>> {
 	const sourceClause = source ? " WHERE source = ?" : "";
 	const params = source ? [source] : [];
 	const sql = limit
 		? `SELECT id, file_path, started_at FROM sessions${sourceClause} ORDER BY started_at ASC LIMIT ?`
 		: `SELECT id, file_path, started_at FROM sessions${sourceClause} ORDER BY started_at ASC`;
-	return (limit
-		? prep(db, sql).all(...[...params, limit]) as Array<{ id: string; file_path: string; started_at: string }>
-		: prep(db, sql).all(...params) as Array<{ id: string; file_path: string; started_at: string }>);
+	return (await (limit
+		? prep(db, sql).all(...[...params, limit])
+		: prep(db, sql).all(...params))) as Array<{ id: string; file_path: string; started_at: string }>;
 }
 
 /** Get the N most-recent sessions by started_at, useful for pilots. */
-export function getRecentSessions(db: Database.Database, limit: number, source?: string): Array<{ id: string; file_path: string; started_at: string }> {
+export async function getRecentSessions(db: AsyncDatabase, limit: number, source?: string): Promise<Array<{ id: string; file_path: string; started_at: string }>> {
 	if (!source) {
-		return prep(db, "SELECT id, file_path, started_at FROM sessions ORDER BY started_at DESC LIMIT ?").all(limit) as Array<{ id: string; file_path: string; started_at: string }>;
+		return (await prep(db, "SELECT id, file_path, started_at FROM sessions ORDER BY started_at DESC LIMIT ?").all(limit)) as Array<{ id: string; file_path: string; started_at: string }>;
 	}
-	return prep(db, "SELECT id, file_path, started_at FROM sessions WHERE source = ? ORDER BY started_at DESC LIMIT ?").all(source, limit) as Array<{ id: string; file_path: string; started_at: string }>;
+	return (await prep(db, "SELECT id, file_path, started_at FROM sessions WHERE source = ? ORDER BY started_at DESC LIMIT ?").all(source, limit)) as Array<{ id: string; file_path: string; started_at: string }>;
 }
 
 export interface SessionLabel {
@@ -109,8 +109,8 @@ export interface SessionLabel {
 }
 
 /** Lightweight labels (project/cwd/message_count/source) for every session, for display. */
-export function getSessionLabels(db: Database.Database): SessionLabel[] {
-	return prep(db, "SELECT id, project, cwd, message_count, source FROM sessions").all() as SessionLabel[];
+export async function getSessionLabels(db: AsyncDatabase): Promise<SessionLabel[]> {
+	return (await prep(db, "SELECT id, project, cwd, message_count, source FROM sessions").all()) as SessionLabel[];
 }
 
 // ── Subagent runs ──
@@ -132,8 +132,8 @@ export interface SubagentRunInsert {
  * reaching this, so an unconditional conflict-update is correct: reaching here
  * means the artifact changed, and the newer reading wins.
  */
-export function upsertSubagentRun(db: Database.Database, r: SubagentRunInsert): void {
-	prep(db, `
+export async function upsertSubagentRun(db: AsyncDatabase, r: SubagentRunInsert): Promise<void> {
+	await prep(db, `
 		INSERT INTO subagent_runs (run_id, project, agent, task_excerpt, exit_code, error, model_attempts, usage, file_mtime, ingested_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(run_id) DO UPDATE SET
@@ -144,8 +144,8 @@ export function upsertSubagentRun(db: Database.Database, r: SubagentRunInsert): 
 }
 
 /** The stored file mtime for a run, or undefined when it has never been ingested. */
-export function getSubagentRunMtime(db: Database.Database, runId: string): number | undefined {
-	const row = prep(db, "SELECT file_mtime FROM subagent_runs WHERE run_id = ?").get(runId) as { file_mtime: number } | undefined;
+export async function getSubagentRunMtime(db: AsyncDatabase, runId: string): Promise<number | undefined> {
+	const row = (await prep(db, "SELECT file_mtime FROM subagent_runs WHERE run_id = ?").get(runId)) as { file_mtime: number } | undefined;
 	return row?.file_mtime;
 }
 
@@ -158,12 +158,12 @@ export function getSubagentRunMtime(db: Database.Database, runId: string): numbe
  * every session of a project sees that project's child runs, which is honest
  * until a stronger parent link exists (see issue #157 for child sessions).
  */
-export function getSubagentRunsForSession(db: Database.Database, sessionId: string): SubagentRunRow[] {
-	return prep(db,
+export async function getSubagentRunsForSession(db: AsyncDatabase, sessionId: string): Promise<SubagentRunRow[]> {
+	return (await prep(db,
 		"SELECT r.run_id, r.project, r.agent, r.task_excerpt, r.exit_code, r.error, r.model_attempts, r.usage, r.file_mtime, r.ingested_at " +
 		"FROM subagent_runs r JOIN sessions s ON s.project = r.project " +
 		"WHERE s.id = ? ORDER BY r.run_id ASC",
-	).all(sessionId) as SubagentRunRow[];
+	).all(sessionId)) as SubagentRunRow[];
 }
 
 // ── Messages ──
@@ -190,32 +190,32 @@ export interface MessageInsert {
 	error_message: string | null;
 }
 
-export function insertMessage(db: Database.Database, m: MessageInsert): void {
-	prep(db, `
+export async function insertMessage(db: AsyncDatabase, m: MessageInsert): Promise<void> {
+	await prep(db, `
 		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, content_hash, model, cost_usd, provider_message_id, stop_reason, error_message)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, m.usage, null, m.model, m.cost_usd, m.provider_message_id, m.stop_reason, m.error_message);
 }
 
-export function countMessages(db: Database.Database, sessionId: string): number {
-	return (prep(db, "SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get(sessionId) as { c: number }).c;
+export async function countMessages(db: AsyncDatabase, sessionId: string): Promise<number> {
+	return ((await prep(db, "SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get(sessionId)) as { c: number }).c;
 }
 
-export function getSessionMessages(db: Database.Database, sessionId: string): Array<{ role: string; content_text: string | null; content_thinking: string | null; tool_calls: string | null; timestamp: string | null }> {
-	return prep(db, "SELECT role, content_text, content_thinking, tool_calls, timestamp FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(sessionId) as any[];
+export async function getSessionMessages(db: AsyncDatabase, sessionId: string): Promise<Array<{ role: string; content_text: string | null; content_thinking: string | null; tool_calls: string | null; timestamp: string | null }>> {
+	return (await prep(db, "SELECT role, content_text, content_thinking, tool_calls, timestamp FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(sessionId)) as any[];
 }
 
 // ── Proposals (v2) ──
 
-export function listProposals(
-	db: Database.Database,
+export async function listProposals(
+	db: AsyncDatabase,
 	status?: string,
 	severity?: string,
 	limit?: number,
 	offset?: number,
 	source?: string,
 	sessionId?: string,
-): Proposal[] {
+): Promise<Proposal[]> {
 	const clauses: string[] = [];
 	const params: (string | number)[] = [];
 	if (status) {
@@ -252,11 +252,11 @@ export function listProposals(
 			params.push(offset);
 		}
 	}
-	return prep(db, sql).all(...params) as Proposal[];
+	return (await prep(db, sql).all(...params)) as Proposal[];
 }
 
-export function getProposal(db: Database.Database, id: string): Proposal | undefined {
-	return prep(db, "SELECT * FROM proposals WHERE id = ?").get(id) as Proposal | undefined;
+export async function getProposal(db: AsyncDatabase, id: string): Promise<Proposal | undefined> {
+	return (await prep(db, "SELECT * FROM proposals WHERE id = ?").get(id)) as Proposal | undefined;
 }
 
 /**
@@ -264,10 +264,10 @@ export function getProposal(db: Database.Database, id: string): Proposal | undef
  * `proposal_input_key`. The decision log is the event source that makes the
  * mutable `proposals.status` projection reconstructible at a point in time.
  */
-function latestDecisionsAsOf(db: Database.Database, at: string): Map<string, ProposalDecision> {
-	const rows = db
+async function latestDecisionsAsOf(db: AsyncDatabase, at: string): Promise<Map<string, ProposalDecision>> {
+	const rows = (await db
 		.prepare("SELECT * FROM proposal_decisions WHERE decided_at <= ? ORDER BY decided_at ASC, rowid ASC")
-		.all(at) as ProposalDecision[];
+		.all(at)) as ProposalDecision[];
 	const latest = new Map<string, ProposalDecision>();
 	for (const d of rows) {
 		const cur = latest.get(d.proposal_input_key);
@@ -283,13 +283,13 @@ function latestDecisionsAsOf(db: Database.Database, at: string): Map<string, Pro
  * status derived by replaying decisions recorded up to T (latest per input_key).
  * This is the reconstructible, immutable projection of the mutable status column.
  */
-export function listProposalsAsOf(db: Database.Database, at: string, source?: string): Proposal[] {
-	const proposals = (source
+export async function listProposalsAsOf(db: AsyncDatabase, at: string, source?: string): Promise<Proposal[]> {
+	const proposals = (await (source
 		? db.prepare(
 			"SELECT p.* FROM proposals p JOIN sessions s ON s.id = p.session_id WHERE p.created_at <= ? AND s.source = ? ORDER BY p.created_at DESC",
 		).all(at, source)
-		: db.prepare("SELECT * FROM proposals WHERE created_at <= ? ORDER BY created_at DESC").all(at)) as Proposal[];
-	const latest = latestDecisionsAsOf(db, at);
+		: db.prepare("SELECT * FROM proposals WHERE created_at <= ? ORDER BY created_at DESC").all(at))) as Proposal[];
+	const latest = await latestDecisionsAsOf(db, at);
 	for (const p of proposals) {
 		const d = latest.get(p.input_key);
 		// A proposal starts life "open" and only transitions by a recorded decision,
@@ -301,10 +301,10 @@ export function listProposalsAsOf(db: Database.Database, at: string, source?: st
 }
 
 /** Status counts for proposals as of `at` (undefined = live/current). */
-function proposalStatusCountsAt(db: Database.Database, at?: string): Record<ProposalStatus, number> {
+async function proposalStatusCountsAt(db: AsyncDatabase, at?: string): Promise<Record<ProposalStatus, number>> {
 	const counts: Record<ProposalStatus, number> = { open: 0, applied: 0, rejected: 0, duplicate: 0 };
 	if (at === undefined) {
-		const rows = db.prepare("SELECT status, COUNT(*) AS c FROM proposals GROUP BY status").all() as Array<{
+		const rows = (await db.prepare("SELECT status, COUNT(*) AS c FROM proposals GROUP BY status").all()) as Array<{
 			status: string;
 			c: number;
 		}>
@@ -315,7 +315,7 @@ function proposalStatusCountsAt(db: Database.Database, at?: string): Record<Prop
 		}
 		return counts;
 	}
-	for (const p of listProposalsAsOf(db, at)) {
+	for (const p of await listProposalsAsOf(db, at)) {
 		counts[p.status]++;
 	}
 	return counts;
@@ -362,27 +362,27 @@ function assertionToRemediation(a: AssertionRow): Remediation {
 	};
 }
 
-function decideProposal(
-	db: Database.Database,
+async function decideProposal(
+	db: AsyncDatabase,
 	id: string,
 	newStatus: ProposalStatus,
 	verdict: DecisionVerdict,
 	input?: DecisionInput,
 	remediationId?: string | null,
-): boolean {
-	const row = prep(db, "SELECT input_key, status FROM proposals WHERE id = ?").get(id) as
+): Promise<boolean> {
+	const row = (await prep(db, "SELECT input_key, status FROM proposals WHERE id = ?").get(id)) as
 		| { input_key: string; status: string }
 		| undefined;
 	if (!row || row.status !== "open") return false;
 	const now = new Date().toISOString();
-	const tx = db.transaction(() => {
-		prep(db, "UPDATE proposals SET status = ?, updated_at = ? WHERE id = ?").run(newStatus, now, id);
+	const tx = db.transaction(async () => {
+		await prep(db, "UPDATE proposals SET status = ?, updated_at = ? WHERE id = ?").run(newStatus, now, id);
 		// The decision is written to the legacy table (the reversible rollback)
 		// AND to the assertions relation, the canonical view keyed by the
 		// content-addressed proposal input_key (issue #73). Both in one transaction
 		// so they never diverge; reads go through assertions. The legacy table is
 		// kept, still written, until a separate change retires it.
-		prep(db, 
+		await prep(db, 
 			"INSERT INTO proposal_decisions " +
 				"(id, proposal_input_key, decision, disposition, rationale, actual_change, harness_ref, remediation_id, decided_at) " +
 				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -397,7 +397,7 @@ function decideProposal(
 			remediationId ?? null,
 			now,
 		);
-		upsertAssertion(db, {
+		await upsertAssertion(db, {
 			subjectKind: ASSERTION_SUBJECT_KINDS.PROPOSAL,
 			subjectKey: row.input_key,
 			verdict,
@@ -410,7 +410,7 @@ function decideProposal(
 			remediationId: remediationId ?? null,
 		});
 	});
-	tx();
+	await tx();
 	return true;
 }
 
@@ -419,11 +419,11 @@ function acceptVerdict(input?: DecisionInput): DecisionVerdict {
 	return input?.disposition === "done_differently" ? "accepted_modified" : "accepted";
 }
 
-export function acceptProposal(db: Database.Database, id: string, input?: DecisionInput): boolean {
+export async function acceptProposal(db: AsyncDatabase, id: string, input?: DecisionInput): Promise<boolean> {
 	return decideProposal(db, id, "applied", acceptVerdict(input), input);
 }
 
-export function rejectProposal(db: Database.Database, id: string, input?: DecisionInput): boolean {
+export async function rejectProposal(db: AsyncDatabase, id: string, input?: DecisionInput): Promise<boolean> {
 	return decideProposal(db, id, "rejected", "rejected", input);
 }
 
@@ -436,39 +436,39 @@ export interface BulkResult {
 }
 
 /** Accept multiple proposals with the same decision input (no remediation row). */
-export function acceptProposalsBulk(
-	db: Database.Database,
+export async function acceptProposalsBulk(
+	db: AsyncDatabase,
 	proposalIds: string[],
 	input?: DecisionInput,
-): BulkResult {
+): Promise<BulkResult> {
 	const accepted: string[] = [];
 	const skipped: string[] = [];
 	const verdict = acceptVerdict(input);
-	const tx = db.transaction(() => {
+	const tx = db.transaction(async () => {
 		for (const id of proposalIds) {
-			if (decideProposal(db, id, "applied", verdict, input)) accepted.push(id);
+			if (await decideProposal(db, id, "applied", verdict, input)) accepted.push(id);
 			else skipped.push(id);
 		}
 	});
-	tx();
+	await tx();
 	return { accepted, rejected: [], skipped };
 }
 
 /** Reject multiple proposals with the same decision input. */
-export function rejectProposalsBulk(
-	db: Database.Database,
+export async function rejectProposalsBulk(
+	db: AsyncDatabase,
 	proposalIds: string[],
 	input?: DecisionInput,
-): BulkResult {
+): Promise<BulkResult> {
 	const rejected: string[] = [];
 	const skipped: string[] = [];
-	const tx = db.transaction(() => {
+	const tx = db.transaction(async () => {
 		for (const id of proposalIds) {
-			if (decideProposal(db, id, "rejected", "rejected", input)) rejected.push(id);
+			if (await decideProposal(db, id, "rejected", "rejected", input)) rejected.push(id);
 			else skipped.push(id);
 		}
 	});
-	tx();
+	await tx();
 	return { accepted: [], rejected, skipped };
 }
 
@@ -496,12 +496,12 @@ export interface RemediateResult {
  * description doubles as the default rationale so each decision row stays
  * self-contained for the meta-analyzer corpus.
  */
-export function acceptProposalsWithRemediation(
-	db: Database.Database,
+export async function acceptProposalsWithRemediation(
+	db: AsyncDatabase,
 	proposalIds: string[],
 	remediation: RemediationInput,
 	input?: DecisionInput,
-): RemediateResult {
+): Promise<RemediateResult> {
 	const decision: DecisionInput = {
 		...input,
 		rationale: input?.rationale ?? remediation.description,
@@ -510,17 +510,16 @@ export function acceptProposalsWithRemediation(
 	const accepted: string[] = [];
 	const skipped: string[] = [];
 	let remediationId: string | null = null;
-	const tx = db.transaction(() => {
-		const open = new Set(
-			proposalIds.filter((id) => {
-				const row = prep(db, "SELECT status FROM proposals WHERE id = ?").get(id) as { status: string } | undefined;
-				return row?.status === "open";
-			}),
-		);
+	const tx = db.transaction(async () => {
+		const open = new Set<string>();
+		for (const id of proposalIds) {
+			const row = (await prep(db, "SELECT status FROM proposals WHERE id = ?").get(id)) as { status: string } | undefined;
+			if (row?.status === "open") open.add(id);
+		}
 		if (open.size > 0) {
 			remediationId = uuidv7();
 			const createdAt = new Date().toISOString();
-			prep(db, "INSERT INTO remediations (id, description, actual_change, created_at) VALUES (?, ?, ?, ?)").run(
+			await prep(db, "INSERT INTO remediations (id, description, actual_change, created_at) VALUES (?, ?, ?, ?)").run(
 				remediationId,
 				remediation.description,
 				remediation.actual_change ?? null,
@@ -528,7 +527,7 @@ export function acceptProposalsWithRemediation(
 			);
 			// Also record the shared remediation as an assertion (issue #73), so the
 			// disaster corpus is uniform; decisions reference it via remediation_id.
-			upsertAssertion(db, {
+			await upsertAssertion(db, {
 				subjectKind: ASSERTION_SUBJECT_KINDS.REMEDIATION,
 				subjectKey: remediationId,
 				verdict: REMEDIATION_VERDICT,
@@ -538,67 +537,67 @@ export function acceptProposalsWithRemediation(
 			});
 		}
 		for (const id of proposalIds) {
-			if (open.has(id) && decideProposal(db, id, "applied", acceptVerdict(decision), decision, remediationId)) {
+			if (open.has(id) && (await decideProposal(db, id, "applied", acceptVerdict(decision), decision, remediationId))) {
 				accepted.push(id);
 			} else {
 				skipped.push(id);
 			}
 		}
 	});
-	tx();
+	await tx();
 	return { remediationId, accepted, skipped };
 }
 
-export function getRemediation(db: Database.Database, id: string): Remediation | undefined {
-	const a = getRemediationAssertion(db, id);
+export async function getRemediation(db: AsyncDatabase, id: string): Promise<Remediation | undefined> {
+	const a = await getRemediationAssertion(db, id);
 	return a ? assertionToRemediation(a) : undefined;
 }
 
 /** Every decision made under one remediation, oldest first. */
-export function getDecisionsForRemediation(db: Database.Database, remediationId: string): ProposalDecision[] {
-	return getProposalAssertionsByRemediation(db, remediationId).map(assertionToDecision);
+export async function getDecisionsForRemediation(db: AsyncDatabase, remediationId: string): Promise<ProposalDecision[]> {
+	return (await getProposalAssertionsByRemediation(db, remediationId)).map(assertionToDecision);
 }
 
 // ── Proposal decisions (append-only human feedback) ──
 
 /** The latest (authoritative) decision for a proposal's input_key, if any. */
-export function getLatestDecision(db: Database.Database, proposalInputKey: string): ProposalDecision | undefined {
-	const rows = getProposalAssertionsForKey(db, proposalInputKey);
+export async function getLatestDecision(db: AsyncDatabase, proposalInputKey: string): Promise<ProposalDecision | undefined> {
+	const rows = await getProposalAssertionsForKey(db, proposalInputKey);
 	if (rows.length === 0) return undefined;
 	// Oldest-first, so the latest (authoritative) decision is the last row.
 	return assertionToDecision(rows[rows.length - 1]!);
 }
 
 /** Full decision history for one proposal, oldest first. */
-export function getDecisionsForProposal(db: Database.Database, proposalInputKey: string): ProposalDecision[] {
-	return getProposalAssertionsForKey(db, proposalInputKey).map(assertionToDecision);
+export async function getDecisionsForProposal(db: AsyncDatabase, proposalInputKey: string): Promise<ProposalDecision[]> {
+	return (await getProposalAssertionsForKey(db, proposalInputKey)).map(assertionToDecision);
 }
 
 /** Every decision, newest first — the corpus the future meta-analyzer consumes. */
-export function getAllDecisions(db: Database.Database): ProposalDecision[] {
-	return getProposalAssertions(db).map(assertionToDecision);
+export async function getAllDecisions(db: AsyncDatabase): Promise<ProposalDecision[]> {
+	return (await getProposalAssertions(db)).map(assertionToDecision);
 }
 
 // ── Proposal validation (issue #6) ──
 
 /** Open proposals for a session, in stable order — the input to proposal-validate. */
-export function listOpenProposalsForSession(db: Database.Database, sessionId: string): Proposal[] {
-	return prep(db, "SELECT * FROM proposals WHERE session_id = ? AND status = 'open' ORDER BY created_at ASC, rowid ASC")
-		.all(sessionId) as Proposal[];
+export async function listOpenProposalsForSession(db: AsyncDatabase, sessionId: string): Promise<Proposal[]> {
+	return (await prep(db, "SELECT * FROM proposals WHERE session_id = ? AND status = 'open' ORDER BY created_at ASC, rowid ASC")
+		.all(sessionId)) as Proposal[];
 }
 
 /** Distinct session ids that currently have at least one open proposal to validate. */
-export function listSessionIdsWithOpenProposals(db: Database.Database, limit?: number): string[] {
-	const rows = prep(db, "SELECT DISTINCT session_id FROM proposals WHERE status = 'open' ORDER BY session_id")
-		.all() as Array<{ session_id: string }>;
+export async function listSessionIdsWithOpenProposals(db: AsyncDatabase, limit?: number): Promise<string[]> {
+	const rows = (await prep(db, "SELECT DISTINCT session_id FROM proposals WHERE status = 'open' ORDER BY session_id")
+		.all()) as Array<{ session_id: string }>;
 	const ids = rows.map((r) => r.session_id);
 	return typeof limit === "number" ? ids.slice(0, limit) : ids;
 }
 
 /** Count open proposals grouped by validation status, for a run summary. */
-export function countOpenProposalsByValidationStatus(db: Database.Database): Record<string, number> {
-	const rows = prep(db, "SELECT validation_status AS s, COUNT(*) AS c FROM proposals WHERE status = 'open' GROUP BY validation_status")
-		.all() as Array<{ s: string; c: number }>;
+export async function countOpenProposalsByValidationStatus(db: AsyncDatabase): Promise<Record<string, number>> {
+	const rows = (await prep(db, "SELECT validation_status AS s, COUNT(*) AS c FROM proposals WHERE status = 'open' GROUP BY validation_status")
+		.all()) as Array<{ s: string; c: number }>;
 	const out: Record<string, number> = {};
 	for (const r of rows) out[r.s] = r.c;
 	return out;
@@ -606,23 +605,23 @@ export function countOpenProposalsByValidationStatus(db: Database.Database): Rec
 
 // ── Stats ──
 
-export function getStats(db: Database.Database, asOf?: string): Stats {
+export async function getStats(db: AsyncDatabase, asOf?: string): Promise<Stats> {
 	const at = asOf;
 	const sessionWhere = at ? " WHERE started_at <= ?" : "";
 	const sessionParams = at ? [at] : [];
-	const totalSessions = (prep(db, `SELECT COUNT(*) as c FROM sessions${sessionWhere}`).get(...sessionParams) as { c: number }).c;
-	const piSessions = (prep(db, `SELECT COUNT(*) as c FROM sessions WHERE source = 'pi'${at ? " AND started_at <= ?" : ""}`).get(...(at ? [at] : [])) as { c: number }).c;
-	const claudeSessions = (prep(db, `SELECT COUNT(*) as c FROM sessions WHERE source = 'claude'${at ? " AND started_at <= ?" : ""}`).get(...(at ? [at] : [])) as { c: number }).c;
+	const totalSessions = ((await prep(db, `SELECT COUNT(*) as c FROM sessions${sessionWhere}`).get(...sessionParams)) as { c: number }).c;
+	const piSessions = ((await prep(db, `SELECT COUNT(*) as c FROM sessions WHERE source = 'pi'${at ? " AND started_at <= ?" : ""}`).get(...(at ? [at] : []))) as { c: number }).c;
+	const claudeSessions = ((await prep(db, `SELECT COUNT(*) as c FROM sessions WHERE source = 'claude'${at ? " AND started_at <= ?" : ""}`).get(...(at ? [at] : []))) as { c: number }).c;
 
 	const msgWhere = at ? ` AND timestamp <= ?` : "";
 	const msgParams = at ? [at] : [];
-	const totalMessages = (prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant')${msgWhere}`).get(...msgParams) as { c: number }).c;
-	const piMessages = (prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'pi'${msgWhere}`).get(...msgParams) as { c: number }).c;
-	const claudeMessages = (prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'claude'${msgWhere}`).get(...msgParams) as { c: number }).c;
-	const totalToolResults = (prep(db, `SELECT COUNT(*) as c FROM messages WHERE role = 'toolResult'${msgWhere}`).get(...msgParams) as { c: number }).c;
-	const sessionsAnalyzed = (prep(db, `SELECT COUNT(*) as c FROM sessions WHERE analyzed_at IS NOT NULL${at ? " AND analyzed_at <= ?" : ""}`).get(...(at ? [at] : [])) as { c: number }).c;
+	const totalMessages = ((await prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant')${msgWhere}`).get(...msgParams)) as { c: number }).c;
+	const piMessages = ((await prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'pi'${msgWhere}`).get(...msgParams)) as { c: number }).c;
+	const claudeMessages = ((await prep(db, `SELECT COUNT(*) as c FROM messages WHERE role IN ('user','assistant') AND source = 'claude'${msgWhere}`).get(...msgParams)) as { c: number }).c;
+	const totalToolResults = ((await prep(db, `SELECT COUNT(*) as c FROM messages WHERE role = 'toolResult'${msgWhere}`).get(...msgParams)) as { c: number }).c;
+	const sessionsAnalyzed = ((await prep(db, `SELECT COUNT(*) as c FROM sessions WHERE analyzed_at IS NOT NULL${at ? " AND analyzed_at <= ?" : ""}`).get(...(at ? [at] : []))) as { c: number }).c;
 
-	const proposalsByStatus = proposalStatusCountsAt(db, at);
+	const proposalsByStatus = await proposalStatusCountsAt(db, at);
 
 
 	return {
@@ -635,8 +634,8 @@ export function getStats(db: Database.Database, asOf?: string): Stats {
 		totalToolResults,
 		sessionsAnalyzed,
 		proposalsByStatus,
-		analysis: getAnalysisStats(db, at),
-		tokens: getTokenStats(db),
+		analysis: await getAnalysisStats(db, at),
+		tokens: await getTokenStats(db),
 	};
 }
 
@@ -648,13 +647,13 @@ export function getStats(db: Database.Database, asOf?: string): Stats {
  * Usage is stored as a JSON column: {"input":N,"output":N,"cacheRead":N,...}
  * Tool calls are stored as a JSON array; we count the array length.
  */
-export function getTokenStats(db: Database.Database): SourceTokenStats {
-	function query(source: string | null): TokenStats {
+export async function getTokenStats(db: AsyncDatabase): Promise<SourceTokenStats> {
+	async function query(source: string | null): Promise<TokenStats> {
 		const sourceClause = source ? "AND source = ?" : "";
 		const params: unknown[] = source ? [source] : [];
 
 		// Count turns and tool calls for assistant messages that have usage
-		const row = prep(db, `
+		const row = (await prep(db, `
 			SELECT
 				COUNT(*) as turnCount,
 				COALESCE(SUM(json_extract(usage, '$.input')), 0) as totalInput,
@@ -667,7 +666,7 @@ export function getTokenStats(db: Database.Database): SourceTokenStats {
 				AND usage IS NOT NULL
 				AND json_extract(usage, '$.input') IS NOT NULL
 				${sourceClause}
-		`).get(...params) as {
+		`).get(...params)) as {
 			turnCount: number;
 			totalInput: number;
 			totalOutput: number;
@@ -677,7 +676,7 @@ export function getTokenStats(db: Database.Database): SourceTokenStats {
 		};
 
 		// Count tool calls from tool_calls JSON array
-		const tcRow = prep(db, `
+		const tcRow = (await prep(db, `
 			SELECT
 				COALESCE(SUM(CASE
 					WHEN tool_calls IS NOT NULL AND tool_calls != '[]'
@@ -688,7 +687,7 @@ export function getTokenStats(db: Database.Database): SourceTokenStats {
 			WHERE role = 'assistant'
 				AND usage IS NOT NULL
 				${sourceClause}
-		`).get(...params) as { toolCallCount: number };
+		`).get(...params)) as { toolCallCount: number };
 
 		const turns = row.turnCount;
 		const inputPerTurn = turns > 0 ? Math.round(row.totalInput / turns) : 0;
@@ -711,9 +710,9 @@ export function getTokenStats(db: Database.Database): SourceTokenStats {
 		};
 	}
 
-	const combined = query(null);
-	const pi = query("pi");
-	const claude = query("claude");
+	const combined = await query(null);
+	const pi = await query("pi");
+	const claude = await query("claude");
 
 	function ratio(piVal: number, claudeVal: number): number | null {
 		return claudeVal === 0 ? null : Math.round((piVal / claudeVal) * 10) / 10;

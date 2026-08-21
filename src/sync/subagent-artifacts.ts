@@ -24,9 +24,9 @@
  * curated labels is the analyzer's job, never the ingest layer's.
  */
 
-import * as fs from "node:fs";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import Database from "better-sqlite3";
+import { type AsyncDatabase } from "../db/async-db.js";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { getSubagentRunMtime, upsertSubagentRun } from "../db/queries.js";
@@ -164,12 +164,12 @@ export interface DiscoveredArtifact {
  * project directory in the sessions root. A missing or unreadable directory
  * contributes nothing: a corpus with no subagent runs is normal, not an error.
  */
-export function discoverSubagentArtifacts(sessionsDir: string, projectFilter?: string): DiscoveredArtifact[] {
+export async function discoverSubagentArtifacts(sessionsDir: string, projectFilter?: string): Promise<DiscoveredArtifact[]> {
 	const out: DiscoveredArtifact[] = [];
 
 	let projects: string[];
 	try {
-		projects = fs.readdirSync(sessionsDir);
+		projects = await fs.readdir(sessionsDir);
 	} catch {
 		return out;
 	}
@@ -179,16 +179,16 @@ export function discoverSubagentArtifacts(sessionsDir: string, projectFilter?: s
 		const artifactDir = path.join(sessionsDir, project, "subagent-artifacts");
 		let files: string[];
 		try {
-			files = fs.readdirSync(artifactDir);
+			files = await fs.readdir(artifactDir);
 		} catch {
 			continue;
 		}
 		for (const file of files) {
 			if (!file.endsWith("_meta.json")) continue;
 			const filePath = path.join(artifactDir, file);
-			let stat: fs.Stats;
+			let stat: Awaited<ReturnType<typeof fs.stat>>;
 			try {
-				stat = fs.statSync(filePath);
+				stat = await fs.stat(filePath);
 			} catch {
 				continue;
 			}
@@ -215,28 +215,28 @@ export interface ArtifactIngestResult {
  * same incremental contract sessions get from their cursor. A file that cannot
  * be parsed is reported in `errors` and never silently dropped.
  */
-export function ingestSubagentArtifacts(
-	db: Database.Database,
+export async function ingestSubagentArtifacts(
+	db: AsyncDatabase,
 	sessionsDir: string,
 	projectFilter?: string,
-): ArtifactIngestResult {
+): Promise<ArtifactIngestResult> {
 	const result: ArtifactIngestResult = { processed: 0, skipped: 0, errors: [] };
 
-	for (const disc of discoverSubagentArtifacts(sessionsDir, projectFilter)) {
+	for (const disc of await discoverSubagentArtifacts(sessionsDir, projectFilter)) {
 		try {
-			const parsed = parseSubagentArtifact(fs.readFileSync(disc.filePath, "utf-8"), path.basename(disc.filePath));
+			const parsed = parseSubagentArtifact(await fs.readFile(disc.filePath, "utf-8"), path.basename(disc.filePath));
 			if (!parsed) {
 				result.errors.push(`${disc.filePath}: not recognisable subagent artifact metadata`);
 				continue;
 			}
 
-			const storedMtime = getSubagentRunMtime(db, parsed.runId);
+			const storedMtime = await getSubagentRunMtime(db, parsed.runId);
 			if (storedMtime !== undefined && storedMtime >= disc.mtime) {
 				result.skipped++;
 				continue;
 			}
 
-			upsertSubagentRun(db, {
+			await upsertSubagentRun(db, {
 				run_id: parsed.runId,
 				project: disc.project,
 				agent: parsed.agent,

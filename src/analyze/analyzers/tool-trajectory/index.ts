@@ -187,9 +187,9 @@ export const toolTrajectoryAnalyzer: Analyzer = {
 		];
 	},
 
-	analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
+	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = (ctx.config.configJson as unknown as ToolTrajectoryConfig) ?? DEFAULT_TOOL_TRAJECTORY_CONFIG;
-		const messages = ctx.getSessionMessages(ctx.sessionId);
+		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const toolCalls = extractToolCalls(messages);
 
 		const signals = detectAllSignals(toolCalls, {
@@ -244,7 +244,7 @@ export const toolTrajectoryAnalyzer: Analyzer = {
 		];
 		let ordinal = 1;
 		// Consume turn-pair-core nodes
-		const coreNodes = ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id);
+		const coreNodes = await ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id);
 		for (const n of coreNodes) {
 			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.output_key, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
 		}

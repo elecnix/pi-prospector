@@ -28,7 +28,7 @@ function makeRoot(label: string): string {
 }
 
 describe("discoverSessions isolation", () => {
-	it("reads only the directories it is given, whatever the environment says", () => {
+	it("reads only the directories it is given, whatever the environment says", async () => {
 		const piRoot = makeRoot("pi");
 		const claudeRoot = makeRoot("claude");
 		const decoyRoot = makeRoot("decoy");
@@ -37,7 +37,7 @@ describe("discoverSessions isolation", () => {
 			// Point the ambient config at a directory that must never be consulted.
 			process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] = decoyRoot;
 
-			const found = discoverSessions(piRoot, claudeRoot);
+			const found = await discoverSessions(piRoot, claudeRoot);
 			assert.equal(found.length, 2, "one Pi session and one Claude session");
 			assert.deepEqual(found.map((s) => s.source).sort(), ["claude", "pi"]);
 			assert.equal(
@@ -52,16 +52,16 @@ describe("discoverSessions isolation", () => {
 		}
 	});
 
-	it("discovers nothing when both directories are absent", () => {
-		assert.deepEqual(discoverSessions("/nonexistent-pi", "/nonexistent-claude"), []);
+	it("discovers nothing when both directories are absent", async () => {
+		assert.deepEqual(await discoverSessions("/nonexistent-pi", "/nonexistent-claude"), []);
 	});
 
-	it("keeps the two sources independent", () => {
+	it("keeps the two sources independent", async () => {
 		const piRoot = makeRoot("pi");
 		try {
-			assert.equal(discoverSessions(piRoot, "/nonexistent-claude").length, 1);
-			assert.equal(discoverSessions("/nonexistent-pi", piRoot).length, 1);
-			assert.equal(discoverSessions("/nonexistent-pi", piRoot)[0]!.source, "claude");
+			assert.equal((await discoverSessions(piRoot, "/nonexistent-claude")).length, 1);
+			assert.equal((await discoverSessions("/nonexistent-pi", piRoot)).length, 1);
+			assert.equal((await discoverSessions("/nonexistent-pi", piRoot))[0]!.source, "claude");
 		} finally {
 			fs.rmSync(piRoot, { recursive: true, force: true });
 		}

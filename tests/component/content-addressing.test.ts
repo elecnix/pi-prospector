@@ -6,6 +6,7 @@ import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { registerDefaults } from "../../src/analyze/defaults.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { verifyNodes } from "../../src/commands/verify.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
 function respond(req: LLMRequest): string {
@@ -36,9 +37,9 @@ function respond(req: LLMRequest): string {
 }
 
 /** Seed a session with EXPLICIT, stable message ids so leaf identities reproduce. */
-function seed(db: import("better-sqlite3").Database, id: string): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+async function seed(db: AsyncDatabase, id: string): Promise<void> {
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		{ id: `${id}-m0`, role: "user", text: "fix the login bug" },
 		{ id: `${id}-m1`, role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ id: `${id}-m2`, role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] },
@@ -47,78 +48,80 @@ function seed(db: import("better-sqlite3").Database, id: string): void {
 	]);
 }
 
-async function analyze(db: import("better-sqlite3").Database, sessionId: string): Promise<void> {
+async function analyze(db: AsyncDatabase, sessionId: string): Promise<void> {
 	const mock = createMockLLM({ responder: respond, tokensPerCall: 100, costPerCall: 0.001 });
 	const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	registerDefaults(fw);
+	await registerDefaults(fw);
 	const summary = await fw.run(sessionId, {});
 	assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 }
 
-function keysOf(db: import("better-sqlite3").Database): string[] {
+async function keysOf(db: AsyncDatabase): Promise<string[]> {
 	return (
-		db
+		(await db
 			.prepare("SELECT analyzer_id, input_key, output_key FROM analysis_nodes ORDER BY analyzer_id, input_key")
-			.all() as Array<{ analyzer_id: string; input_key: string; output_key: string }>
+			.all()) as Array<{ analyzer_id: string; input_key: string; output_key: string }>
 	).map((r) => `${r.analyzer_id}|${r.input_key}|${r.output_key}`);
 }
 
 describe("content-addressed identities", () => {
 	it("reproduce identically across independent databases (global, wipe-surviving)", async () => {
-		const a = tempDb();
-		const b = tempDb();
+		const a = await tempDb();
+		const b = await tempDb();
 		try {
-			seed(a.db, "s1");
-			seed(b.db, "s1");
+			await seed(a.db, "s1");
+			await seed(b.db, "s1");
 			await analyze(a.db, "s1");
 			await analyze(b.db, "s1");
 
-			const ka = keysOf(a.db);
-			const kb = keysOf(b.db);
+			const ka = await keysOf(a.db);
+			const kb = await keysOf(b.db);
 			assert.ok(ka.length > 0, "produced nodes");
 			// Node uuids and created_at differ between DBs; input_key + output_key must not.
 			assert.deepEqual(ka, kb, "input_key/output_key are pure functions of content, not DB-local ids");
 		} finally {
-			a.close();
-			b.close();
+			await a.close();
+			await b.close();
 		}
 	});
 
 	it("a consumer's input_key folds in the upstream output_key (output matters)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			seed(db, "s1");
+			await seed(db, "s1");
 			await analyze(db, "s1");
 			// The session-overview node consumes turn-pair output_keys; its source_set_hash
 			// is therefore derived from upstream output_keys, not uuids.
-			const overview = db.prepare("SELECT source_set_hash FROM analysis_nodes WHERE analyzer_id='session-overview'").get() as { source_set_hash: string };
-			const upstreamOutputKeys = (db.prepare("SELECT output_key FROM analysis_nodes WHERE analyzer_id IN ('turn-pair-core','turn-pair-llm')").all() as Array<{ output_key: string }>).map((r) => r.output_key);
+			const overview = (await db.prepare("SELECT source_set_hash FROM analysis_nodes WHERE analyzer_id='session-overview'").get()) as { source_set_hash: string } | undefined;
+			const upstreamOutputKeys = (
+				(await db.prepare("SELECT output_key FROM analysis_nodes WHERE analyzer_id IN ('turn-pair-core','turn-pair-llm')").all()) as Array<{ output_key: string }>
+			).map((r) => r.output_key);
 			assert.ok(overview, "overview node exists");
 			assert.ok(upstreamOutputKeys.every((k) => k.length === 16), "upstream nodes have content-addressed output_keys");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("edges that point at nodes reference output_key (content-addressed, portable)", async () => {
-		const a = tempDb();
-		const b = tempDb();
+		const a = await tempDb();
+		const b = await tempDb();
 		try {
-			seed(a.db, "s1");
-			seed(b.db, "s1");
+			await seed(a.db, "s1");
+			await seed(b.db, "s1");
 			await analyze(a.db, "s1");
 			await analyze(b.db, "s1");
 
-			const nodeEdges = (db: import("better-sqlite3").Database): Array<{ edge_kind: string; to_ref_id: string }> =>
-				db
+			const nodeEdges = async (db: AsyncDatabase): Promise<Array<{ edge_kind: string; to_ref_id: string }>> =>
+				(await db
 					.prepare("SELECT edge_kind, to_ref_id FROM analysis_edges WHERE to_ref_kind = 'analysis_node' ORDER BY edge_kind, to_ref_id")
-					.all() as Array<{ edge_kind: string; to_ref_id: string }>;
-			const outputKeysOf = (db: import("better-sqlite3").Database): Set<string> =>
-				new Set((db.prepare("SELECT output_key FROM analysis_nodes").all() as Array<{ output_key: string }>).map((r) => r.output_key));
+					.all()) as Array<{ edge_kind: string; to_ref_id: string }>;
+			const outputKeysOf = async (db: AsyncDatabase): Promise<Set<string>> =>
+				new Set(((await db.prepare("SELECT output_key FROM analysis_nodes").all()) as Array<{ output_key: string }>).map((r) => r.output_key));
 
-			const ea = nodeEdges(a.db);
+			const ea = await nodeEdges(a.db);
 			assert.ok(ea.length > 0, "produced node-targeting edges");
-			const oka = outputKeysOf(a.db);
+			const oka = await outputKeysOf(a.db);
 			for (const e of ea) {
 				// A node-targeting edge must reference a content-addressed output_key
 				// (16 hex chars) that resolves to a real node — never a DB-local uuid.
@@ -127,29 +130,31 @@ describe("content-addressed identities", () => {
 			}
 			// Portable: the (edge_kind, target) multiset reproduces across independent DBs.
 			const canon = (rows: Array<{ edge_kind: string; to_ref_id: string }>): string[] => rows.map((r) => `${r.edge_kind}|${r.to_ref_id}`);
-			assert.deepEqual(canon(ea), canon(nodeEdges(b.db)), "node-targeting edges reproduce across DBs");
+			assert.deepEqual(canon(ea), canon(await nodeEdges(b.db)), "node-targeting edges reproduce across DBs");
 		} finally {
-			a.close();
-			b.close();
+			await a.close();
+			await b.close();
 		}
 	});
 
 	it("verifyNodes confirms a clean graph and detects tampering", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			seed(db, "s1");
+			await seed(db, "s1");
 			await analyze(db, "s1");
 
-			const clean = verifyNodes(db);
+			const clean = await verifyNodes(db);
 			assert.ok(clean.total > 0);
 			assert.equal(clean.mismatches.length, 0, "a freshly built graph verifies");
 
 			// Tamper with stored content out of band; the output_key no longer matches.
-			db.prepare("UPDATE analysis_nodes SET content_json = '{\"tampered\":true}' WHERE id = (SELECT id FROM analysis_nodes WHERE analyzer_id='turn-pair-core' LIMIT 1)").run();
-			const dirty = verifyNodes(db);
+			await db
+				.prepare("UPDATE analysis_nodes SET content_json = '{\"tampered\":true}' WHERE id = (SELECT id FROM analysis_nodes WHERE analyzer_id='turn-pair-core' LIMIT 1)")
+				.run();
+			const dirty = await verifyNodes(db);
 			assert.equal(dirty.mismatches.length, 1, "tampering is detected");
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

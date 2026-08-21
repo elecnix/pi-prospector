@@ -17,6 +17,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { AsyncDatabase } from "../src/db/async-db.js";
 import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
@@ -43,8 +44,8 @@ const ORDERS_TSV = [
 ].join("\n");
 
 /** Framework with the dataprofiler analyzer registered. */
-function newFramework(
-	db: import("better-sqlite3").Database,
+async function newFramework(
+	db: AsyncDatabase,
 	configOverrides?: Record<string, Record<string, unknown>>,
 ) {
 	const fw = new AnalyzerFramework({
@@ -54,18 +55,18 @@ function newFramework(
 		modelTiers: DEFAULT_MODEL_TIERS,
 		configOverrides,
 	});
-	fw.register(dataprofilerAnalyzer);
+	await fw.register(dataprofilerAnalyzer);
 	return fw;
 }
 
-function readNodes(db: import("better-sqlite3").Database): Array<Record<string, unknown>> {
-	return db
+async function readNodes(db: AsyncDatabase): Promise<Array<Record<string, unknown>>>  {
+	return await db
 		.prepare("SELECT * FROM analysis_nodes WHERE analyzer_id = ? ORDER BY created_at ASC")
 		.all(DATAPROFILER_DEF.id) as Array<Record<string, unknown>>;
 }
 
-function newestProps(db: import("better-sqlite3").Database): DataprofilerProperties {
-	const rows = readNodes(db);
+async function newestProps(db: AsyncDatabase): DataprofilerProperties  {
+	const rows = await readNodes(db);
 	assert.ok(rows.length >= 1, "dataprofiler analyzer should produce at least one node");
 	const row = rows[rows.length - 1]!; // newest (append-only graph)
 	return JSON.parse(row["content_json"] as string) as DataprofilerProperties;
@@ -73,10 +74,10 @@ function newestProps(db: import("better-sqlite3").Database): DataprofilerPropert
 
 describe("dataprofiler component test", () => {
 	it("profiles files read and written, anchors correctly, stores no full value", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "dp-1");
-			const ids = insertMessages(db, "dp-1", [
+			await insertSession(db, "dp-1");
+			const ids = await insertMessages(db, "dp-1", [
 				{ role: "user", text: "Please check the customer export before we ship it." },
 				// Assistant reads customers.csv via the structured read tool…
 				{ role: "assistant" },
@@ -94,15 +95,15 @@ describe("dataprofiler component test", () => {
 			// Write the exact stored shapes directly: tool calls with provider ids
 			// on the assistant rows, paired result envelopes with captured content
 			// on inserted toolResult rows.
-			db.prepare("UPDATE messages SET tool_calls = ? WHERE id = ?").run(
+			await db.prepare("UPDATE messages SET tool_calls = ? WHERE id = ?").run(
 				JSON.stringify([{ id: "call-read-1", name: "read", arguments: { file_path: "/data/customers.csv" } }]),
 				readCallMsg,
 			);
-			db.prepare("UPDATE messages SET tool_calls = ? WHERE id = ?").run(
+			await db.prepare("UPDATE messages SET tool_calls = ? WHERE id = ?").run(
 				JSON.stringify([{ id: "call-cat-1", name: "bash", arguments: { command: "cat /data/orders.tsv" } }]),
 				bashCallMsg,
 			);
-			const insertResult = db.prepare(
+			const insertResult = await db.prepare(
 				"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd) " +
 					"VALUES (?, ?, 'pi', ?, ?, 'toolResult', ?, NULL, NULL, ?, NULL, NULL)",
 			);
@@ -123,12 +124,12 @@ describe("dataprofiler component test", () => {
 				JSON.stringify([{ toolCallId: "call-cat-1", toolName: "bash", isError: false, textLength: ORDERS_TSV.length }]),
 			);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("dp-1", { analyzerIds: ["dataprofiler"] });
 			assert.equal(first.nodesProduced, 1);
 			assert.equal(first.errors.length, 0);
 
-			const row = readNodes(db).at(-1)!;
+			const row = (await readNodes(db)).at(-1)!;
 			assert.equal(row["node_kind"], "metric");
 			const props = JSON.parse(row["content_json"] as string) as DataprofilerProperties;
 
@@ -175,29 +176,29 @@ describe("dataprofiler component test", () => {
 
 			// Anchors: one to the session, one per message whose tool call produced
 			// a finding — here the two distinct assistant call messages.
-			const edges = db
+			const edges = await db
 				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
 				.all(row["id"]) as Array<Record<string, unknown>>;
 			const anchors = edges.filter((e) => e["edge_kind"] === "anchors");
 			const targets = anchors.map((e) => `${e["to_ref_kind"]}:${e["to_ref_id"]}`).sort();
 			assert.deepEqual(targets, [`message:${ids[1]}`, `message:${ids[2]}`, "session:dp-1"]);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("is idempotent: a second run produces no new node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "dp-2");
-			const ids = insertMessages(db, "dp-2", [
+			await insertSession(db, "dp-2");
+			const ids = await insertMessages(db, "dp-2", [
 				{ role: "assistant" },
 			] satisfies TestMessage[]);
-			db.prepare("UPDATE messages SET tool_calls = ? WHERE id = ?").run(
+			await db.prepare("UPDATE messages SET tool_calls = ? WHERE id = ?").run(
 				JSON.stringify([{ id: "call-r", name: "read", arguments: { file_path: "/data/customers.csv" } }]),
 				ids[0]!,
 			);
-			db.prepare(
+			await db.prepare(
 				"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd) " +
 					"VALUES (?, ?, 'pi', ?, ?, 'toolResult', ?, NULL, NULL, ?, NULL, NULL)",
 			).run(
@@ -209,34 +210,34 @@ describe("dataprofiler component test", () => {
 				JSON.stringify([{ toolCallId: "call-r", toolName: "read", isError: false, textLength: CUSTOMERS_CSV.length }]),
 			);
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			const first = await fw.run("dp-2", { analyzerIds: ["dataprofiler"] });
 			assert.equal(first.nodesProduced, 1);
 			const second = await fw.run("dp-2", { analyzerIds: ["dataprofiler"] });
 			assert.equal(second.nodesProduced, 0);
 			assert.equal(second.nodesSkipped, 1);
 
-			const count = (db
+			const count = ((await db
 				.prepare("SELECT COUNT(*) as c FROM analysis_nodes WHERE analyzer_id = ?")
-				.get(DATAPROFILER_DEF.id) as { c: number }).c;
+				.get(DATAPROFILER_DEF.id)) as { c: number }).c;
 			assert.equal(count, 1);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("config overrides apply: format toggle marks stale and revises; allowlist silences", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "dp-3");
-			const ids = insertMessages(db, "dp-3", [
+			await insertSession(db, "dp-3");
+			const ids = await insertMessages(db, "dp-3", [
 				{ role: "assistant" },
 			] satisfies TestMessage[]);
-			db.prepare("UPDATE messages SET tool_calls = ? WHERE id = ?").run(
+			await db.prepare("UPDATE messages SET tool_calls = ? WHERE id = ?").run(
 				JSON.stringify([{ id: "call-r", name: "read", arguments: { file_path: "/data/customers.csv" } }]),
 				ids[0]!,
 			);
-			db.prepare(
+			await db.prepare(
 				"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd) " +
 					"VALUES (?, ?, 'pi', ?, ?, 'toolResult', ?, NULL, NULL, ?, NULL, NULL)",
 			).run(
@@ -249,19 +250,19 @@ describe("dataprofiler component test", () => {
 			);
 
 			// Baseline: three sensitive columns (email + phone confirmed, name label-only).
-			const fw1 = newFramework(db);
+			const fw1 = await newFramework(db);
 			await fw1.run("dp-3", { analyzerIds: ["dataprofiler"] });
-			const baseline = newestProps(db);
+			const baseline = await newestProps(db);
 			assert.equal(baseline.finding_count, 1);
 			assert.equal(baseline.sensitive_columns, 3);
 
 			// Disable the csv format: config change → stale/config → revise; the
 			// file is no longer extracted at all.
-			const fw2 = newFramework(db, {
+			const fw2 = await newFramework(db, {
 				dataprofiler: { formats: { csv: false, tsv: true, json: true } },
 			});
 			await fw2.run("dp-3", { analyzerIds: ["dataprofiler"], revise: ["config"] });
-			const revised = newestProps(db);
+			const revised = await newestProps(db);
 			assert.equal(revised.finding_count, 0);
 			assert.equal(revised.has_findings, false);
 			assert.equal(revised.files_touched, 0);
@@ -269,7 +270,7 @@ describe("dataprofiler component test", () => {
 			// Re-enable csv but allowlist every matched value by fingerprint: the
 			// email and phone columns lose all value support and downgrade to
 			// label-only — the header alone keeps them visible at low severity.
-			const fw3 = newFramework(db, {
+			const fw3 = await newFramework(db, {
 				dataprofiler: {
 					formats: { csv: true, tsv: true, json: true },
 					allowFingerprints: [
@@ -283,7 +284,7 @@ describe("dataprofiler component test", () => {
 				},
 			});
 			await fw3.run("dp-3", { analyzerIds: ["dataprofiler"], revise: ["config"] });
-			const final = newestProps(db);
+			const final = await newestProps(db);
 			assert.equal(final.finding_count, 1);
 			assert.equal(final.allowlisted_values, 6);
 			const cols = new Map(final.findings[0]!.sensitive_columns.map((c) => [c.column_name, c]));
@@ -293,7 +294,7 @@ describe("dataprofiler component test", () => {
 				assert.equal(col.match_count, 0, col.column_name);
 			}
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

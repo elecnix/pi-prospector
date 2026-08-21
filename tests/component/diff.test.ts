@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM, type MockLLMReply } from "../../src/analyze/mock-llm.js";
@@ -50,27 +50,27 @@ async function runDiff(args: string): Promise<string> {
 
 /** Build a turn-pair-core graph, then re-run with a major version bump to create a revises chain. */
 async function buildTwoVersionGraph(): Promise<{ sessionId: string; sourceSetHash: string }> {
-	const db = new Database(dbPath);
-	migrate(db);
+	const db = await openAsyncDatabase(dbPath);
+	await migrate(db);
 	const { insertSession, insertMessages } = await import("./helpers.js");
-	insertSession(db, "sess-diff");
-	insertMessages(db, "sess-diff", [
+	await insertSession(db, "sess-diff");
+	await insertMessages(db, "sess-diff", [
 		{ role: "user", text: "do a thing" },
 		{ role: "assistant", text: "done" },
 	]);
 	const mock = createMockLLM({ responder: respond });
 	const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	fw.register(turnPairCoreAnalyzer);
+	await fw.register(turnPairCoreAnalyzer);
 	await fw.run("sess-diff", {});
 
-	const sset = (db
+	const sset = ((await db
 		.prepare("SELECT source_set_hash FROM analysis_nodes WHERE analyzer_id = 'turn-pair-core' AND session_id = ? LIMIT 1")
-		.get("sess-diff") as { source_set_hash: string }).source_set_hash;
+		.get("sess-diff")) as { source_set_hash: string }).source_set_hash;
 
 	const fw2 = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	fw2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
+	await fw2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
 	await fw2.run("sess-diff", { revise: ["major"], analyzerIds: ["turn-pair-core"] });
-	db.close();
+	await db.close();
 	return { sessionId: "sess-diff", sourceSetHash: sset };
 }
 
@@ -83,27 +83,27 @@ describe("prospect diff (#53)", () => {
 
 	it("diff --as-of reports the unit as changed between two timepoints", async () => {
 		// Build the first version and capture its time, then bump the version.
-		const db = new Database(dbPath);
-		migrate(db);
+		const db = await openAsyncDatabase(dbPath);
+		await migrate(db);
 		const { insertSession, insertMessages } = await import("./helpers.js");
-		insertSession(db, "sess-ts");
-		insertMessages(db, "sess-ts", [
+		await insertSession(db, "sess-ts");
+		await insertMessages(db, "sess-ts", [
 			{ role: "user", text: "zz" },
 			{ role: "assistant", text: "ok" },
 		]);
 		const mock = createMockLLM({ responder: respond });
 		const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-		fw.register(turnPairCoreAnalyzer);
+		await fw.register(turnPairCoreAnalyzer);
 		await fw.run("sess-ts", {});
-		db.close();
+		await db.close();
 
 		const before = new Date().toISOString();
-		const db2 = new Database(dbPath);
-		migrate(db2);
+		const db2 = await openAsyncDatabase(dbPath);
+		await migrate(db2);
 		const fw2 = new AnalyzerFramework({ db: db2, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-		fw2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
+		await fw2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
 		await fw2.run("sess-ts", { revise: ["major"], analyzerIds: ["turn-pair-core"] });
-		db2.close();
+		await db2.close();
 
 		// The future timepoint (well after the v2 node) → the unit's latest changed.
 		const future = "2038-01-01T00:00:00.000Z";

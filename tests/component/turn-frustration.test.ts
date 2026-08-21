@@ -31,7 +31,7 @@ import type { LLMRequest } from "../../src/analyze/types.js";
 
 const FRUSTRATED_TERMS = new Set(["putain", "wrong", "pénible"]);
 
-function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
+async function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
 	const llm = createMockLLM({
 		responder: (req: LLMRequest) => {
 			const term = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
@@ -49,75 +49,75 @@ function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
 		},
 	});
 	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	framework.register(turnPairCoreAnalyzer);
-	framework.register(lexiconCandidatesAnalyzer);
-	framework.register(frustrationLexiconAnalyzer);
-	framework.register(turnFrustrationAnalyzer);
+	await framework.register(turnPairCoreAnalyzer);
+	await framework.register(lexiconCandidatesAnalyzer);
+	await framework.register(frustrationLexiconAnalyzer);
+	await framework.register(turnFrustrationAnalyzer);
 	return { framework, llm };
 }
 
-function hits(db: Parameters<typeof getNodesByAnalyzer>[0], sessionId: string): TurnFrustrationProperties[] {
-	return getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId).map(
+async function hits(db: Parameters<typeof getNodesByAnalyzer>[0], sessionId: string): Promise<TurnFrustrationProperties[]> {
+	return (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId)).map(
 		(n) => JSON.parse(n.content_json) as TurnFrustrationProperties,
 	);
 }
 
 describe("turn-frustration", () => {
 	it("emits one node per (turn, term) and ignores neutral vocabulary", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
 				{ role: "user", text: "putain that is wrong" },
 				{ role: "assistant", text: "fixing" },
 			]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1");
 
-			const found = hits(db, "s1");
+			const found = await hits(db, "s1");
 			assert.deepEqual(found.map((h) => h.signal).sort(), ["putain", "wrong"]);
 			assert.equal(found.every((h) => h.signal_source === "lexicon"), true);
 			assert.equal(found.every((h) => h.polarity === "frustration"), true);
 			assert.equal(found[0]!.language, "fr");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("detects frustration expressed with no lexicon word at all", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
 				{ role: "user", text: "hmmmm ????" },
 				{ role: "assistant", text: "let me check" },
 			]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1");
 
-			const found = hits(db, "s1");
+			const found = await hits(db, "s1");
 			assert.ok(found.length > 0, "a turn with no known vocabulary still produces signal");
 			assert.equal(found.every((h) => h.signal_source === "paralinguistic"), true);
 			assert.deepEqual(found.map((h) => h.signal).sort(), ["elongation", "repeated_punctuation"]);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("is additive: learning a word elsewhere leaves an analysed session untouched", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1");
 
-			const before = getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1").map((n) => n.id);
+			const before = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).map((n) => n.id);
 			assert.equal(before.length, 1);
 
 			// s2 teaches the corpus a brand-new frustration word.
@@ -128,30 +128,30 @@ describe("turn-frustration", () => {
 			const notCurrent = scan.filter((u) => u.status !== "current");
 			assert.deepEqual(notCurrent, [], "growing the lexicon must not invalidate settled work");
 			assert.deepEqual(
-				getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1").map((n) => n.id),
+				(await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).map((n) => n.id),
 				before,
 				"the existing hit nodes are the same nodes, not replacements",
 			);
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("picks up a word the corpus learned earlier when a later session uses it", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: "putain, encore pénible" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain, encore pénible" }, { role: "assistant", text: "ok" }]);
 
-			const { framework, llm } = build(db);
+			const { framework, llm } = await build(db);
 			await framework.run("s1");
 			const callsAfterS1 = llm.calls.length;
 			await framework.run("s2");
 
 			// Code-unit order, matching the analyzer's locale-independent sort.
-			assert.deepEqual(hits(db, "s2").map((h) => h.signal).sort(), ["putain", "pénible"]);
+			assert.deepEqual((await hits(db, "s2")).map((h) => h.signal).sort(), ["putain", "pénible"]);
 			// `putain` was judged during s1; s2 reuses that verdict without re-asking.
 			// Exact match: a phrase entry such as `TERM: putain encore` must not be
 			// counted as another adjudication of the single word.
@@ -159,26 +159,26 @@ describe("turn-frustration", () => {
 			assert.equal(putainCalls, 1);
 			assert.ok(llm.calls.length > callsAfterS1, "s2's genuinely new words were still judged");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("anchors each hit to its turn and consumes the term node it matched", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			const ids = insertMessages(db, "s1", [
+			await insertSession(db, "s1");
+			const ids = await insertMessages(db, "s1", [
 				{ role: "user", text: "putain" },
 				{ role: "assistant", text: "ok" },
 			]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1");
 
-			const node = getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")[0]!;
-			const edges = db
+			const node = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!;
+			const edges = (await db
 				.prepare("SELECT to_ref_kind, to_ref_id, edge_kind FROM analysis_edges WHERE from_node_id = ?")
-				.all(node.id) as Array<{ to_ref_kind: string; to_ref_id: string; edge_kind: string }>;
+				.all(node.id)) as Array<{ to_ref_kind: string; to_ref_id: string; edge_kind: string }>;
 
 			assert.ok(
 				edges.some((e) => e.edge_kind === "anchors" && e.to_ref_kind === "message" && e.to_ref_id === ids[0]),
@@ -189,7 +189,7 @@ describe("turn-frustration", () => {
 				"the hit points at the lexicon verdict that justified it",
 			);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

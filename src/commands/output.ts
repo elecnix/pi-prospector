@@ -16,7 +16,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import Database from "better-sqlite3";
+import { openAsyncDatabase } from "../db/async-db.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import { getAnalyzerPaths, getDbPath, loadConfig } from "../config.js";
 import { migrate } from "../db/schema.js";
@@ -87,8 +87,8 @@ export async function prospectOutput(rawArgs: string, ctx: ExtensionCommandConte
 		return;
 	}
 
-	const db = new Database(dbPath, { readonly: false });
-	migrate(db);
+	const db = openAsyncDatabase(dbPath);
+	await migrate(db);
 	try {
 		const resolved = resolveOutputs(analyzers, args.spec);
 		const results = await renderOutputs(resolved, {
@@ -118,7 +118,7 @@ export async function prospectOutput(rawArgs: string, ctx: ExtensionCommandConte
 	} catch (err) {
 		out(ctx, `output: ${err instanceof Error ? err.message : String(err)}`, "error");
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

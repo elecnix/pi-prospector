@@ -7,6 +7,7 @@ import { registerDefaults } from "../../src/analyze/defaults.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { mapWithConcurrency } from "../../src/analyze/concurrency.js";
 import { listProposals } from "../../src/db/queries.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
 /** Deterministic mock: every LLM step returns fixed structured output. */
@@ -54,9 +55,9 @@ function respond(req: LLMRequest): import("../../src/analyze/mock-llm.js").MockL
 	};
 }
 
-function seed(db: import("better-sqlite3").Database, id: string): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+async function seed(db: AsyncDatabase, id: string): Promise<void> {
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		{ role: "user", text: "fix the login bug" },
 		{ role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] },
@@ -68,25 +69,27 @@ function seed(db: import("better-sqlite3").Database, id: string): void {
 const SESSIONS = ["s1", "s2", "s3", "s4", "s5"];
 
 /** Copy sessions + messages verbatim so two DBs have byte-identical inputs. */
-function copyInputs(from: import("better-sqlite3").Database, to: import("better-sqlite3").Database): void {
-	const cols = (rows: Record<string, unknown>[], table: string): void => {
+async function copyInputs(from: AsyncDatabase, to: AsyncDatabase): Promise<void> {
+	const cols = async (rows: Record<string, unknown>[], table: string): Promise<void> => {
 		for (const r of rows) {
 			const keys = Object.keys(r);
-			to.prepare(`INSERT INTO ${table} (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`).run(
-				...keys.map((k) => r[k] as never),
-			);
+			await to
+				.prepare(`INSERT INTO ${table} (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`)
+				.run(...(keys.map((k) => r[k] as never) as [never, ...never[]]));
 		}
 	};
-	cols(from.prepare("SELECT * FROM sessions").all() as Record<string, unknown>[], "sessions");
-	cols(from.prepare("SELECT * FROM messages").all() as Record<string, unknown>[], "messages");
+	await cols((await from.prepare("SELECT * FROM sessions").all()) as Record<string, unknown>[], "sessions");
+	await cols((await from.prepare("SELECT * FROM messages").all()) as Record<string, unknown>[], "messages");
 }
 
 /** Sorted (input_key, output_key) of every node, plus sorted proposal input_keys. */
-function fingerprint(db: import("better-sqlite3").Database): { nodes: string[]; proposals: string[] } {
-	const nodes = (db.prepare("SELECT input_key, output_key FROM analysis_nodes").all() as Array<{ input_key: string; output_key: string }>)
+async function fingerprint(db: AsyncDatabase): Promise<{ nodes: string[]; proposals: string[] }> {
+	const nodes = (
+		(await db.prepare("SELECT input_key, output_key FROM analysis_nodes").all()) as Array<{ input_key: string; output_key: string }>
+	)
 		.map((n) => `${n.input_key}:${n.output_key}`)
 		.sort();
-	const proposals = listProposals(db)
+	const proposals = (await listProposals(db))
 		.map((p) => p.input_key)
 		.sort();
 	return { nodes, proposals };
@@ -95,42 +98,42 @@ function fingerprint(db: import("better-sqlite3").Database): { nodes: string[]; 
 describe("concurrency does not change analysis identity", () => {
 	it("a concurrent session run yields the same nodes + proposals as a sequential one", async () => {
 		// Baseline: process every session sequentially.
-		const seq = tempDb();
+		const seq = await tempDb();
 		// Concurrent: same fixtures, processed with a worker pool over one shared
 		// connection (exactly how the analyze command drives a corpus run).
-		const conc = tempDb();
+		const conc = await tempDb();
 		try {
-			for (const id of SESSIONS) seed(seq.db, id);
+			for (const id of SESSIONS) await seed(seq.db, id);
 			// Byte-identical inputs: copy the seeded rows rather than re-seeding (the
 			// shared insert helpers use a global id/timestamp counter, so re-seeding
 			// would itself diverge the inputs and mask what we are testing).
-			copyInputs(seq.db, conc.db);
+			await copyInputs(seq.db, conc.db);
 
 			const seqFw = new AnalyzerFramework({ db: seq.db, llm: createMockLLM({ responder: respond }).caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(seqFw);
+			await registerDefaults(seqFw);
 			for (const id of SESSIONS) await seqFw.run(id, {});
 
 			const concFw = new AnalyzerFramework({ db: conc.db, llm: createMockLLM({ responder: respond }).caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(concFw);
+			await registerDefaults(concFw);
 			await mapWithConcurrency(SESSIONS, 4, (id) => concFw.run(id, {}));
 
-			const a = fingerprint(seq.db);
-			const b = fingerprint(conc.db);
+			const a = await fingerprint(seq.db);
+			const b = await fingerprint(conc.db);
 			assert.deepEqual(b.nodes, a.nodes, "node identities must be independent of concurrency");
 			assert.deepEqual(b.proposals, a.proposals, "proposal identities must be independent of concurrency");
 			assert.ok(a.nodes.length > 0 && a.proposals.length > 0, "the run actually produced work");
 		} finally {
-			seq.close();
-			conc.close();
+			await seq.close();
+			await conc.close();
 		}
 	});
 
 	it("a concurrent run is idempotent: a second concurrent pass produces nothing new", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			for (const id of SESSIONS) seed(db, id);
+			for (const id of SESSIONS) await seed(db, id);
 			const fw = new AnalyzerFramework({ db, llm: createMockLLM({ responder: respond }).caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw);
+			await registerDefaults(fw);
 
 			const first = await mapWithConcurrency(SESSIONS, 4, (id) => fw.run(id, {}));
 			const producedFirst = first.reduce((s, r) => s + r.nodesProduced, 0);
@@ -140,7 +143,7 @@ describe("concurrency does not change analysis identity", () => {
 			const producedSecond = second.reduce((s, r) => s + r.nodesProduced, 0);
 			assert.equal(producedSecond, 0, "a converged corpus produces no new nodes under concurrency");
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

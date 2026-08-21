@@ -53,16 +53,16 @@ function tokenNode(sessionId: string, unit: number): AnalysisNodeRow {
 }
 
 describe("buildLeaves harness source", () => {
-	it("labels leaves by harness, and an orphaned source as unknown, never Pi", () => {
-		const { db, close } = tempDb();
+	it("labels leaves by harness, and an orphaned source as unknown, never Pi", async () => {
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s-orphan", "/tmp/orphan.jsonl", "", "");
-			insertSession(db, "s-bad", "/tmp/bad.jsonl", "", "bogus");
+			await insertSession(db, "s-orphan", "/tmp/orphan.jsonl", "", "");
+			await insertSession(db, "s-bad", "/tmp/bad.jsonl", "", "bogus");
 			// A node whose session row does not exist at all: the strongest orphan.
-			insertSession(db, "s-pi", "/tmp/pi.jsonl", "", "pi");
-			insertSession(db, "s-cl", "/tmp/cl.jsonl", "", "claude");
+			await insertSession(db, "s-pi", "/tmp/pi.jsonl", "", "pi");
+			await insertSession(db, "s-cl", "/tmp/cl.jsonl", "", "claude");
 
-			const result = buildLeaves({
+			const result = await buildLeaves({
 				db,
 				tokenNodes: [
 					tokenNode("s-pi", 100),
@@ -82,7 +82,7 @@ describe("buildLeaves harness source", () => {
 			assert.equal(bySession.get("s-bad"), "unknown", "an unknown source must not read as pi");
 			assert.equal(bySession.get("s-ghost"), "unknown", "a missing session must not read as pi");
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

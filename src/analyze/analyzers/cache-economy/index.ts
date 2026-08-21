@@ -320,13 +320,13 @@ export const cacheEconomyAnalyzer: Analyzer = {
 		label: "default",
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		if (ctx.messages.length === 0) return [];
 
 		const cfg = (ctx.config as unknown as CacheEconomyConfig) ?? DEFAULT_CACHE_ECONOMY_CONFIG;
-		const rows = ctx.db
+		const rows = (await ctx.db
 			.prepare("SELECT role, timestamp, usage, model, cost_usd FROM messages WHERE session_id = ? ORDER BY rowid ASC")
-			.all(ctx.sessionId) as UsageRow[];
+			.all(ctx.sessionId)) as UsageRow[];
 		const result = measureSession(ctx.sessionId, rows, cfg);
 
 		const sources: SourceRef[] = [{ kind: "session", id: ctx.sessionId }];

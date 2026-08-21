@@ -52,12 +52,12 @@ function readOptions(ctx: AnalyzerOutputContext): { day?: string; previews: bool
 	return { day, previews, label: day };
 }
 
-function gather(ctx: AnalyzerOutputContext): { built: BuildLeavesResult; day?: string; label: string; previews: boolean } {
+async function gather(ctx: AnalyzerOutputContext): Promise<{ built: BuildLeavesResult; day?: string; label: string; previews: boolean }> {
 	const { day, previews, label } = readOptions(ctx);
-	const built = buildLeaves({
+	const built = await buildLeaves({
 		db: ctx.db,
-		tokenNodes: ctx.ownNodes,
-		classNodes: ctx.getNodes("request-classes"),
+		tokenNodes: await ctx.ownNodes,
+		classNodes: await ctx.getNodes("request-classes"),
 		day,
 		previews,
 	});
@@ -80,8 +80,8 @@ export const reportOutput: AnalyzerOutput = {
 		description:
 			"A self-contained page: total MITE, a nested treemap of where it went, and per-class, per-model, per-project and per-hour tables. Options: day=YYYY-MM-DD|all (default today), previews=false to leave request text out.",
 	},
-	render(ctx: AnalyzerOutputContext): OutputArtifact[] {
-		const { built, label, previews } = gather(ctx);
+	render: async (ctx: AnalyzerOutputContext): Promise<OutputArtifact[]> => {
+		const { built, label, previews } = await gather(ctx);
 		const cfg = (ctx.config as unknown as TokenUnitsConfig) ?? DEFAULT_TOKEN_UNITS_CONFIG;
 		const filenameDay = label === "all indexed sessions" ? "all" : label;
 
@@ -208,8 +208,8 @@ export const classCostsOutput: AnalyzerOutput = {
 		description:
 			"One row per class: its MITE and the raw token counts behind it. Same options as the report. Classes are the model's own names, grouped only by case and whitespace.",
 	},
-	render(ctx: AnalyzerOutputContext): OutputArtifact[] {
-		const { built, label } = gather(ctx);
+	render: async (ctx: AnalyzerOutputContext): Promise<OutputArtifact[]> => {
+		const { built, label } = await gather(ctx);
 		const costs = classCosts(built.leaves, built.totals.mite);
 		const filenameDay = label === "all indexed sessions" ? "all" : label;
 

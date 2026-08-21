@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 import { insertSession, insertMessages } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
@@ -48,10 +48,10 @@ before(async () => {
 	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-show-"));
 	dbPath = path.join(tmpDir, "show.db");
 	process.env["PROSPECTOR_DB_PATH"] = dbPath;
-	const db = new Database(dbPath);
-	migrate(db);
-	insertSession(db, "s1");
-	insertMessages(db, "s1", [
+	const db = await openAsyncDatabase(dbPath);
+	await migrate(db);
+	await insertSession(db, "s1");
+	await insertMessages(db, "s1", [
 		{ id: "s1-m0", role: "user", text: "fix the login bug" },
 		{ id: "s1-m1", role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ id: "s1-m2", role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 40 }] },
@@ -60,10 +60,10 @@ before(async () => {
 	]);
 	const mock = createMockLLM({ responder: respond, tokensPerCall: 50, costPerCall: 0.001 });
 	const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	registerDefaults(fw);
+	await registerDefaults(fw);
 	const summary = await fw.run("s1", {});
 	assert.equal(summary.errors.length, 0, summary.errors.join("; "));
-	db.close();
+	await db.close();
 });
 
 after(() => {
@@ -82,24 +82,24 @@ async function show(ref: string): Promise<string> {
 }
 
 describe("prospect-show", () => {
-	it("resolves a proposal by exact id and by unambiguous prefix; rejects unknown", () => {
-		const db = new Database(dbPath);
+	it("resolves a proposal by exact id and by unambiguous prefix; rejects unknown", async () => {
+		const db = await openAsyncDatabase(dbPath);
 		try {
-			const all = listProposals(db);
+			const all = await listProposals(db);
 			assert.ok(all.length >= 1);
 			const id = all[0]!.id;
-			assert.equal(resolveProposal(db, id).proposal?.id, id);
-			assert.equal(resolveProposal(db, id.slice(0, 18)).proposal?.id, id);
-			assert.equal(resolveProposal(db, "no-such-id").matches.length, 0);
+			assert.equal((await resolveProposal(db, id)).proposal?.id, id);
+			assert.equal((await resolveProposal(db, id.slice(0, 18))).proposal?.id, id);
+			assert.equal((await resolveProposal(db, "no-such-id")).matches.length, 0);
 		} finally {
-			db.close();
+			await db.close();
 		}
 	});
 
 	it("prints the proposal and reconstructs the verbatim anchored turns from the graph", async () => {
-		const db = new Database(dbPath);
-		const id = listProposals(db)[0]!.id;
-		db.close();
+		const db = await openAsyncDatabase(dbPath);
+		const id = (await listProposals(db))[0]!.id;
+		await db.close();
 
 		const text = await show(id);
 		assert.match(text, /Document the auth module/); // proposal title

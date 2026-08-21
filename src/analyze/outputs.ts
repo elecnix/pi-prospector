@@ -8,7 +8,7 @@
  * earned once and kept, a file should be cheap and thrown away.
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "../db/async-db.js";
 import { getLatestNodesByAnalyzerAcrossSessions } from "../db/analysis-queries.js";
 import type {
 	Analyzer,
@@ -84,7 +84,7 @@ function unknownMessage(spec: string, all: ResolvedOutput[]): string {
 }
 
 export interface RenderOptions {
-	db: Database.Database;
+	db: AsyncDatabase;
 	/** Caller-supplied knobs passed straight through to the output. */
 	options?: Record<string, string>;
 	/** Read the graph as it stood at this instant. */
@@ -109,10 +109,10 @@ export async function renderOutputs(
 	opts: RenderOptions,
 ): Promise<RenderResult[]> {
 	const cache = new Map<string, AnalysisNodeRow[]>();
-	const getNodes = (analyzerId: string): AnalysisNodeRow[] => {
+	const getNodes = async (analyzerId: string, asOf?: string): Promise<AnalysisNodeRow[]> => {
 		const cached = cache.get(analyzerId);
 		if (cached) return cached;
-		const rows = getLatestNodesByAnalyzerAcrossSessions(opts.db, analyzerId, opts.asOf);
+		const rows = await getLatestNodesByAnalyzerAcrossSessions(opts.db, analyzerId, asOf);
 		cache.set(analyzerId, rows);
 		return rows;
 	};
@@ -124,8 +124,8 @@ export async function renderOutputs(
 			db: opts.db,
 			// Lazy: an output that only folds another analyzer's nodes — or none at
 			// all — should not pay for a corpus-wide query it never reads.
-			get ownNodes(): AnalysisNodeRow[] {
-				return getNodes(analyzerId);
+			get ownNodes(): Promise<AnalysisNodeRow[]> {
+				return getNodes(analyzerId, opts.asOf);
 			},
 			getNodes,
 			config: opts.configs?.[analyzerId] ?? item.analyzer.defaultConfig.configJson ?? {},

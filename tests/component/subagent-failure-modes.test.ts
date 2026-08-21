@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import Database from "better-sqlite3";
+import type { AsyncDatabase } from "../src/db/async-db.js";
 import { tempDb } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
@@ -42,8 +42,8 @@ async function withSettings<T>(file: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /** A session in the project plus three spawn-failed child runs beside it. */
-function seed(db: Database.Database): void {
-	db.prepare(
+async function seed(db: AsyncDatabase): void  {
+	await db.prepare(
 		"INSERT INTO sessions (id, file_path, project, source, cwd, started_at, last_line, last_modified, message_count, branch_count) " +
 			"VALUES ('parent-1', '/tmp/parent-1.jsonl', ?, 'pi', '', '', 0, 0, 0, 0)",
 	).run(PROJECT);
@@ -62,17 +62,17 @@ function seed(db: Database.Database): void {
 	}
 }
 
-function readProps(db: Database.Database): FailureModesProperties {
-	const rows = db
+async function readProps(db: AsyncDatabase): Promise<FailureModesProperties> {
+	const rows = (await db
 		.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = ? ORDER BY created_at ASC, id ASC")
-		.all(FAILURE_MODES_DEF.id) as Array<{ content_json: string }>;
+		.all(FAILURE_MODES_DEF.id)) as Array<{ content_json: string }>;
 	assert.ok(rows.length >= 1, "expected a failure-modes node");
 	return JSON.parse(rows[rows.length - 1]!.content_json) as FailureModesProperties;
 }
 
 describe("failure-modes over subagent runs", () => {
 	it("classifies spawn failures from artifacts and proposes an environment remedy, never an extension", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
 			seed(db);
@@ -81,10 +81,10 @@ describe("failure-modes over subagent runs", () => {
 				llm: createMockLLM({ fallback: "" }).caller,
 				modelTiers: DEFAULT_MODEL_TIERS,
 			});
-			fw.register(failureModesAnalyzer);
+			await fw.register(failureModesAnalyzer);
 			await withSettings(settings, () => fw.run("parent-1", { analyzerIds: ["failure-modes"] }));
 
-			const props = readProps(db);
+			const props = await readProps(db);
 			assert.equal(props.child_run_count, 3);
 			assert.equal(props.child_run_failure_count, 3);
 
@@ -97,43 +97,43 @@ describe("failure-modes over subagent runs", () => {
 			assert.match(proposal.evidence, /3 child run\(s\) recorded in artifact metadata/);
 
 			// Materialised into the proposal store with the same environment target.
-			const stored = db.prepare("SELECT target_type, target_path FROM proposals").all() as Array<{ target_type: string; target_path: string | null }>;
+			const stored = await db.prepare("SELECT target_type, target_path FROM proposals").all() as Array<{ target_type: string; target_path: string | null }>;
 			assert.equal(stored.length, 1);
 			assert.equal(stored[0]!.target_type, "environment");
 			assert.equal(stored[0]!.target_path, null);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("is idempotent: a re-run reproduces the same node instead of stacking findings", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			seed(db);
+			await seed(db);
 			const fw = new AnalyzerFramework({
 				db,
 				llm: createMockLLM({ fallback: "" }).caller,
 				modelTiers: DEFAULT_MODEL_TIERS,
 			});
-			fw.register(failureModesAnalyzer);
+			await fw.register(failureModesAnalyzer);
 			await withSettings(settings, () => fw.run("parent-1", { analyzerIds: ["failure-modes"] }));
 			await withSettings(settings, () => fw.run("parent-1", { analyzerIds: ["failure-modes"] }));
 
-			const nodes = db
+			const nodes = ((await db
 				.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id = ? AND node_kind != 'error'")
-				.get(FAILURE_MODES_DEF.id) as { c: number };
+				.get(FAILURE_MODES_DEF.id)) as { c: number });
 			assert.equal(nodes.c, 1);
-			assert.equal(readProps(db).child_run_failure_count, 3);
+			assert.equal((await readProps(db)).child_run_failure_count, 3);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 
 	it("re-identifies when new artifact metadata is ingested", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
 			seed(db);
@@ -142,7 +142,7 @@ describe("failure-modes over subagent runs", () => {
 				llm: createMockLLM({ fallback: "" }).caller,
 				modelTiers: DEFAULT_MODEL_TIERS,
 			});
-			fw.register(failureModesAnalyzer);
+			await fw.register(failureModesAnalyzer);
 			await withSettings(settings, () => fw.run("parent-1", { analyzerIds: ["failure-modes"] }));
 
 			upsertSubagentRun(db, {
@@ -158,14 +158,14 @@ describe("failure-modes over subagent runs", () => {
 			});
 			await withSettings(settings, () => fw.run("parent-1", { analyzerIds: ["failure-modes"] }));
 
-			const props = readProps(db);
+			const props = await readProps(db);
 			assert.equal(props.child_run_failure_count, 4);
 			const exhaustion = props.groups.find((g) => g.class_id === "model-attempt-exhaustion");
 			assert.ok(exhaustion, "the exhausted run is its own group");
 			assert.equal(exhaustion.count, 1);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+			await close();
 		}
 	});
 });

@@ -119,12 +119,12 @@ export const noseyParkerAnalyzer: Analyzer = {
 		];
 	},
 
-	analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
+	async analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config =
 			(ctx.config.configJson as unknown as NoseyParkerConfig) ?? DEFAULT_NOSEY_PARKER_CONFIG;
 		// Re-read messages from the DB rather than the (possibly stale) plan-time
 		// list, matching the other detectors' pattern.
-		const messages = ctx.getSessionMessages(ctx.sessionId);
+		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const scan = detectNoseyParkerLeaks(messages, config);
 
 		const properties: NoseyParkerProperties = {

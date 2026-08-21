@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { tempDb, insertSession, insertMessages } from "./helpers.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { registerDefaults } from "../../src/analyze/defaults.js";
@@ -60,8 +61,8 @@ function respond(req: LLMRequest): string {
 	});
 }
 
-function seed(db: import("better-sqlite3").Database, id: string): string[] {
-	insertSession(db, id);
+async function seed(db: AsyncDatabase, id: string): Promise<string[]> {
+	await insertSession(db, id);
 	return insertMessages(db, id, [
 		{ role: "user", text: "open a PR for this branch" },
 		{ role: "assistant", text: "creating PR", toolCalls: [{ name: "bash" }] },
@@ -73,21 +74,21 @@ function seed(db: import("better-sqlite3").Database, id: string): string[] {
 
 describe("proposal-validate (replay validation, issue #6)", () => {
 	it("grounds confidence: supports the rule that averts friction, rejects the one that doesn't", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			const ids = seed(db, "v1");
+			const ids = await seed(db, "v1");
 
 			// 1) analyze: materialise proposals (defaults only — validation is separate).
 			const mock = createMockLLM({ responder: respond, tokensPerCall: 10, costPerCall: 0.001 });
 			const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw);
+			await registerDefaults(fw);
 			const analyzeSummary = await fw.run("v1", {});
 			assert.equal(analyzeSummary.errors.length, 0, analyzeSummary.errors.join("; "));
 			assert.equal(analyzeSummary.proposalsCreated, 2);
 
 			// Prerequisite: every proposal carries the session's high-signal turn id.
 			const correctionUserId = ids[3]!; // "no, that's wrong …"
-			for (const p of listProposals(db)) {
+			for (const p of await listProposals(db)) {
 				assert.deepEqual(JSON.parse(p.source_message_ids ?? "[]"), [correctionUserId], `proposal ${p.title} replay set`);
 				assert.equal(p.validation_status, "unvalidated");
 				assert.equal(p.validated_score, null);
@@ -95,15 +96,15 @@ describe("proposal-validate (replay validation, issue #6)", () => {
 
 			// 2) validate: run only proposal-validate (deps already current).
 			const fw2 = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw2);
-			fw2.register(proposalValidateAnalyzer);
+			await registerDefaults(fw2);
+			await fw2.register(proposalValidateAnalyzer);
 			const valSummary = await fw2.run("v1", { analyzerIds: [PROPOSAL_VALIDATE_DEF.id] });
 			assert.equal(valSummary.errors.length, 0, valSummary.errors.join("; "));
 
-			const vNodes = db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE node_kind = 'validation'").get() as { c: number };
+			const vNodes = (await db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE node_kind = 'validation'").get()) as { c: number };
 			assert.equal(vNodes.c, 2, "one validation node per proposal");
 
-			const byTitle = new Map(listProposals(db).map((p) => [p.title, p]));
+			const byTitle = new Map((await listProposals(db)).map((p) => [p.title, p]));
 			const good = byTitle.get(GOOD_TITLE)!;
 			const wrong = byTitle.get(WRONG_TITLE)!;
 
@@ -120,18 +121,18 @@ describe("proposal-validate (replay validation, issue #6)", () => {
 			assert.deepEqual(ranked, [GOOD_TITLE, WRONG_TITLE]);
 
 			// 3) integrity: validation nodes are content-addressed and verify clean.
-			const { mismatches } = verifyNodes(db);
+			const { mismatches } = await verifyNodes(db);
 			assert.equal(mismatches.length, 0, JSON.stringify(mismatches));
 
 			// 4) idempotency: re-validating produces no new nodes.
 			const fw3 = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(fw3);
-			fw3.register(proposalValidateAnalyzer);
+			await registerDefaults(fw3);
+			await fw3.register(proposalValidateAnalyzer);
 			const again = await fw3.run("v1", { analyzerIds: [PROPOSAL_VALIDATE_DEF.id] });
 			const vr = again.analyzerResults.find((r) => r.analyzerId === PROPOSAL_VALIDATE_DEF.id)!;
 			assert.equal(vr.nodesProduced, 0, "validation is idempotent");
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

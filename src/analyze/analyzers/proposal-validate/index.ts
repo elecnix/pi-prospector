@@ -129,11 +129,11 @@ export const proposalValidateAnalyzer: Analyzer = {
 		return [resolveModelSpec(cfg.validatorTier, modelTiers)];
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const config = (ctx.config as unknown as ProposalValidateConfig) ?? DEFAULT_PROPOSAL_VALIDATE_CONFIG;
 		const cap = Number.isFinite(config.maxReplayTurns) && config.maxReplayTurns >= 0 ? config.maxReplayTurns : undefined;
 
-		const proposals = listOpenProposalsForSession(ctx.db, ctx.sessionId);
+		const proposals = await listOpenProposalsForSession(ctx.db, ctx.sessionId);
 
 		const nodeById = new Map(ctx.allNodes.map((n) => [n.id, n]));
 		const units: AnalysisUnit[] = [];
@@ -190,7 +190,7 @@ export const proposalValidateAnalyzer: Analyzer = {
 		const meta = unit.meta as unknown as ValidateMeta;
 		const validatorModel = resolveModelSpec(config.validatorTier, ctx.modelTiers);
 
-		const pairs = buildTurnPairs(ctx.getSessionMessages(ctx.sessionId));
+		const pairs = buildTurnPairs(await ctx.getSessionMessages(ctx.sessionId));
 		const pairByUser = new Map(pairs.map((p) => [p.userMessageId, p]));
 
 		const replayTurns: ReplayTurnResult[] = [];

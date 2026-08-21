@@ -25,7 +25,7 @@
  * the precise sibling content and reproduce across an independent DB rebuild.
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "../../../db/async-db.js";
 import type { MessageRow, SourceRef } from "../../types.js";
 import { shortHash } from "../../input-hash.js";
 import { buildTurnPairs } from "../turn-pair-core/build.js";
@@ -56,28 +56,28 @@ const MAX_REQUEST_SNIPPETS = 2;
 const REQUEST_SNIPPET_MAX = 120;
 
 /** Load a session's messages in stream order (mirrors the framework's loader). */
-export function loadMessagesForContrast(db: Database.Database, sessionId: string): MessageRow[] {
-	return db
+export async function loadMessagesForContrast(db: AsyncDatabase, sessionId: string): Promise<MessageRow[]> {
+	return (await db
 		.prepare(
 			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results " +
 			"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
 		)
-		.all(sessionId) as MessageRow[];
+		.all(sessionId)) as MessageRow[];
 }
 
 /** The current session's `cwd` (repo grouping key), or "" if unknown. */
-export function getSessionCwd(db: Database.Database, sessionId: string): string {
-	const row = db.prepare("SELECT cwd FROM sessions WHERE id = ?").get(sessionId) as { cwd?: string } | undefined;
+export async function getSessionCwd(db: AsyncDatabase, sessionId: string): Promise<string> {
+	const row = (await db.prepare("SELECT cwd FROM sessions WHERE id = ?").get(sessionId)) as { cwd?: string } | undefined;
 	return row?.cwd ?? "";
 }
 
 /** Sibling session ids sharing a (non-empty) `cwd`, excluding self, in a deterministic order. */
-export function getSiblingSessionIds(db: Database.Database, sessionId: string, cwd: string): string[] {
+export async function getSiblingSessionIds(db: AsyncDatabase, sessionId: string, cwd: string): Promise<string[]> {
 	if (!cwd) return [];
 	return (
-		db
+		(await db
 			.prepare("SELECT id FROM sessions WHERE cwd = ? AND id <> ? ORDER BY id ASC")
-			.all(cwd, sessionId) as Array<{ id: string }>
+			.all(cwd, sessionId)) as Array<{ id: string }>
 	).map((r) => r.id);
 }
 
@@ -105,18 +105,18 @@ function assessSibling(messages: MessageRow[]): { pairCount: number; smooth: boo
  * distil each into a compact contrast digest. Pure function of raw DB content —
  * deterministic and reproducible.
  */
-export function selectCrossSessionContrast(
-	db: Database.Database,
+export async function selectCrossSessionContrast(
+	db: AsyncDatabase,
 	sessionId: string,
 	config: CrossSessionContrastConfig,
-): CrossSessionContrast {
+): Promise<CrossSessionContrast> {
 	if (!config.crossSessionContrast) return EMPTY;
-	const cwd = getSessionCwd(db, sessionId);
+	const cwd = await getSessionCwd(db, sessionId);
 	if (!cwd) return EMPTY;
 
 	const candidates: SiblingContrast[] = [];
-	for (const siblingId of getSiblingSessionIds(db, sessionId, cwd)) {
-		const assessment = assessSibling(loadMessagesForContrast(db, siblingId));
+	for (const siblingId of await getSiblingSessionIds(db, sessionId, cwd)) {
+		const assessment = assessSibling(await loadMessagesForContrast(db, siblingId));
 		if (!assessment.smooth || assessment.pairCount < config.minSiblingPairs) continue;
 		const digestText = formatSiblingDigest(siblingId, assessment.pairCount, assessment.requests);
 		candidates.push({

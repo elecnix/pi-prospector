@@ -156,7 +156,7 @@ export function makePiicatcherAnalyzer(): Analyzer {
 				(ctx.config.configJson as unknown as PiicatcherConfig) ?? DEFAULT_PIICATCHER_CONFIG;
 			// Re-read messages from the DB rather than the (possibly stale) plan-time
 			// list, matching the other detectors' pattern.
-			const messages = ctx.getSessionMessages(ctx.sessionId);
+			const messages = await ctx.getSessionMessages(ctx.sessionId);
 			const scan: PiicatcherScanResult = detectTabularPii(messages, config);
 
 			const properties: PiicatcherProperties = {

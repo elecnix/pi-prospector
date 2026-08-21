@@ -82,11 +82,11 @@ interface ReplyNode {
 
 describe("user-reply-acts custom analyzer", () => {
 	it("classifies user replies into multi-act arrays, anchored and idempotent", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s1";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Fix the login bug in auth.ts" },
 				{ id: "a0", role: "assistant", text: "I'll look at auth.ts and propose a fix." },
 				{ id: "u1", role: "user", text: "Looks good, ship it." },
@@ -115,9 +115,9 @@ describe("user-reply-acts custom analyzer", () => {
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 			assert.ok(summary.nodesProduced > 0);
 
-			const rows = t.db
+			const rows = (await await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'user-reply-acts' ORDER BY created_at")
-				.all() as Array<{ content_json: string; node_kind: string }>;
+				.all()) as unknown as Array<{ content_json: string; node_kind: string }>;
 			assert.ok(rows.length >= 6, `expected ≥6 reply nodes, got ${rows.length}`);
 			for (const r of rows) assert.equal(r.node_kind, "classification");
 
@@ -130,15 +130,15 @@ describe("user-reply-acts custom analyzer", () => {
 			assertReply(byMsg, "u6", { acceptances: [], refusals: [], questions: [], answers: [], continuation: true });
 
 			// consumes + anchors + uses_prompt edges
-			const consumes = (t.db.prepare("SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON e.from_node_id=n.id WHERE n.analyzer_id='user-reply-acts' AND e.edge_kind='consumes'").get() as { c: number }).c;
+			const consumes = ((await t.db.prepare("SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON e.from_node_id=n.id WHERE n.analyzer_id='user-reply-acts' AND e.edge_kind='consumes'").get()) as { c: number }).c;
 			assert.ok(consumes >= 6, `expected ≥6 consumes, got ${consumes}`);
-			const anchors = (t.db.prepare("SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON e.from_node_id=n.id WHERE n.analyzer_id='user-reply-acts' AND e.edge_kind='anchors'").get() as { c: number }).c;
+			const anchors = ((await t.db.prepare("SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON e.from_node_id=n.id WHERE n.analyzer_id='user-reply-acts' AND e.edge_kind='anchors'").get()) as { c: number }).c;
 			assert.equal(anchors, rows.length);
-			const usesPrompt = (t.db.prepare("SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON e.from_node_id=n.id WHERE n.analyzer_id='user-reply-acts' AND e.edge_kind='uses_prompt'").get() as { c: number }).c;
+			const usesPrompt = ((await t.db.prepare("SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON e.from_node_id=n.id WHERE n.analyzer_id='user-reply-acts' AND e.edge_kind='uses_prompt'").get()) as { c: number }).c;
 			assert.equal(usesPrompt, rows.length);
 
 			// ── distribution node ──
-			const distRow = t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='user-reply-acts-distribution'").get() as { content_json: string } | undefined;
+			const distRow = (await t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='user-reply-acts-distribution'").get()) as { content_json: string } | undefined;
 			assert.ok(distRow, "distribution node produced");
 			const dist = JSON.parse(distRow!.content_json) as {
 				replies_classified: number;
@@ -168,16 +168,16 @@ describe("user-reply-acts custom analyzer", () => {
 			assert.equal(rerun.nodesProduced, 0, "fill re-run produces nothing new");
 			assert.equal(rerun.errors.length, 0, rerun.errors.join("; "));
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 
 	it("rejects unusable model output with an error node and self-heals on re-run", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s2";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Do something" },
 				{ id: "a0", role: "assistant", text: "I propose X." },
 				{ id: "u1", role: "user", text: "Looks good, ship it." },
@@ -189,9 +189,9 @@ describe("user-reply-acts custom analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["user-reply-acts"] });
 			assert.ok(summary.errors.length > 0, "unusable output should error");
 			assert.ok(summary.errors.some((e) => e.includes("no usable classify_reply verdict")), summary.errors.join("; "));
-			const errNodes = t.db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id='user-reply-acts' AND node_kind='error'").get() as { c: number };
+			const errNodes = ((await t.db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id='user-reply-acts' AND node_kind='error'").get()) as { c: number });
 			assert.ok(errNodes.c >= 1, "error node recorded");
-			const okNodes = t.db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id='user-reply-acts' AND node_kind='classification'").get() as { c: number };
+			const okNodes = ((await t.db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE analyzer_id='user-reply-acts' AND node_kind='classification'").get()) as { c: number });
 			assert.equal(okNodes.c, 0);
 
 			const good = createMockLLM({ responder, tokensPerCall: 10, costPerCall: 0.0001 });
@@ -201,7 +201,7 @@ describe("user-reply-acts custom analyzer", () => {
 			assert.equal(heal.errors.length, 0, heal.errors.join("; "));
 			assert.ok(heal.nodesProduced >= 1, "self-healed");
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 
@@ -209,16 +209,16 @@ describe("user-reply-acts custom analyzer", () => {
 		// Seed many replies (> default cap of 100 is impractical here; instead
 		// verify the ordering is turn order by checking pair_index is monotonic
 		// across produced nodes when the cap is set low).
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s3";
-			insertSession(t.db, sid);
+			await insertSession(t.db, sid);
 			const msgs: Array<{ id: string; role: string; text?: string }> = [];
 			for (let i = 0; i < 6; i++) {
 				msgs.push({ id: `u${i}`, role: "user", text: i === 0 ? "start" : `reply ${i}` });
 				msgs.push({ id: `a${i}`, role: "assistant", text: `assistant ${i}` });
 			}
-			insertMessages(t.db, sid, msgs);
+			await insertMessages(t.db, sid, msgs);
 
 			const mock = createMockLLM({ responder: () => ({ text: "ok", structured: { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], memories: [], continuation: true, other: false } }), tokensPerCall: 1, costPerCall: 0 });
 			// Override the cap to 3 via configOverrides.
@@ -227,13 +227,13 @@ describe("user-reply-acts custom analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["user-reply-acts"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const rows = t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='user-reply-acts' ORDER BY created_at").all() as Array<{ content_json: string }>;
+			const rows = (await t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id='user-reply-acts' ORDER BY created_at").all()) as unknown as Array<{ content_json: string }>;
 			assert.equal(rows.length, 3, "cap=3 applied");
 			const indices = rows.map((r) => (JSON.parse(r.content_json) as { pair_index: number }).pair_index);
 			// Turn order → monotonic increasing pair_index (u1,u2,u3 → indices 1,2,3).
 			assert.deepEqual(indices, [1, 2, 3], "turn order, not friction-ranked");
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 });
@@ -260,11 +260,11 @@ function assertReply(
 
 describe("user-reply-acts agentic retry", () => {
 	it("retries with the abstention tool when the first attempt fails, and stores an abstention", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s-retry";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Do something" },
 				{ id: "a0", role: "assistant", text: "I propose X. Should I use A or B?" },
 				{ id: "u1", role: "user", text: "gzxbqwk" },  // nonsense the model can't classify
@@ -314,7 +314,7 @@ describe("user-reply-acts agentic retry", () => {
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 			assert.equal(callCount, 2, "exactly 2 LLM calls (first fail + retry)");
 
-			const row = t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'user-reply-acts' AND node_kind = 'classification'").get() as { content_json: string } | undefined;
+			const row = (await t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'user-reply-acts' AND node_kind = 'classification'").get()) as { content_json: string } | undefined;
 			assert.ok(row, "produced a classification node");
 			const c = JSON.parse(row!.content_json) as UserReplyActsProperties;
 			assert.equal(c.attempt, 2, "attempt is 2");
@@ -323,16 +323,16 @@ describe("user-reply-acts agentic retry", () => {
 			assert.ok(c.abstention!.reason.length > 0, "abstention has a reason");
 			assert.equal(c.acceptances.length, 0, "no acts when abstaining");
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 
 	it("retries and succeeds on the second attempt when the first returns garbage", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s-retry2";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Do something" },
 				{ id: "a0", role: "assistant", text: "I propose X." },
 				{ id: "u1", role: "user", text: "Yes, go ahead." },
@@ -372,23 +372,23 @@ describe("user-reply-acts agentic retry", () => {
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 			assert.equal(callCount, 2);
 
-			const row = t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'user-reply-acts' AND node_kind = 'classification'").get() as { content_json: string };
+			const row = (await t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'user-reply-acts' AND node_kind = 'classification'").get()) as { content_json: string };
 			const c = JSON.parse(row.content_json) as UserReplyActsProperties;
 			assert.equal(c.attempt, 2, "succeeded on attempt 2");
 			assert.equal(c.acceptances.length, 1);
 			assert.equal(c.acceptances[0]!.level, "full");
 			assert.equal(c.abstention, null, "no abstention on success");
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 
 	it("does not retry when the first attempt succeeds", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s-noretry";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Do something" },
 				{ id: "a0", role: "assistant", text: "I propose X." },
 				{ id: "u1", role: "user", text: "Yes, go ahead." },
@@ -420,7 +420,7 @@ describe("user-reply-acts agentic retry", () => {
 			await fw.run(sid, { analyzerIds: ["user-reply-acts"] });
 			assert.equal(callCount, 1, "only 1 call — no retry when first attempt succeeds");
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 });

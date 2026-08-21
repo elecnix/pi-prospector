@@ -106,11 +106,11 @@ export const secretLeakAnalyzer: Analyzer = {
 		];
 	},
 
-	analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
+	async analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = (ctx.config.configJson as unknown as SecretLeakConfig) ?? DEFAULT_SECRET_LEAK_CONFIG;
 		// Re-read messages from the DB rather than the (possibly stale) plan-time
 		// list, matching tool-trajectory's pattern.
-		const messages = ctx.getSessionMessages(ctx.sessionId);
+		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const scan = detectSecretLeaks(messages, config);
 
 		const properties: SecretLeakProperties = {

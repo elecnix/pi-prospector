@@ -11,7 +11,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
+import type { AsyncDatabase } from "../src/db/async-db.js";
 import { tempDb } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
@@ -41,8 +41,8 @@ interface Row {
 	costUsd?: number | null;
 }
 
-function insertRows(db: Database.Database, sessionId: string, rows: Row[]): string[] {
-	const stmt = db.prepare(
+async function insertRows(db: AsyncDatabase, sessionId: string, rows: Row[]): string[]  {
+	const stmt = await db.prepare(
 		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, model, cost_usd, provider_message_id, stop_reason, error_message) " +
 			"VALUES (?, ?, 'pi', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, NULL, NULL)",
 	);
@@ -50,7 +50,7 @@ function insertRows(db: Database.Database, sessionId: string, rows: Row[]): stri
 	let parent: string | null = null;
 	for (const r of rows) {
 		const id = `rc-${sessionId}-${seq++}`;
-		stmt.run(
+		await stmt.run(
 			id,
 			sessionId,
 			parent,
@@ -72,15 +72,15 @@ function insertRows(db: Database.Database, sessionId: string, rows: Row[]): stri
 }
 
 /** A session in PROJECT plus its child-run artifacts, joined by project. */
-function seedSession(db: Database.Database): void {
-	db.prepare(
+async function seedSession(db: AsyncDatabase): void  {
+	await db.prepare(
 		"INSERT INTO sessions (id, file_path, project, source, cwd, started_at, last_line, last_modified, message_count, branch_count) " +
 			"VALUES ('parent-1', '/tmp/parent-1.jsonl', ?, 'pi', '', '', 0, 0, 0, 0)",
 	).run(PROJECT);
 }
 
-function upsertRun(db: Database.Database, runId: string, usage: string | null): void {
-	db.prepare(
+async function upsertRun(db: AsyncDatabase, runId: string, usage: string | null): void  {
+	await db.prepare(
 		"INSERT INTO subagent_runs (run_id, project, agent, task_excerpt, exit_code, error, model_attempts, usage, file_mtime, ingested_at) " +
 			"VALUES (?, ?, 'general-purpose', NULL, 0, NULL, NULL, ?, 1_700_000_000_000, '2026-01-01T00:00:00.000Z') " +
 			"ON CONFLICT(run_id) DO UPDATE SET usage = excluded.usage",
@@ -126,36 +126,36 @@ const CHAIN_ROWS: Row[] = [
 	{ role: "toolResult", toolResults: [{ toolCallId: "b1", toolName: "bash", isError: false, textLength: 3 }] },
 ];
 
-function newFramework(db: Database.Database) {
+async function newFramework(db: AsyncDatabase) {
 	const fw = new AnalyzerFramework({
 		db,
 		llm: createMockLLM({ fallback: "" }).caller,
 		modelTiers: DEFAULT_MODEL_TIERS,
 	});
-	fw.register(reviveChainsAnalyzer);
+	await fw.register(reviveChainsAnalyzer);
 	return fw;
 }
 
-function readProps(db: Database.Database): ReviveChainsProperties {
-	const rows = db
+async function readProps(db: AsyncDatabase): Promise<ReviveChainsProperties> {
+	const rows = (await db
 		.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = ? ORDER BY created_at ASC, id ASC")
-		.all(REVIVE_CHAINS_DEF.id) as Array<{ content_json: string }>;
+		.all(REVIVE_CHAINS_DEF.id)) as Array<{ content_json: string }>;
 	assert.ok(rows.length >= 1, "expected a revive-chains node");
 	return JSON.parse(rows[rows.length - 1]!.content_json) as ReviveChainsProperties;
 }
 
 describe("revive-chains component test", () => {
 	it("detects the chain, splits self from delegated usage, and proposes the prose remedy", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
-			const ids = insertRows(db, "parent-1", CHAIN_ROWS);
-			upsertRun(db, "r1", JSON.stringify({ input: 5000, output: 800, cacheRead: 200, cacheWrite: 100, cost: 0.05, turns: 2 }));
-			upsertRun(db, "r2", null);
+			const ids = await insertRows(db, "parent-1", CHAIN_ROWS);
+			await upsertRun(db, "r1", JSON.stringify({ input: 5000, output: 800, cacheRead: 200, cacheWrite: 100, cost: 0.05, turns: 2 }));
+			await upsertRun(db, "r2", null);
 
-			await newFramework(db).run("parent-1", { analyzerIds: ["revive-chains"] });
+			await (await newFramework(db)).run("parent-1", { analyzerIds: ["revive-chains"] });
 
-			const props = readProps(db);
+			const props = await readProps(db);
 			assert.equal(props.chain_count, 1);
 			const [chain] = props.chains;
 			assert.equal(chain!.length, 3);
@@ -186,57 +186,57 @@ describe("revive-chains component test", () => {
 			assert.doesNotMatch(props.remedy!, /npm:|install /i);
 
 			// The finding walks back to the exact revived calls' carrying messages.
-			const anchors = db
+			const anchors = (await db
 				.prepare("SELECT to_ref_id FROM analysis_edges WHERE edge_kind = 'anchors' AND to_ref_kind = 'message'")
-				.all() as Array<{ to_ref_id: string }>;
+				.all()) as Array<{ to_ref_id: string }>;
 			assert.deepEqual(anchors.map((a) => a.to_ref_id).sort(), [ids[3], ids[5], ids[7]].sort());
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("stays a metric below the threshold and skips sessions with no orchestration traffic", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
-			insertRows(db, "parent-1", [
+			await insertRows(db, "parent-1", [
 				{ role: "user", text: "plain session" },
 				{ role: "assistant", toolCalls: [{ id: "b1", name: "bash", arguments: {} }] },
 				{ role: "toolResult", toolResults: [{ toolCallId: "b1", toolName: "bash", isError: false, textLength: 3 }] },
 			]);
 
-			await newFramework(db).run("parent-1", { analyzerIds: ["revive-chains"] });
+			await (await newFramework(db)).run("parent-1", { analyzerIds: ["revive-chains"] });
 
-			const count = db
+			const count = ((await db
 				.prepare("SELECT COUNT(*) AS n FROM analysis_nodes WHERE analyzer_id = ?")
-				.get(REVIVE_CHAINS_DEF.id) as { n: number };
+				.get(REVIVE_CHAINS_DEF.id)) as { n: number });
 			assert.equal(count.n, 0, "no subagent traffic → no node");
 		} finally {
-			close();
+			await close();
 		}
 	});
 
 	it("is idempotent: a second run over unchanged inputs produces no new node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
-			insertRows(db, "parent-1", CHAIN_ROWS);
-			upsertRun(db, "r1", JSON.stringify({ input: 5000 }));
+			await insertRows(db, "parent-1", CHAIN_ROWS);
+			await upsertRun(db, "r1", JSON.stringify({ input: 5000 }));
 
-			const fw = newFramework(db);
+			const fw = await newFramework(db);
 			await fw.run("parent-1", { analyzerIds: ["revive-chains"] });
-			const afterFirst = db
+			const afterFirst = await db
 				.prepare("SELECT COUNT(*) AS n FROM analysis_nodes WHERE analyzer_id = ?")
 				.get(REVIVE_CHAINS_DEF.id) as { n: number };
 
 			await fw.run("parent-1", { analyzerIds: ["revive-chains"] });
-			const afterSecond = db
+			const afterSecond = await db
 				.prepare("SELECT COUNT(*) AS n FROM analysis_nodes WHERE analyzer_id = ?")
 				.get(REVIVE_CHAINS_DEF.id) as { n: number };
 
 			assert.equal(afterSecond.n, afterFirst.n);
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

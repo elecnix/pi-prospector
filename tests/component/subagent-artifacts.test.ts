@@ -40,10 +40,10 @@ function tempRoot(): { root: string; cleanup: () => void } {
 }
 
 describe("subagent artifact ingestion", () => {
-	it("discovers *_meta.json under each project's subagent-artifacts directory", () => {
+	it("discovers *_meta.json under each project's subagent-artifacts directory", async () => {
 		const { root, cleanup } = tempRoot();
 		try {
-			const found = discoverSubagentArtifacts(root);
+			const found = await discoverSubagentArtifacts(root);
 			assert.equal(found.length, 1);
 			assert.equal(found[0]!.project, "--Users-test--project");
 			assert.match(found[0]!.filePath, /_meta\.json$/);
@@ -52,87 +52,87 @@ describe("subagent artifact ingestion", () => {
 		}
 	});
 
-	it("honours a project filter", () => {
+	it("honours a project filter", async () => {
 		const { root, cleanup } = tempRoot();
 		try {
-			assert.equal(discoverSubagentArtifacts(root, "--Users-other--project").length, 0);
-			assert.equal(discoverSubagentArtifacts(root, "--Users-test--project").length, 1);
+			assert.equal((await discoverSubagentArtifacts(root, "--Users-other--project")).length, 0);
+			assert.equal((await discoverSubagentArtifacts(root, "--Users-test--project")).length, 1);
 		} finally {
 			cleanup();
 		}
 	});
 
-	it("upserts the artifact once, skips it unchanged, and re-upserts when mtime moves", () => {
-		const { db, close } = tempDb();
+	it("upserts the artifact once, skips it unchanged, and re-upserts when mtime moves", async () => {
+		const { db, close } = await tempDb();
 		const { root, cleanup } = tempRoot();
 		try {
-			const first = ingestSubagentArtifacts(db, root);
+			const first = await ingestSubagentArtifacts(db, root);
 			assert.equal(first.processed, 1);
 			assert.equal(first.skipped, 0);
 			assert.deepEqual(first.errors, []);
 
-			const row = db
+			const row = (await db
 				.prepare("SELECT * FROM subagent_runs WHERE run_id = '6f1c2a4b-9d3e-4f50-8a17-2b5c6d7e8f90'")
-				.get() as Record<string, unknown>;
+				.get()) as Record<string, unknown>;
 			assert.equal(row["project"], "--Users-test--project");
 			assert.equal(row["exit_code"], 1);
 			assert.equal(row["error"], "spawn pi ENOENT");
 			assert.ok(typeof row["file_mtime"] === "number");
 
 			// Unchanged file: skipped, not reprocessed — the session cursor contract.
-			const second = ingestSubagentArtifacts(db, root);
+			const second = await ingestSubagentArtifacts(db, root);
 			assert.equal(second.processed, 0);
 			assert.equal(second.skipped, 1);
 
 			// Moved mtime: re-read and re-upserted.
 			const future = Date.now() / 1000 + 60;
 			fs.utimesSync(path.join(root, "--Users-test--project", "subagent-artifacts", path.basename(FIXTURE)), future, future);
-			const third = ingestSubagentArtifacts(db, root);
+			const third = await ingestSubagentArtifacts(db, root);
 			assert.equal(third.processed, 1);
 			assert.equal(third.skipped, 0);
-			assert.equal(db.prepare("SELECT COUNT(*) AS c FROM subagent_runs").get().c, 1);
+			assert.equal(((await db.prepare("SELECT COUNT(*) AS c FROM subagent_runs").get()) as { c: number }).c, 1);
 		} finally {
 			cleanup();
-			close();
+			await close();
 		}
 	});
 
-	it("joins to a parent session by directory nesting on project", () => {
-		const { db, close } = tempDb();
+	it("joins to a parent session by directory nesting on project", async () => {
+		const { db, close } = await tempDb();
 		const { root, cleanup } = tempRoot();
 		try {
-			ingestSubagentArtifacts(db, root);
-			db.prepare(
+			await ingestSubagentArtifacts(db, root);
+			await db.prepare(
 				"INSERT INTO sessions (id, file_path, project, source, cwd, started_at, last_line, last_modified, message_count, branch_count) " +
 					"VALUES ('parent-1', '/tmp/parent-1.jsonl', '--Users-test--project', 'pi', '', '', 0, 0, 0, 0)",
 			).run();
 
-			const runs = getSubagentRunsForSession(db, "parent-1");
+			const runs = await getSubagentRunsForSession(db, "parent-1");
 			assert.equal(runs.length, 1);
 			assert.equal(runs[0]!.run_id, "6f1c2a4b-9d3e-4f50-8a17-2b5c6d7e8f90");
 			// A session of another project sees none of them — nesting is the join.
-			assert.equal(getSubagentRunsForSession(db, "other-session").length, 0);
+			assert.equal((await getSubagentRunsForSession(db, "other-session")).length, 0);
 		} finally {
 			cleanup();
-			close();
+			await close();
 		}
 	});
 
-	it("reports an unparseable artifact in errors instead of dropping it silently", () => {
-		const { db, close } = tempDb();
+	it("reports an unparseable artifact in errors instead of dropping it silently", async () => {
+		const { db, close } = await tempDb();
 		const { root, cleanup } = tempRoot();
 		try {
 			fs.writeFileSync(
 				path.join(root, "--Users-test--project", "subagent-artifacts", "broken_agent_meta.json"),
 				"{not json",
 			);
-			const result = ingestSubagentArtifacts(db, root);
+			const result = await ingestSubagentArtifacts(db, root);
 			assert.equal(result.errors.length, 1);
 			assert.match(result.errors[0]!, /broken_agent_meta\.json/);
 			assert.equal(result.processed, 1); // the good fixture still lands
 		} finally {
 			cleanup();
-			close();
+			await close();
 		}
 	});
 });

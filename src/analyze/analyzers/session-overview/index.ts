@@ -122,7 +122,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		return [resolveModelSpec(cfg.mapTier, modelTiers), resolveModelSpec(cfg.reduceTier, modelTiers)];
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const core = (ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		if (core.length === 0) return [];
 		const llm = (ctx.dependencyNodes[TURN_PAIR_LLM_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
@@ -146,7 +146,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		// and reproducible. Derived from sibling RAW messages (present after ingest),
 		// never from their analysis nodes — so it is order-independent and acyclic.
 		const cfg = (ctx.config as unknown as SessionOverviewConfig) ?? DEFAULT_SESSION_OVERVIEW_CONFIG;
-		const contrast = selectCrossSessionContrast(ctx.db, ctx.sessionId, cfg);
+		const contrast = await selectCrossSessionContrast(ctx.db, ctx.sessionId, cfg);
 		sources.push(...contrast.sourceRefs);
 
 		return [
@@ -162,13 +162,13 @@ export const sessionOverviewAnalyzer: Analyzer = {
 
 	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = (ctx.config.configJson as unknown as SessionOverviewConfig) ?? DEFAULT_SESSION_OVERVIEW_CONFIG;
-		const coreNodes = ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id);
-		const llmNodes = ctx.getDependencyNodes(TURN_PAIR_LLM_DEF.id);
-		const trajectoryNodes = ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id);
-		const failureNodes = ctx.getDependencyNodes(FAILURE_MODES_DEF.id);
-		const frustrationNodes = ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id);
-		const replyActsNodes = ctx.getDependencyNodes("user-reply-acts");
-		const messages = ctx.getSessionMessages(ctx.sessionId);
+		const coreNodes = await ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id);
+		const llmNodes = await ctx.getDependencyNodes(TURN_PAIR_LLM_DEF.id);
+		const trajectoryNodes = await ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id);
+		const failureNodes = await ctx.getDependencyNodes(FAILURE_MODES_DEF.id);
+		const frustrationNodes = await ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id);
+		const replyActsNodes = await ctx.getDependencyNodes("user-reply-acts");
+		const messages = await ctx.getSessionMessages(ctx.sessionId);
 
 		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes, failureNodes, frustrationNodes, replyActsNodes });
 		const statsText = JSON.stringify(

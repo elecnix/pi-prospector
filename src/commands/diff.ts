@@ -23,7 +23,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import {
 	getAllAnalysisNodes,
@@ -120,8 +120,8 @@ function recipeReason(a: AnalysisNodeRow, b: AnalysisNodeRow): string[] {
 
 // ─────────────────────────── --unit ───────────────────────────
 
-function diffUnit(db: Database.Database, analyzerId: string, sourceSetHash: string, full: boolean): string[] {
-	const versions = getNodeVersions(db, analyzerId, sourceSetHash);
+async function diffUnit(db: AsyncDatabase, analyzerId: string, sourceSetHash: string, full: boolean): Promise<string[]> {
+	const versions = await getNodeVersions(db, analyzerId, sourceSetHash);
 	if (versions.length === 0) return [`  no nodes for unit ${analyzerId} · ${short(sourceSetHash, 12)}`];
 	const lines: string[] = [];
 	for (let i = 1; i < versions.length; i++) {
@@ -148,13 +148,13 @@ function diffUnit(db: Database.Database, analyzerId: string, sourceSetHash: stri
 
 // ─────────────────────────── --runs ───────────────────────────
 
-function diffRuns(db: Database.Database, runA: string, runB: string, full: boolean): string[] {
-	const aNodes = db
+async function diffRuns(db: AsyncDatabase, runA: string, runB: string, full: boolean): Promise<string[]> {
+	const aNodes = (await db
 		.prepare("SELECT * FROM analysis_nodes WHERE run_id = ?")
-		.all(runA) as AnalysisNodeRow[];
-	const bNodes = db
+		.all(runA)) as AnalysisNodeRow[];
+	const bNodes = (await db
 		.prepare("SELECT * FROM analysis_nodes WHERE run_id = ?")
-		.all(runB) as AnalysisNodeRow[];
+		.all(runB)) as AnalysisNodeRow[];
 	const aByKey = new Map(aNodes.map((n) => [n.input_key, n]));
 	const bByKey = new Map(bNodes.map((n) => [n.input_key, n]));
 
@@ -183,9 +183,9 @@ function diffRuns(db: Database.Database, runA: string, runB: string, full: boole
 
 // ─────────────────────────── --as-of ───────────────────────────
 
-function diffAsOf(db: Database.Database, t1: string, t2: string, full: boolean): string[] {
-	const at1 = latestByUnitAt(getAllAnalysisNodes(db), t1);
-	const at2 = latestByUnitAt(getAllAnalysisNodes(db), t2);
+async function diffAsOf(db: AsyncDatabase, t1: string, t2: string, full: boolean): Promise<string[]> {
+	const at1 = latestByUnitAt(await getAllAnalysisNodes(db), t1);
+	const at2 = latestByUnitAt(await getAllAnalysisNodes(db), t2);
 	if (at1.size === 0 && at2.size === 0) return ["  no analysis nodes at either timepoint"];
 
 	const entries: Array<{ analyzerId: string; kind: "added" | "removed" | "changed" }> = [];
@@ -224,8 +224,8 @@ export async function prospectDiff(rawArgs: string, ctx: ExtensionCommandContext
 	const { positionals, flags } = parseFlags(rawArgs ?? "");
 	const full = flags["full"] !== undefined;
 
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		const header: string[] = [];
 		let body: string[];
@@ -237,21 +237,21 @@ export async function prospectDiff(rawArgs: string, ctx: ExtensionCommandContext
 				output(ctx, "Usage: prospect diff --unit <analyzer> <source_set_hash> [--full]", "warning");
 				return;
 			}
-			body = diffUnit(db, analyzerId, sset, full);
+			body = await diffUnit(db, analyzerId, sset, full);
 		} else if (flags["runs"] !== undefined) {
 			const runIds = [flags["runs"], ...positionals].filter(Boolean);
 			if (runIds.length !== 2) {
 				output(ctx, "Usage: prospect diff --runs <runA> <runB> [--full]", "warning");
 				return;
 			}
-			body = diffRuns(db, runIds[0]!, runIds[1]!, full);
+			body = await diffRuns(db, runIds[0]!, runIds[1]!, full);
 		} else if (flags["as-of"] !== undefined) {
 			const pair = [flags["as-of"], ...positionals].filter(Boolean);
 			if (pair.length !== 2) {
 				output(ctx, "Usage: prospect diff --as-of <T1> <T2> [--full]  (ISO or relative like 7d)", "warning");
 				return;
 			}
-			body = diffAsOf(db, parseTimestamp(pair[0]!), parseTimestamp(pair[1]!), full);
+			body = await diffAsOf(db, parseTimestamp(pair[0]!), parseTimestamp(pair[1]!), full);
 		} else {
 			output(
 				ctx,
@@ -263,7 +263,7 @@ export async function prospectDiff(rawArgs: string, ctx: ExtensionCommandContext
 
 		output(ctx, [header.join(""), ...body].filter((l) => l !== "").join("\n"));
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

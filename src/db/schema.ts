@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
 
 /**
@@ -21,13 +21,13 @@ import { migrateDecisionsToAssertions } from "./assertions.js";
  *   analysis_nodes                     — append-only analysis artifacts
  *   analysis_edges                     — the typed relationship graph
  */
-export function migrate(db: Database.Database): void {
-	db.pragma("journal_mode = WAL");
-	db.pragma("foreign_keys = ON");
+export async function migrate(db: AsyncDatabase): Promise<void> {
+	await db.pragma("journal_mode = WAL");
+	await db.pragma("foreign_keys = ON");
 
 	// Create tables in dependency order (messages depends on sessions, etc.)
 	// Use IF NOT EXISTS for idempotency. Schema evolution handled below.
-	db.exec(`
+	await db.exec(`
 		-- ───────────────────────── session index ─────────────────────────
 
 		CREATE TABLE IF NOT EXISTS sessions (
@@ -326,7 +326,7 @@ export function migrate(db: Database.Database): void {
 	`);
 
 	// Full-text virtual table (must be recreated to sync with messages table changes)
-	db.exec(`
+	await db.exec(`
 		DROP TABLE IF EXISTS messages_fts;
 		CREATE VIRTUAL TABLE messages_fts USING fts5(
 			content_text,
@@ -351,18 +351,18 @@ export function migrate(db: Database.Database): void {
 	// Schema evolution: add missing columns for older databases.
 	// Separate from table creation because indexes may reference columns.
 	// Also clean up any partial migration artifacts.
-	cleanupPartialMigrations(db);
-	addMissingColumns(db);
+	await cleanupPartialMigrations(db);
+	await addMissingColumns(db);
 
 	// Live-view for retraction: the append-only invariant is enforced by never
 	// deleting analysis nodes — retraction hides them from ordinary reads by
 	// setting retracted_at, and the live_nodes view is the sanctioned read path
 	// for everything that treats a retracted node as absent (scanning, live gaps).
-	db.exec("DROP VIEW IF EXISTS live_nodes");
-	db.exec("CREATE VIEW live_nodes AS SELECT * FROM analysis_nodes WHERE retracted_at IS NULL");
+	await db.exec("DROP VIEW IF EXISTS live_nodes");
+	await db.exec("CREATE VIEW live_nodes AS SELECT * FROM analysis_nodes WHERE retracted_at IS NULL");
 
 	// Create indexes after schema evolution (they may reference new columns)
-	db.exec(`
+	await db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_subagent_runs_project ON subagent_runs(project);
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
@@ -399,19 +399,19 @@ export function migrate(db: Database.Database): void {
 	// and it can be run again after a partial failure. The old tables are kept
 	// intact (they remain the reversible rollback) until a separate change drops
 	// them.
-	migrateDecisionsToAssertions(db);
+	await migrateDecisionsToAssertions(db);
 }
 
 /**
  * Clean up partial migration artifacts that may exist from interrupted migrations.
  */
-function cleanupPartialMigrations(db: Database.Database): void {
+async function cleanupPartialMigrations(db: AsyncDatabase): Promise<void> {
 	// Drop proposals_old if it exists (leftover from failed v1→v2 migration)
-	db.exec("DROP TABLE IF EXISTS proposals_old");
+	await db.exec("DROP TABLE IF EXISTS proposals_old");
 
 	// Drop the old indexes that referenced old column names
-	db.exec("DROP INDEX IF EXISTS idx_nodes_input_hash");
-	db.exec("DROP INDEX IF EXISTS idx_nodes_config");
+	await db.exec("DROP INDEX IF EXISTS idx_nodes_input_hash");
+	await db.exec("DROP INDEX IF EXISTS idx_nodes_config");
 }
 
 /**
@@ -419,24 +419,24 @@ function cleanupPartialMigrations(db: Database.Database): void {
  * databases created before these columns were added. We check if the column
  * exists before adding it, since SQLite doesn't support IF NOT EXISTS on ALTER.
  */
-function addMissingColumns(db: Database.Database): void {
-	const hasColumn = (table: string, column: string): boolean => {
-		const rows = db
+async function addMissingColumns(db: AsyncDatabase): Promise<void> {
+	const hasColumn = async (table: string, column: string): Promise<boolean> => {
+		const rows = (await db
 			.prepare(`PRAGMA table_info(${table})`)
-			.all() as Array<{ name: string; type: string }>;
+			.all()) as Array<{ name: string; type: string }>;
 		return rows.some((r) => r.name === column);
 	};
 
 	// sessions: add source column if missing
-	if (!hasColumn("sessions", "source")) {
-		db.exec("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'pi'");
-		db.exec("UPDATE sessions SET source = 'pi' WHERE source IS NULL");
+	if (!await hasColumn("sessions", "source")) {
+		await db.exec("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'pi'");
+		await db.exec("UPDATE sessions SET source = 'pi' WHERE source IS NULL");
 	}
 
 	// messages: add source column if missing
-	if (!hasColumn("messages", "source")) {
-		db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'pi'");
-		db.exec("UPDATE messages SET source = 'pi' WHERE source IS NULL");
+	if (!await hasColumn("messages", "source")) {
+		await db.exec("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'pi'");
+		await db.exec("UPDATE messages SET source = 'pi' WHERE source IS NULL");
 	}
 
 	// messages: model and billed cost (issue #65). Both are nullable — a message
@@ -444,17 +444,17 @@ function addMissingColumns(db: Database.Database): void {
 	// value (cost is money; a silent 0 reads as "this was free"). Existing rows
 	// are filled only by a full re-sync that rebuilds the index from transcripts;
 	// incremental sync fills them for newly appended messages.
-	if (!hasColumn("messages", "model")) {
-		db.exec("ALTER TABLE messages ADD COLUMN model TEXT");
+	if (!await hasColumn("messages", "model")) {
+		await db.exec("ALTER TABLE messages ADD COLUMN model TEXT");
 	}
-	if (!hasColumn("messages", "cost_usd")) {
-		db.exec("ALTER TABLE messages ADD COLUMN cost_usd REAL");
+	if (!await hasColumn("messages", "cost_usd")) {
+		await db.exec("ALTER TABLE messages ADD COLUMN cost_usd REAL");
 	}
 
 	// messages: token usage (JSON). Added after model/cost; databases created
 	// before usage was recorded lack this column and fail on INSERT.
-	if (!hasColumn("messages", "usage")) {
-		db.exec("ALTER TABLE messages ADD COLUMN usage TEXT");
+	if (!await hasColumn("messages", "usage")) {
+		await db.exec("ALTER TABLE messages ADD COLUMN usage TEXT");
 	}
 
 	// messages: the provider's own message id, so several rows can be recognised
@@ -465,8 +465,8 @@ function addMissingColumns(db: Database.Database): void {
 	// response and needs no de-duplication; its id is stored here too so the
 	// column means the same thing for both sources. NULL on rows indexed before
 	// this column existed — a full re-sync backfills them.
-	if (!hasColumn("messages", "provider_message_id")) {
-		db.exec("ALTER TABLE messages ADD COLUMN provider_message_id TEXT");
+	if (!await hasColumn("messages", "provider_message_id")) {
+		await db.exec("ALTER TABLE messages ADD COLUMN provider_message_id TEXT");
 	}
 
 	// messages: the host's stop reason and error text for an assistant generation.
@@ -476,32 +476,32 @@ function addMissingColumns(db: Database.Database): void {
 	// these two columns. NULL on rows indexed before they existed; a full re-sync
 	// backfills them, and the failure-modes analyzer states that coverage rather
 	// than reading an absent column as "nothing went wrong".
-	if (!hasColumn("messages", "stop_reason")) {
-		db.exec("ALTER TABLE messages ADD COLUMN stop_reason TEXT");
+	if (!await hasColumn("messages", "stop_reason")) {
+		await db.exec("ALTER TABLE messages ADD COLUMN stop_reason TEXT");
 	}
-	if (!hasColumn("messages", "error_message")) {
-		db.exec("ALTER TABLE messages ADD COLUMN error_message TEXT");
+	if (!await hasColumn("messages", "error_message")) {
+		await db.exec("ALTER TABLE messages ADD COLUMN error_message TEXT");
 	}
 
 	// proposals v2: check if it has v1 schema (has "target" instead of "title")
 	// and migrate to v2
-	if (!hasColumn("proposals", "title") && hasColumn("proposals", "target")) {
-		migrateProposalsToV2(db);
+	if (!await hasColumn("proposals", "title") && await hasColumn("proposals", "target")) {
+		await migrateProposalsToV2(db);
 	}
 
 	// analysis_nodes: rename input_hash to input_key, add output_key and config_fingerprint
-	if (!hasColumn("analysis_nodes", "input_key")) {
-		if (hasColumn("analysis_nodes", "input_hash")) {
-			db.exec("ALTER TABLE analysis_nodes RENAME COLUMN input_hash TO input_key");
+	if (!await hasColumn("analysis_nodes", "input_key")) {
+		if (await hasColumn("analysis_nodes", "input_hash")) {
+			await db.exec("ALTER TABLE analysis_nodes RENAME COLUMN input_hash TO input_key");
 		}
 	}
-	if (!hasColumn("analysis_nodes", "output_key")) {
-		db.exec("ALTER TABLE analysis_nodes ADD COLUMN output_key TEXT DEFAULT ''");
-		db.exec("UPDATE analysis_nodes SET output_key = '' WHERE output_key IS NULL");
+	if (!await hasColumn("analysis_nodes", "output_key")) {
+		await db.exec("ALTER TABLE analysis_nodes ADD COLUMN output_key TEXT DEFAULT ''");
+		await db.exec("UPDATE analysis_nodes SET output_key = '' WHERE output_key IS NULL");
 	}
-	if (!hasColumn("analysis_nodes", "config_fingerprint")) {
-		db.exec("ALTER TABLE analysis_nodes ADD COLUMN config_fingerprint TEXT DEFAULT ''");
-		db.exec("UPDATE analysis_nodes SET config_fingerprint = '' WHERE config_fingerprint IS NULL");
+	if (!await hasColumn("analysis_nodes", "config_fingerprint")) {
+		await db.exec("ALTER TABLE analysis_nodes ADD COLUMN config_fingerprint TEXT DEFAULT ''");
+		await db.exec("UPDATE analysis_nodes SET config_fingerprint = '' WHERE config_fingerprint IS NULL");
 	}
 
 	// analysis_nodes: token split for the node's LLM inference. Databases created
@@ -509,8 +509,8 @@ function addMissingColumns(db: Database.Database): void {
 	// and rebuilt from transcripts, so an old DB's NULLs are honest about being
 	// unrecorded rather than claiming "no inference cost".
 	for (const col of ["input_tokens", "cached_input_tokens", "output_tokens"] as const) {
-		if (!hasColumn("analysis_nodes", col)) {
-			db.exec(`ALTER TABLE analysis_nodes ADD COLUMN ${col} INTEGER`);
+		if (!await hasColumn("analysis_nodes", col)) {
+			await db.exec(`ALTER TABLE analysis_nodes ADD COLUMN ${col} INTEGER`);
 		}
 	}
 
@@ -519,55 +519,55 @@ function addMissingColumns(db: Database.Database): void {
 	// were throttled and recovered" (high retried, low failed) from "we were
 	// throttled and gave up" (high retried, high failed) — a coverage number with
 	// no visibility into why produced the wrong diagnosis in the first place.
-	if (!hasColumn("analyze_runs", "retried")) {
-		db.exec("ALTER TABLE analyze_runs ADD COLUMN retried INTEGER NOT NULL DEFAULT 0");
+	if (!await hasColumn("analyze_runs", "retried")) {
+		await db.exec("ALTER TABLE analyze_runs ADD COLUMN retried INTEGER NOT NULL DEFAULT 0");
 	}
 
 	// analysis_runs: add missing columns
-	if (!hasColumn("analysis_runs", "mode")) {
-		db.exec("ALTER TABLE analysis_runs ADD COLUMN mode TEXT DEFAULT 'fill'");
-		db.exec("UPDATE analysis_runs SET mode = 'fill' WHERE mode IS NULL");
+	if (!await hasColumn("analysis_runs", "mode")) {
+		await db.exec("ALTER TABLE analysis_runs ADD COLUMN mode TEXT DEFAULT 'fill'");
+		await db.exec("UPDATE analysis_runs SET mode = 'fill' WHERE mode IS NULL");
 	}
-	if (!hasColumn("analysis_runs", "nodes_produced")) {
-		db.exec("ALTER TABLE analysis_runs ADD COLUMN nodes_produced INTEGER DEFAULT 0");
-		db.exec("UPDATE analysis_runs SET nodes_produced = 0 WHERE nodes_produced IS NULL");
+	if (!await hasColumn("analysis_runs", "nodes_produced")) {
+		await db.exec("ALTER TABLE analysis_runs ADD COLUMN nodes_produced INTEGER DEFAULT 0");
+		await db.exec("UPDATE analysis_runs SET nodes_produced = 0 WHERE nodes_produced IS NULL");
 	}
-	if (!hasColumn("analysis_runs", "nodes_skipped")) {
-		db.exec("ALTER TABLE analysis_runs ADD COLUMN nodes_skipped INTEGER DEFAULT 0");
-		db.exec("UPDATE analysis_runs SET nodes_skipped = 0 WHERE nodes_skipped IS NULL");
+	if (!await hasColumn("analysis_runs", "nodes_skipped")) {
+		await db.exec("ALTER TABLE analysis_runs ADD COLUMN nodes_skipped INTEGER DEFAULT 0");
+		await db.exec("UPDATE analysis_runs SET nodes_skipped = 0 WHERE nodes_skipped IS NULL");
 	}
 
 	// proposal_decisions: link decisions to a shared remediation (databases
 	// created before the remediations table existed)
-	if (!hasColumn("proposal_decisions", "remediation_id")) {
-		db.exec("ALTER TABLE proposal_decisions ADD COLUMN remediation_id TEXT");
+	if (!await hasColumn("proposal_decisions", "remediation_id")) {
+		await db.exec("ALTER TABLE proposal_decisions ADD COLUMN remediation_id TEXT");
 	}
 
 	// analysis_edges: add missing id and ordinal columns
-	if (!hasColumn("analysis_edges", "id")) {
-		db.exec("ALTER TABLE analysis_edges ADD COLUMN id TEXT");
+	if (!await hasColumn("analysis_edges", "id")) {
+		await db.exec("ALTER TABLE analysis_edges ADD COLUMN id TEXT");
 	}
-	if (!hasColumn("analysis_edges", "ordinal")) {
-		db.exec("ALTER TABLE analysis_edges ADD COLUMN ordinal INTEGER DEFAULT 0");
-		db.exec("UPDATE analysis_edges SET ordinal = 0 WHERE ordinal IS NULL");
+	if (!await hasColumn("analysis_edges", "ordinal")) {
+		await db.exec("ALTER TABLE analysis_edges ADD COLUMN ordinal INTEGER DEFAULT 0");
+		await db.exec("UPDATE analysis_edges SET ordinal = 0 WHERE ordinal IS NULL");
 	}
 
 	// Retraction tombstones: NULL = live. Never physically delete an analysis node;
 	// set retracted_at (and the gc provenance) instead so the graph stays append-only
 	// and as-of reads can still see the node before its retraction.
-	if (!hasColumn("analysis_nodes", "retracted_at")) {
-		db.exec("ALTER TABLE analysis_nodes ADD COLUMN retracted_at TEXT");
+	if (!await hasColumn("analysis_nodes", "retracted_at")) {
+		await db.exec("ALTER TABLE analysis_nodes ADD COLUMN retracted_at TEXT");
 	}
-	if (!hasColumn("analysis_nodes", "retracted_by_run")) {
-		db.exec("ALTER TABLE analysis_nodes ADD COLUMN retracted_by_run TEXT");
+	if (!await hasColumn("analysis_nodes", "retracted_by_run")) {
+		await db.exec("ALTER TABLE analysis_nodes ADD COLUMN retracted_by_run TEXT");
 	}
 
 	// proposals: billed dollar cost of the source work (issue #71). Nullable — a
 	// proposal with no priced source turns keeps NULL, never a synthetic 0.
 	// Existing proposals get NULL too (unbackfilled by design); a fresh analyse
 	// run repopulates them, since the proposals table is rebuilt from nodes.
-	if (!hasColumn("proposals", "cost_usd")) {
-		db.exec("ALTER TABLE proposals ADD COLUMN cost_usd REAL");
+	if (!await hasColumn("proposals", "cost_usd")) {
+		await db.exec("ALTER TABLE proposals ADD COLUMN cost_usd REAL");
 	}
 
 	// assertions: decision-qualifier columns (issue #73). Databases created before
@@ -575,8 +575,8 @@ function addMissingColumns(db: Database.Database): void {
 	// migrate() adds them in place so the migration is reversible. (Verified
 	// column names come from the fixed assertions CREATE TABLE above.)
 	for (const col of ["disposition", "actual_change", "harness_ref", "remediation_id"] as const) {
-		if (!hasColumn("assertions", col)) {
-			db.exec(`ALTER TABLE assertions ADD COLUMN ${col} TEXT`);
+		if (!await hasColumn("assertions", col)) {
+			await db.exec(`ALTER TABLE assertions ADD COLUMN ${col} TEXT`);
 		}
 	}
 
@@ -587,8 +587,8 @@ function addMissingColumns(db: Database.Database): void {
 	// code from the content), so rather than carry the dead column forward we
 	// drop it where it exists. SQLite ≥ 3.35 supports DROP COLUMN for a plain
 	// column like this one.
-	if (hasColumn("prompt_registry", "full_hash")) {
-		db.exec("ALTER TABLE prompt_registry DROP COLUMN full_hash");
+	if (await hasColumn("prompt_registry", "full_hash")) {
+		await db.exec("ALTER TABLE prompt_registry DROP COLUMN full_hash");
 	}
 }
 
@@ -597,11 +597,11 @@ function addMissingColumns(db: Database.Database): void {
  * V1 had: id, created_at, session_id, target, severity, summary, detail, evidence, status, dedup_hash, source_node_id
  * V2 has: id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path, title, severity, summary, detail, evidence, confidence, status, input_key, source_message_ids, validated_score, validation_status, validation_node_id
  */
-function migrateProposalsToV2(db: Database.Database): void {
+async function migrateProposalsToV2(db: AsyncDatabase): Promise<void> {
 	// Rename existing proposals to proposals_old (backup)
-	db.exec("ALTER TABLE proposals RENAME TO proposals_old");
+	await db.exec("ALTER TABLE proposals RENAME TO proposals_old");
 	// Create new table with correct schema
-	db.exec(`CREATE TABLE proposals (
+	await db.exec(`CREATE TABLE proposals (
 		id TEXT PRIMARY KEY,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL,
@@ -626,11 +626,11 @@ function migrateProposalsToV2(db: Database.Database): void {
 		FOREIGN KEY (session_id) REFERENCES sessions(id)
 	)`);
 	// Copy data with column mapping
-	db.exec(`INSERT INTO proposals SELECT
+	await db.exec(`INSERT INTO proposals SELECT
 		id, created_at, created_at AS updated_at, session_id, source_node_id, NULL AS analyzer_id,
 		target AS target_type, NULL AS target_path, summary AS title, severity, summary, detail, evidence, confidence,
 		status, dedup_hash AS input_key, NULL AS source_message_ids, NULL AS validated_score,
 		'unvalidated' AS validation_status, NULL AS validation_node_id
 		FROM proposals_old`);
-	db.exec("DROP TABLE proposals_old");
+	await db.exec("DROP TABLE proposals_old");
 }
