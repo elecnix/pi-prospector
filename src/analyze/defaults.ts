@@ -21,6 +21,7 @@ import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
 import { detectSecretsAnalyzer } from "./analyzers/detect-secrets/index.js";
+import { trufflehogAnalyzer } from "./analyzers/trufflehog/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -40,6 +41,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"gitleaks",
 	"nosey-parker",
 	"detect-secrets",
+	"trufflehog",
 	"token-units",
 	"request-classes",
 	"session-overview",
@@ -90,6 +92,16 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// narrows it via config (disabledPlugins / disabledFilters / allowlists),
 	// never by editing this list.
 	detectSecretsAnalyzer,
+	// The TruffleHog-style detector, same seam as the other detectors:
+	// session-level, standalone, deterministic, metric nodes only, redacted
+	// findings. Its catalogue is deliberately small — only self-written patterns
+	// no bundled detector matches (TruffleHog is AGPL-3.0; nothing was ported) —
+	// and its distinctive half is **opt-in live verification** (`verify: false`
+	// by default): when enabled, findings are probed against their issuing
+	// provider through the verifier seam, turning a shape match into a confirmed
+	// live credential. Enabling it marks prior nodes stale/config, which is the
+	// correct visible behaviour for a materially different analysis.
+	trufflehogAnalyzer,
 	// Cost accounting. token-units is deterministic and depends on nothing;
 	// request-classes labels the same request segments it prices. Neither depends
 	// on the other — the report joins them at read time, through token-units'

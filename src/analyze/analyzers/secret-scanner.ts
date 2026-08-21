@@ -222,8 +222,14 @@ function lineContaining(text: string, index: number): string {
 /**
  * Scan a single text field for all rule matches. A fresh regex is cloned per
  * field so the shared catalogue's `lastIndex` never leaks between calls.
+ *
+ * Exported (as {@link scanFieldCandidates}) for one consumer: a detector that
+ * post-processes its own findings (the trufflehog verifier) must recover the
+ * raw matched value of an already-emitted finding, and re-walking the same
+ * deterministic candidates through this function guarantees it agrees with
+ * what {@link scanMessages} emitted.
  */
-function scanField(
+export function scanFieldCandidates(
 	text: string,
 	rules: readonly SecretLeakRule[],
 ): Array<{ rule: SecretLeakRule; value: string; index: number }> {
@@ -281,7 +287,7 @@ export function scanMessages(
 			const raw = m[row];
 			if (typeof raw !== "string" || raw.length === 0) continue;
 
-			const hits = scanField(raw, activeRules);
+			const hits = scanFieldCandidates(raw, activeRules);
 
 			// Cap per field; record how many were dropped. The exclusion filter
 			// runs before the cap so the cap counts survivors, not raw matches.
