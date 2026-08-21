@@ -552,6 +552,17 @@ function addMissingColumns(db: Database.Database): void {
 			db.exec(`ALTER TABLE assertions ADD COLUMN ${col} TEXT`);
 		}
 	}
+
+	// prompt_registry: legacy (pre-0.2.0) databases declare full_hash TEXT NOT
+	// NULL, which breaks registerPrompt — v0.2.0 no longer supplies the column,
+	// so the first prompt registration fails with "NOT NULL constraint failed:
+	// prompt_registry.full_hash". Nothing reads full_hash (hash is derived in
+	// code from the content), so rather than carry the dead column forward we
+	// drop it where it exists. SQLite ≥ 3.35 supports DROP COLUMN for a plain
+	// column like this one.
+	if (hasColumn("prompt_registry", "full_hash")) {
+		db.exec("ALTER TABLE prompt_registry DROP COLUMN full_hash");
+	}
 }
 
 /**

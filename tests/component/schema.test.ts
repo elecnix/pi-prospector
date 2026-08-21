@@ -1,8 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import Database from "better-sqlite3";
 import { tempDb } from "./helpers.js";
 import { migrate } from "../../src/db/schema.js";
+import { registerPrompt } from "../../src/db/analysis-queries.js";
 
 function tableColumns(db: import("better-sqlite3").Database, table: string): Set<string> {
 	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -224,6 +226,69 @@ describe("schema migration", () => {
 			assert.equal(row.usage, null, "existing rows should keep null usage");
 		} finally {
 			db.close();
+		}
+	});
+});
+
+describe("prompt_registry full_hash", () => {
+	it("drops the legacy NOT NULL full_hash column and registers prompts afterwards", () => {
+		// Reproduces the field failure: databases created by the pre-0.2.0
+		// analyzer-framework build carry prompt_registry.full_hash as NOT NULL,
+		// which broke the first registerPrompt insert. Nothing reads full_hash,
+		// so migrate drops the dead column instead of feeding it.
+		const db = new Database(":memory:");
+		try {
+			db.exec(`CREATE TABLE prompt_registry (
+				hash TEXT PRIMARY KEY,
+				content TEXT NOT NULL,
+				role TEXT,
+				full_hash TEXT NOT NULL,
+				created_at TEXT NOT NULL
+			)`);
+			// A legacy row: hash was the 16-char prefix of sha256(content).
+			const legacyContent = "legacy prompt";
+			const legacyFull = createHash("sha256").update(legacyContent).digest("hex");
+			db.prepare("INSERT INTO prompt_registry (hash, content, role, full_hash, created_at) VALUES (?, ?, ?, ?, ?)")
+				.run(legacyFull.slice(0, 16), legacyContent, null, legacyFull, new Date().toISOString());
+
+			migrate(db);
+			assert.ok(!tableColumns(db, "prompt_registry").has("full_hash"), "full_hash should be dropped");
+			const legacyRow = db.prepare("SELECT hash, content FROM prompt_registry").get() as { hash: string; content: string };
+			assert.equal(legacyRow.content, legacyContent);
+			assert.doesNotThrow(() => {
+				registerPrompt(db, { hash: "abc123", content: "hello world" });
+			});
+		} finally {
+			db.close();
+		}
+	});
+
+	it("leaves a prompt_registry without the column alone", () => {
+		const db = new Database(":memory:");
+		try {
+			db.exec(`CREATE TABLE prompt_registry (
+				hash TEXT PRIMARY KEY,
+				content TEXT NOT NULL,
+				role TEXT,
+				created_at TEXT NOT NULL
+			)`);
+			migrate(db);
+			assert.ok(!tableColumns(db, "prompt_registry").has("full_hash"));
+			assert.doesNotThrow(() => {
+				registerPrompt(db, { hash: "deadbeef", content: "no legacy column" });
+			});
+		} finally {
+			db.close();
+		}
+	});
+
+	it("creates prompt_registry without a full_hash column on fresh databases", () => {
+		const { db, close } = tempDb();
+		try {
+			assert.ok(!tableColumns(db, "prompt_registry").has("full_hash"));
+			registerPrompt(db, { hash: "abc123", content: "fresh" });
+		} finally {
+			close();
 		}
 	});
 });
