@@ -10,6 +10,7 @@ import { registerValidateCommand } from "./commands/validate.js";
 import { registerShowCommand } from "./commands/show.js";
 import { registerNodesCommands } from "./commands/nodes.js";
 import { registerLeaksCommands } from "./commands/leaks.js";
+import { registerSearchCommands } from "./commands/search.js";
 import { registerDiffCommand } from "./commands/diff.js";
 import { registerRunsCommand } from "./commands/runs.js";
 import { registerGcCommand } from "./commands/gc.js";
@@ -31,6 +32,7 @@ export default function (pi: ExtensionAPI) {
 	registerShowCommand(pi);
 	registerNodesCommands(pi);
 	registerLeaksCommands(pi);
+	registerSearchCommands(pi);
 	registerDiffCommand(pi);
 	registerRunsCommand(pi);
 	registerGcCommand(pi);

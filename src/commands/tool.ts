@@ -12,6 +12,7 @@ import { getLatestAnalyzeRuns } from "../db/analysis-queries.js";
 import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
 import { readSessionSummary } from "./show.js";
 import { readLeaks, type LeaksQuery } from "./leaks.js";
+import { readSearch, searchSyntaxHelp, type SearchQuery } from "./search.js";
 import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
 import type { AnalysisNodeRow } from "../analyze/types.js";
@@ -73,7 +74,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			"Use action session_summary with session_id for the session-level summary with its evidence: what happened, what went well, " +
 			"what caused friction (textual gradients), the verbatim consumed turns behind it, the proposals it produced, and its cross-session contrast siblings. " +
 			"Use action leaks to report which sessions contain detected secrets: findings from the credential-detector analyzers with severity, rule, " +
-			"redacted preview, fingerprint, and message anchor (params: severity floor, limit, source).",
+			"redacted preview, fingerprint, and message anchor (params: severity floor, limit, source). " +
+			"Use action search with query for content and pattern search over proposals and the session corpus (FTS5): hits carry record kind, id, session, " +
+			"a highlighted snippet ranked by bm25, and links into show / node (params: query required; kind all|messages|proposals; limit; source).",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
@@ -90,6 +93,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				Type.Literal("node"),
 				Type.Literal("session_summary"),
 				Type.Literal("leaks"),
+				Type.Literal("search"),
 				Type.Literal("help"),
 			]),
 			status: Type.Optional(
@@ -137,6 +141,14 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			counts: Type.Optional(Type.String({ description: "Group counts over this top-level content property across all matching nodes (nodes action)." })),
 			latest_per_key: Type.Optional(Type.String({ description: "Keep only the newest node per distinct value of this content property, e.g. 'term' for the newest lexicon verdict per term (nodes action)." })),
 			output_key: Type.Optional(Type.String({ description: "The node's content-addressed output key, or an unambiguous prefix (node action)." })),
+			query: Type.Optional(
+				Type.String({ description: "search action: FTS5 MATCH query — plain terms (implicit AND), \"quoted phrases\", prefix terms (lexicon*), OR/NOT/AND, NEAR(a b, n), column:term." }),
+			),
+			kind: Type.Optional(
+				Type.Union([Type.Literal("all"), Type.Literal("messages"), Type.Literal("proposals")], {
+					description: "search: restrict which record kinds are searched (default all).",
+				}),
+			),
 			// session_id is declared above (list_proposals filter); session_summary reuses it.
 		}),
 		async execute(
@@ -335,7 +347,22 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						return text(`prospect leaks: ${err instanceof Error ? err.message : String(err)}`, {});
 					}
 				}
-				case "session_summary": {
+				case "search": {
+				if (!params.query) return text(`query required. ${searchSyntaxHelp()}`, {});
+				const q: SearchQuery = {
+					query: params.query as string,
+					kind: (params.kind as SearchQuery["kind"]) ?? "all",
+					limit: params.limit as number | undefined,
+					source: parseHarnessSource(params.source as string | undefined),
+				};
+				try {
+					const { text: body, report } = readSearch(db, q);
+					return text(body, report);
+				} catch (err) {
+					return text(`prospect search: ${err instanceof Error ? err.message : String(err)}`, {});
+				}
+			}
+			case "session_summary": {
 				const sessionId = params.session_id as string | undefined;
 				if (!sessionId) return text("session_id required (use list_proposals or nodes to find one)", {});
 				try {
@@ -365,6 +392,7 @@ Analysis-graph & point-in-time commands (slash commands):
   - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
   - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
   - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
+  - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)
