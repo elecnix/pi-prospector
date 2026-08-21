@@ -5,7 +5,7 @@ import { migrate } from "../db/schema.js";
 import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages } from "../db/queries.js";
 import { discoverSessions, type DiscoverOptions } from "./scanner.js";
 import { ingestSubagentArtifacts } from "./subagent-artifacts.js";
-import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "./parser.js";
+import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap, extractSessionName } from "./parser.js";
 import { resolveFork } from "./forks.js";
 import type { SyncResult, SessionSource } from "../types.js";
 
@@ -105,6 +105,10 @@ async function syncPiSession(
 		}
 	}
 
+	// The human-readable session name, written in `session_info` records that can
+	// sit anywhere in the file (and after the resume point), so scan everything.
+	const name = extractSessionName(lines);
+
 	// Every DB write for this session commits as one unit. The insert loop, the
 	// cursor advance and the message count are deliberately inside the same
 	// transaction: if anything here fails partway, SQLite rolls the whole session
@@ -129,6 +133,7 @@ async function syncPiSession(
 			analyzed_at: null,
 			message_count: 0,
 			branch_count: branchCount,
+			name,
 		});
 
 		// Parse messages from resume point
@@ -137,7 +142,7 @@ async function syncPiSession(
 			if (!line) continue;
 
 			const parsed = parseLine(line);
-			if (!parsed || parsed.kind === "session") continue;
+			if (!parsed || parsed.kind === "session" || parsed.kind === "session-info") continue;
 
 			const entry = parsed.entry;
 			await insertMessage(db, {
@@ -212,6 +217,9 @@ async function syncClaudeSession(
 			analyzed_at: null,
 			message_count: 0,
 			branch_count: 0,
+			// Claude Code records no session name; its AI-generated title is the
+			// nearest equivalent identity marker, when one was written.
+			name: meta?.title ?? null,
 		});
 
 		// Parse messages from resume point

@@ -254,11 +254,15 @@ export function sessionLabel(s: { project: string; cwd: string } | undefined, id
  * The group header for a session's proposals, with the coding harness shown as
  * `[Pi]`/`[Claude]` so a reader always knows which host the proposals came from.
  * A session with no recorded source shows `[unknown]` rather than being guessed.
+ * When sync captured the session's human-readable name (issue #207), it is shown
+ * beside the id prefix — an opaque `01a025e8` alone is not scannable; a missing
+ * name degrades to today's header, never an empty slot.
  */
-export function sessionGroupHeader(s: { project: string; cwd: string; source?: string } | undefined, id: string, count: number): string {
+export function sessionGroupHeader(s: { project: string; cwd: string; source?: string; name?: string | null } | undefined, id: string, count: number): string {
 	const harness = `[${harnessLabel(s?.source)}]`;
 	const label = sessionLabel(s, id);
-	return `═══ ${id.slice(0, 8)} ${harness} · ${label} · ${count} proposal(s) ═══`;
+	const name = s?.name ? ` ${s.name}` : "";
+	return `═══ ${id.slice(0, 8)}${name} ${harness} · ${label} · ${count} proposal(s) ═══`;
 }
 
 export async function prospectProposals(args: string, ctx: ExtensionCommandContext): Promise<void> {

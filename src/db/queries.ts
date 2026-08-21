@@ -39,18 +39,20 @@ export interface SessionInsert {
 	analyzed_at: string | null;
 	message_count: number;
 	branch_count: number;
+	/** Human-readable session name, or null when the transcript recorded none. */
+	name: string | null;
 }
 
 export async function upsertSession(db: AsyncDatabase, s: SessionInsert): Promise<void> {
 	await prep(db, `
-		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count, name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			file_path=excluded.file_path, project=excluded.project, source=excluded.source, cwd=excluded.cwd,
 			parent_session=excluded.parent_session, last_line=excluded.last_line,
 			last_modified=excluded.last_modified, message_count=excluded.message_count,
-			branch_count=excluded.branch_count
-	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count);
+			branch_count=excluded.branch_count, name=excluded.name
+	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count, s.name);
 }
 
 export async function getCursor(db: AsyncDatabase, filePath: string): Promise<{ last_line: number; last_modified: number } | undefined> {
@@ -106,11 +108,13 @@ export interface SessionLabel {
 	message_count: number;
 	/** The coding harness this session came from: "pi" | "claude". */
 	source: string;
+	/** Human-readable session name, or null when the transcript recorded none. */
+	name: string | null;
 }
 
-/** Lightweight labels (project/cwd/message_count/source) for every session, for display. */
+/** Lightweight labels (project/cwd/message_count/source/name) for every session, for display. */
 export async function getSessionLabels(db: AsyncDatabase): Promise<SessionLabel[]> {
-	return (await prep(db, "SELECT id, project, cwd, message_count, source FROM sessions").all()) as SessionLabel[];
+	return (await prep(db, "SELECT id, project, cwd, message_count, source, name FROM sessions").all()) as SessionLabel[];
 }
 
 // ── Subagent runs ──

@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"bbbb0002-cccc-dddd-eeee-ffffffffffff","timestamp":"2026-02-20T09:00:00.000Z","cwd":"/home/user/project"}
+{"type":"model_change","id":"mc1","parentId":null,"timestamp":"2026-02-20T09:00:00.500Z","provider":"anthropic","modelId":"claude-sonnet-4-5"}
+{"type":"session_info","id":"si1","parentId":null,"timestamp":"2026-02-20T09:00:01.000Z","name":"rusty-dragon-17"}
+{"type":"message","id":"m2aaa001","parentId":null,"timestamp":"2026-02-20T09:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"Please review the parser module."}],"timestamp":1771578002000}}
+{"type":"message","id":"m2aaa002","parentId":"m2aaa001","timestamp":"2026-02-20T09:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Reviewed; the parser handles both hosts."}],"api":"anthropic","provider":"anthropic","model":"claude-sonnet-4-5","usage":{"input":80,"output":40,"cacheRead":0,"cacheWrite":0,"totalTokens":120},"stopReason":"stop","timestamp":1771578005000}}

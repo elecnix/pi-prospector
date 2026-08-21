@@ -8,6 +8,18 @@ export interface ParsedSession {
 	header: SessionHeader;
 }
 
+/**
+ * A `session_info` metadata record: the host's note of the session's
+ * human-readable name (e.g. "rusty-dragon-17", or "rusty-dragon-17: task").
+ * It can appear anywhere in the file and is re-written when the session is
+ * renamed, so sync scans for the last one rather than trusting the header.
+ */
+export interface ParsedSessionInfo {
+	kind: "session-info";
+	/** The captured name, or null when the record carries none. Never empty. */
+	name: string | null;
+}
+
 export interface UsageData {
 	input: number;
 	output: number;
@@ -54,7 +66,7 @@ export interface ParsedMessage {
 	};
 }
 
-export type ParsedLine = ParsedSession | ParsedMessage;
+export type ParsedLine = ParsedSession | ParsedSessionInfo | ParsedMessage;
 
 // ─── Orchestration toolResult classification ───
 
@@ -132,6 +144,23 @@ export function classifySubagentResult(toolName: string, text: string | null): S
 	}
 
 	return undefined;
+}
+
+/**
+ * Scan a whole session file for `session_info` records and return the last
+ * non-empty name recorded, or null. The name may be written after the header,
+ * long after an incremental sync's resume point, so this deliberately reads all
+ * lines; only lines that mention the record type are parsed, keeping the pass
+ * cheap on large transcripts.
+ */
+export function extractSessionName(lines: string[]): string | null {
+	let name: string | null = null;
+	for (const line of lines) {
+		if (!line.includes("session_info")) continue;
+		const parsed = parseLine(line);
+		if (parsed && parsed.kind === "session-info" && parsed.name) name = parsed.name;
+	}
+	return name;
 }
 
 export function parseLine(line: string, source?: SessionSource, toolNamesById?: Map<string, string>): ParsedLine | null {
@@ -243,6 +272,14 @@ function parsePiLine(line: string): ParsedLine | null {
 			kind: "message",
 			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, usage, model, costUsd, providerMessageId: role === "assistant" ? id : null, stopReason, errorMessage },
 		};
+	}
+
+	// Session metadata record (issue #207): carries the session's human-readable
+	// name. Returned as its own kind so it never becomes a message row, and sync
+	// can pick the name up wherever in the file the host wrote it.
+	if (type === "session_info") {
+		const raw = obj.name;
+		return { kind: "session-info", name: typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null };
 	}
 
 	// Other message-like types (bashExecution, branch_summary, compactionSummary, custom_message)
