@@ -20,6 +20,7 @@ import type {
 	Remediation,
 } from "../types.js";
 import { getAnalysisStats } from "./analysis-queries.js";
+import type { SubagentRunRow } from "../analyze/types.js";
 import { uuidv7 } from "../analyze/input-hash.js";
 import type { TokenStats, SourceTokenStats } from "../types.js";
 
@@ -110,6 +111,59 @@ export interface SessionLabel {
 /** Lightweight labels (project/cwd/message_count/source) for every session, for display. */
 export function getSessionLabels(db: Database.Database): SessionLabel[] {
 	return prep(db, "SELECT id, project, cwd, message_count, source FROM sessions").all() as SessionLabel[];
+}
+
+// ── Subagent runs ──
+
+export interface SubagentRunInsert {
+	run_id: string;
+	project: string;
+	agent: string | null;
+	task_excerpt: string | null;
+	exit_code: number | null;
+	error: string | null;
+	model_attempts: string | null;
+	usage: string | null;
+	file_mtime: number;
+}
+
+/**
+ * Upsert one child-run record. Ingestion skips unchanged files by mtime before
+ * reaching this, so an unconditional conflict-update is correct: reaching here
+ * means the artifact changed, and the newer reading wins.
+ */
+export function upsertSubagentRun(db: Database.Database, r: SubagentRunInsert): void {
+	prep(db, `
+		INSERT INTO subagent_runs (run_id, project, agent, task_excerpt, exit_code, error, model_attempts, usage, file_mtime, ingested_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_id) DO UPDATE SET
+			project=excluded.project, agent=excluded.agent, task_excerpt=excluded.task_excerpt,
+			exit_code=excluded.exit_code, error=excluded.error, model_attempts=excluded.model_attempts,
+			usage=excluded.usage, file_mtime=excluded.file_mtime, ingested_at=excluded.ingested_at
+	`).run(r.run_id, r.project, r.agent, r.task_excerpt, r.exit_code, r.error, r.model_attempts, r.usage, r.file_mtime, new Date().toISOString());
+}
+
+/** The stored file mtime for a run, or undefined when it has never been ingested. */
+export function getSubagentRunMtime(db: Database.Database, runId: string): number | undefined {
+	const row = prep(db, "SELECT file_mtime FROM subagent_runs WHERE run_id = ?").get(runId) as { file_mtime: number } | undefined;
+	return row?.file_mtime;
+}
+
+/**
+ * Every subagent run recorded for a session's project.
+ *
+ * The join is by directory nesting — the artifacts directory sits beside the
+ * parent session files in the same project directory — so `project` is the
+ * whole join key. That makes the attachment corpus-wide rather than per-run:
+ * every session of a project sees that project's child runs, which is honest
+ * until a stronger parent link exists (see issue #157 for child sessions).
+ */
+export function getSubagentRunsForSession(db: Database.Database, sessionId: string): SubagentRunRow[] {
+	return prep(db,
+		"SELECT r.run_id, r.project, r.agent, r.task_excerpt, r.exit_code, r.error, r.model_attempts, r.usage, r.file_mtime, r.ingested_at " +
+		"FROM subagent_runs r JOIN sessions s ON s.project = r.project " +
+		"WHERE s.id = ? ORDER BY r.run_id ASC",
+	).all(sessionId) as SubagentRunRow[];
 }
 
 // ── Messages ──

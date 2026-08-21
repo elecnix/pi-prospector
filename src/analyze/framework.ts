@@ -86,6 +86,7 @@ import {
 	upsertAnalyzerVersion,
 } from "../db/analysis-queries.js";
 import { prep } from "../db/prepared.js";
+import { getSubagentRunsForSession } from "../db/queries.js";
 import { materializeProposalsFromNode, applyValidationFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
 
@@ -633,6 +634,7 @@ export class AnalyzerFramework {
 			},
 			getGlobalDependencyNodes: (depId) => this.globalDependencyNodes(analyzer, depId),
 			getSessionMessages: (sid) => this.loadMessages(sid),
+			getSubagentRuns: (sid) => getSubagentRunsForSession(db, sid),
 			llm: this.deps.llm,
 			config,
 			prompts,

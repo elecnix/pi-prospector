@@ -148,6 +148,10 @@ export interface SyncResult {
 	sessionsSkipped: number;
 	messagesInserted: number;
 	forksResolved: number;
+	/** Child-run artifacts upserted (file mtime had moved past the stored one). */
+	subagentRunsProcessed: number;
+	/** Child-run artifacts already current — re-read only when their mtime moves. */
+	subagentRunsSkipped: number;
 	errors: string[];
 }
 
