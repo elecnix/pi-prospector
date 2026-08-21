@@ -1,25 +1,26 @@
 /**
- * secret-leak — deterministic session-level secret detection.
+ * gitleaks — deterministic session-level secret detection using the ported
+ * gitleaks rule catalogue.
  *
- * Scans every message field of a session transcript for high-confidence
- * credential patterns (provider-anchored API keys, PEM private-key headers,
- * signed JWTs) and emits one `metric` node per session recording what was
- * found. No LLM is used.
+ * Scans every message field of a session transcript with the gitleaks rule
+ * set (see `rules.ts` for provenance: upstream v8.25.0, Apache-2.0) and emits
+ * one `metric` node per session recording what was found. No LLM is used.
  *
  * The analyzer is **standalone** — it declares no dependencies and reads the
  * session's raw messages directly, so it runs even before turn-pair-core has.
  * Its unit identity folds in every message id in the session, so a session that
  * grows new turns re-identifies and is re-scanned on the next run.
  *
- * Findings never store the matched secret: each carries a redacted preview and a
- * short SHA-256 fingerprint. The analysis graph is durable and widely readable,
- * so it must not become a second leak surface — the same reasoning that makes
- * `gitleaks --redact` the default in CI.
+ * Findings never store the matched secret: each carries a redacted preview and
+ * a short SHA-256 fingerprint, derived identically to the `secret-leak`
+ * analyzer. Per the single-proposal-per-leak contract this analyzer emits
+ * **metric nodes only**; grouping findings by `(credential fingerprint,
+ * message_id)` into one proposal is the downstream synthesiser's job, so the
+ * same leak found by both detectors never becomes two proposals.
  *
  * The node anchors to the session, plus one `anchors` edge per message that
  * contained a leak, so `prospect show` can walk a finding back to the exact
- * turn. Metric nodes from this analyzer are queryable alongside the other
- * session-level metrics and may be consumed by a future synthesis analyzer.
+ * turn.
  */
 
 import type {
@@ -35,32 +36,30 @@ import type {
 } from "../../types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import {
-	DEFAULT_SECRET_LEAK_CONFIG,
-	type SecretLeakConfig,
-} from "./config.js";
-import { detectSecretLeaks, type SecretLeakScanResult } from "./detectors.js";
+import { DEFAULT_GITLEAKS_CONFIG, type GitleaksConfig } from "./config.js";
+import { detectGitleaksLeaks, type SecretLeakScanResult } from "./detectors.js";
 
-export const SECRET_LEAK_DEF: AnalyzerDef = {
-	id: "secret-leak",
-	label: "Secret Leak Detection (deterministic)",
+export const GITLEAKS_DEF: AnalyzerDef = {
+	id: "gitleaks",
+	label: "Secret Leak Detection (gitleaks rules)",
 	description:
-		"Scans session transcripts for high-confidence credential patterns (provider API keys, PEM private keys, signed JWTs) and records redacted findings. No LLM; never stores the matched secret.",
+		"Scans session transcripts with the ported gitleaks rule catalogue (provider tokens, assignment-context secrets) and records redacted findings. No LLM; never stores the matched secret.",
 	anchorSpan: "full_session",
 	dependencies: [],
 };
 
-export const SECRET_LEAK_VERSION: AnalyzerVersion = {
-	analyzerId: SECRET_LEAK_DEF.id,
-	// 1.0: initial catalogue — AWS, GitHub, Google, Slack, Stripe, GitLab,
-	// Anthropic, OpenAI, PEM private keys, signed JWTs. Standalone, deterministic.
+export const GITLEAKS_VERSION: AnalyzerVersion = {
+	analyzerId: GITLEAKS_DEF.id,
+	// 1.0: initial port — ~90 high-signal rules from gitleaks v8.25.0
+	// (Apache-2.0): prefix-anchored provider tokens plus assignment-context
+	// rules. Standalone, deterministic, metric nodes only.
 	major: 1,
 	minor: 0,
 	implementationKind: "deterministic",
-	codeRef: "src/analyze/analyzers/secret-leak/index.ts",
+	codeRef: "src/analyze/analyzers/gitleaks/index.ts",
 };
 
-export interface SecretLeakProperties extends SecretLeakScanResult {
+export interface GitleaksProperties extends SecretLeakScanResult {
 	/** Session id this analysis covers. */
 	session_id: string;
 	/** Convenience boolean: were any leaks found? */
@@ -71,15 +70,15 @@ export interface SecretLeakProperties extends SecretLeakScanResult {
 
 // ──────────────────────────── analyzer ────────────────────────────
 
-export const secretLeakAnalyzer: Analyzer = {
-	def: SECRET_LEAK_DEF,
-	version: SECRET_LEAK_VERSION,
+export const gitleaksAnalyzer: Analyzer = {
+	def: GITLEAKS_DEF,
+	version: GITLEAKS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
 	defaultConfig: {
 		id: "",
-		analyzerId: SECRET_LEAK_DEF.id,
-		configHash: computeConfigHash(DEFAULT_SECRET_LEAK_CONFIG),
-		configJson: DEFAULT_SECRET_LEAK_CONFIG as unknown as Record<string, unknown>,
+		analyzerId: GITLEAKS_DEF.id,
+		configHash: computeConfigHash(DEFAULT_GITLEAKS_CONFIG),
+		configJson: DEFAULT_GITLEAKS_CONFIG as unknown as Record<string, unknown>,
 		label: "default",
 	},
 
@@ -107,13 +106,13 @@ export const secretLeakAnalyzer: Analyzer = {
 	},
 
 	analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
-		const config = (ctx.config.configJson as unknown as SecretLeakConfig) ?? DEFAULT_SECRET_LEAK_CONFIG;
+		const config = (ctx.config.configJson as unknown as GitleaksConfig) ?? DEFAULT_GITLEAKS_CONFIG;
 		// Re-read messages from the DB rather than the (possibly stale) plan-time
-		// list, matching tool-trajectory's pattern.
+		// list, matching secret-leak's pattern.
 		const messages = ctx.getSessionMessages(ctx.sessionId);
-		const scan = detectSecretLeaks(messages, config);
+		const scan = detectGitleaksLeaks(messages, config);
 
-		const properties: SecretLeakProperties = {
+		const properties: GitleaksProperties = {
 			session_id: ctx.sessionId,
 			has_leaks: scan.leak_count > 0,
 			leak_count: scan.leak_count,
@@ -153,5 +152,6 @@ export const secretLeakAnalyzer: Analyzer = {
 
 // Re-export the catalogue and helpers so consumers (and tests) can import the
 // analyzer's public surface from one place.
-export { SECRET_LEAK_RULES, detectSecretLeaks, redact, fingerprintOf, type SecretLeakFinding } from "./detectors.js";
-export { DEFAULT_SECRET_LEAK_CONFIG, type SecretLeakConfig } from "./config.js";
+export { GITLEAKS_RULES, GITLEAKS_UPSTREAM, detectGitleaksLeaks, matchedGitleaksRuleIds } from "./detectors.js";
+export { fingerprintOf, redact } from "../secret-scanner.js";
+export { DEFAULT_GITLEAKS_CONFIG, type GitleaksConfig } from "./config.js";

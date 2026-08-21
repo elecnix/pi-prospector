@@ -1,9 +1,9 @@
 /**
- * Configuration for the secret-leak analyzer.
+ * Configuration for the nosey-parker analyzer.
  *
- * The analyzer scans session transcripts for high-confidence secret patterns
- * (provider-anchored token formats, private-key headers, signed JWTs). It is
- * deterministic — no LLM — and emits one `metric` node per session.
+ * The analyzer scans session transcripts with the ported Nosey Parker rule
+ * catalogue (`rules.ts`). It is deterministic — no LLM — and emits one
+ * `metric` node per session.
  *
  * All thresholds and the allowlist are part of the config fingerprint, so
  * changing them produces a new config identity and, on a run that includes the
@@ -11,18 +11,24 @@
  *
  * The allowlist is **fingerprint-based by design**: a user never pastes a real
  * secret into config (config is content-addressed and stored in the analysis
- * graph — storing a secret there would be the very leak this analyzer exists to
- * catch). Instead the user allows a known-safe value by its short SHA-256
- * prefix, the same fingerprint the analyzer records for a detected match, so a
- * fixture token can be silenced without ever re-entering it.
+ * graph — storing a secret there would be the very leak this analyzer exists
+ * to catch). Instead the user allows a known-safe value by its short SHA-256
+ * fingerprint, the same fingerprint the analyzer records for a detected match,
+ * or by a shape pattern. `disabledRules` entries use the ported kebab-case ids
+ * (each carries its upstream `np.<service>.<n>` id in `rules.ts`).
+ *
+ * `minConfidence` is the Nosey Parker confidence floor: `passive` (the
+ * default) reports every rule, including bare-structure matches; `active`
+ * reports only rules whose match carries confirming context (an assignment,
+ * a keyword, an auth header) — the higher-precision tier.
  */
 
 import { Type, type Static } from "typebox";
 
-export const SecretLeakConfig = Type.Object({
+export const NoseyParkerConfig = Type.Object({
 	/**
-	 * Rule ids to skip entirely. See `SECRET_LEAK_RULES` in detectors.ts for the
-	 * catalogue of built-in rule ids.
+	 * Rule ids to skip entirely. Ids are the ported kebab-case ids — see
+	 * `NOSEY_PARKER_RULES` in rules.ts for the catalogue.
 	 */
 	disabledRules: Type.Array(Type.String()),
 	/**
@@ -34,7 +40,7 @@ export const SecretLeakConfig = Type.Object({
 	allowFingerprints: Type.Array(Type.String()),
 	/**
 	 * Regex source strings tested against a matched value; a match is ignored.
-	 * Use this for shape-based allowlisting (e.g. `"^AKIATEST"`), never for a
+	 * Use this for shape-based allowlisting (e.g. `"^sl\\.0+"`), never for a
 	 * literal secret.
 	 */
 	allowPatterns: Type.Array(Type.String()),
@@ -53,17 +59,19 @@ export const SecretLeakConfig = Type.Object({
 		Type.Literal("high"),
 		Type.Literal("critical"),
 	]),
+	/**
+	 * Lowest rule confidence to report. `passive` (the default) reports every
+	 * matching rule; `active` reports only matches with confirming context.
+	 */
+	minConfidence: Type.Union([Type.Literal("passive"), Type.Literal("active")]),
 });
-export type SecretLeakConfig = Static<typeof SecretLeakConfig>;
+export type NoseyParkerConfig = Static<typeof NoseyParkerConfig>;
 
-export const DEFAULT_SECRET_LEAK_CONFIG: SecretLeakConfig = {
+export const DEFAULT_NOSEY_PARKER_CONFIG: NoseyParkerConfig = {
 	disabledRules: [],
 	allowFingerprints: [],
 	allowPatterns: [],
 	maxMatchesPerField: 50,
 	minSeverity: "medium",
+	minConfidence: "passive",
 };
-
-// Severity ranking and the floor comparison live in the shared scanner engine
-// so every detector analyzer applies them identically.
-export { SEVERITY_RANK, meetsMinSeverity, type LeakSeverity } from "../secret-scanner.js";

@@ -1,9 +1,9 @@
 /**
- * Configuration for the secret-leak analyzer.
+ * Configuration for the gitleaks analyzer.
  *
- * The analyzer scans session transcripts for high-confidence secret patterns
- * (provider-anchored token formats, private-key headers, signed JWTs). It is
- * deterministic — no LLM — and emits one `metric` node per session.
+ * The analyzer scans session transcripts with the ported gitleaks rule
+ * catalogue (`rules.ts`). It is deterministic — no LLM — and emits one
+ * `metric` node per session.
  *
  * All thresholds and the allowlist are part of the config fingerprint, so
  * changing them produces a new config identity and, on a run that includes the
@@ -11,18 +11,19 @@
  *
  * The allowlist is **fingerprint-based by design**: a user never pastes a real
  * secret into config (config is content-addressed and stored in the analysis
- * graph — storing a secret there would be the very leak this analyzer exists to
- * catch). Instead the user allows a known-safe value by its short SHA-256
- * prefix, the same fingerprint the analyzer records for a detected match, so a
- * fixture token can be silenced without ever re-entering it.
+ * graph — storing a secret there would be the very leak this analyzer exists
+ * to catch). Instead the user allows a known-safe value by its short SHA-256
+ * prefix, the same fingerprint the analyzer records for a detected match, or
+ * by a shape pattern. `disabledRules` entries use the upstream gitleaks rule
+ * ids, so an upstream rule can be silenced by the id gitleaks documents.
  */
 
 import { Type, type Static } from "typebox";
 
-export const SecretLeakConfig = Type.Object({
+export const GitleaksConfig = Type.Object({
 	/**
-	 * Rule ids to skip entirely. See `SECRET_LEAK_RULES` in detectors.ts for the
-	 * catalogue of built-in rule ids.
+	 * Rule ids to skip entirely. Ids are the upstream gitleaks rule ids — see
+	 * `GITLEAKS_RULES` in rules.ts for the ported catalogue.
 	 */
 	disabledRules: Type.Array(Type.String()),
 	/**
@@ -34,8 +35,8 @@ export const SecretLeakConfig = Type.Object({
 	allowFingerprints: Type.Array(Type.String()),
 	/**
 	 * Regex source strings tested against a matched value; a match is ignored.
-	 * Use this for shape-based allowlisting (e.g. `"^AKIATEST"`), never for a
-	 * literal secret.
+	 * Use this for shape-based allowlisting (e.g. `"^dop_v1_0000"`), never for
+	 * a literal secret.
 	 */
 	allowPatterns: Type.Array(Type.String()),
 	/**
@@ -54,16 +55,12 @@ export const SecretLeakConfig = Type.Object({
 		Type.Literal("critical"),
 	]),
 });
-export type SecretLeakConfig = Static<typeof SecretLeakConfig>;
+export type GitleaksConfig = Static<typeof GitleaksConfig>;
 
-export const DEFAULT_SECRET_LEAK_CONFIG: SecretLeakConfig = {
+export const DEFAULT_GITLEAKS_CONFIG: GitleaksConfig = {
 	disabledRules: [],
 	allowFingerprints: [],
 	allowPatterns: [],
 	maxMatchesPerField: 50,
 	minSeverity: "medium",
 };
-
-// Severity ranking and the floor comparison live in the shared scanner engine
-// so every detector analyzer applies them identically.
-export { SEVERITY_RANK, meetsMinSeverity, type LeakSeverity } from "../secret-scanner.js";
