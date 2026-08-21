@@ -171,9 +171,9 @@ export const failureModesAnalyzer: Analyzer = {
 		];
 	},
 
-	analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
+	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = resolveConfig(ctx.config.configJson);
-		const messages = ctx.getSessionMessages(ctx.sessionId);
+		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const stream = buildToolStream(messages);
 		const groups = groupFailures(stream);
 

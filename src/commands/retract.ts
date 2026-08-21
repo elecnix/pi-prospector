@@ -13,7 +13,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { parseFlags, parseTimestamp } from "../timepoint.js";
 import { listRetracted, unretract, purgeRetractedBefore } from "../db/gc.js";
@@ -31,11 +31,11 @@ function short(s: string, n = 8): string {
 export async function prospectRetract(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
 	const { flags } = parseFlags(rawArgs ?? "");
 
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		if (flags["list"] !== undefined) {
-			const rows = listRetracted(db);
+			const rows = await listRetracted(db);
 			if (rows.length === 0) {
 				output(ctx, "No retracted nodes.");
 				return;
@@ -49,7 +49,7 @@ export async function prospectRetract(rawArgs: string, ctx: ExtensionCommandCont
 		}
 
 		if (flags["undo"] !== undefined) {
-			const count = unretract(db, flags["undo"]);
+			const count = await unretract(db, flags["undo"]);
 			output(ctx, count > 0 ? `Un-retracted ${count} node(s) (restored them to the live view).` : `No retracted nodes found for gc id '${flags["undo"]}'.`);
 			return;
 		}
@@ -61,14 +61,14 @@ export async function prospectRetract(rawArgs: string, ctx: ExtensionCommandCont
 				return;
 			}
 			const at = parseTimestamp(ts);
-			const res = purgeRetractedBefore(db, at);
+			const res = await purgeRetractedBefore(db, at);
 			output(ctx, `Purged ${res.nodes} retracted node(s), ${res.edges} edge(s), ${res.proposals} proposal(s) retracted before ${at}.`);
 			return;
 		}
 
 		output(ctx, "Usage: prospect retract --list | --undo <gcRunId> | --purge --retracted-before <ts>", "warning");
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

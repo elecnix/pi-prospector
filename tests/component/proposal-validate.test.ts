@@ -61,7 +61,7 @@ function respond(req: LLMRequest): string {
 }
 
 function seed(db: import("better-sqlite3").Database, id: string): string[] {
-	insertSession(db, id);
+	await insertSession(db, id);
 	return insertMessages(db, id, [
 		{ role: "user", text: "open a PR for this branch" },
 		{ role: "assistant", text: "creating PR", toolCalls: [{ name: "bash" }] },
@@ -73,7 +73,7 @@ function seed(db: import("better-sqlite3").Database, id: string): string[] {
 
 describe("proposal-validate (replay validation, issue #6)", () => {
 	it("grounds confidence: supports the rule that averts friction, rejects the one that doesn't", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			const ids = seed(db, "v1");
 
@@ -103,7 +103,7 @@ describe("proposal-validate (replay validation, issue #6)", () => {
 			const vNodes = db.prepare("SELECT COUNT(*) AS c FROM analysis_nodes WHERE node_kind = 'validation'").get() as { c: number };
 			assert.equal(vNodes.c, 2, "one validation node per proposal");
 
-			const byTitle = new Map(listProposals(db).map((p) => [p.title, p]));
+			const byTitle = new Map(((await listProposals(db)).map((p) => [p.title, p]));
 			const good = byTitle.get(GOOD_TITLE)!;
 			const wrong = byTitle.get(WRONG_TITLE)!;
 
@@ -131,7 +131,7 @@ describe("proposal-validate (replay validation, issue #6)", () => {
 			const vr = again.analyzerResults.find((r) => r.analyzerId === PROPOSAL_VALIDATE_DEF.id)!;
 			assert.equal(vr.nodesProduced, 0, "validation is idempotent");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

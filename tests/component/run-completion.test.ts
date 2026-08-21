@@ -58,7 +58,7 @@ function llmAnalyzer(id: string): Analyzer {
 
 describe("whole-run completion record + terminal state", () => {
 	it("persists a run record that starts 'running' and finalizes with real counts", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			createAnalyzeRun(db, { id: "run-1", mode: "fill", sessionAttempted: 320 });
 			let row = getLatestAnalyzeRuns(db, 1)[0] as Record<string, unknown>;
@@ -87,15 +87,15 @@ describe("whole-run completion record + terminal state", () => {
 			const examples = JSON.parse(String(row.error_examples)) as string[];
 			assert.deepEqual(examples, ["turn-pair-llm: …timed out…"]);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a hung LLM call fails that session and the run still reaches a terminal state", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s-hang");
-			insertSession(db, "s-good");
+			await insertSession(db, "s-hang");
+			await insertSession(db, "s-good");
 
 			const fw = new AnalyzerFramework({
 				db,
@@ -142,14 +142,14 @@ describe("whole-run completion record + terminal state", () => {
 			assert.equal(runStatus(accounting), "partial");
 			assert.match(accounting.errorExamples[0] ?? "", /exceeded 120ms/);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("retries a throttled (429) LLM call, completes the session, and records the retry", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s-throttled");
+			await insertSession(db, "s-throttled");
 
 			// baseLlm fails the first calls with a status-bearing 429 (as a provider
 			// error looks after its own internal retries are spent) then succeeds.
@@ -206,7 +206,7 @@ describe("whole-run completion record + terminal state", () => {
 			assert.equal(row.status, "ok");
 			assert.equal(row.retried, retryStats.retries);
 		} finally {
-			close();
+await close();
 		}
 	});
 

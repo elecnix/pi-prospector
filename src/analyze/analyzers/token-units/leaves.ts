@@ -14,7 +14,7 @@
  * same report can disagree.
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "../../../db/async-db.js";
 import type { AnalysisNodeRow } from "../../types.js";
 import { latestBySession } from "../../outputs.js";
 import { harnessLabel } from "../../../harness.js";
@@ -42,7 +42,7 @@ export interface Leaf {
 }
 
 export interface BuildLeavesOptions {
-	db: Database.Database;
+	db: AsyncDatabase;
 	tokenNodes: readonly AnalysisNodeRow[];
 	classNodes: readonly AnalysisNodeRow[];
 	/** Keep only requests that started on this local day. Omit for everything. */
@@ -140,7 +140,7 @@ function parseNode<T>(row: AnalysisNodeRow): T | null {
  * node, and the error this convention admits is bounded by the one or two
  * requests that straddle a boundary. The reports state the convention.
  */
-export function buildLeaves(opts: BuildLeavesOptions): BuildLeavesResult {
+export async function buildLeaves(opts: BuildLeavesOptions): Promise<BuildLeavesResult> {
 	const { db } = opts;
 	// Both analyzers key a unit on how far the session had got, so a session
 	// analysed twice has two live nodes and summing them would count it twice.
@@ -148,7 +148,7 @@ export function buildLeaves(opts: BuildLeavesOptions): BuildLeavesResult {
 	const classNodes = latestBySession(opts.classNodes);
 
 	const sessions = new Map<string, SessionRow>();
-	for (const row of db.prepare("SELECT id, source, project, cwd FROM sessions").all() as SessionRow[]) {
+	for (const row of (await db.prepare("SELECT id, source, project, cwd FROM sessions").all()) as SessionRow[]) {
 		sessions.set(row.id, row);
 	}
 
@@ -216,7 +216,7 @@ export function buildLeaves(opts: BuildLeavesOptions): BuildLeavesResult {
 
 			let preview = "";
 			if (previewOf && seg.user_message_id) {
-				const row = previewOf.get(seg.user_message_id) as { content_text: string | null } | undefined;
+				const row = (await previewOf.get(seg.user_message_id)) as { content_text: string | null } | undefined;
 				preview = (row?.content_text ?? "").replace(/\s+/g, " ").trim().slice(0, 180);
 			}
 

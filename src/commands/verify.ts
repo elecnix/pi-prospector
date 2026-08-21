@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getAllAnalysisNodes } from "../db/analysis-queries.js";
 import { checkGraphIntegrity, type DanglingEdge } from "../db/graph-integrity.js";
@@ -34,11 +34,11 @@ export interface VerifyResult {
  * broken evidence trail (see {@link verifyGraph}). Kept exported for callers
  * that only need the content check.
  */
-export function verifyNodes(db: Database.Database): { total: number; mismatches: VerifyMismatch[] } {
+export async function verifyNodes(db: AsyncDatabase): Promise<{ total: number; mismatches: VerifyMismatch[] }> {
 	// Include retracted nodes: a retracted node is still a node and its content
 	// must still hash correctly (issue #52). Only physically purged-and-gone nodes
 	// are absent from verification, and those cannot be checked.
-	const nodes = getAllAnalysisNodes(db, undefined, true);
+	const nodes = await getAllAnalysisNodes(db, undefined, true);
 	const mismatches: VerifyMismatch[] = [];
 	for (const n of nodes) {
 		let content: unknown;
@@ -68,9 +68,9 @@ export function verifyNodes(db: Database.Database): { total: number; mismatches:
  * this tool exists to catch. (`prospect show` walking a trail will fail
  * silently — `verify` must not.)
  */
-export function verifyGraph(db: Database.Database): VerifyResult {
-	const { total, mismatches } = verifyNodes(db);
-	const integrity = checkGraphIntegrity(db);
+export async function verifyGraph(db: AsyncDatabase): Promise<VerifyResult> {
+	const { total, mismatches } = await verifyNodes(db);
+	const integrity = await checkGraphIntegrity(db);
 	return {
 		nodes: total,
 		contentMismatches: mismatches,
@@ -100,10 +100,10 @@ function groupDangling(dangling: DanglingEdge[]): string[] {
 }
 
 export async function prospectVerify(_args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const r = verifyGraph(db);
+		const r = await verifyGraph(db);
 		const empty = r.nodes === 0 && r.edges === 0;
 		const failures = r.contentMismatches.length + r.dangling.length;
 
@@ -140,7 +140,7 @@ export async function prospectVerify(_args: string, ctx: ExtensionCommandContext
 		}
 		output(ctx, lines.join("\n"), "error");
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

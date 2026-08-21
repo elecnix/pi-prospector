@@ -49,9 +49,9 @@ describe("timepoint helpers", () => {
 
 describe("as-of reads (#50)", () => {
 	it("getAllAnalysisNodes filters by created_at", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			seedNodeAt(db, "n1", T1);
 			seedNodeAt(db, "n2", T2);
 			seedNodeAt(db, "n3", T3);
@@ -59,30 +59,30 @@ describe("as-of reads (#50)", () => {
 			assert.equal(getAllAnalysisNodes(db, T2).length, 2);
 			assert.equal(getAllAnalysisNodes(db, T1).length, 1);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("getStats as-of counts only nodes present by T", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			seedNodeAt(db, "n1", T1);
 			seedNodeAt(db, "n2", T3);
-			assert.equal(getStats(db).analysis.nodes, 2);
-			assert.equal(getStats(db, T2).analysis.nodes, 1);
+			assert.equal((((await getStats(db)).analysis)).nodes, 2);
+			assert.equal((((await getStats(db, T2)).analysis)).nodes, 1);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("listProposalsAsOf reconstructs status from the decision log", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertProposalRow(db, { id: "p1", sessionId: "s1", title: "One", status: "applied", inputKey: "ik-p1" });
-			insertProposalRow(db, { id: "p2", sessionId: "s1", title: "Two", status: "rejected", inputKey: "ik-p2" });
-			insertProposalRow(db, { id: "p3", sessionId: "s1", title: "Three", status: "open", inputKey: "ik-p3" });
+			await insertSession(db, "s1");
+			await insertProposalRow(db, { id: "p1", sessionId: "s1", title: "One", status: "applied", inputKey: "ik-p1" });
+			await insertProposalRow(db, { id: "p2", sessionId: "s1", title: "Two", status: "rejected", inputKey: "ik-p2" });
+			await insertProposalRow(db, { id: "p3", sessionId: "s1", title: "Three", status: "open", inputKey: "ik-p3" });
 
 			const push = (id: string, key: string, decision: string, at: string) =>
 				db
@@ -107,7 +107,7 @@ describe("as-of reads (#50)", () => {
 			assert.equal(byId2.get("p2"), "rejected");
 			assert.equal(byId2.get("p3"), "open");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

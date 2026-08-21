@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
 import { parseHarnessSource } from "../harness.js";
@@ -7,13 +7,13 @@ import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
 export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
 	const dbPath = getDbPath();
-	const db = new Database(dbPath);
-	migrate(db);
+	const db = openAsyncDatabase(dbPath);
+	await migrate(db);
 
 	const args = parseSyncArgs(rawArgs ?? "");
 
 	try {
-		const result = runSync(db, getSessionsDir(), getClaudeSessionsDir(), {
+		const result = await runSync(db, getSessionsDir(), getClaudeSessionsDir(), {
 			project: args.project,
 			source: args.source,
 		});
@@ -35,7 +35,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 		console.log(text);
 		ctx.ui.notify(text, "info");
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

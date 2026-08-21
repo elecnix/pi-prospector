@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { DiscoveredSession, SessionSource } from "../types.js";
 
@@ -34,45 +34,45 @@ export interface DiscoverOptions {
  * Resolving defaults belongs to the composition root — `getSessionsDir()` and
  * `getClaudeSessionsDir()` in `src/config.ts`, called from the command layer.
  */
-export function discoverSessions(
+export async function discoverSessions(
 	sessionsDir: string,
 	claudeSessionsDir: string,
 	opts?: DiscoverOptions,
-): DiscoveredSession[] {
-	const pi: DiscoveredSession[] = opts?.source && opts.source !== "pi" ? [] : discoverPiSessions(sessionsDir);
+): Promise<DiscoveredSession[]> {
+	const pi: DiscoveredSession[] = opts?.source && opts.source !== "pi" ? [] : await discoverPiSessions(sessionsDir);
 	const claude: DiscoveredSession[] =
-		opts?.source && opts.source !== "claude" ? [] : discoverClaudeSessions(claudeSessionsDir);
+		opts?.source && opts.source !== "claude" ? [] : await discoverClaudeSessions(claudeSessionsDir);
 	const all = [...pi, ...claude];
 	if (opts?.project) return all.filter((s) => s.project === opts.project);
 	return all;
 }
 
-function discoverPiSessions(sessionsDir: string): DiscoveredSession[] {
+async function discoverPiSessions(sessionsDir: string): Promise<DiscoveredSession[]> {
 	return walkSessionDir(sessionsDir, "pi");
 }
 
-function discoverClaudeSessions(sessionsDir: string): DiscoveredSession[] {
+async function discoverClaudeSessions(sessionsDir: string): Promise<DiscoveredSession[]> {
 	return walkSessionDir(sessionsDir, "claude");
 }
 
-function walkSessionDir(
+async function walkSessionDir(
 	sessionsDir: string,
 	source: SessionSource,
-): DiscoveredSession[] {
+): Promise<DiscoveredSession[]> {
 	const results: DiscoveredSession[] = [];
 
 	let entries: string[];
 	try {
-		entries = fs.readdirSync(sessionsDir);
+		entries = await fs.readdir(sessionsDir);
 	} catch {
 		return results;
 	}
 
 	for (const entry of entries) {
 		const fullPath = path.join(sessionsDir, entry);
-		let stat: fs.Stats;
+		let stat: Awaited<ReturnType<typeof fs.stat>>;
 		try {
-			stat = fs.statSync(fullPath);
+			stat = await fs.stat(fullPath);
 		} catch {
 			continue;
 		}
@@ -86,7 +86,7 @@ function walkSessionDir(
 
 		let files: string[];
 		try {
-			files = fs.readdirSync(fullPath);
+			files = await fs.readdir(fullPath);
 		} catch {
 			continue;
 		}
@@ -94,9 +94,9 @@ function walkSessionDir(
 		for (const file of files) {
 			if (!file.endsWith(".jsonl")) continue;
 			const filePath = path.join(fullPath, file);
-			let fileStat: fs.Stats;
+			let fileStat: Awaited<ReturnType<typeof fs.stat>>;
 			try {
-				fileStat = fs.statSync(filePath);
+				fileStat = await fs.stat(filePath);
 			} catch {
 				continue;
 			}

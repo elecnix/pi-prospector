@@ -3,16 +3,16 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
 import { getStats } from "../../src/db/queries.js";
 
-function tempDb(): { db: Database.Database; close: () => void } {
+async function tempDb(): Promise<{ db: AsyncDatabase; close: () => Promise<void> }> {
 	const dbPath = path.join(os.tmpdir(), `prospect-claude-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
-	const db = new Database(dbPath);
-	migrate(db);
-	return { db, close: () => { db.close(); try { fs.unlinkSync(dbPath); } catch {} } };
+	const db = openAsyncDatabase(dbPath);
+	await migrate(db);
+	return { db, close: async () => { await db.close(); try { fs.unlinkSync(dbPath); } catch {} } };
 }
 
 /**
@@ -54,8 +54,8 @@ function cleanupFixture(piRoot: string): void {
 }
 
 describe("Claude session sync", () => {
-	it("syncs a Claude session into database", () => {
-		const { db, close } = tempDb();
+	it("syncs a Claude session into database", async () => {
+		const { db, close } = await tempDb();
 		try {
 			const { piRoot, claudeRoot } = createMixedFixture(
 				[],
@@ -73,34 +73,34 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				const result = runSync(db, piRoot, claudeRoot);
+				const result = await runSync(db, piRoot, claudeRoot);
 				assert.ok(result.sessionsProcessed >= 1, `expected >=1 session, got ${result.sessionsProcessed}`);
 
 				// Verify session row
-				const session = db.prepare("SELECT * FROM sessions WHERE source = 'claude'").get() as Record<string, unknown>;
+				const session = (await db.prepare("SELECT * FROM sessions WHERE source = 'claude'").get()) as Record<string, unknown>;
 				assert.ok(session);
 				assert.equal(session.id, "claude-sess-001");
 				assert.equal(session.source, "claude");
 
 				// Verify messages: ai-title is not inserted as a message
-				const messages = db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all("claude-sess-001") as Array<{ role: string; source: string }>;
+				const messages = (await db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all("claude-sess-001")) as Array<{ role: string; source: string }>;
 				assert.equal(messages.length, 2);
 				assert.equal(messages[0]!.role, "user");
 				assert.equal(messages[1]!.role, "assistant");
 				for (const m of messages) assert.equal(m.source, "claude");
 
-				const stats = getStats(db);
+				const stats = await getStats(db);
 				assert.equal(stats.claudeSessions, 1);
 			} finally {
 				cleanupFixture(piRoot);
 			}
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("records the serving model on indexed Claude messages, with no cost (issue #65)", () => {
-		const { db, close } = tempDb();
+	it("records the serving model on indexed Claude messages, with no cost (issue #65)", async () => {
+		const { db, close } = await tempDb();
 		try {
 			const { piRoot, claudeRoot } = createMixedFixture(
 				[],
@@ -127,10 +127,10 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				runSync(db, piRoot, claudeRoot);
-				const assistant = db
+				await runSync(db, piRoot, claudeRoot);
+				const assistant = (await db
 					.prepare("SELECT role, model, cost_usd, usage FROM messages WHERE role = 'assistant'")
-					.get() as { role: string; model: string | null; cost_usd: number | null; usage: string | null };
+					.get()) as { role: string; model: string | null; cost_usd: number | null; usage: string | null };
 				assert.equal(assistant.model, "claude-opus-5");
 				assert.equal(assistant.cost_usd, null);
 				assert.ok(assistant.usage);
@@ -140,12 +140,12 @@ describe("Claude session sync", () => {
 				cleanupFixture(piRoot);
 			}
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("handles incremental re-sync of Claude sessions", () => {
-		const { db, close } = tempDb();
+	it("handles incremental re-sync of Claude sessions", async () => {
+		const { db, close } = await tempDb();
 		try {
 			const { piRoot, claudeRoot } = createMixedFixture(
 				[],
@@ -160,22 +160,22 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				const r1 = runSync(db, piRoot, claudeRoot);
+				const r1 = await runSync(db, piRoot, claudeRoot);
 				assert.equal(r1.sessionsProcessed, 1);
 
-				const r2 = runSync(db, piRoot, claudeRoot);
+				const r2 = await runSync(db, piRoot, claudeRoot);
 				assert.equal(r2.sessionsSkipped, 1);
 				assert.equal(r2.messagesInserted, 0);
 			} finally {
 				cleanupFixture(piRoot);
 			}
 		} finally {
-			close();
+			await close();
 		}
 	});
 
-	it("syncs both Pi and Claude sessions together", () => {
-		const { db, close } = tempDb();
+	it("syncs both Pi and Claude sessions together", async () => {
+		const { db, close } = await tempDb();
 		try {
 			const { piRoot, claudeRoot } = createMixedFixture(
 				[
@@ -199,17 +199,17 @@ describe("Claude session sync", () => {
 				],
 			);
 			try {
-				const result = runSync(db, piRoot, claudeRoot);
+				const result = await runSync(db, piRoot, claudeRoot);
 				assert.ok(result.sessionsProcessed >= 2, `expected >=2 sessions, got ${result.sessionsProcessed}`);
 
-				const stats = getStats(db);
+				const stats = await getStats(db);
 				assert.ok(stats.piSessions >= 1);
 				assert.ok(stats.claudeSessions >= 1);
 			} finally {
 				cleanupFixture(piRoot);
 			}
 		} finally {
-			close();
+			await close();
 		}
 	});
 });

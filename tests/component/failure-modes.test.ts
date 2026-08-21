@@ -123,10 +123,10 @@ const THREE_RATE_LIMITS: Row[] = [
 
 describe("failure-modes component test", () => {
 	it("detects failed generations, prices them, and proposes a verified extension", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			const ids = insertRows(db, "s1", THREE_RATE_LIMITS);
 
 			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
@@ -155,15 +155,15 @@ describe("failure-modes component test", () => {
 			assert.deepEqual(anchors.map((a) => a.to_ref_id).sort(), ids.slice(1).sort());
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+await close();
 		}
 	});
 
 	it("materialises the extension proposal into the proposal store with its package spec", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			insertRows(db, "s1", THREE_RATE_LIMITS);
 			await withSettings(settings, () => newFramework(db).run("s1", { analyzerIds: ["failure-modes"] }));
 
@@ -176,14 +176,14 @@ describe("failure-modes component test", () => {
 			assert.equal(proposals[0]!.severity, "waste");
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+await close();
 		}
 	});
 
 	it("does not recommend a package the host already has", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			insertRows(db, "s1", THREE_RATE_LIMITS);
 
 			// Every package the catalogue knows is installed, so the only honest
@@ -200,15 +200,15 @@ describe("failure-modes component test", () => {
 			assert.ok(proposal, "the measurement survives even when there is nothing to install");
 			assert.notEqual(proposal!.target_type, "extension");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("keeps the diagnosis but drops every package pointer when extensions are turned off", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			insertRows(db, "s1", THREE_RATE_LIMITS);
 			await withSettings(settings, () =>
 				newFramework(db, { "failure-modes": { recommendExtensions: false } }).run("s1", { analyzerIds: ["failure-modes"] }),
@@ -221,15 +221,15 @@ describe("failure-modes component test", () => {
 			assert.ok(!JSON.stringify(props.improvement_proposals).includes("npm:"));
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+await close();
 		}
 	});
 
 	it("says the capture is absent rather than reporting a clean session", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			// Rows as an older sync wrote them: no stop reason at all.
 			insertRows(db, "s1", [
 				{ role: "user", text: "hi" },
@@ -242,15 +242,15 @@ describe("failure-modes component test", () => {
 			assert.equal(props.turn_failure_count, 0);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+await close();
 		}
 	});
 
 	it("is idempotent: a second run produces no second node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			insertRows(db, "s1", THREE_RATE_LIMITS);
 			await withSettings(settings, async () => {
 				await newFramework(db).run("s1", { analyzerIds: ["failure-modes"] });
@@ -262,15 +262,15 @@ describe("failure-modes component test", () => {
 			assert.equal(count, 1);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+await close();
 		}
 	});
 
 	it("re-identifies when a re-sync fills in error text the first pass never saw", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			const ids = insertRows(db, "s1", [
 				{ role: "user", text: "go" },
 				{ role: "assistant", text: "" },
@@ -289,14 +289,14 @@ describe("failure-modes component test", () => {
 			assert.equal(readNode(db).props.turn_failure_count, 3);
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+await close();
 		}
 	});
 
 	it("marks nodes stale for the config reason once a recommended package is installed", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			insertRows(db, "s1", THREE_RATE_LIMITS);
 
 			const before = settingsWith([]);
@@ -319,15 +319,15 @@ describe("failure-modes component test", () => {
 				fs.unlinkSync(after);
 			}
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("classifies failed tool calls per tool, and never stores the raw error text", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			const rows: Row[] = [{ role: "user", text: "go" }];
 			for (let i = 0; i < 3; i++) {
 				rows.push({
@@ -353,15 +353,15 @@ describe("failure-modes component test", () => {
 			assert.ok(!JSON.stringify(props).includes("private-name-here"), "host error text must never reach the graph");
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+await close();
 		}
 	});
 
 	it("records an abort without proposing anything about it", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const settings = settingsWith([]);
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			insertRows(db, "s1", [
 				{ role: "user", text: "go" },
 				{ role: "assistant", stopReason: "aborted", errorMessage: "This operation was aborted" },
@@ -376,7 +376,7 @@ describe("failure-modes component test", () => {
 			assert.equal(row["node_kind"], "metric");
 		} finally {
 			fs.unlinkSync(settings);
-			close();
+await close();
 		}
 	});
 });

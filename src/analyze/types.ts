@@ -8,7 +8,7 @@
  */
 
 import { Type, type Static } from "typebox";
-import type Database from "better-sqlite3";
+import type { AsyncDatabase } from "../db/async-db.js";
 
 // ─────────────────────────── enumerations ───────────────────────────
 
@@ -365,25 +365,25 @@ export interface AnalyzerPlanContext {
 	 * scope is lifted, and the read is lazy, so analyzers that do not need it pay
 	 * nothing.
 	 */
-	getGlobalDependencyNodes: (analyzerId: string) => AnalysisNodeRow[];
+	getGlobalDependencyNodes: (analyzerId: string) => Promise<AnalysisNodeRow[]>;
 	/** The resolved config JSON for this analyzer, so plan() can honour cost guards. */
 	config: Record<string, unknown>;
-	db: Database.Database;
+	db: AsyncDatabase;
 }
 
 /** Context handed to `analyzer.analyze()` while producing a single node. */
 export interface AnalyzerRunContext {
 	sessionId: string;
-	getMessage: (id: string) => MessageRow | undefined;
-	getNode: (id: string) => AnalysisNodeRow | undefined;
+	getMessage: (id: string) => Promise<MessageRow | undefined>;
+	getNode: (id: string) => Promise<AnalysisNodeRow | undefined>;
 	/** Nodes from a declared dependency. Throws if the dependency was not declared. */
-	getDependencyNodes: (analyzerId: string) => AnalysisNodeRow[];
+	getDependencyNodes: (analyzerId: string) => Promise<AnalysisNodeRow[]>;
 	/**
 	 * A declared dependency's newest node per logical unit, across every session —
 	 * the corpus-scoped read. See {@link AnalyzerPlanContext.getGlobalDependencyNodes}.
 	 */
-	getGlobalDependencyNodes: (analyzerId: string) => AnalysisNodeRow[];
-	getSessionMessages: (sessionId: string) => MessageRow[];
+	getGlobalDependencyNodes: (analyzerId: string) => Promise<AnalysisNodeRow[]>;
+	getSessionMessages: (sessionId: string) => Promise<MessageRow[]>;
 	llm: LLMCaller;
 	config: AnalyzerConfig;
 	/** Prompt content keyed by prompt name. */
@@ -497,7 +497,7 @@ export type AnalyzerOutputDef = Static<typeof AnalyzerOutputDef>;
  * reorder real analysis work to satisfy a rendering concern.
  */
 export interface AnalyzerOutputContext {
-	db: Database.Database;
+	db: AsyncDatabase;
 	/**
 	 * Newest live node per logical unit for the owning analyzer, corpus-wide.
 	 * Read lazily — an output that never touches it runs no query.
@@ -507,9 +507,9 @@ export interface AnalyzerOutputContext {
 	 * session, and summing them counts the session twice. `latestBySession` is the
 	 * fold for that.
 	 */
-	readonly ownNodes: AnalysisNodeRow[];
+	readonly ownNodes: Promise<AnalysisNodeRow[]>;
 	/** The same read for any analyzer id. Empty when that analyzer has never run. */
-	getNodes: (analyzerId: string) => AnalysisNodeRow[];
+	getNodes: (analyzerId: string) => Promise<AnalysisNodeRow[]>;
 	/** The owning analyzer's resolved config. */
 	config: Record<string, unknown>;
 	/** Caller-supplied knobs, e.g. `{ day: "2026-08-14" }`. */

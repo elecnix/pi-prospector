@@ -24,11 +24,11 @@ function setTimestamps(db: import("better-sqlite3").Database, sessionId: string,
 
 describe("cache-economy analyzer", () => {
 	it("classifies cold hits by gap, computes hit ratio, counts churn, and emits proposals", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "ce1";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "start" },
 				{ id: "a1", role: "assistant", text: "cold start", model: "m-a", costUsd: 0.01 },
 				{ id: "u1", role: "user", text: "next" },
@@ -98,11 +98,11 @@ describe("cache-economy analyzer", () => {
 	});
 
 	it("emits only a metric node for a session with healthy cache hits", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "ce2";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "start" },
 				{ id: "a1", role: "assistant", text: "hit 1", model: "m-a", costUsd: 0.001 },
 				{ id: "a2", role: "assistant", text: "hit 2", model: "m-a", costUsd: 0.001 },
@@ -131,11 +131,11 @@ describe("cache-economy analyzer", () => {
 	});
 
 	it("distinguishes an unbilled turn from a measured zero", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "ce3";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "start" },
 				{ id: "a1", role: "assistant", text: "unbilled", model: "m-a" }, // no usage → unbilled
 				{ id: "a2", role: "assistant", text: "measured zero", model: "m-a" },

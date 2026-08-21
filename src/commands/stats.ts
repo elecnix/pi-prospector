@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getStats } from "../db/queries.js";
 import { getDbPath } from "../config.js";
@@ -43,18 +43,18 @@ function tokenBlock(label: string, stats: TokenStats): string[] {
 }
 
 export async function prospectStats(args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		const { flags } = parseFlags(args ?? "");
 		let asOf: string | undefined;
 		let timepointLabel: string | undefined;
-		const tp = resolveTimepoint(db, flags);
+		const tp = await resolveTimepoint(db, flags);
 		if (tp) {
 			asOf = tp.at;
 			timepointLabel = tp.source;
 		}
-		const s = getStats(db, asOf);
+		const s = await getStats(db, asOf);
 		const kindLines = Object.entries(s.analysis.nodesByKind).map(([k, v]) => `    ${k}: ${v}`);
 		const t = s.tokens;
 
@@ -104,7 +104,7 @@ export async function prospectStats(args: string, ctx: ExtensionCommandContext):
 		ctx.ui.notify(text, "info");
 		console.log(text);
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

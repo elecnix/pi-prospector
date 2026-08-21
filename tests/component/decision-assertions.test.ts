@@ -60,9 +60,9 @@ function insertLegacyRemediation(db: Database.Database, id: string, description:
 
 describe("decisions/remediations onto assertions (issue #73)", () => {
 	it("backfills legacy decisions and remediations and reconciles exactly", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			// Pre-conversion corpus, written straight to the legacy tables.
 			insertLegacyDecision(db, { ik: "ik-1", decision: "accepted", disposition: "done", rationale: "added it", decidedAt: "2026-01-01T00:00:00.000Z" });
 			insertLegacyDecision(db, { ik: "ik-2", decision: "rejected", rationale: "covered", decidedAt: "2026-01-02T00:00:00.000Z" });
@@ -81,12 +81,12 @@ describe("decisions/remediations onto assertions (issue #73)", () => {
 			assert.deepEqual(r.extraAssertions, [], "no assertion decision without a legacy row");
 			assert.deepEqual(r.missingRemediations, [], "every legacy remediation has an assertion");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("reads backfilled decisions with identical semantics through the public API", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			insertLegacyDecision(db, { ik: "ik-1", decision: "accepted", disposition: "done", rationale: "already did it", decidedAt: "2026-01-01T00:00:00.000Z" });
 			insertLegacyRemediation(db, "rem-1", "consolidated polling guidance");
@@ -101,22 +101,22 @@ describe("decisions/remediations onto assertions (issue #73)", () => {
 
 			const rem = getRemediation(db, "rem-1")!;
 			assert.equal(rem.description, "consolidated polling guidance");
-			assert.equal(getDecisionsForRemediation(db, "rem-1").length, 1, "grouping survives");
-			assert.equal(getAllDecisions(db).length, 2);
-			assert.equal(getAllDecisions(db).map((d) => d.remediation_id).filter(Boolean).length, 1);
+			assert.equal((((await getDecisionsForRemediation(db, "rem-1")).length)), 1, "grouping survives");
+			assert.equal((((await getAllDecisions(db)).length)), 2);
+			assert.equal(((await getAllDecisions(db)).map((d) => d.remediation_id).filter(Boolean).length, 1);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("dual-writes fresh decisions to both tables so the migration stays reversible", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", inputKey: "ik-1" });
+			await insertSession(db, "s1");
+			await insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", inputKey: "ik-1" });
 
-			assert.equal(acceptProposal(db, "p1", { disposition: "done", rationale: "already did it", actual_change: "abc123" }), true);
-			assert.equal(rejectProposal(db, "p1"), false, "a decided proposal cannot be re-decided");
+			assert.equal(await acceptProposal(db, "p1", { disposition: "done", rationale: "already did it", actual_change: "abc123" }), true);
+			assert.equal(await rejectProposal(db, "p1"), false, "a decided proposal cannot be re-decided");
 
 			// Both the legacy table and the assertions relation hold the decision.
 			const legacyCount = (db.prepare("SELECT COUNT(*) AS c FROM proposal_decisions").get() as { c: number }).c;
@@ -125,7 +125,7 @@ describe("decisions/remediations onto assertions (issue #73)", () => {
 			assert.equal(d.decision, "accepted");
 			assert.equal(d.disposition, "done");
 			assert.equal(d.actual_change, "abc123");
-			assert.deepEqual(getProposalAssertionsForKey(db, "ik-1").map((a) => a.subject_key), ["ik-1"]);
+			assert.deepEqual(((await getProposalAssertionsForKey(db, "ik-1")).map((a) => a.subject_key), ["ik-1"]);
 
 			// Reads go through assertions and reconcile cleanly against the legacy view.
 			const r = reconcileDecisionsMigration(db);
@@ -133,16 +133,16 @@ describe("decisions/remediations onto assertions (issue #73)", () => {
 			assert.deepEqual(r.missingDecisions, []);
 			assert.deepEqual(r.extraAssertions, []);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("keeps decisions keyed by the content-addressed input_key (durable across regenerate)", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertProposalRow(db, { id: "pA", sessionId: "s1", title: "A", inputKey: "ik-same" });
-			assert.equal(acceptProposal(db, "pA", { rationale: "keyed on the input_key" }), true);
+			await insertSession(db, "s1");
+			await insertProposalRow(db, { id: "pA", sessionId: "s1", title: "A", inputKey: "ik-same" });
+			assert.equal(await acceptProposal(db, "pA", { rationale: "keyed on the input_key" }), true);
 
 			// The decision assertion is keyed by the proposal_input_key, not the row id
 			// — the wipe-durability contract. A regenerated proposal that re-derives
@@ -154,18 +154,18 @@ describe("decisions/remediations onto assertions (issue #73)", () => {
 			// The assertion id is content-addressed, not a random row id.
 			assert.match(rows[0]!.id, /^[0-9a-f]{16}$/);
 			// Two proposals cannot share the decision: keying is by input_key alone.
-			insertProposalRow(db, { id: "pB", sessionId: "s1", title: "B", inputKey: "ik-other" });
-			assert.equal(acceptProposal(db, "pB"), true);
-			assert.equal(getAllDecisions(db).length, 2);
+			await insertProposalRow(db, { id: "pB", sessionId: "s1", title: "B", inputKey: "ik-other" });
+			assert.equal(await acceptProposal(db, "pB"), true);
+			assert.equal((((await getAllDecisions(db)).length)), 2);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("migrate() auto-folds legacy data and is idempotent", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			// Simulate a DB that predates the migration: write legacy rows, then
 			// re-run migrate() as any command open would — the backfill runs and is
 			// idempotent.
@@ -181,16 +181,16 @@ describe("decisions/remediations onto assertions (issue #73)", () => {
 			assert.equal(finalCount, after, "re-running migrate() never duplicates");
 			assert.equal(getRemediationAssertion(db, "rem-1")?.reason, "one fix");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("remediate writes the shared remediation assertion and groups decisions", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", inputKey: "ik-1" });
-			insertProposalRow(db, { id: "p2", sessionId: "s1", title: "B", inputKey: "ik-2" });
+			await insertSession(db, "s1");
+			await insertProposalRow(db, { id: "p1", sessionId: "s1", title: "A", inputKey: "ik-1" });
+			await insertProposalRow(db, { id: "p2", sessionId: "s1", title: "B", inputKey: "ik-2" });
 
 			const res = acceptProposalsWithRemediation(db, ["p1", "p2"], { description: "consolidated", actual_change: "sha" }, { disposition: "done" });
 			assert.ok(res.remediationId);
@@ -202,7 +202,7 @@ describe("decisions/remediations onto assertions (issue #73)", () => {
 			assert.equal(rem.actual_change, "sha");
 			const decs = getProposalAssertionsForKey(db, "ik-1");
 			assert.equal(decs[0]!.remediation_id, res.remediationId);
-			assert.equal(getDecisionsForRemediation(db, res.remediationId!).length, 2);
+			assert.equal((((await getDecisionsForRemediation(db, res.remediationId!)).length)), 2);
 			assert.equal(getLatestDecision(db, "ik-2")!.disposition, "done");
 
 			const r = reconcileDecisionsMigration(db);
@@ -211,7 +211,7 @@ describe("decisions/remediations onto assertions (issue #73)", () => {
 			assert.deepEqual(r.missingDecisions, []);
 			assert.deepEqual(r.missingRemediations, []);
 		} finally {
-			close();
+await close();
 		}
 	});
 });

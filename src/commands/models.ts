@@ -10,7 +10,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getDbPath } from "../config.js";
 import type { AnalysisNodeRow } from "../analyze/types.js";
@@ -21,12 +21,12 @@ function pct(x: number): string {
 }
 
 export async function prospectModels(_args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const rows = db
+		const rows = (await db
 			.prepare("SELECT id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind, content_json, source_set_hash, input_key, output_key, config_fingerprint, model_used, cost_usd, tokens_used, duration_ms, created_at FROM analysis_nodes WHERE analyzer_id = 'routing-opportunity' ORDER BY created_at ASC")
-			.all() as AnalysisNodeRow[];
+			.all()) as AnalysisNodeRow[];
 
 		const cfg: ModelMixConfig = DEFAULT_MODEL_MIX_CONFIG;
 		const { result, suggestions } = aggregateModels(rows, cfg);
@@ -73,7 +73,7 @@ export async function prospectModels(_args: string, ctx: ExtensionCommandContext
 		ctx.ui.notify(text, "info");
 		console.log(text);
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

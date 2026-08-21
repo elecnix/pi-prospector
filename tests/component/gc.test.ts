@@ -27,7 +27,7 @@ function seedNode(db: Database, id: string, analyzer: string, outputKey: string,
 
 /** A graph where analyzer A is consumed by B, and A produced a proposal with a recorded decision. */
 function buildGraph(db: Database): void {
-	insertSession(db, "s1");
+	await insertSession(db, "s1");
 	const [m1] = insertMessages(db, "s1", [{ role: "user", text: "hi" }]);
 
 	seedNode(db, "nA1", "analyzer-A", "okA1", null);
@@ -55,7 +55,7 @@ const allCount = (db: Database, analyzer: string): number =>
 
 describe("retraction (#52)", () => {
 	it("gc retracts nodes (tombstone) instead of deleting, and removes their proposals but never decisions", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			buildGraph(db);
 			const catalog = computeDeletionSet(db, { kind: "analyzer", analyzerId: "analyzer-A" });
@@ -76,12 +76,12 @@ describe("retraction (#52)", () => {
 			// The graph stays referentially intact (nodes still exist → edges resolve).
 			assert.equal(checkGraphIntegrity(db).all.length, 0);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a retracted node is absent from the live view and scanning, and re-analysis would treat it as missing", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			buildGraph(db);
 			const catalog = computeDeletionSet(db, { kind: "analyzer", analyzerId: "analyzer-A" });
@@ -89,12 +89,12 @@ describe("retraction (#52)", () => {
 			// findNodeByInputKey (the idempotency/scan lookup) reads live_nodes → absent.
 			assert.equal(findNodeByInputKey(db, "ih-nA1"), undefined);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a retracted node's content still verifies (#52)", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			buildGraph(db);
 			const catalog = computeDeletionSet(db, { kind: "analyzer", analyzerId: "analyzer-A" });
@@ -106,12 +106,12 @@ describe("retraction (#52)", () => {
 			// fake seeded keys here are unrelated to the hashes, so we assert on count.
 			assert.equal(r.total, 3);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("unretract reverses a gc (reversible rollback)", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			buildGraph(db);
 			const id = newGcRunId();
@@ -124,12 +124,12 @@ describe("retraction (#52)", () => {
 			assert.equal(undone, 2);
 			assert.equal(liveCount(db, "analyzer-A"), 2);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("purge --retracted-before physically reclaims only old retracted nodes", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			buildGraph(db);
 			const catalog = computeDeletionSet(db, { kind: "analyzer", analyzerId: "analyzer-A" });
@@ -141,7 +141,7 @@ describe("retraction (#52)", () => {
 			// No dangling refs after purge.
 			assert.equal(checkGraphIntegrity(db).all.length, 0);
 		} finally {
-			close();
+await close();
 		}
 	});
 });

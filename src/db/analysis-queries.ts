@@ -7,7 +7,7 @@
  * rows (snake_case) typed by the schemas in `../analyze/types.ts`.
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "./async-db.js";
 import { prep } from "./prepared.js";
 import type {
 	AnalysisEdgeRow,
@@ -25,8 +25,8 @@ import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 
 // ───────────────────────── analyzer registry ─────────────────────────
 
-export function upsertAnalyzerDef(db: Database.Database, def: AnalyzerDef): void {
-	prep(db, `
+export async function upsertAnalyzerDef(db: AsyncDatabase, def: AnalyzerDef): Promise<void> {
+	await prep(db, `
 		INSERT INTO analyzer_defs (id, label, description, anchor_span, dependencies, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -44,8 +44,8 @@ export function upsertAnalyzerDef(db: Database.Database, def: AnalyzerDef): void
 	);
 }
 
-export function upsertAnalyzerVersion(db: Database.Database, version: AnalyzerVersion): void {
-	prep(db, `
+export async function upsertAnalyzerVersion(db: AsyncDatabase, version: AnalyzerVersion): Promise<void> {
+	await prep(db, `
 		INSERT INTO analyzer_versions (analyzer_id, version_id, implementation_kind, code_ref, created_at)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(analyzer_id, version_id) DO NOTHING
@@ -58,8 +58,8 @@ export function upsertAnalyzerVersion(db: Database.Database, version: AnalyzerVe
 	);
 }
 
-export function registerPrompt(db: Database.Database, prompt: PromptVersion): void {
-	prep(db, `
+export async function registerPrompt(db: AsyncDatabase, prompt: PromptVersion): Promise<void> {
+	await prep(db, `
 		INSERT INTO prompt_registry (hash, content, role, created_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(hash) DO NOTHING
@@ -70,13 +70,13 @@ export function registerPrompt(db: Database.Database, prompt: PromptVersion): vo
  * Resolve (and persist if new) an analyzer config. Configs are content-addressed
  * by a hash of their canonical JSON; identical configs share one row and id.
  */
-export function resolveConfig(
-	db: Database.Database,
+export async function resolveConfig(
+	db: AsyncDatabase,
 	params: { analyzerId: string; configJson: Record<string, unknown>; label?: string },
-): AnalyzerConfig {
+): Promise<AnalyzerConfig> {
 	const configHash = computeConfigHash(params.configJson);
-	const existing = prep(db, "SELECT id, analyzer_id, config_hash, config_json, label FROM analyzer_configs WHERE config_hash = ?")
-		.get(configHash) as
+	const existing = (await prep(db, "SELECT id, analyzer_id, config_hash, config_json, label FROM analyzer_configs WHERE config_hash = ?")
+		.get(configHash)) as
 		| { id: string; analyzer_id: string; config_hash: string; config_json: string; label: string | null }
 		| undefined;
 
@@ -91,7 +91,7 @@ export function resolveConfig(
 	}
 
 	const id = uuidv7();
-	prep(db, `
+	await prep(db, `
 		INSERT INTO analyzer_configs (id, analyzer_id, config_hash, config_json, label, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`).run(id, params.analyzerId, configHash, JSON.stringify(params.configJson), params.label ?? null, new Date().toISOString());
@@ -107,8 +107,8 @@ export function resolveConfig(
 
 // ───────────────────────── runs ─────────────────────────
 
-export function createRun(
-	db: Database.Database,
+export async function createRun(
+	db: AsyncDatabase,
 	params: {
 		id: string;
 		analyzerId: string;
@@ -119,8 +119,8 @@ export function createRun(
 		promptBundleHash: string;
 		modelSpec?: string;
 	},
-): void {
-	prep(db, `
+): Promise<void> {
+	await prep(db, `
 		INSERT INTO analysis_runs
 			(id, analyzer_id, analyzer_version_id, config_id, session_id, mode, status, prompt_bundle_hash, model_spec, started_at)
 		VALUES (?, ?, ?, ?, ?, ?, 'ok', ?, ?, ?)
@@ -137,8 +137,8 @@ export function createRun(
 	);
 }
 
-export function finishRun(
-	db: Database.Database,
+export async function finishRun(
+	db: AsyncDatabase,
 	runId: string,
 	fields: {
 		status: string;
@@ -148,8 +148,8 @@ export function finishRun(
 		tokensUsed: number;
 		errorMessage?: string | null;
 	},
-): void {
-	prep(db, `
+): Promise<void> {
+	await prep(db, `
 		UPDATE analysis_runs SET
 			status = ?, finished_at = ?, nodes_produced = ?, nodes_skipped = ?,
 			cost_usd = ?, tokens_used = ?, error_message = ?
@@ -166,8 +166,8 @@ export function finishRun(
 	);
 }
 
-export function getRun(db: Database.Database, runId: string): AnalysisRunRow | undefined {
-	return prep(db, "SELECT * FROM analysis_runs WHERE id = ?").get(runId) as AnalysisRunRow | undefined;
+export async function getRun(db: AsyncDatabase, runId: string): Promise<AnalysisRunRow | undefined> {
+	return (await prep(db, "SELECT * FROM analysis_runs WHERE id = ?").get(runId)) as AnalysisRunRow | undefined;
 }
 
 // ───────────────────────── analyze invocations (run batches) ─────────────────────────
@@ -177,19 +177,19 @@ export function getRun(db: Database.Database, runId: string): AnalysisRunRow | u
  * is interrupted before {@link finalizeAnalyzeRun}, the row still records that a
  * run began and how many sessions it set out to analyse.
  */
-export function createAnalyzeRun(
-	db: Database.Database,
+export async function createAnalyzeRun(
+	db: AsyncDatabase,
 	params: { id: string; mode: string; sessionAttempted: number },
-): void {
-	prep(
+): Promise<void> {
+	await prep(
 		db,
 		"INSERT INTO analyze_runs (id, mode, session_attempted, status, started_at) VALUES (?, ?, ?, 'running', ?)",
 	).run(params.id, params.mode, params.sessionAttempted, new Date().toISOString());
 }
 
 /** Close out a whole-run completion record with the real tallies. */
-export function finalizeAnalyzeRun(
-	db: Database.Database,
+export async function finalizeAnalyzeRun(
+	db: AsyncDatabase,
 	runId: string,
 	fields: {
 		status: "ok" | "partial";
@@ -204,8 +204,8 @@ export function finalizeAnalyzeRun(
 		errorCount: number;
 		errorExamples: string[];
 	},
-): void {
-	prep(
+): Promise<void> {
+	await prep(
 		db,
 		`UPDATE analyze_runs SET
 			status = ?, session_completed = ?, session_failed = ?, retried = ?,
@@ -230,19 +230,19 @@ export function finalizeAnalyzeRun(
 }
 
 /** The most recent whole-run records, newest first — e.g. for a status command. */
-export function getLatestAnalyzeRuns(
-	db: Database.Database,
+export async function getLatestAnalyzeRuns(
+	db: AsyncDatabase,
 	limit = 20,
-): Array<Record<string, unknown>> {
-	return prep(db, "SELECT * FROM analyze_runs ORDER BY started_at DESC LIMIT ?").all(limit) as Array<
+): Promise<Array<Record<string, unknown>>> {
+	return (await prep(db, "SELECT * FROM analyze_runs ORDER BY started_at DESC LIMIT ?").all(limit)) as Array<
 		Record<string, unknown>
 	>;
 }
 
 // ───────────────────────── nodes ─────────────────────────
 
-export function insertNode(
-	db: Database.Database,
+export async function insertNode(
+	db: AsyncDatabase,
 	node: {
 		id: string;
 		sessionId: string;
@@ -265,8 +265,8 @@ export function insertNode(
 		durationMs?: number | null;
 		createdAt: string;
 	},
-): void {
-	prep(db, `
+): Promise<void> {
+	await prep(db, `
 		INSERT INTO analysis_nodes
 			(id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind,
 			 content_json, source_set_hash, input_key, output_key, config_fingerprint, model_used, cost_usd, tokens_used,
@@ -296,8 +296,8 @@ export function insertNode(
 	);
 }
 
-export function getNode(db: Database.Database, id: string): AnalysisNodeRow | undefined {
-	return prep(db, "SELECT * FROM analysis_nodes WHERE id = ?").get(id) as AnalysisNodeRow | undefined;
+export async function getNode(db: AsyncDatabase, id: string): Promise<AnalysisNodeRow | undefined> {
+	return (await prep(db, "SELECT * FROM analysis_nodes WHERE id = ?").get(id)) as AnalysisNodeRow | undefined;
 }
 
 /**
@@ -307,14 +307,14 @@ export function getNode(db: Database.Database, id: string): AnalysisNodeRow | un
  * and reproduces across a wipe/rebuild. `output_key` is effectively unique
  * (H(input_key | content) over a unique input_key), so this is a 1:1 lookup.
  */
-export function getNodeByOutputKey(db: Database.Database, outputKey: string): AnalysisNodeRow | undefined {
+export async function getNodeByOutputKey(db: AsyncDatabase, outputKey: string): Promise<AnalysisNodeRow | undefined> {
 	if (!outputKey) return undefined;
-	return prep(db, "SELECT * FROM analysis_nodes WHERE output_key = ? LIMIT 1").get(outputKey) as AnalysisNodeRow | undefined;
+	return (await prep(db, "SELECT * FROM analysis_nodes WHERE output_key = ? LIMIT 1").get(outputKey)) as AnalysisNodeRow | undefined;
 }
 
 /** Idempotency lookup: a node produced by an exact recipe over an exact source set. Live only (a retracted node is absent). */
-export function findNodeByInputKey(db: Database.Database, inputKey: string): AnalysisNodeRow | undefined {
-	return prep(db, "SELECT * FROM live_nodes WHERE input_key = ?").get(inputKey) as AnalysisNodeRow | undefined;
+export async function findNodeByInputKey(db: AsyncDatabase, inputKey: string): Promise<AnalysisNodeRow | undefined> {
+	return (await prep(db, "SELECT * FROM live_nodes WHERE input_key = ?").get(inputKey)) as AnalysisNodeRow | undefined;
 }
 
 /**
@@ -323,23 +323,23 @@ export function findNodeByInputKey(db: Database.Database, inputKey: string): Ana
  * older recipe) and to wire the `revises` lineage edge. Live only — a retracted
  * node is treated as absent so its unit classifies `missing` and is recomputed.
  */
-export function findLatestNodeBySourceSet(
-	db: Database.Database,
+export async function findLatestNodeBySourceSet(
+	db: AsyncDatabase,
 	analyzerId: string,
 	sourceSetHash: string,
-): AnalysisNodeRow | undefined {
-	return prep(db,
+): Promise<AnalysisNodeRow | undefined> {
+	return (await prep(db,
 			"SELECT * FROM live_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND node_kind != 'error' ORDER BY created_at DESC, id DESC LIMIT 1",
 		)
-		.get(analyzerId, sourceSetHash) as AnalysisNodeRow | undefined;
+		.get(analyzerId, sourceSetHash)) as AnalysisNodeRow | undefined;
 }
 
-export function getSessionNodes(db: Database.Database, sessionId: string, asOf?: string): AnalysisNodeRow[] {
+export async function getSessionNodes(db: AsyncDatabase, sessionId: string, asOf?: string): Promise<AnalysisNodeRow[]> {
 	if (asOf) {
-		return prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? AND created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
-			.all(sessionId, asOf, asOf) as AnalysisNodeRow[];
+		return (await prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? AND created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
+			.all(sessionId, asOf, asOf)) as AnalysisNodeRow[];
 	}
-	return prep(db, "SELECT * FROM live_nodes WHERE session_id = ? ORDER BY created_at ASC, id ASC").all(sessionId) as AnalysisNodeRow[];
+	return (await prep(db, "SELECT * FROM live_nodes WHERE session_id = ? ORDER BY created_at ASC, id ASC").all(sessionId)) as AnalysisNodeRow[];
 }
 
 /**
@@ -347,33 +347,33 @@ export function getSessionNodes(db: Database.Database, sessionId: string, asOf?:
  * nodes and their content must still hash correctly, so pass `includeRetracted`
  * to see all of them; live/current reads leave it false (the live view).
  */
-export function getAllAnalysisNodes(db: Database.Database, asOf?: string, includeRetracted = false): AnalysisNodeRow[] {
+export async function getAllAnalysisNodes(db: AsyncDatabase, asOf?: string, includeRetracted = false): Promise<AnalysisNodeRow[]> {
 	if (includeRetracted && !asOf) {
-		return prep(db, "SELECT * FROM analysis_nodes ORDER BY created_at ASC, id ASC").all() as AnalysisNodeRow[];
+		return (await prep(db, "SELECT * FROM analysis_nodes ORDER BY created_at ASC, id ASC").all()) as AnalysisNodeRow[];
 	}
 	if (asOf) {
-		return prep(db, "SELECT * FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
-			.all(asOf, asOf) as AnalysisNodeRow[];
+		return (await prep(db, "SELECT * FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
+			.all(asOf, asOf)) as AnalysisNodeRow[];
 	}
-	return prep(db, "SELECT * FROM live_nodes ORDER BY created_at ASC, id ASC").all() as AnalysisNodeRow[];
+	return (await prep(db, "SELECT * FROM live_nodes ORDER BY created_at ASC, id ASC").all()) as AnalysisNodeRow[];
 }
 
 /** A session's messages in stream order — for reconstructing turns verbatim. */
-export function getSessionMessageRows(db: Database.Database, sessionId: string): MessageRow[] {
-	return prep(db,
+export async function getSessionMessageRows(db: AsyncDatabase, sessionId: string): Promise<MessageRow[]> {
+	return (await prep(db,
 			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message " +
 				"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
 		)
-		.all(sessionId) as MessageRow[];
+		.all(sessionId)) as MessageRow[];
 }
 
-export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, sessionId: string, asOf?: string): AnalysisNodeRow[] {
+export async function getNodesByAnalyzer(db: AsyncDatabase, analyzerId: string, sessionId: string, asOf?: string): Promise<AnalysisNodeRow[]> {
 	if (asOf) {
-		return prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND session_id = ? AND created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
-			.all(analyzerId, sessionId, asOf, asOf) as AnalysisNodeRow[];
+		return (await prep(db, "SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND session_id = ? AND created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC")
+			.all(analyzerId, sessionId, asOf, asOf)) as AnalysisNodeRow[];
 	}
-	return prep(db, "SELECT * FROM live_nodes WHERE analyzer_id = ? AND session_id = ? ORDER BY created_at ASC, id ASC")
-		.all(analyzerId, sessionId) as AnalysisNodeRow[];
+	return (await prep(db, "SELECT * FROM live_nodes WHERE analyzer_id = ? AND session_id = ? ORDER BY created_at ASC, id ASC")
+		.all(analyzerId, sessionId)) as AnalysisNodeRow[];
 }
 
 /**
@@ -387,9 +387,9 @@ export function getNodesByAnalyzer(db: Database.Database, analyzerId: string, se
  * that `findLatestNodeBySourceSet` applies per unit: one row per
  * `source_set_hash`, newest first, errors excluded.
  */
-export function getLatestNodesByAnalyzerAcrossSessions(db: Database.Database, analyzerId: string, asOf?: string): AnalysisNodeRow[] {
+export async function getLatestNodesByAnalyzerAcrossSessions(db: AsyncDatabase, analyzerId: string, asOf?: string): Promise<AnalysisNodeRow[]> {
 	if (asOf) {
-		return prep(db, 
+		return (await prep(db, 
 				`SELECT * FROM analysis_nodes n
 			 WHERE n.analyzer_id = ?
 			   AND n.node_kind != 'error'
@@ -407,9 +407,9 @@ export function getLatestNodesByAnalyzerAcrossSessions(db: Database.Database, an
 			   )
 			 ORDER BY n.created_at ASC, n.id ASC`,
 			)
-			.all(analyzerId, asOf, asOf, asOf, asOf) as AnalysisNodeRow[];
+			.all(analyzerId, asOf, asOf, asOf, asOf)) as AnalysisNodeRow[];
 	}
-	return prep(db, 
+	return (await prep(db, 
 			`SELECT * FROM live_nodes n
 			 WHERE n.analyzer_id = ?
 			   AND n.node_kind != 'error'
@@ -423,45 +423,45 @@ export function getLatestNodesByAnalyzerAcrossSessions(db: Database.Database, an
 			   )
 			 ORDER BY n.created_at ASC, n.id ASC`,
 		)
-		.all(analyzerId) as AnalysisNodeRow[];
+		.all(analyzerId)) as AnalysisNodeRow[];
 }
 
 // ───────────────────────── edges ─────────────────────────
 
-export function insertEdge(
-	db: Database.Database,
+export async function insertEdge(
+	db: AsyncDatabase,
 	edge: { fromNodeId: string; toRefKind: string; toRefId: string; edgeKind: string; ordinal: number },
-): void {
-	prep(db, `
+): Promise<void> {
+	await prep(db, `
 		INSERT INTO analysis_edges (id, from_node_id, to_ref_kind, to_ref_id, edge_kind, ordinal)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`).run(uuidv7(), edge.fromNodeId, edge.toRefKind, edge.toRefId, edge.edgeKind, edge.ordinal);
 }
 
-export function getEdgesFrom(db: Database.Database, nodeId: string): AnalysisEdgeRow[] {
-	return prep(db, "SELECT * FROM analysis_edges WHERE from_node_id = ? ORDER BY ordinal ASC").all(nodeId) as AnalysisEdgeRow[];
+export async function getEdgesFrom(db: AsyncDatabase, nodeId: string): Promise<AnalysisEdgeRow[]> {
+	return (await prep(db, "SELECT * FROM analysis_edges WHERE from_node_id = ? ORDER BY ordinal ASC").all(nodeId)) as AnalysisEdgeRow[];
 }
 
-export function getEdgesTo(db: Database.Database, toRefId: string, edgeKind?: string): AnalysisEdgeRow[] {
+export async function getEdgesTo(db: AsyncDatabase, toRefId: string, edgeKind?: string): Promise<AnalysisEdgeRow[]> {
 	if (edgeKind) {
-		return prep(db, "SELECT * FROM analysis_edges WHERE to_ref_id = ? AND edge_kind = ?")
-			.all(toRefId, edgeKind) as AnalysisEdgeRow[];
+		return (await prep(db, "SELECT * FROM analysis_edges WHERE to_ref_id = ? AND edge_kind = ?")
+			.all(toRefId, edgeKind)) as AnalysisEdgeRow[];
 	}
-	return prep(db, "SELECT * FROM analysis_edges WHERE to_ref_id = ?").all(toRefId) as AnalysisEdgeRow[];
+	return (await prep(db, "SELECT * FROM analysis_edges WHERE to_ref_id = ?").all(toRefId)) as AnalysisEdgeRow[];
 }
 
 /** Message ids that a node anchors to (via `anchors` edges with message targets). */
-export function getAnchoredMessageIds(db: Database.Database, nodeId: string): string[] {
-	const rows = prep(db, "SELECT to_ref_id FROM analysis_edges WHERE from_node_id = ? AND edge_kind = ? AND to_ref_kind = ?")
-		.all(nodeId, EDGE_KINDS.ANCHORS, REF_KINDS.MESSAGE) as Array<{ to_ref_id: string }>;
+export async function getAnchoredMessageIds(db: AsyncDatabase, nodeId: string): Promise<string[]> {
+	const rows = (await prep(db, "SELECT to_ref_id FROM analysis_edges WHERE from_node_id = ? AND edge_kind = ? AND to_ref_kind = ?")
+		.all(nodeId, EDGE_KINDS.ANCHORS, REF_KINDS.MESSAGE)) as Array<{ to_ref_id: string }>;
 	return rows.map((r) => r.to_ref_id);
 }
 
-export function getMessage(db: Database.Database, id: string): MessageRow | undefined {
-	return prep(db,
+export async function getMessage(db: AsyncDatabase, id: string): Promise<MessageRow | undefined> {
+	return (await prep(db,
 			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message FROM messages WHERE id = ?",
 		)
-		.get(id) as MessageRow | undefined;
+		.get(id)) as MessageRow | undefined;
 }
 
 /**
@@ -472,13 +472,13 @@ export function getMessage(db: Database.Database, id: string): MessageRow | unde
  * turns. Returns null when none of the turns has a recorded cost — money is
  * never guessed, and a sum of 0 reads as "no amount" (see extractCostUsd).
  */
-export function sumSourceTurnCost(
-	db: Database.Database,
+export async function sumSourceTurnCost(
+	db: AsyncDatabase,
 	sessionId: string,
 	userMessageIds: readonly string[],
-): number | null {
+): Promise<number | null> {
 	if (userMessageIds.length === 0) return null;
-	const rows = prep(db, "SELECT id, role, cost_usd FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(sessionId) as Array<{
+	const rows = (await prep(db, "SELECT id, role, cost_usd FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(sessionId)) as Array<{
 		id: string;
 		role: string;
 		cost_usd: number | null;
@@ -510,42 +510,42 @@ export function sumSourceTurnCost(
  * nodes that sit "at the same level" of the graph; their `created_at` and
  * `analyzer_version_id` distinguish the alternatives.
  */
-export function getNodeVersions(
-	db: Database.Database,
+export async function getNodeVersions(
+	db: AsyncDatabase,
 	analyzerId: string,
 	sourceSetHash: string,
 	asOf?: string,
-): AnalysisNodeRow[] {
+): Promise<AnalysisNodeRow[]> {
 	if (asOf) {
-		return prep(
+		return (await prep(
 				db,
 				"SELECT * FROM analysis_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) ORDER BY created_at ASC, id ASC",
 			)
-			.all(analyzerId, sourceSetHash, asOf, asOf) as AnalysisNodeRow[];
+			.all(analyzerId, sourceSetHash, asOf, asOf)) as AnalysisNodeRow[];
 	}
-	return prep(db, "SELECT * FROM live_nodes WHERE analyzer_id = ? AND source_set_hash = ? ORDER BY created_at ASC, id ASC")
-		.all(analyzerId, sourceSetHash) as AnalysisNodeRow[];
+	return (await prep(db, "SELECT * FROM live_nodes WHERE analyzer_id = ? AND source_set_hash = ? ORDER BY created_at ASC, id ASC")
+		.all(analyzerId, sourceSetHash)) as AnalysisNodeRow[];
 }
 
 /** The node that `nodeId` revises (its immediate older-version predecessor), if any. */
-export function getRevisedNode(db: Database.Database, nodeId: string): AnalysisNodeRow | undefined {
-	const edge = prep(db, "SELECT to_ref_id FROM analysis_edges WHERE from_node_id = ? AND edge_kind = ? LIMIT 1")
-		.get(nodeId, EDGE_KINDS.REVISES) as { to_ref_id: string } | undefined;
+export async function getRevisedNode(db: AsyncDatabase, nodeId: string): Promise<AnalysisNodeRow | undefined> {
+	const edge = (await prep(db, "SELECT to_ref_id FROM analysis_edges WHERE from_node_id = ? AND edge_kind = ? LIMIT 1")
+		.get(nodeId, EDGE_KINDS.REVISES)) as { to_ref_id: string } | undefined;
 	if (!edge) return undefined;
 	// `revises` edges reference the predecessor's content-addressed output_key.
 	return getNodeByOutputKey(db, edge.to_ref_id);
 }
 
 /** Nodes that revise `nodeId` (its newer-version successors), if any. */
-export function getRevisions(db: Database.Database, nodeId: string): AnalysisNodeRow[] {
+export async function getRevisions(db: AsyncDatabase, nodeId: string): Promise<AnalysisNodeRow[]> {
 	// `revises` edges point at the predecessor's output_key, so match on that.
-	const node = getNode(db, nodeId);
+	const node = await getNode(db, nodeId);
 	if (!node || !node.output_key) return [];
-	const edges = prep(db, "SELECT from_node_id FROM analysis_edges WHERE to_ref_id = ? AND edge_kind = ?")
-		.all(node.output_key, EDGE_KINDS.REVISES) as Array<{ from_node_id: string }>;
+	const edges = (await prep(db, "SELECT from_node_id FROM analysis_edges WHERE to_ref_id = ? AND edge_kind = ?")
+		.all(node.output_key, EDGE_KINDS.REVISES)) as Array<{ from_node_id: string }>;
 	const out: AnalysisNodeRow[] = [];
 	for (const e of edges) {
-		const n = getNode(db, e.from_node_id);
+		const n = await getNode(db, e.from_node_id);
 		if (n) out.push(n);
 	}
 	return out;
@@ -560,26 +560,26 @@ export interface AnalysisStats {
 	nodesByKind: Record<string, number>;
 }
 
-export function getAnalysisStats(db: Database.Database, asOf?: string): AnalysisStats {
+export async function getAnalysisStats(db: AsyncDatabase, asOf?: string): Promise<AnalysisStats> {
 	const nodes = asOf
-		? (prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?)").get(asOf, asOf) as { c: number }).c
-		: (prep(db, "SELECT COUNT(*) AS c FROM live_nodes").get() as { c: number }).c;
+		? ((await prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?)").get(asOf, asOf)) as { c: number }).c
+		: ((await prep(db, "SELECT COUNT(*) AS c FROM live_nodes").get()) as { c: number }).c;
 	// Edges have no timestamp of their own; they are bounded by their source node,
 	// so an as-of edge count counts edges whose source node exists at T.
 	const edges = asOf
-		? (prep(
+		? ((await prep(
 					db,
 					"SELECT COUNT(*) AS c FROM analysis_edges e JOIN live_nodes n ON n.id = e.from_node_id WHERE n.created_at <= ? AND (n.retracted_at IS NULL OR n.retracted_at > ?)",
 				)
-				.get(asOf, asOf) as { c: number }).c
-		: (prep(db, "SELECT COUNT(*) AS c FROM analysis_edges e JOIN live_nodes n ON n.id = e.from_node_id").get() as { c: number }).c;
-	const runs = (prep(db, "SELECT COUNT(*) AS c FROM analysis_runs").get() as { c: number }).c;
+				.get(asOf, asOf)) as { c: number }).c
+		: ((await prep(db, "SELECT COUNT(*) AS c FROM analysis_edges e JOIN live_nodes n ON n.id = e.from_node_id").get()) as { c: number }).c;
+	const runs = ((await prep(db, "SELECT COUNT(*) AS c FROM analysis_runs").get()) as { c: number }).c;
 	const kindRows = asOf
-		? (prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) GROUP BY node_kind").all(asOf, asOf) as Array<{
+		? ((await prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) GROUP BY node_kind").all(asOf, asOf)) as Array<{
 				node_kind: string;
 				c: number;
 			}>)
-		: (prep(db, "SELECT node_kind, COUNT(*) AS c FROM live_nodes GROUP BY node_kind").all() as Array<{
+		: ((await prep(db, "SELECT node_kind, COUNT(*) AS c FROM live_nodes GROUP BY node_kind").all()) as Array<{
 				node_kind: string;
 				c: number;
 			}>);
@@ -605,10 +605,10 @@ export interface RunLite {
 	tokens_used: number;
 }
 
-export function listRuns(db: Database.Database, limit = 30): RunLite[] {
-	return db
+export async function listRuns(db: AsyncDatabase, limit = 30): Promise<RunLite[]> {
+	return (await db
 		.prepare(
 			"SELECT id, analyzer_id, analyzer_version_id, session_id, mode, status, model_spec, started_at, finished_at, nodes_produced, nodes_skipped, cost_usd, tokens_used FROM analysis_runs ORDER BY started_at DESC, rowid DESC LIMIT ?",
 		)
-		.all(limit) as RunLite[];
+		.all(limit)) as RunLite[];
 }

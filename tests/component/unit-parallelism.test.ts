@@ -51,13 +51,13 @@ function trackingLLM(delayMs = 5) {
 }
 
 function seed(db: Parameters<typeof getNodesByAnalyzer>[0], sessionId: string, vocab: string[]): void {
-	insertSession(db, sessionId);
-	insertMessages(db, sessionId, [{ role: "user", text: vocab.join(" ") }]);
+	await insertSession(db, sessionId);
+	await insertMessages(db, sessionId, [{ role: "user", text: vocab.join(" ") }]);
 }
 
 describe("intra-analyzer parallelism", () => {
 	it("runs a single session's units concurrently", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db, "s1", words("alpha", 30));
 			const llm = trackingLLM();
@@ -76,14 +76,14 @@ describe("intra-analyzer parallelism", () => {
 				`one session must reach past concurrency 1; peak in-flight was ${llm.peak()}`,
 			);
 			assert.ok(llm.peak() <= 8, `must respect the configured limit; peak was ${llm.peak()}`);
-			assert.equal(getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1").length, 30);
+			assert.equal((((await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).length)), 30);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("defaults to sequential so existing behaviour is opt-in to change", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db, "s1", words("beta", 10));
 			const llm = trackingLLM();
@@ -91,14 +91,14 @@ describe("intra-analyzer parallelism", () => {
 			framework.register(lexiconCandidatesAnalyzer);
 			framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
-			assert.equal(getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1").length, 10);
+			assert.equal((((await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).length)), 10);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("still produces exactly one node per unit, with no duplicates", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			const vocab = words("gamma", 40);
 			seed(db, "s1", vocab);
@@ -116,12 +116,12 @@ describe("intra-analyzer parallelism", () => {
 			assert.equal(terms.length, vocab.length);
 			assert.equal(new Set(terms).size, terms.length, "no term judged twice");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("re-running remains a no-op", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db, "s1", words("delta", 20));
 			const llm = trackingLLM(1);
@@ -134,12 +134,12 @@ describe("intra-analyzer parallelism", () => {
 			const again = await framework.run("s1");
 			assert.equal(again.nodesProduced, 0, "idempotency must survive concurrency");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a configuration fault still stops the analyzer instead of failing every unit", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db, "s1", words("epsilon", 40));
 			let calls = 0;
@@ -160,7 +160,7 @@ describe("intra-analyzer parallelism", () => {
 			// not one, but nowhere near the 40 a per-unit failure would produce.
 			assert.ok(calls <= 8, `expected the run to stop early, got ${calls} calls`);
 		} finally {
-			close();
+await close();
 		}
 	});
 });

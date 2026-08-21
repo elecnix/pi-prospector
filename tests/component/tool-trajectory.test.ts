@@ -148,11 +148,11 @@ function readTrajectoryNode(db: import("better-sqlite3").Database): ToolTrajecto
 describe("tool-trajectory component test", () => {
 	it("polite error-free thrash session yields >=1 trajectory signal and >=1 proposal where the baseline produced none", async () => {
 		// ── Baseline: same session WITHOUT the trajectory analyzer registered. ──
-		const baseline = tempDb();
+		const baseline = await tempDb();
 		let baselineProposalCount: number;
 		try {
-			insertSession(baseline.db, "thrash-baseline");
-			insertMessages(baseline.db, "thrash-baseline", thrashSessionMessages());
+			await insertSession(baseline.db, "thrash-baseline");
+			await insertMessages(baseline.db, "thrash-baseline", thrashSessionMessages());
 
 			const baselineFw = newFramework(baseline.db);
 			baselineFw.register(turnPairCoreAnalyzer);
@@ -172,10 +172,10 @@ describe("tool-trajectory component test", () => {
 		assert.equal(baselineProposalCount, 0, "baseline (no trajectory analyzer) should produce zero proposals");
 
 		// ── Trajectory-enabled run of the same session. ──
-		const full = tempDb();
+		const full = await tempDb();
 		try {
-			insertSession(full.db, "thrash-traj");
-			insertMessages(full.db, "thrash-traj", thrashSessionMessages());
+			await insertSession(full.db, "thrash-traj");
+			await insertMessages(full.db, "thrash-traj", thrashSessionMessages());
 
 			const trajFw = newFramework(full.db);
 			trajFw.register(turnPairCoreAnalyzer);
@@ -212,10 +212,10 @@ describe("tool-trajectory component test", () => {
 	});
 
 	it("trajectory analyzer emits a well-formed metric node anchored to the session", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "traj-struct");
-			insertMessages(db, "traj-struct", [
+			await insertSession(db, "traj-struct");
+			await insertMessages(db, "traj-struct", [
 				{ role: "user", text: "check the PR" },
 				{ role: "assistant", text: "checking", toolCalls: bashCall("gh pr view 7") },
 				{ role: "toolResult", toolResults: [{ toolName: "bash", isError: false, textLength: 100 }] },
@@ -253,7 +253,7 @@ describe("tool-trajectory component test", () => {
 			const anchorEdge = edges.find((e) => e["edge_kind"] === "anchors");
 			assert.ok(anchorEdge, "trajectory node should have an anchors edge");
 		} finally {
-			close();
+await close();
 		}
 	});
 });
@@ -276,10 +276,10 @@ describe("trajectory signal pricing", () => {
 	}
 
 	it("prices signals when recorded cost is carried through the loader", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "priced");
-			insertMessages(db, "priced", [
+			await insertSession(db, "priced");
+			await insertMessages(db, "priced", [
 				{ role: "user", text: "watch PR 5" },
 				...pollLoop(5, 0.02),
 				{ role: "user", text: "ok" },
@@ -304,21 +304,21 @@ describe("trajectory signal pricing", () => {
 			assert.ok(props.trajectory_cost_usd !== null, "aggregate cost should be present when fully priced");
 			assert.ok(Math.abs(props.trajectory_cost_usd! - 0.1) < 1e-9, `aggregate should be $0.10, got ${props.trajectory_cost_usd}`);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("reports partial pricing as a lower bound, never a silent total", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "partial");
+			await insertSession(db, "partial");
 			// One polling loop whose turns ARE priced, plus a checkout oscillation
 			// whose turns have NO recorded cost (e.g. a subscription route).
 			const checkout = (text: string, branch: string): TestMessage[] => [
 				{ role: "assistant", text, toolCalls: bashCall(`git checkout ${branch}`) },
 				{ role: "toolResult", toolResults: [{ toolName: "bash", isError: false, textLength: 40 }] },
 			];
-			insertMessages(db, "partial", [
+			await insertMessages(db, "partial", [
 				{ role: "user", text: "look at branches" },
 				...checkout("a", "main"),
 				...checkout("b", "feature"),
@@ -353,15 +353,15 @@ describe("trajectory signal pricing", () => {
 			assert.ok(props.trajectory_cost_usd !== null, "aggregate reflects the priced subset");
 			assert.ok(Math.abs(props.trajectory_cost_usd! - 0.1) < 1e-9, `aggregate must be the $0.10 of priced signals (a lower bound), got ${props.trajectory_cost_usd}`);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a fully unpriced session prices nothing and says so", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "unpriced");
-			insertMessages(db, "unpriced", [
+			await insertSession(db, "unpriced");
+			await insertMessages(db, "unpriced", [
 				{ role: "user", text: "watch PR 5" },
 				...pollLoop(5),
 				{ role: "user", text: "ok" },
@@ -381,7 +381,7 @@ describe("trajectory signal pricing", () => {
 			assert.equal(props.unpriced_signal_count, 1, "the signal is reported as unpriced");
 			assert.equal(props.trajectory_cost_usd, null, "aggregate stays null (unknown), never 0");
 		} finally {
-			close();
+await close();
 		}
 	});
 });
@@ -394,14 +394,14 @@ describe("trajectory signal pricing", () => {
  */
 describe("tool-trajectory dogfood regressions (through the framework)", () => {
 	it("detects a gh-pr-view polling loop (session 019e6294 pattern)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "poll-loop");
+			await insertSession(db, "poll-loop");
 			const poll = (text: string): TestMessage[] => [
 				{ role: "assistant", text, toolCalls: bashCall("gh pr view 29 --json state") },
 				{ role: "toolResult", toolResults: [{ toolName: "bash", isError: false, textLength: 120 }] },
 			];
-			insertMessages(db, "poll-loop", [
+			await insertMessages(db, "poll-loop", [
 				{ role: "user", text: "wait for PR 29 to become mergeable" },
 				...poll("checking"),
 				...poll("still pending"),
@@ -423,19 +423,19 @@ describe("tool-trajectory dogfood regressions (through the framework)", () => {
 			assert.equal(polling[0]!.count, 5, "polling loop should span all 5 read-only calls");
 			assert.equal(polling[0]!.tool, "bash");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("detects a push → force-restore → repush oscillation (session cd4f39ed pattern)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "oscillation");
+			await insertSession(db, "oscillation");
 			const push = (text: string, command: string): TestMessage[] => [
 				{ role: "assistant", text, toolCalls: bashCall(command) },
 				{ role: "toolResult", toolResults: [{ toolName: "bash", isError: false, textLength: 60 }] },
 			];
-			insertMessages(db, "oscillation", [
+			await insertMessages(db, "oscillation", [
 				{ role: "user", text: "clean up the branch" },
 				...push("pushing the new work", "git push origin feature"),
 				...push("actually restoring the old commit", "git push --force origin feature"),
@@ -457,7 +457,7 @@ describe("tool-trajectory dogfood regressions (through the framework)", () => {
 			);
 			assert.equal(oscillations[0]!.tool, "bash");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

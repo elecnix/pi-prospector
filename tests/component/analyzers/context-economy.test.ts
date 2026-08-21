@@ -22,16 +22,16 @@ function setUsage(db: import("better-sqlite3").Database, id: string, output: num
 
 describe("context-economy analyzer", () => {
 	it("computes carry cost, raises flags, tracks skills, and emits proposals", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s1";
-			insertSession(t.db, sid);
+			await insertSession(t.db, sid);
 			// rowid order matters; carry(result) = tokens * billed_assistant_turns_after.
 			// charsPerToken 3.5 → 35000 chars = 10000 tokens, 35 chars = 10 tokens, 70 = 20.
 			//
 			// a1 invokes Skill "pr" — this fires *before* the big read, so
 			// skill "pr" sees r1+r2+r3 tokens loaded after its invocation.
-			insertMessages(t.db, sid, [
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "do a thing" },
 				{
 					id: "a1", role: "assistant", text: "invoking skill",
@@ -121,13 +121,13 @@ describe("context-economy analyzer", () => {
 	});
 
 	it("emits skill-level proposal when tokens-loaded-after exceeds 50k", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s2";
-			insertSession(t.db, sid);
+			await insertSession(t.db, sid);
 			// Skill "pr" invoked first, then two enormous reads follow.
 			// charsPerToken 3.5 → 200000 chars = ~57142 tokens.
-			insertMessages(t.db, sid, [
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "pr skill" },
 				{
 					id: "a1", role: "assistant", text: "invoking skill",
@@ -164,10 +164,10 @@ describe("context-economy analyzer", () => {
 	});
 
 	it("caps carry at the next compaction boundary (compaction flushes context)", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s3";
-			insertSession(t.db, sid);
+			await insertSession(t.db, sid);
 			// A big read is loaded, then a compaction event flushes context, then more turns.
 			// charsPerToken 3.5 → 35000 chars = 10000 tokens, 35 chars = 10 tokens, 70 = 20.
 			//
@@ -176,7 +176,7 @@ describe("context-economy analyzer", () => {
 			// WITHOUT compaction awareness the big read (r1) would be credited with 2
 			// billed turns after it (a2, a3) = 20000 token-turns. WITH awareness its
 			// carry stops at the compaction, so only a2 counts = 10000 token-turns.
-			insertMessages(t.db, sid, [
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "do a thing" },
 				{ id: "a1", role: "assistant", text: "reading", toolCalls: [{ name: "read", arguments: { path: "/big.ts" } }] },
 				{ id: "r1", role: "toolResult", toolResults: [{ toolName: "read", isError: false, textLength: 35000 }] },

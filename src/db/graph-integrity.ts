@@ -19,7 +19,7 @@
  * All SQL that reads graph shape lives here (per AGENTS.md, SQL stays in db/).
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "./async-db.js";
 import { REF_KINDS } from "../analyze/edge-kinds.js";
 
 /**
@@ -49,8 +49,8 @@ export interface GraphIntegrityResult {
 	all: DanglingEdge[];
 }
 
-function idSet(db: Database.Database, table: string, column: string): Set<string> {
-	const rows = db.prepare(`SELECT ${column} AS id FROM ${table}`).all() as Array<{ id: string | null }>;
+async function idSet(db: AsyncDatabase, table: string, column: string): Promise<Set<string>> {
+	const rows = (await db.prepare(`SELECT ${column} AS id FROM ${table}`).all()) as Array<{ id: string | null }>;
 	const out = new Set<string>();
 	for (const r of rows) if (r.id != null) out.add(r.id);
 	return out;
@@ -69,8 +69,8 @@ function idSet(db: Database.Database, table: string, column: string): Set<string
  *  | `config_version`  | `analyzer_configs.id`               |
  *  | `proposal`        | `proposals.id`                      |
  */
-export function checkGraphIntegrity(db: Database.Database): GraphIntegrityResult {
-	const nodeRows = db.prepare("SELECT id, analyzer_id, output_key FROM analysis_nodes").all() as Array<{
+export async function checkGraphIntegrity(db: AsyncDatabase): Promise<GraphIntegrityResult> {
+	const nodeRows = (await db.prepare("SELECT id, analyzer_id, output_key FROM analysis_nodes").all()) as Array<{
 		id: string;
 		analyzer_id: string;
 		output_key: string;
@@ -84,13 +84,13 @@ export function checkGraphIntegrity(db: Database.Database): GraphIntegrityResult
 		analyzerByNode.set(n.id, n.analyzer_id);
 	}
 
-	const sessionIds = idSet(db, "sessions", "id");
-	const messageIds = idSet(db, "messages", "id");
-	const configIds = idSet(db, "analyzer_configs", "id");
-	const promptHashes = idSet(db, "prompt_registry", "hash");
-	const proposalIds = idSet(db, "proposals", "id");
+	const sessionIds = await idSet(db, "sessions", "id");
+	const messageIds = await idSet(db, "messages", "id");
+	const configIds = await idSet(db, "analyzer_configs", "id");
+	const promptHashes = await idSet(db, "prompt_registry", "hash");
+	const proposalIds = await idSet(db, "proposals", "id");
 
-	const edges = db.prepare("SELECT id, from_node_id, to_ref_kind, to_ref_id, edge_kind FROM analysis_edges").all() as Array<{
+	const edges = (await db.prepare("SELECT id, from_node_id, to_ref_kind, to_ref_id, edge_kind FROM analysis_edges").all()) as Array<{
 		id: string;
 		from_node_id: string;
 		to_ref_kind: string;

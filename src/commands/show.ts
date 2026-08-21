@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getProposal, listProposals, getSessionLabels, getLatestDecision } from "../db/queries.js";
 import { getNode, getNodeByOutputKey, getEdgesFrom, getAnchoredMessageIds, getSessionNodes, getSessionMessageRows } from "../db/analysis-queries.js";
@@ -16,10 +16,10 @@ function out(ctx: ExtensionCommandContext, text: string, level: "info" | "warnin
 }
 
 /** Resolve a proposal by exact id or unambiguous id-prefix. */
-export function resolveProposal(db: Database.Database, ref: string): { proposal?: Proposal; matches: Proposal[] } {
-	const exact = getProposal(db, ref);
+export async function resolveProposal(db: AsyncDatabase, ref: string): Promise<{ proposal?: Proposal; matches: Proposal[] }> {
+	const exact = await getProposal(db, ref);
 	if (exact) return { proposal: exact, matches: [exact] };
-	const matches = listProposals(db).filter((p) => p.id.startsWith(ref));
+	const matches = (await listProposals(db)).filter((p) => p.id.startsWith(ref));
 	return { proposal: matches.length === 1 ? matches[0] : undefined, matches };
 }
 
@@ -167,20 +167,20 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 		out(ctx, "Usage: prospect show <proposal-id>", "warning");
 		return;
 	}
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const { proposal, matches } = resolveProposal(db, ref);
+		const { proposal, matches } = await resolveProposal(db, ref);
 		if (!proposal) {
 			if (matches.length === 0) out(ctx, `No proposal matches "${ref}".`, "warning");
 			else out(ctx, formatAmbiguousMatches(ref, matches), "warning");
 			return;
 		}
 
-		const labels = new Map(getSessionLabels(db).map((s) => [s.id, s]));
+		const labels = new Map((await getSessionLabels(db)).map((s) => [s.id, s]));
 		const label = sessionLabel(labels.get(proposal.session_id), proposal.session_id);
 		const conf = proposal.confidence == null ? "n/a" : `${Math.round(proposal.confidence * 100)}%`;
-		const decision = getLatestDecision(db, proposal.input_key);
+		const decision = await getLatestDecision(db, proposal.input_key);
 
 		const head = [
 			`Proposal ${proposal.id.slice(0, 8)}  [${conf}] ${proposal.severity}  (${proposal.status})`,
@@ -196,22 +196,22 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 		out(ctx, head.join("\n"));
 
 		const sourceId = proposal.source_node_id;
-		if (!sourceId || !getNode(db, sourceId)) {
+		if (!sourceId || !(await getNode(db, sourceId))) {
 			out(ctx, "\n(No source node recorded — cannot reconstruct anchored turns.)", "warning");
 			return;
 		}
 
 		// Walk provenance: summary --consumes--> turn nodes --anchors--> messages.
-		const consumed = getEdgesFrom(db, sourceId).filter(
+		const consumed = (await getEdgesFrom(db, sourceId)).filter(
 			(e) => e.edge_kind === EDGE_KINDS.CONSUMES && e.to_ref_kind === REF_KINDS.ANALYSIS_NODE,
 		);
 		const anchorIds = new Set<string>();
 		// `consumes` edges reference the turn node's content-addressed output_key; resolve
 		// it back to the node to walk its `anchors` edges to messages.
 		for (const edge of consumed) {
-			const turnNode = getNodeByOutputKey(db, edge.to_ref_id);
+			const turnNode = await getNodeByOutputKey(db, edge.to_ref_id);
 			if (!turnNode) continue;
-			for (const mid of getAnchoredMessageIds(db, turnNode.id)) anchorIds.add(mid);
+			for (const mid of await getAnchoredMessageIds(db, turnNode.id)) anchorIds.add(mid);
 		}
 
 		if (anchorIds.size === 0) {
@@ -222,7 +222,7 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 		// Per-turn deterministic + LLM signals, keyed by anchoring user message.
 		const coreByUser = new Map<string, Record<string, unknown>>();
 		const llmByUser = new Map<string, Record<string, unknown>>();
-		for (const n of getSessionNodes(db, proposal.session_id)) {
+		for (const n of await getSessionNodes(db, proposal.session_id)) {
 			if (n.analyzer_id === "turn-pair-core") {
 				const c = safeParse(n.content_json);
 				if (typeof c["user_message_id"] === "string") coreByUser.set(c["user_message_id"] as string, c);
@@ -239,7 +239,7 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 		);
 		const renderIds = signalIds.size > 0 ? signalIds : anchorIds;
 
-		const messages = getSessionMessageRows(db, proposal.session_id);
+		const messages = await getSessionMessageRows(db, proposal.session_id);
 		const byId = new Map(messages.map((m) => [m.id, m]));
 		const pairs = buildTurnPairs(messages);
 
@@ -251,7 +251,7 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 		const body = renderAnchoredTurns(pairs, byId, renderIds, coreByUser, llmByUser, 15);
 		out(ctx, body.join("\n"));
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

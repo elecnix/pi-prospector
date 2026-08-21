@@ -47,10 +47,10 @@ function structuredNeutral() {
 
 describe("lexicon model selection", () => {
 	it("refuses to cache a verdict when the model returned no structured output", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
 			// A model with no usable tool-calling: prose only, no structured arguments.
 			const { framework } = frameworkWith(db, () => ({ text: "Sure! That word seems negative." }) as never);
@@ -64,15 +64,15 @@ describe("lexicon model selection", () => {
 				"no verdict node is written — a wrong verdict would be cached corpus-wide, forever",
 			);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("self-heals once the model answers properly", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
 			const broken = frameworkWith(db, () => ({ text: "prose" }) as never);
 			await broken.framework.run("s1");
@@ -86,15 +86,15 @@ describe("lexicon model selection", () => {
 				"the verdict lands on the retry",
 			);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("lets one analyzer use a different model from the rest", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
 			const { framework, llm } = frameworkWith(db, structuredNeutral, {
 				"frustration-lexicon": { tier: "openrouter/google/gemma-4-31b-it:free" },
@@ -108,15 +108,15 @@ describe("lexicon model selection", () => {
 				"an explicit provider/model spec is honoured in place of a tier name",
 			);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("folds the chosen model into identity, so switching is a config change", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
 			const cheap = frameworkWith(db, structuredNeutral, {
 				"frustration-lexicon": { tier: "openrouter/google/gemma-4-31b-it:free" },
@@ -134,7 +134,7 @@ describe("lexicon model selection", () => {
 			const revised = await other.framework.run("s1", { revise: ["config"] });
 			assert.ok(revised.nodesRevised > 0, "asking for config revision re-judges under the new model");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

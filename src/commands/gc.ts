@@ -12,7 +12,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { parseFlags, parseTimestamp } from "../timepoint.js";
 import { computeDeletionSet, retractNodes, newGcRunId, type GcCatalog, type GcTarget } from "../db/gc.js";
@@ -55,15 +55,15 @@ export async function prospectGc(rawArgs: string, ctx: ExtensionCommandContext):
 		return;
 	}
 
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		let target: GcTarget;
 		if (runId !== undefined) target = { kind: "run", runId };
 		else if (analyzerId !== undefined) target = { kind: "analyzer", analyzerId };
 		else target = { kind: "since", since: parseTimestamp(since!) };
 
-		const catalog = computeDeletionSet(db, target);
+		const catalog = await computeDeletionSet(db, target);
 
 		const describe = `${target.kind === "run" ? `run ${target.runId.slice(0, 8)}` : target.kind === "analyzer" ? `analyzer ${target.analyzerId}` : `everything after ${target.since}`}`;
 		if (catalog.nodes.length === 0 && catalog.proposalIds.length === 0) {
@@ -83,7 +83,7 @@ export async function prospectGc(rawArgs: string, ctx: ExtensionCommandContext):
 			return;
 		}
 
-		const result = retractNodes(db, catalog, newGcRunId(), new Date().toISOString());
+		const result = await retractNodes(db, catalog, newGcRunId(), new Date().toISOString());
 		output(
 			ctx,
 			[
@@ -94,7 +94,7 @@ export async function prospectGc(rawArgs: string, ctx: ExtensionCommandContext):
 			].join("\n"),
 		);
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

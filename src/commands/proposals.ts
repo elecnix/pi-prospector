@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { listProposals, listProposalsAsOf, acceptProposal, rejectProposal, acceptProposalsWithRemediation, getSessionLabels, getLatestDecision } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
@@ -212,9 +212,9 @@ export function formatDecisionLine(d: ProposalDecision): string {
 }
 
 /** A one-line with/without replay summary, read from the validation node. */
-function validationDeltaLine(db: Database.Database, p: Proposal): string | null {
+async function validationDeltaLine(db: AsyncDatabase, p: Proposal): Promise<string | null> {
 	if (!p.validation_node_id) return null;
-	const node = getNode(db, p.validation_node_id);
+	const node = await getNode(db, p.validation_node_id);
 	if (!node) return null;
 	try {
 		const c = JSON.parse(node.content_json) as {
@@ -232,9 +232,9 @@ function validationDeltaLine(db: Database.Database, p: Proposal): string | null 
 	}
 }
 
-function fullEntry(db: Database.Database, p: Proposal, decision?: ProposalDecision): string {
+async function fullEntry(db: AsyncDatabase, p: Proposal, decision?: ProposalDecision): Promise<string> {
 	const lines = [conciseEntry(p, decision)];
-	const delta = validationDeltaLine(db, p);
+	const delta = await validationDeltaLine(db, p);
 	if (delta) lines.push(`    ${delta}`);
 	if (p.detail && p.detail.trim()) lines.push(`    detail:   ${p.detail.trim()}`);
 	if (p.evidence && p.evidence.trim()) lines.push(`    evidence: ${p.evidence.trim()}`);
@@ -262,8 +262,8 @@ export function sessionGroupHeader(s: { project: string; cwd: string; source?: s
 }
 
 export async function prospectProposals(args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		const { status, severity, full } = parseProposalsArgs(args);
 		const { flags } = parseFlags(args ?? "");
@@ -272,11 +272,11 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 		const source = parseHarnessSource(flags["source"]);
 		let asOfLabel: string | undefined;
 		let proposals: Proposal[] = [];
-		const tp = resolveTimepoint(db, flags);
+		const tp = await resolveTimepoint(db, flags);
 		const { sessionId } = parseProposalsArgs(args);
 		if (tp) {
 			asOfLabel = tp.source;
-			const all = listProposalsAsOf(db, tp.at, source);
+			const all = await listProposalsAsOf(db, tp.at, source);
 			proposals = all.filter(
 				(p) =>
 					(!status || p.status === status) &&
@@ -284,7 +284,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 					(!sessionId || p.session_id === sessionId),
 			);
 		} else {
-			proposals = listProposals(db, status, severity, undefined, undefined, source, sessionId ?? undefined);
+			proposals = await listProposals(db, status, severity, undefined, undefined, source, sessionId ?? undefined);
 		}
 		proposals = proposals.sort(rankProposals);
 		const filterDesc = [status, severity, sessionId ? `session ${sessionId}` : undefined, source ? `source ${source}` : undefined]
@@ -296,7 +296,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 			return;
 		}
 
-		const labels = new Map(getSessionLabels(db).map((s) => [s.id, s]));
+		const labels = new Map((await getSessionLabels(db)).map((s) => [s.id, s]));
 
 		// Group by session. Because `proposals` is already globally ranked by
 		// confidence, first-seen order puts the session with the strongest single
@@ -309,18 +309,20 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 		}
 
 		const format = full
-			? (p: Proposal) => fullEntry(db, p, getLatestDecision(db, p.input_key))
-			: (p: Proposal) => conciseEntry(p, getLatestDecision(db, p.input_key));
+			? async (p: Proposal) => fullEntry(db, p, await getLatestDecision(db, p.input_key))
+			: async (p: Proposal) => conciseEntry(p, await getLatestDecision(db, p.input_key));
 		const blocks: string[] = [];
 		for (const [sessionId, group] of groups) {
 			const header = sessionGroupHeader(labels.get(sessionId), sessionId, group.length);
-			blocks.push(`${header}\n${group.map(format).join("\n\n")}`);
+			const entries: string[] = [];
+			for (const p of group) entries.push(await format(p));
+			blocks.push(`${header}\n${entries.join("\n\n")}`);
 		}
 
 		const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validation, then cost, then confidence:${asOfLabel ? `\n  (VIEW ${asOfLabel} — status reconstructed from decisions, not current state)` : ""}`;
 		output(ctx, `${headline}\n\n${blocks.join("\n\n")}`);
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 
@@ -330,13 +332,13 @@ export async function prospectAccept(args: string, ctx: ExtensionCommandContext)
 		output(ctx, "Usage: /prospect-accept <id> [--planned|--done|--done-differently] [rationale...]", "warning");
 		return;
 	}
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const ok = acceptProposal(db, id, input);
+		const ok = await acceptProposal(db, id, input);
 		output(ctx, ok ? `Proposal ${id} applied.` : `Proposal ${id} not found or not open.`, ok ? "info" : "warning");
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 
@@ -346,13 +348,13 @@ export async function prospectReject(args: string, ctx: ExtensionCommandContext)
 		output(ctx, "Usage: /prospect-reject <id> [rationale...]", "warning");
 		return;
 	}
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const ok = rejectProposal(db, id, input);
+		const ok = await rejectProposal(db, id, input);
 		output(ctx, ok ? `Proposal ${id} rejected.` : `Proposal ${id} not found or not open.`, ok ? "info" : "warning");
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 
@@ -366,10 +368,10 @@ export async function prospectRemediate(args: string, ctx: ExtensionCommandConte
 		);
 		return;
 	}
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const res = acceptProposalsWithRemediation(db, ids, { description }, { disposition });
+		const res = await acceptProposalsWithRemediation(db, ids, { description }, { disposition });
 		if (!res.remediationId) {
 			output(ctx, `No open proposal among: ${ids.join(", ")}. Nothing applied.`, "warning");
 			return;
@@ -378,7 +380,7 @@ export async function prospectRemediate(args: string, ctx: ExtensionCommandConte
 		if (res.skipped.length > 0) lines.push(`Skipped (not found or not open): ${res.skipped.join(", ")}`);
 		output(ctx, lines.join("\n"));
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

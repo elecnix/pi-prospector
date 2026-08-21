@@ -20,12 +20,12 @@ function setUsage(db: import("better-sqlite3").Database, id: string, u: Record<s
 
 describe("context-economy compaction policy", () => {
 	it("records a fired-too-late compaction and emits the proposal", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s-cc";
-			insertSession(t.db, sid);
+			await insertSession(t.db, sid);
 			// user → big read → held across 3 billed turns → late compaction → tail.
-			insertMessages(t.db, sid, [
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "big task" },
 				{ id: "a1", role: "assistant", text: "reading", toolCalls: [{ name: "read", arguments: { path: "/big.ts" } }] },
 				{ id: "r1", role: "toolResult", toolResults: [{ toolName: "read", isError: false, textLength: 35000 }] }, // 10000 tok

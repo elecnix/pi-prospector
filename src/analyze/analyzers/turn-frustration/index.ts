@@ -141,13 +141,13 @@ export const turnFrustrationAnalyzer: Analyzer = {
 	// not set this — judging a word is unaffected by muting it.
 	consultsAssertions: ["term"],
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const config = (ctx.config as unknown as TurnFrustrationConfig) ?? DEFAULT_TURN_FRUSTRATION_CONFIG;
 		// The lexicon is corpus-wide: a term learned in any session applies here.
-		const lexicon = usableLexicon(ctx.getGlobalDependencyNodes(FRUSTRATION_LEXICON_DEF.id), config);
+		const lexicon = usableLexicon(await ctx.getGlobalDependencyNodes(FRUSTRATION_LEXICON_DEF.id), config);
 		// The operator-muted terms (config, not derived). A muted term stops matching
 		// new turns; its existing hit nodes stay and become stale/config lineage.
-		const muted = new Set(getMutedTerms(ctx.db));
+		const muted = new Set(await getMutedTerms(ctx.db));
 
 		const units: AnalysisUnit[] = [];
 		for (const pair of buildTurnPairs(ctx.messages)) {

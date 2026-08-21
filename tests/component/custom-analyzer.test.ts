@@ -44,8 +44,8 @@ function customSource(label: string): string {
 }
 
 function seed(db: import("better-sqlite3").Database, id: string): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		{ id: `${id}-m0`, role: "user", text: "hello" },
 		{ id: `${id}-m1`, role: "assistant", text: "hi" },
 	]);
@@ -69,7 +69,7 @@ async function run(db: import("better-sqlite3").Database, paths: string[], revis
 
 describe("custom analyzer end-to-end", () => {
 	it("a disk-loaded custom analyzer produces a node", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			seed(t.db, "s1");
 			fs.writeFileSync(path.join(tmp, "count.analyzer.mjs"), customSource("v1"));
@@ -86,7 +86,7 @@ describe("custom analyzer end-to-end", () => {
 	});
 
 	it("editing the analyzer source revises its node under --revise config (identity-on-edit)", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			seed(t.db, "s1");
 			const file = path.join(tmp, "count.analyzer.mjs");

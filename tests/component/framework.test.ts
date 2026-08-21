@@ -13,8 +13,8 @@ function frameworkFor(db: import("better-sqlite3").Database): AnalyzerFramework 
 }
 
 function seedSession(db: import("better-sqlite3").Database, id = "s1"): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		{ role: "user", text: "fix the login bug" },
 		{ role: "assistant", text: "looking", toolCalls: [{ name: "read" }] },
 		{ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 50 }] },
@@ -25,7 +25,7 @@ function seedSession(db: import("better-sqlite3").Database, id = "s1"): void {
 
 describe("framework: incremental scan + fill run", () => {
 	it("classifies all units as missing, then current after a run", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			const fw = frameworkFor(db);
@@ -42,12 +42,12 @@ describe("framework: incremental scan + fill run", () => {
 			const after = await fw.scan("s1");
 			assert.ok(after.every((c) => c.status === "current"));
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("is idempotent: re-running a fill produces nothing new", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			const fw = frameworkFor(db);
@@ -57,12 +57,12 @@ describe("framework: incremental scan + fill run", () => {
 			assert.equal(second.nodesProduced, 0);
 			assert.ok(second.nodesSkipped > 0);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("deterministic analyzer never calls the LLM", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			const fw = frameworkFor(db); // throwing LLM
@@ -71,14 +71,14 @@ describe("framework: incremental scan + fill run", () => {
 			assert.equal(summary.errors.length, 0);
 			assert.ok(summary.nodesProduced > 0);
 		} finally {
-			close();
+await close();
 		}
 	});
 });
 
 describe("framework: version lineage (revise)", () => {
 	it("re-analyses stale units into new versions linked by revises edges", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 
@@ -118,14 +118,14 @@ describe("framework: version lineage (revise)", () => {
 			assert.equal(revised!.id, oldest.id);
 			assert.equal(getRevisions(db, oldest.id)[0]!.id, newest.id);
 		} finally {
-			close();
+await close();
 		}
 	});
 });
 
 describe("framework: dependency visibility & ordering", () => {
 	it("throws when an analyzer reads an undeclared dependency", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			const sneaky: Analyzer = {
@@ -162,12 +162,12 @@ describe("framework: dependency visibility & ordering", () => {
 			assert.ok(after.every((c) => c.status === "missing"));
 			assert.notEqual(errNode!.input_key, after[0]!.inputKey);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("self-heals: a failed unit stays missing and is recomputed on the next run, keeping the error node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			let attempts = 0;
@@ -209,12 +209,12 @@ describe("framework: dependency visibility & ordering", () => {
 			const scan2 = (await fw.scan("s1")).filter((c) => c.analyzerId === "flaky");
 			assert.ok(scan2.every((c) => c.status === "current"));
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("dedups two same-recipe units in one run (no UNIQUE collision, no wasted analyze)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			let analyzeCalls = 0;
@@ -253,12 +253,12 @@ describe("framework: dependency visibility & ordering", () => {
 			assert.equal(second.errors.length, 0);
 			assert.equal(second.nodesProduced, 0);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("orders analyzers by dependency and detects cycles", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			const fw = frameworkFor(db);
 			fw.register(turnPairCoreAnalyzer);
@@ -278,7 +278,7 @@ describe("framework: dependency visibility & ordering", () => {
 			fw.register(cyclicB);
 			assert.throws(() => fw.topologicalSort(["A"]), /cycle/i);
 		} finally {
-			close();
+await close();
 		}
 	});
 });

@@ -91,17 +91,17 @@ function respond(req: LLMRequest) {
 
 describe("multilingual friction recall", () => {
 	it("the deterministic layer alone still sees no friction (the gap this closes)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "fr1");
-			insertMessages(db, "fr1", FRENCH_SESSION);
+			await insertSession(db, "fr1");
+			await insertMessages(db, "fr1", FRENCH_SESSION);
 
 			const llm = createMockLLM({ responder: respond });
 			const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
 			framework.register(turnPairCoreAnalyzer);
 			await framework.run("fr1", { analyzerIds: [TURN_PAIR_CORE_DEF.id] });
 
-			const core = getNodesByAnalyzer(db, TURN_PAIR_CORE_DEF.id, "fr1").map(
+			const core = ((await getNodesByAnalyzer(db, TURN_PAIR_CORE_DEF.id, "fr1")).map(
 				(n) => JSON.parse(n.content_json) as TurnPairCoreProperties,
 			);
 			assert.equal(core.length, 2);
@@ -111,14 +111,14 @@ describe("multilingual friction recall", () => {
 				"English correction patterns cannot see a French correction",
 			);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("the learned lexicon carries the turn into enrichment and the digest", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "fr1");
+			await insertSession(db, "fr1");
 			const ids = insertMessages(db, "fr1", FRENCH_SESSION);
 
 			const llm = createMockLLM({ responder: respond });
@@ -127,7 +127,7 @@ describe("multilingual friction recall", () => {
 			await framework.run("fr1");
 
 			// The turn the deterministic layer scored at zero is now classified.
-			const enriched = getNodesByAnalyzer(db, TURN_PAIR_LLM_DEF.id, "fr1").map(
+			const enriched = ((await getNodesByAnalyzer(db, TURN_PAIR_LLM_DEF.id, "fr1")).map(
 				(n) => JSON.parse(n.content_json) as { user_message_id: string; sentiment: string },
 			);
 			assert.equal(enriched.length, 1, "exactly the frustrated turn was promoted");
@@ -147,7 +147,7 @@ describe("multilingual friction recall", () => {
 			const proposals = db.prepare("SELECT COUNT(*) AS n FROM proposals WHERE session_id = ?").get("fr1") as { n: number };
 			assert.ok(proposals.n > 0, "the friction reaches a reviewable proposal");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

@@ -82,11 +82,11 @@ interface ReplyNode {
 
 describe("user-reply-acts custom analyzer", () => {
 	it("classifies user replies into multi-act arrays, anchored and idempotent", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s1";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Fix the login bug in auth.ts" },
 				{ id: "a0", role: "assistant", text: "I'll look at auth.ts and propose a fix." },
 				{ id: "u1", role: "user", text: "Looks good, ship it." },
@@ -173,11 +173,11 @@ describe("user-reply-acts custom analyzer", () => {
 	});
 
 	it("rejects unusable model output with an error node and self-heals on re-run", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s2";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Do something" },
 				{ id: "a0", role: "assistant", text: "I propose X." },
 				{ id: "u1", role: "user", text: "Looks good, ship it." },
@@ -209,16 +209,16 @@ describe("user-reply-acts custom analyzer", () => {
 		// Seed many replies (> default cap of 100 is impractical here; instead
 		// verify the ordering is turn order by checking pair_index is monotonic
 		// across produced nodes when the cap is set low).
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s3";
-			insertSession(t.db, sid);
+			await insertSession(t.db, sid);
 			const msgs: Array<{ id: string; role: string; text?: string }> = [];
 			for (let i = 0; i < 6; i++) {
 				msgs.push({ id: `u${i}`, role: "user", text: i === 0 ? "start" : `reply ${i}` });
 				msgs.push({ id: `a${i}`, role: "assistant", text: `assistant ${i}` });
 			}
-			insertMessages(t.db, sid, msgs);
+			await insertMessages(t.db, sid, msgs);
 
 			const mock = createMockLLM({ responder: () => ({ text: "ok", structured: { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], memories: [], continuation: true, other: false } }), tokensPerCall: 1, costPerCall: 0 });
 			// Override the cap to 3 via configOverrides.
@@ -260,11 +260,11 @@ function assertReply(
 
 describe("user-reply-acts agentic retry", () => {
 	it("retries with the abstention tool when the first attempt fails, and stores an abstention", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s-retry";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Do something" },
 				{ id: "a0", role: "assistant", text: "I propose X. Should I use A or B?" },
 				{ id: "u1", role: "user", text: "gzxbqwk" },  // nonsense the model can't classify
@@ -328,11 +328,11 @@ describe("user-reply-acts agentic retry", () => {
 	});
 
 	it("retries and succeeds on the second attempt when the first returns garbage", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s-retry2";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Do something" },
 				{ id: "a0", role: "assistant", text: "I propose X." },
 				{ id: "u1", role: "user", text: "Yes, go ahead." },
@@ -384,11 +384,11 @@ describe("user-reply-acts agentic retry", () => {
 	});
 
 	it("does not retry when the first attempt succeeds", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const sid = "s-noretry";
-			insertSession(t.db, sid);
-			insertMessages(t.db, sid, [
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
 				{ id: "u0", role: "user", text: "Do something" },
 				{ id: "a0", role: "assistant", text: "I propose X." },
 				{ id: "u1", role: "user", text: "Yes, go ahead." },

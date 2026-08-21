@@ -37,8 +37,8 @@ function respond(req: LLMRequest): string {
 
 /** Seed a session with EXPLICIT, stable message ids so leaf identities reproduce. */
 function seed(db: import("better-sqlite3").Database, id: string): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		{ id: `${id}-m0`, role: "user", text: "fix the login bug" },
 		{ id: `${id}-m1`, role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ id: `${id}-m2`, role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] },
@@ -65,8 +65,8 @@ function keysOf(db: import("better-sqlite3").Database): string[] {
 
 describe("content-addressed identities", () => {
 	it("reproduce identically across independent databases (global, wipe-surviving)", async () => {
-		const a = tempDb();
-		const b = tempDb();
+		const a = await tempDb();
+		const b = await tempDb();
 		try {
 			seed(a.db, "s1");
 			seed(b.db, "s1");
@@ -85,7 +85,7 @@ describe("content-addressed identities", () => {
 	});
 
 	it("a consumer's input_key folds in the upstream output_key (output matters)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db, "s1");
 			await analyze(db, "s1");
@@ -96,13 +96,13 @@ describe("content-addressed identities", () => {
 			assert.ok(overview, "overview node exists");
 			assert.ok(upstreamOutputKeys.every((k) => k.length === 16), "upstream nodes have content-addressed output_keys");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("edges that point at nodes reference output_key (content-addressed, portable)", async () => {
-		const a = tempDb();
-		const b = tempDb();
+		const a = await tempDb();
+		const b = await tempDb();
 		try {
 			seed(a.db, "s1");
 			seed(b.db, "s1");
@@ -114,7 +114,7 @@ describe("content-addressed identities", () => {
 					.prepare("SELECT edge_kind, to_ref_id FROM analysis_edges WHERE to_ref_kind = 'analysis_node' ORDER BY edge_kind, to_ref_id")
 					.all() as Array<{ edge_kind: string; to_ref_id: string }>;
 			const outputKeysOf = (db: import("better-sqlite3").Database): Set<string> =>
-				new Set((db.prepare("SELECT output_key FROM analysis_nodes").all() as Array<{ output_key: string }>).map((r) => r.output_key));
+				new Set((await db.prepare("SELECT output_key FROM analysis_nodes").all()) as Array<{ output_key: string }>.map((r) => r.output_key));
 
 			const ea = nodeEdges(a.db);
 			assert.ok(ea.length > 0, "produced node-targeting edges");
@@ -135,7 +135,7 @@ describe("content-addressed identities", () => {
 	});
 
 	it("verifyNodes confirms a clean graph and detects tampering", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db, "s1");
 			await analyze(db, "s1");
@@ -149,7 +149,7 @@ describe("content-addressed identities", () => {
 			const dirty = verifyNodes(db);
 			assert.equal(dirty.mismatches.length, 1, "tampering is detected");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

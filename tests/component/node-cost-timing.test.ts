@@ -16,13 +16,13 @@ import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import type { Analyzer, AnalysisResult, AnalyzerRunContext } from "../../src/analyze/types.js";
 
 function seed(db: import("better-sqlite3").Database, sessionId = "s1"): void {
-	insertSession(db, sessionId);
-	insertMessages(db, sessionId, [{ role: "user", text: "hello" }]);
+	await insertSession(db, sessionId);
+	await insertMessages(db, sessionId, [{ role: "user", text: "hello" }]);
 }
 
 describe("node compute cost & wall-clock timing", () => {
 	it("records the wall-clock duration on deterministic nodes (no LLM costs)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db);
 			// A slow deterministic analyzer. It never calls the LLM, so its token
@@ -51,12 +51,12 @@ describe("node compute cost & wall-clock timing", () => {
 			assert.equal(nodes[0]!.cached_input_tokens, null);
 			assert.equal(nodes[0]!.output_tokens, null);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("records the token split (input / cached input / output) on LLM nodes", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db);
 			const mock = createMockLLM({
@@ -111,7 +111,7 @@ describe("node compute cost & wall-clock timing", () => {
 			assert.equal(typeof n.duration_ms, "number");
 			assert.ok(n.duration_ms! >= 0, "LLM node still records measured wall-clock");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

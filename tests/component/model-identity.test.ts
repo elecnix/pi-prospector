@@ -24,8 +24,8 @@ function respond(_req: LLMRequest): string {
 }
 
 function seedSession(db: import("better-sqlite3").Database, id = "s1"): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		{ role: "user", text: "fix the login bug" },
 		{ role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] },
@@ -56,7 +56,7 @@ function classificationNodes(db: import("better-sqlite3").Database) {
 
 describe("the resolved model is part of a node's config identity", () => {
 	it("remapping a tier to a new model marks the LLM node stale (config reason); core stays current", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 
@@ -78,12 +78,12 @@ describe("the resolved model is part of a node's config identity", () => {
 			);
 			assert.ok(core.every((c) => c.status === "current"), "deterministic core is unaffected by model change");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a plain fill leaves the stale (model-changed) node untouched; --revise config revises it", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", {});
@@ -111,12 +111,12 @@ describe("the resolved model is part of a node's config identity", () => {
 			assert.ok(revisedNode, "newest version revises an older one");
 			assert.equal(revisedNode!.id, before[0]!.id);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("re-running with the same tier mapping is idempotent (no model churn)", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			await frameworkFor(db, DEFAULT_MODEL_TIERS).run("s1", {});
@@ -124,14 +124,14 @@ describe("the resolved model is part of a node's config identity", () => {
 			assert.equal(revised.nodesRevised, 0, "unchanged model means nothing is stale");
 			assert.equal(classificationNodes(db).length, 1);
 		} finally {
-			close();
+await close();
 		}
 	});
 });
 
 describe("--model override is live (the pinned model is actually used)", () => {
 	it("passes the pinned concrete model to the LLM and records it on the node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSession(db);
 			const pinned = "openai/gpt-5-override";
@@ -152,7 +152,7 @@ describe("--model override is live (the pinned model is actually used)", () => {
 			const node = classificationNodes(db)[0] as unknown as { model_used: string | null };
 			assert.equal(node.model_used, pinned, "the node records the model actually used");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

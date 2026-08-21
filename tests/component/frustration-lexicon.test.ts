@@ -63,10 +63,10 @@ function classifyCallsFor(llm: ReturnType<typeof lexiconMock>, term: string): nu
 
 describe("lexicon-candidates", () => {
 	it("nominates the user's vocabulary, ranked and capped, ignoring assistant text", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
 				{ role: "user", text: "wrong wrong again" },
 				{ role: "assistant", text: "apologies, correcting the mistake now" },
 				{ role: "user", text: "still wrong" },
@@ -84,17 +84,17 @@ describe("lexicon-candidates", () => {
 			assert.equal(terms.includes("again"), true);
 			assert.equal(terms.includes("apologies"), false, "assistant vocabulary is never nominated");
 		} finally {
-			close();
+await close();
 		}
 	});
 });
 
 describe("frustration-lexicon", () => {
 	it("adjudicates each term once and stores the verdict as a node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain c'est encore faux" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain c'est encore faux" }]);
 
 			const llm = lexiconMock();
 			const framework = frameworkFor(db, llm);
@@ -113,15 +113,15 @@ describe("frustration-lexicon", () => {
 			assert.equal(byTerm.get("encore")?.polarity, "neutral");
 			assert.equal(classifyCallsFor(llm, "putain"), 1);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("re-running a session costs nothing — every term is already current", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain c'est encore faux" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain c'est encore faux" }]);
 
 			const llm = lexiconMock();
 			const framework = frameworkFor(db, llm);
@@ -132,17 +132,17 @@ describe("frustration-lexicon", () => {
 			await framework.run("s1");
 			assert.equal(llm.calls.length, afterFirst, "the second run makes no model calls at all");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("THE CACHE: a term adjudicated in one session is free in every other", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain c'est faux" }]);
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: "putain, toujours faux" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain c'est faux" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain, toujours faux" }]);
 
 			const llm = lexiconMock();
 			const framework = frameworkFor(db, llm);
@@ -162,15 +162,15 @@ describe("frustration-lexicon", () => {
 			assert.equal(s2Terms.includes("putain"), false, "s2 reuses s1's verdict rather than making its own");
 			assert.equal(s2Terms.includes("toujours"), true);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("anchors a term node to the session that triggered its classification", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
 			const llm = lexiconMock();
 			const framework = frameworkFor(db, llm);
@@ -185,17 +185,17 @@ describe("frustration-lexicon", () => {
 				"the term links back to the session that surfaced it",
 			);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("survives two sessions racing to adjudicate the same new term", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain" }]);
 
 			const llm = lexiconMock();
 			const framework = frameworkFor(db, llm);
@@ -216,7 +216,7 @@ describe("frustration-lexicon", () => {
 				.get(FRUSTRATION_LEXICON_DEF.id) as { n: number };
 			assert.equal(putain.n, 1, "exactly one verdict node exists for the term");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

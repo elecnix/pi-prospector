@@ -216,7 +216,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 		label: "default",
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const cfg = (ctx.config as unknown as RoutingConfig) ?? DEFAULT_ROUTING_CONFIG;
 
 		// Per-message model / cost maps from the loaded MessageRows.
@@ -230,7 +230,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 		// Per-message usage (input + cacheRead) — not on MessageRow, so one direct
 		// query (same pattern as context-economy).
 		const usageByMessageId = new Map<string, { input: number; cacheRead: number }>();
-		const usageRows = ctx.db.prepare("SELECT id, usage FROM messages WHERE session_id = ?").all(ctx.sessionId) as DbUsageRow[];
+		const usageRows = (await ctx.db.prepare("SELECT id, usage FROM messages WHERE session_id = ?").all(ctx.sessionId)) as DbUsageRow[];
 		for (const r of usageRows) {
 			if (!r.usage) continue;
 			try {

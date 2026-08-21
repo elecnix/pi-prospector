@@ -45,8 +45,8 @@ function respond(req: LLMRequest): string {
  * change the contrast digest without changing anything else).
  */
 function seedSmooth(db: import("better-sqlite3").Database, id: string, firstRequest = "add a hello endpoint"): void {
-	insertSession(db, id, `/tmp/${id}.jsonl`, REPO);
-	insertMessages(db, id, [
+	await insertSession(db, id, `/tmp/${id}.jsonl`, REPO);
+	await insertMessages(db, id, [
 		{ id: `${id}-m0`, role: "user", text: firstRequest },
 		{ id: `${id}-m1`, role: "assistant", text: "done, added the endpoint" },
 		{ id: `${id}-m2`, role: "user", text: "now add tests for it" },
@@ -56,8 +56,8 @@ function seedSmooth(db: import("better-sqlite3").Database, id: string, firstRequ
 
 /** A friction session in REPO: a genuine correction after a failed tool call. */
 function seedFriction(db: import("better-sqlite3").Database, id: string): void {
-	insertSession(db, id, `/tmp/${id}.jsonl`, REPO);
-	insertMessages(db, id, [
+	await insertSession(db, id, `/tmp/${id}.jsonl`, REPO);
+	await insertMessages(db, id, [
 		{ id: `${id}-m0`, role: "user", text: "fix the login bug" },
 		{ id: `${id}-m1`, role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ id: `${id}-m2`, role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] },
@@ -101,7 +101,7 @@ function keysOf(db: import("better-sqlite3").Database): string[] {
 
 describe("cross-session success/failure contrast (#10)", () => {
 	it("hands a friction session's reduce step the smooth sibling as contrast", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSmooth(db, "smooth1");
 			seedFriction(db, "friction1");
@@ -131,7 +131,7 @@ describe("cross-session success/failure contrast (#10)", () => {
 			const withSibling = overviewIdentity(db, "friction1");
 			assert.ok(withSibling, "friction session produced an overview node");
 
-			const control = tempDb();
+			const control = await tempDb();
 			try {
 				seedFriction(control.db, "friction1"); // same friction session, no smooth sibling
 				await analyze(control.db, "friction1");
@@ -151,12 +151,12 @@ describe("cross-session success/failure contrast (#10)", () => {
 				control.close();
 			}
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a smooth session with no smooth sibling of its own gets no contrast", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seedSmooth(db, "smooth1");
 			seedFriction(db, "friction1");
@@ -172,13 +172,13 @@ describe("cross-session success/failure contrast (#10)", () => {
 				.get() as { n: number };
 			assert.equal(edges.n, 0, "no contrasts_with edge");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("identity reproduces across independent DBs over the same fixture", async () => {
-		const a = tempDb();
-		const b = tempDb();
+		const a = await tempDb();
+		const b = await tempDb();
 		try {
 			for (const t of [a, b]) {
 				seedSmooth(t.db, "smooth1");
@@ -202,8 +202,8 @@ describe("cross-session success/failure contrast (#10)", () => {
 		// were fed to analyze() but NOT folded into `sources`, both overviews would
 		// share an input_key/output_key and this test would fail — this is the test
 		// that proves identity actually commits to sibling content.
-		const a = tempDb();
-		const b = tempDb();
+		const a = await tempDb();
+		const b = await tempDb();
 		try {
 			seedSmooth(a.db, "smooth1", "add a hello endpoint");
 			seedFriction(a.db, "friction1");

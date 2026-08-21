@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext, ToolResult } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { Type } from "typebox";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
@@ -86,19 +86,19 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			_onUpdate: unknown,
 			_ctx: ExtensionCommandContext,
 		): Promise<ToolResult> {
-			const db = new Database(getDbPath());
-			migrate(db);
+			const db = openAsyncDatabase(getDbPath());
+			await migrate(db);
 			try {
 				switch (params.action) {
 					case "sync": {
-						const result = runSync(db, getSessionsDir(), getClaudeSessionsDir(), {
+						const result = await runSync(db, getSessionsDir(), getClaudeSessionsDir(), {
 							project: params.project as string | undefined,
 							source: parseHarnessSource(params.source as string | undefined),
 						});
 						return text(JSON.stringify(result), result);
 					}
 					case "stats": {
-						const stats = getStats(db);
+						const stats = await getStats(db);
 						return text(JSON.stringify(stats, null, 2), stats);
 					}
 					case "list_proposals": {
@@ -108,7 +108,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						const severity = params.severity as string | undefined;
 						const source = parseHarnessSource(params.source as string | undefined);
 						const sessionId = params.session_id as string | undefined;
-						const proposals = listProposals(db, status, severity, limit, offset, source, sessionId).sort(rankProposals);
+						const proposals = (await listProposals(db, status, severity, limit, offset, source, sessionId)).sort(rankProposals);
 						const filterDesc = [status, severity, sessionId ? `session ${sessionId}` : undefined, source ? `source ${source}` : undefined]
 							.filter(Boolean)
 							.join(" ");
@@ -117,7 +117,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						}
 						// Group by session and reuse the slash-command conciseEntry formatter,
 						// so the tool and `/prospect-proposals` render identical entries (#21).
-						const labels = new Map(getSessionLabels(db).map((s) => [s.id, s]));
+						const labels = new Map((await getSessionLabels(db)).map((s) => [s.id, s]));
 						const groups = new Map<string, Proposal[]>();
 						for (const p of proposals) {
 							const bucket = groups.get(p.session_id);
@@ -127,7 +127,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						const blocks: string[] = [];
 						for (const [sessionId, group] of groups) {
 							const header = sessionGroupHeader(labels.get(sessionId), sessionId, group.length);
-							blocks.push(`${header}\n${group.map((p) => conciseEntry(p, getLatestDecision(db, p.input_key))).join("\n\n")}`);
+							const entries: string[] = [];
+							for (const p of group) entries.push(conciseEntry(p, await getLatestDecision(db, p.input_key)));
+							blocks.push(`${header}\n${entries.join("\n\n")}`);
 						}
 						const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validated score then confidence:`;
 						return text(`${headline}\n\n${blocks.join("\n\n")}`, proposals);
@@ -137,21 +139,21 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						// Bulk path: proposal_ids array
 						if (params.proposal_ids && Array.isArray(params.proposal_ids) && (params.proposal_ids as string[]).length > 0) {
 							const ids = params.proposal_ids as string[];
-							const res = acceptProposalsBulk(db, ids, decision);
+							const res = await acceptProposalsBulk(db, ids, decision);
 							const lines = [`Accepted ${res.accepted.length} proposal(s): ${res.accepted.join(", ")}`];
 							if (res.skipped.length > 0) lines.push(`Skipped (not found or not open): ${res.skipped.join(", ")}`);
 							return text(lines.join("\n"), res);
 						}
 						// Single path
 						if (!params.proposal_id) return text("proposal_id or proposal_ids required", {});
-						const ok = acceptProposal(db, params.proposal_id as string, decision);
+						const ok = await acceptProposal(db, params.proposal_id as string, decision);
 						return text(ok ? `Applied ${params.proposal_id}` : `Proposal "${params.proposal_id}" not found or not open. Use the full ID from the list_proposals output (e.g., prospect show <id>). Check that the proposal is still "open".`, { ok });
 					}
 					case "remediate": {
 						const ids = params.proposal_ids as string[] | undefined;
 						if (!ids || ids.length === 0) return text("proposal_ids required", {});
 						if (!params.description) return text("description required", {});
-						const res = acceptProposalsWithRemediation(
+						const res = await acceptProposalsWithRemediation(
 							db,
 							ids,
 							{ description: params.description as string, actual_change: (params.actual_change as string | undefined) ?? null },
@@ -172,20 +174,20 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						// Bulk path: proposal_ids array
 						if (params.proposal_ids && Array.isArray(params.proposal_ids) && (params.proposal_ids as string[]).length > 0) {
 							const ids = params.proposal_ids as string[];
-							const res = rejectProposalsBulk(db, ids, decision);
+							const res = await rejectProposalsBulk(db, ids, decision);
 							const lines = [`Rejected ${res.rejected.length} proposal(s): ${res.rejected.join(", ")}`];
 							if (res.skipped.length > 0) lines.push(`Skipped (not found or not open): ${res.skipped.join(", ")}`);
 							return text(lines.join("\n"), res);
 						}
 						// Single path
 						if (!params.proposal_id) return text("proposal_id or proposal_ids required", {});
-						const ok = rejectProposal(db, params.proposal_id as string, decision);
+						const ok = await rejectProposal(db, params.proposal_id as string, decision);
 						return text(ok ? `Rejected ${params.proposal_id}` : `Proposal "${params.proposal_id}" not found or not open. Use the full ID from the list_proposals output (e.g., prospect show <id>). Check that the proposal is still "open".`, { ok });
 					}
 					case "mute": {
 						if (!params.term) return text("term required for mute", {});
 						const term = params.term as string;
-						const { assertionId } = muteTerm(db, {
+						const { assertionId } = await muteTerm(db, {
 							term,
 							reason: (params.reason as string | undefined) ?? null,
 							by: "agent",
@@ -199,14 +201,14 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					case "unmute": {
 						if (!params.term) return text("term required for unmute", {});
 						const term = params.term as string;
-						const n = unmuteTerm(db, term);
+						const n = await unmuteTerm(db, term);
 						return text(
 							n > 0 ? `Unmuted '${term.toLowerCase()}'.` : `'${term.toLowerCase()}' was not muted.`,
 							{ superseded: n, term: term.toLowerCase() },
 						);
 					}
 					case "mutes": {
-						const rows = listAssertions(db, "term");
+						const rows = await listAssertions(db, "term");
 						if (rows.length === 0) return text("No term assertions recorded.", []);
 						const active = rows.filter((r) => r.superseded_at === null).length;
 						return text(`Term assertions (${rows.length} total, ${active} active):\n${rows.map(formatAssertion).join("\n")}`, rows);
@@ -250,7 +252,7 @@ Custom analyzers:
 					}
 				}
 			} finally {
-				db.close();
+				await db.close();
 			}
 		},
 	});

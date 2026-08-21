@@ -61,11 +61,11 @@ export const tokenUnitsAnalyzer: Analyzer = {
 
 	outputs: [reportOutput, classCostsOutput],
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		if (ctx.messages.length === 0) return [];
 
 		const cfg = (ctx.config as unknown as TokenUnitsConfig) ?? DEFAULT_TOKEN_UNITS_CONFIG;
-		const rows = ctx.db.prepare(SELECT_ROWS).all(ctx.sessionId) as UsageRow[];
+		const rows = (await ctx.db.prepare(SELECT_ROWS).all(ctx.sessionId)) as UsageRow[];
 		const result = foldSessionUnits(ctx.sessionId, rows, cfg.weights ?? DEFAULT_WEIGHTS);
 
 		// A session that grew since the last run is a NEW logical unit, not a stale

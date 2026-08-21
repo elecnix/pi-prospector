@@ -11,7 +11,7 @@ const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 
 describe("end-to-end sync", () => {
 	it("syncs simple.jsonl into database", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			const result = runSync(db, FIXTURES, NO_CLAUDE_DIR);
 			assert.ok(result.sessionsProcessed >= 1, `expected >=1 session, got ${result.sessionsProcessed}`);
@@ -20,12 +20,12 @@ describe("end-to-end sync", () => {
 			assert.ok(stats.totalSessions >= 1);
 			assert.ok(stats.totalMessages >= 1);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("incremental re-sync skips unchanged files", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			runSync(db, FIXTURES, NO_CLAUDE_DIR);
 			const stats1 = getStats(db);
@@ -37,23 +37,23 @@ describe("end-to-end sync", () => {
 			const stats2 = getStats(db);
 			assert.equal(stats2.totalSessions, stats1.totalSessions);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("handles compacted session (compactionSummary entries)", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			runSync(db, FIXTURES, NO_CLAUDE_DIR);
 			const stats = getStats(db);
 			assert.ok(stats.totalSessions >= 2, "should index at least 2 sessions (simple + compacted)");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("scopes sync to a single project (avoids full fresh-install scan)", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const home = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-scope-sync-"));
 		const origUser = process.env.USER;
 		process.env.USER = "test";
@@ -77,7 +77,7 @@ describe("end-to-end sync", () => {
 			const rows = db.prepare("SELECT id, project FROM sessions ORDER BY id").all() as Array<{ id: string; project: string }>;
 			assert.deepEqual(rows, [{ id: "projA-001", project: "projA" }]);
 		} finally {
-			close();
+await close();
 			process.env.USER = origUser;
 			try {
 				fs.rmSync(home, { recursive: true, force: true });
@@ -88,7 +88,7 @@ describe("end-to-end sync", () => {
 	});
 
 	it("carries model and billed cost through into the message index (issue #65)", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			runSync(db, FIXTURES, NO_CLAUDE_DIR);
 
@@ -110,7 +110,7 @@ describe("end-to-end sync", () => {
 			assert.equal(user.model, null);
 			assert.equal(user.cost_usd, null);
 		} finally {
-			close();
+await close();
 		}
 	});
 });

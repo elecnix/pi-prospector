@@ -39,20 +39,20 @@ function queryRoutingNodes(db: import("better-sqlite3").Database): AnalysisNodeR
 
 describe("routing-opportunity + model-mix frontier", () => {
 	it("labels every turn and folds a single dominated-model recommendation at read time", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const s1 = "mix1";
 			const s2 = "mix2";
-			insertSession(t.db, s1);
-			insertSession(t.db, s2);
+			await insertSession(t.db, s1);
+			await insertSession(t.db, s2);
 
 			const m1: Array<ReturnType<typeof easyTurn>[number]> = [];
 			for (let i = 0; i < 25; i++) m1.push(...easyTurn("m-cheap", 0.001, i, s1));
-			insertMessages(t.db, s1, m1);
+			await insertMessages(t.db, s1, m1);
 
 			const m2: Array<ReturnType<typeof easyTurn>[number]> = [];
 			for (let i = 0; i < 25; i++) m2.push(...easyTurn("m-pricey", 0.05, i, s2));
-			insertMessages(t.db, s2, m2);
+			await insertMessages(t.db, s2, m2);
 
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -93,13 +93,13 @@ describe("routing-opportunity + model-mix frontier", () => {
 	});
 
 	it("yields no recommendation below the min-turn threshold (thin corpus)", async () => {
-		const t: TempDb = tempDb();
+		const t: TempDb = await tempDb();
 		try {
 			const s1 = "thin1";
-			insertSession(t.db, s1);
+			await insertSession(t.db, s1);
 			const m1: Array<ReturnType<typeof easyTurn>[number]> = [];
 			for (let i = 0; i < 2; i++) m1.push(...easyTurn("m-cheap", 0.001, i, s1));
-			insertMessages(t.db, s1, m1);
+			await insertMessages(t.db, s1, m1);
 
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });

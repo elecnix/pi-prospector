@@ -43,9 +43,9 @@ function readNode(db: import("better-sqlite3").Database): { row: Record<string, 
 
 describe("secret-leak component test", () => {
 	it("detects a secret in a user message, anchors to session and message, and stores no full secret", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "leak-1");
+			await insertSession(db, "leak-1");
 			const ids = insertMessages(db, "leak-1", [
 				{ role: "user", text: `here is my token: ${GITHUB_PAT}` },
 				{ role: "assistant", text: "got it" },
@@ -76,15 +76,15 @@ describe("secret-leak component test", () => {
 			const targets = anchors.map((e) => `${e["to_ref_kind"]}:${e["to_ref_id"]}`).sort();
 			assert.deepEqual(targets, [`message:${ids[0]}`, "session:leak-1"]);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("is idempotent: a second run produces no new node", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "leak-2");
-			insertMessages(db, "leak-2", [
+			await insertSession(db, "leak-2");
+			await insertMessages(db, "leak-2", [
 				{ role: "user", text: `token ${GITHUB_PAT}` },
 			] satisfies TestMessage[]);
 
@@ -101,15 +101,15 @@ describe("secret-leak component test", () => {
 				.get(SECRET_LEAK_DEF.id) as { c: number }).c;
 			assert.equal(count, 1);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("re-identifies when the session grows new turns and rescans", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "leak-3");
-			insertMessages(db, "leak-3", [
+			await insertSession(db, "leak-3");
+			await insertMessages(db, "leak-3", [
 				{ role: "user", text: "hello" },
 				{ role: "assistant", text: "hi" },
 			] satisfies TestMessage[]);
@@ -124,7 +124,7 @@ describe("secret-leak component test", () => {
 			}
 
 			// Append a turn that introduces a secret.
-			insertMessages(db, "leak-3", [
+			await insertMessages(db, "leak-3", [
 				{ role: "user", text: `actually use ${GITHUB_PAT}` },
 			] satisfies TestMessage[]);
 			const second = await fw.run("leak-3", { analyzerIds: ["secret-leak"] });
@@ -141,14 +141,14 @@ describe("secret-leak component test", () => {
 			assert.equal(props.leak_count, 1);
 			assert.equal(props.leaks[0]!.rule_id, "github_pat_classic");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("detects a PEM private key inside a tool_result field", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "leak-4");
+			await insertSession(db, "leak-4");
 			const ids = insertMessages(db, "leak-4", [
 				{ role: "user", text: "show me the key file" },
 				{
@@ -176,15 +176,15 @@ describe("secret-leak component test", () => {
 			assert.equal(props.leaks[0]!.message_id, toolResultId);
 			assert.ok(!JSON.stringify(props).includes(PEM_HEADER.slice(16, -16)));
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("clean session produces a node with has_leaks=false", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "leak-5");
-			insertMessages(db, "leak-5", [
+			await insertSession(db, "leak-5");
+			await insertMessages(db, "leak-5", [
 				{ role: "user", text: "refactor the helpers please" },
 				{ role: "assistant", text: "splitting them by concern" },
 			] satisfies TestMessage[]);
@@ -205,7 +205,7 @@ describe("secret-leak component test", () => {
 			assert.equal(edges.length, 1);
 			assert.equal(edges[0]!["to_ref_kind"], "session");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

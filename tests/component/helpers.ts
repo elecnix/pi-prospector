@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import Database from "better-sqlite3";
+import { type AsyncDatabase, openAsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 
 export const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
@@ -17,19 +17,18 @@ export const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 export const NO_CLAUDE_DIR = path.join(os.tmpdir(), "prospect-tests-no-claude-sessions");
 
 export interface TempDb {
-	db: Database.Database;
-	close: () => void;
+	db: AsyncDatabase;
+	close: () => Promise<void>;
 }
 
-/** A migrated SQLite database backed by a unique temp file, with cleanup. */
-export function tempDb(): TempDb {
+/** A migrated SQLite database backed by an async worker + unique temp file, with cleanup. */
+export function tempDb(): Promise<TempDb> {
 	const dbPath = path.join(os.tmpdir(), `prospect-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
-	const db = new Database(dbPath);
-	migrate(db);
-	return {
+	const db = openAsyncDatabase(dbPath);
+	return migrate(db).then(() => ({
 		db,
-		close: () => {
-			db.close();
+		close: async () => {
+			await db.close();
 			for (const suffix of ["", "-wal", "-shm"]) {
 				try {
 					fs.unlinkSync(dbPath + suffix);
@@ -38,12 +37,12 @@ export function tempDb(): TempDb {
 				}
 			}
 		},
-	};
+	}));
 }
 
 /** Insert a minimal session row so foreign keys on messages/proposals are satisfied. */
-export function insertSession(db: Database.Database, id: string, filePath = `/tmp/${id}.jsonl`, cwd = "", source = "pi"): void {
-	db.prepare(
+export async function insertSession(db: AsyncDatabase, id: string, filePath = `/tmp/${id}.jsonl`, cwd = "", source = "pi"): Promise<void> {
+	await db.prepare(
 		"INSERT INTO sessions (id, file_path, project, source, cwd, started_at, last_line, last_modified, message_count, branch_count) " +
 			"VALUES (?, ?, '', ?, ?, ?, 0, 0, 0, 0)",
 	).run(id, filePath, source, cwd, new Date().toISOString());
@@ -65,7 +64,8 @@ export interface TestMessage {
 }
 
 /** Insert messages for a session in order, returning the inserted ids. */
-export function insertMessages(db: Database.Database, sessionId: string, messages: TestMessage[]): string[] {
+/** Insert messages for a session in order, returning the inserted ids. */
+export async function insertMessages(db: AsyncDatabase, sessionId: string, messages: TestMessage[]): Promise<string[]> {
 	const stmt = db.prepare(
 		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd) " +
 			"VALUES (?, ?, 'pi', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -74,7 +74,7 @@ export function insertMessages(db: Database.Database, sessionId: string, message
 	let parent: string | null = null;
 	for (const m of messages) {
 		const id = m.id ?? `msg-${sessionId}-${messageSeq++}`;
-		stmt.run(
+		await stmt.run(
 			id,
 			sessionId,
 			parent,
@@ -94,8 +94,9 @@ export function insertMessages(db: Database.Database, sessionId: string, message
 }
 
 /** Insert a v2 proposal directly (bypassing materialisation), for query tests. */
-export function insertProposalRow(
-	db: Database.Database,
+/** Insert a v2 proposal directly (bypassing materialisation), for query tests. */
+export async function insertProposalRow(
+	db: AsyncDatabase,
 	p: {
 		id: string;
 		sessionId: string;
@@ -107,9 +108,9 @@ export function insertProposalRow(
 		status?: string;
 		inputKey?: string;
 	},
-): void {
+): Promise<void> {
 	const now = new Date().toISOString();
-	db.prepare(
+	await db.prepare(
 		"INSERT INTO proposals (id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path, title, severity, summary, detail, evidence, confidence, status, input_key) " +
 			"VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
 	).run(

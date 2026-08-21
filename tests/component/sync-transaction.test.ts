@@ -73,7 +73,7 @@ function piSessionFile(headerId: string, ...messages: Array<Record<string, unkno
 
 describe("per-session sync transaction (issue #59)", () => {
 	it("a session that fails mid-sync leaves no partial session", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const fx = makePiRoot();
 		try {
 			// Session A succeeds; session B carries a sentinel message that will
@@ -110,12 +110,12 @@ describe("per-session sync transaction (issue #59)", () => {
 			assert.equal(aCount, 1);
 		} finally {
 			fx.cleanup();
-			close();
+await close();
 		}
 	});
 
 	it("a partial failure does not advance the resume cursor past rolled-back rows", () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		const fx = makePiRoot();
 		try {
 			const filePath = path.join(fx.dir("proj"), "sess.jsonl");
@@ -163,7 +163,7 @@ describe("per-session sync transaction (issue #59)", () => {
 			assert.ok(r2.errors.some((e) => e.includes("sess.jsonl")), `second run must report the failure, got: ${r2.errors}`);
 			// The already-committed row survives; the appended rows rolled back
 			// together — m2 was written, then undone when m3-fail aborted.
-			const idsAfter = (db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess") as Array<{ id: string }>).map((r) => r.id);
+			const idsAfter = (await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>.map((r) => r.id);
 			assert.deepEqual(idsAfter, ["m1"], "a successful insert in the session must roll back with the failure");
 			cursor = db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess") as { last_line: number };
 			assert.equal(cursor.last_line, origLineCount, "the cursor must not advance past rows that were rolled back");
@@ -173,7 +173,7 @@ describe("per-session sync transaction (issue #59)", () => {
 			armMessageFailure(db, false);
 			const r3 = runSync(db, fx.piRoot, NO_CLAUDE_DIR);
 			assert.equal(r3.errors.length, 0, `third run should succeed, got: ${r3.errors}`);
-			const idsRecovered = (db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess") as Array<{ id: string }>).map((r) => r.id);
+			const idsRecovered = (await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>.map((r) => r.id);
 			assert.deepEqual(idsRecovered, ["m1", "m2", "m3-fail"], "re-sync imports the rows the failed run rolled back");
 			// The cursor tracks `lines.length` (split length), which includes the
 			// trailing empty element after the final newline.
@@ -182,7 +182,7 @@ describe("per-session sync transaction (issue #59)", () => {
 			assert.equal(cursor.last_line, finalLineCount, "cursor advances past the full file after a successful re-run");
 		} finally {
 			fx.cleanup();
-			close();
+await close();
 		}
 	});
 });

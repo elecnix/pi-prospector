@@ -27,7 +27,7 @@
  * All SQL for assertions lives here.
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "./async-db.js";
 import { prep } from "./prepared.js";
 import { shortHash } from "../analyze/input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
@@ -79,8 +79,8 @@ export function assertionId(subjectKind: string, subjectKey: string, verdict: st
  * proposal that already carries that verdict, never duplicates. Returns the
  * assertion id.
  */
-export function upsertAssertion(
-	db: Database.Database,
+export async function upsertAssertion(
+	db: AsyncDatabase,
 	params: {
 		subjectKind: string;
 		subjectKey: string;
@@ -93,9 +93,9 @@ export function upsertAssertion(
 		harnessRef?: string | null;
 		remediationId?: string | null;
 	},
-): string {
+): Promise<string> {
 	const id = assertionId(params.subjectKind, params.subjectKey, params.verdict);
-	prep(db, `
+	await prep(db, `
 		INSERT INTO assertions (id, subject_kind, subject_key, verdict, reason, asserted_at, asserted_by, superseded_at, disposition, actual_change, harness_ref, remediation_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -128,11 +128,11 @@ export function upsertAssertion(
  * Append-only via `superseded_at` — the original mute row stays inspectable
  * with its reason and asserted_at. Returns the number of rows superseded.
  */
-export function supersedeAssertion(
-	db: Database.Database,
+export async function supersedeAssertion(
+	db: AsyncDatabase,
 	params: { subjectKind: string; subjectKey: string; verdict: string; supersededAt?: string },
-): number {
-	const res = prep(db, `
+): Promise<number> {
+	const res = await prep(db, `
 		UPDATE assertions SET superseded_at = ?
 		WHERE subject_kind = ? AND subject_key = ? AND verdict = ? AND superseded_at IS NULL
 	`).run(
@@ -145,32 +145,32 @@ export function supersedeAssertion(
 }
 
 /** Every currently-active assertion (superseded_at IS NULL). */
-export function getActiveAssertions(db: Database.Database): AssertionRow[] {
-	return prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE superseded_at IS NULL ORDER BY subject_kind ASC, subject_key ASC, verdict ASC`).all() as AssertionRow[];
+export async function getActiveAssertions(db: AsyncDatabase): Promise<AssertionRow[]> {
+	return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE superseded_at IS NULL ORDER BY subject_kind ASC, subject_key ASC, verdict ASC`).all()) as AssertionRow[];
 }
 
 /** Currently-active assertions restricted to the given subject kinds. */
-export function getActiveAssertionsForKinds(db: Database.Database, subjectKinds: readonly string[]): AssertionRow[] {
+export async function getActiveAssertionsForKinds(db: AsyncDatabase, subjectKinds: readonly string[]): Promise<AssertionRow[]> {
 	if (subjectKinds.length === 0) return [];
 	const placeholders = subjectKinds.map(() => "?").join(", ");
-	return prep(
+	return (await prep(
 		db,
 		`SELECT ${ASSERTION_COLS} FROM assertions WHERE superseded_at IS NULL AND subject_kind IN (${placeholders}) ORDER BY subject_key ASC, verdict ASC`,
-	).all(...subjectKinds) as AssertionRow[];
+	).all(...subjectKinds)) as AssertionRow[];
 }
 
 /** The currently-muted terms (subject_kind='term', verdict='muted', active). */
-export function getMutedTerms(db: Database.Database): string[] {
-	const rows = prep(db, `
+export async function getMutedTerms(db: AsyncDatabase): Promise<string[]> {
+	const rows = (await prep(db, `
 		SELECT subject_key FROM assertions
 		WHERE subject_kind = 'term' AND verdict = 'muted' AND superseded_at IS NULL
-	`).all() as Array<{ subject_key: string }>;
+	`).all()) as Array<{ subject_key: string }>;
 	return rows.map((r) => r.subject_key);
 }
 
 /** True when the term is currently muted. */
-export function isTermMuted(db: Database.Database, term: string): boolean {
-	const row = prep(db, `
+export async function isTermMuted(db: AsyncDatabase, term: string): Promise<boolean> {
+	const row = await prep(db, `
 		SELECT 1 FROM assertions
 		WHERE subject_kind = 'term' AND subject_key = ? AND verdict = 'muted' AND superseded_at IS NULL
 		LIMIT 1
@@ -179,11 +179,11 @@ export function isTermMuted(db: Database.Database, term: string): boolean {
 }
 
 /** Every assertion row, most recently asserted first, optionally filtered by subject kind. */
-export function listAssertions(db: Database.Database, subjectKind?: string): AssertionRow[] {
+export async function listAssertions(db: AsyncDatabase, subjectKind?: string): Promise<AssertionRow[]> {
 	if (subjectKind) {
-		return prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? ORDER BY asserted_at DESC, subject_key ASC`).all(subjectKind) as AssertionRow[];
+		return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? ORDER BY asserted_at DESC, subject_key ASC`).all(subjectKind)) as AssertionRow[];
 	}
-	return prep(db, `SELECT ${ASSERTION_COLS} FROM assertions ORDER BY asserted_at DESC, subject_key ASC`).all() as AssertionRow[];
+	return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions ORDER BY asserted_at DESC, subject_key ASC`).all()) as AssertionRow[];
 }
 
 // ───────────────────────────── decision assertions ─────────────────────────────
@@ -205,41 +205,41 @@ export function computeAssertionFingerprint(rows: readonly AssertionRow[]): stri
 }
 
 /** Every decision assertion (subject_kind='proposal'), newest asserted first. */
-export function getProposalAssertions(db: Database.Database): AssertionRow[] {
-	return prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? ORDER BY asserted_at DESC, rowid DESC`).all(
+export async function getProposalAssertions(db: AsyncDatabase): Promise<AssertionRow[]> {
+	return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? ORDER BY asserted_at DESC, rowid DESC`).all(
 		ASSERTION_SUBJECT_KINDS.PROPOSAL,
-	) as AssertionRow[];
+	)) as AssertionRow[];
 }
 
 /** A proposal's decision assertions, oldest first (one per verdict in practice). */
-export function getProposalAssertionsForKey(db: Database.Database, inputKey: string): AssertionRow[] {
-	return prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? AND subject_key = ? ORDER BY asserted_at ASC, rowid ASC`).all(
+export async function getProposalAssertionsForKey(db: AsyncDatabase, inputKey: string): Promise<AssertionRow[]> {
+	return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? AND subject_key = ? ORDER BY asserted_at ASC, rowid ASC`).all(
 		ASSERTION_SUBJECT_KINDS.PROPOSAL,
 		inputKey,
-	) as AssertionRow[];
+	)) as AssertionRow[];
 }
 
 /** The decisions made under one shared remediation, oldest first. */
-export function getProposalAssertionsByRemediation(db: Database.Database, remediationId: string): AssertionRow[] {
-	return prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? AND remediation_id = ? ORDER BY asserted_at ASC, rowid ASC`).all(
+export async function getProposalAssertionsByRemediation(db: AsyncDatabase, remediationId: string): Promise<AssertionRow[]> {
+	return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? AND remediation_id = ? ORDER BY asserted_at ASC, rowid ASC`).all(
 		ASSERTION_SUBJECT_KINDS.PROPOSAL,
 		remediationId,
-	) as AssertionRow[];
+	)) as AssertionRow[];
 }
 
 /** The remediation assertion for a remediation id (its subject_key), if any. */
-export function getRemediationAssertion(db: Database.Database, remediationId: string): AssertionRow | undefined {
-	return prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? AND subject_key = ?`).get(
+export async function getRemediationAssertion(db: AsyncDatabase, remediationId: string): Promise<AssertionRow | undefined> {
+	return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? AND subject_key = ?`).get(
 		ASSERTION_SUBJECT_KINDS.REMEDIATION,
 		remediationId,
-	) as AssertionRow | undefined;
+	)) as AssertionRow | undefined;
 }
 
 /** Every remediation assertion, newest first. */
-export function getAllRemediationAssertions(db: Database.Database): AssertionRow[] {
-	return prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? ORDER BY asserted_at DESC, rowid DESC`).all(
+export async function getAllRemediationAssertions(db: AsyncDatabase): Promise<AssertionRow[]> {
+	return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE subject_kind = ? ORDER BY asserted_at DESC, rowid DESC`).all(
 		ASSERTION_SUBJECT_KINDS.REMEDIATION,
-	) as AssertionRow[];
+	)) as AssertionRow[];
 }
 
 // ──────────────────────── migration from the legacy tables ────────────────────────
@@ -254,13 +254,13 @@ export function getAllRemediationAssertions(db: Database.Database): AssertionRow
  * decided_at wins (the decision corpus is "latest by decided_at", matching the
  * legacy read path).
  */
-export function migrateDecisionsToAssertions(db: Database.Database): { decisions: number; remediations: number } {
+export async function migrateDecisionsToAssertions(db: AsyncDatabase): Promise<{ decisions: number; remediations: number }> {
 	let decisions = 0;
 	// Newest first so, on a collision, the first (authoritative) row wins.
-	const legacy = prep(db, `
+	const legacy = (await prep(db, `
 		SELECT proposal_input_key, decision, disposition, rationale, actual_change, harness_ref, remediation_id, decided_at
 		FROM proposal_decisions ORDER BY decided_at DESC, rowid DESC
-	`).all() as Array<{
+	`).all()) as Array<{
 		proposal_input_key: string;
 		decision: string;
 		disposition: string | null;
@@ -276,7 +276,7 @@ export function migrateDecisionsToAssertions(db: Database.Database): { decisions
 	`);
 	for (const d of legacy) {
 		const id = assertionId(ASSERTION_SUBJECT_KINDS.PROPOSAL, d.proposal_input_key, d.decision);
-		const res = insertDecision.run(
+		const res = await insertDecision.run(
 			id,
 			ASSERTION_SUBJECT_KINDS.PROPOSAL,
 			d.proposal_input_key,
@@ -292,7 +292,7 @@ export function migrateDecisionsToAssertions(db: Database.Database): { decisions
 	}
 
 	let remediations = 0;
-	const legacyRems = prep(db, "SELECT id, description, actual_change, created_at FROM remediations ORDER BY created_at ASC, rowid ASC").all() as Array<{
+	const legacyRems = (await prep(db, "SELECT id, description, actual_change, created_at FROM remediations ORDER BY created_at ASC, rowid ASC").all()) as Array<{
 		id: string;
 		description: string;
 		actual_change: string | null;
@@ -304,7 +304,7 @@ export function migrateDecisionsToAssertions(db: Database.Database): { decisions
 	`);
 	for (const r of legacyRems) {
 		const id = assertionId(ASSERTION_SUBJECT_KINDS.REMEDIATION, r.id, REMEDIATION_VERDICT);
-		const res = insertRemediation.run(id, ASSERTION_SUBJECT_KINDS.REMEDIATION, r.id, REMEDIATION_VERDICT, r.description, r.created_at, r.actual_change);
+		const res = await insertRemediation.run(id, ASSERTION_SUBJECT_KINDS.REMEDIATION, r.id, REMEDIATION_VERDICT, r.description, r.created_at, r.actual_change);
 		if (res.changes > 0) remediations++;
 	}
 
@@ -331,9 +331,9 @@ export interface DecisionMigrationReconcile {
  * exact keys that fail to round-trip. Used by tests and `prospect verify` to
  * prove parity before the legacy tables are ever dropped.
  */
-export function reconcileDecisionsMigration(db: Database.Database): DecisionMigrationReconcile {
-	const legacy = prep(db, "SELECT proposal_input_key, decision FROM proposal_decisions").all() as Array<{ proposal_input_key: string; decision: string }>;
-	const assertion = prep(db, "SELECT subject_key, verdict FROM assertions WHERE subject_kind = ?").all(ASSERTION_SUBJECT_KINDS.PROPOSAL) as Array<{
+export async function reconcileDecisionsMigration(db: AsyncDatabase): Promise<DecisionMigrationReconcile> {
+	const legacy = (await prep(db, "SELECT proposal_input_key, decision FROM proposal_decisions").all()) as Array<{ proposal_input_key: string; decision: string }>;
+	const assertion = (await prep(db, "SELECT subject_key, verdict FROM assertions WHERE subject_kind = ?").all(ASSERTION_SUBJECT_KINDS.PROPOSAL)) as Array<{
 		subject_key: string;
 		verdict: string;
 	}>;
@@ -344,8 +344,8 @@ export function reconcileDecisionsMigration(db: Database.Database): DecisionMigr
 	const missingDecisions = legacy.filter((d) => !assertSet.has(legacyKey(d.proposal_input_key, d.decision))).map((d) => legacyKey(d.proposal_input_key, d.decision));
 	const extraAssertions = assertion.filter((a) => !legacySet.has(legacyKey(a.subject_key, a.verdict))).map((a) => legacyKey(a.subject_key, a.verdict));
 
-	const remLegacy = prep(db, "SELECT id FROM remediations").all() as Array<{ id: string }>;
-	const remAssertion = prep(db, "SELECT subject_key FROM assertions WHERE subject_kind = ?").all(ASSERTION_SUBJECT_KINDS.REMEDIATION) as Array<{ subject_key: string }>;
+	const remLegacy = (await prep(db, "SELECT id FROM remediations").all()) as Array<{ id: string }>;
+	const remAssertion = (await prep(db, "SELECT subject_key FROM assertions WHERE subject_kind = ?").all(ASSERTION_SUBJECT_KINDS.REMEDIATION)) as Array<{ subject_key: string }>;
 	const remLegacySet = new Set(remLegacy.map((r) => r.id));
 	const remAssertSet = new Set(remAssertion.map((r) => r.subject_key));
 	const missingRemediations = remLegacy.filter((r) => !remAssertSet.has(r.id)).map((r) => r.id);
@@ -373,18 +373,18 @@ export function reconcileDecisionsMigration(db: Database.Database): DecisionMigr
  * edge is re-established the next time the same term is muted. Idempotent: a
  * re-mute never duplicates the edge.
  */
-export function attachMuteEdge(db: Database.Database, term: string, assertionId: string): void {
+export async function attachMuteEdge(db: AsyncDatabase, term: string, assertionId: string): Promise<void> {
 	// Locate the term's frustration-lexicon node by its content-addressed source
 	// set (the term alone), the same identity turn-frustration consumes.
 	const sourceSetHash = computeSourceSetHash([{ kind: "term", id: term }]);
-	const node = findLatestNodeBySourceSet(db, FRUSTRATION_LEXICON_DEF.id, sourceSetHash);
+	const node = await findLatestNodeBySourceSet(db, FRUSTRATION_LEXICON_DEF.id, sourceSetHash);
 	if (!node) return;
-	const existing = prep(db, `
+	const existing = await prep(db, `
 		SELECT 1 FROM analysis_edges
 		WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? LIMIT 1
 	`).get(node.id, assertionId, EDGE_KINDS.MUTES);
 	if (existing) return;
-	insertEdge(db, {
+	await insertEdge(db, {
 		fromNodeId: node.id,
 		toRefKind: REF_KINDS.ASSERTION,
 		toRefId: assertionId,

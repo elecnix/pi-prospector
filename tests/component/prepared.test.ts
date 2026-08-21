@@ -1,45 +1,69 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
+import * as os from "node:os";
+import { openAsyncDatabase } from "../../src/db/async-db.js";
 import { prep } from "../../src/db/prepared.js";
 
-describe("prepared statement cache (prep)", () => {
-	it("reuses the same Statement for identical SQL on the same connection", () => {
-		const db = new Database(":memory:");
-		const a = prep(db, "SELECT 1");
-		const b = prep(db, "SELECT 1");
-		assert.equal(a, b, "cache should return the identical Statement object");
-		db.close();
+function memPath(tag: string): string {
+	return `${os.tmpdir()}/prospect-prepared-${tag}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+}
+
+describe("prepared statements (prep)", () => {
+	it("prepared statements run correctly through the async driver", async () => {
+		const db = openAsyncDatabase(memPath("run"));
+		try {
+			const stmt = prep(db, "SELECT ? AS val");
+			assert.deepEqual(await stmt.get(42), { val: 42 });
+		} finally {
+			await db.close();
+		}
 	});
 
-	it("keeps distinct caches per connection (no cross-DB statement leakage)", () => {
-		const sql = "SELECT 1";
-		const db1 = new Database(":memory:");
-		const db2 = new Database(":memory:");
-		const s1 = prep(db1, sql);
-		const s2 = prep(db2, sql);
-		assert.notEqual(s1, s2, "each connection must have its own prepared Statement");
-		db1.close();
-		db2.close();
+	it("distinct AsyncDatabase connections never share a prepared statement", async () => {
+		const db1 = openAsyncDatabase(memPath("a"));
+		const db2 = openAsyncDatabase(memPath("b"));
+		try {
+			const sql = "SELECT 1 AS one";
+			const s1 = prep(db1, sql);
+			const s2 = prep(db2, sql);
+			// Each AsyncDatabase owns its own worker/connection, so the statements
+			// are independent handles that both work against their own DB.
+			assert.deepEqual(await s1.get(), { one: 1 });
+			assert.deepEqual(await s2.get(), { one: 1 });
+		} finally {
+			await db1.close();
+			await db2.close();
+		}
 	});
 
-	it("a fresh connection never receives a statement prepared on a closed one", () => {
-		const closed = new Database(":memory:");
-		prep(closed, "SELECT 1");
-		closed.close();
+	it("a connection works after a sibling is closed", async () => {
+		const closed = openAsyncDatabase(memPath("closed"));
+		await prep(closed, "SELECT 1").get();
+		await closed.close();
 
-		// A new connection sharing the identical SQL must still work — it must
-		// not be handed the closed connection's statement.
-		const fresh = new Database(":memory:");
-		const stmt = prep(fresh, "SELECT 1");
-		assert.deepEqual(stmt.get(), { "1": 1 });
-		fresh.close();
+		// A new connection sharing identical SQL must still work — it must not
+		// try to reuse the closed connection's statement/worker.
+		const fresh = openAsyncDatabase(memPath("fresh"));
+		try {
+			const stmt = prep(fresh, "SELECT 1 AS one");
+			assert.deepEqual(await stmt.get(), { one: 1 });
+		} finally {
+			await fresh.close();
+		}
 	});
 
-	it("prepared statements run correctly through the cache", () => {
-		const db = new Database(":memory:");
-		const stmt = prep(db, "SELECT ? AS val");
-		assert.deepEqual(stmt.get(42), { val: 42 });
-		db.close();
+	it("is a thin handle over the worker's per-connection cache", async () => {
+		// prep returns a fresh AsyncStatement handle per call; the underlying
+		// prepared statement lives in that AsyncDatabase's worker, keyed by SQL.
+		// Both handles must execute correctly against the same connection.
+		const db = openAsyncDatabase(memPath("handle"));
+		try {
+			const a = prep(db, "SELECT ? AS val");
+			const b = prep(db, "SELECT ? AS val");
+			assert.deepEqual(await a.get(7), { val: 7 });
+			assert.deepEqual(await b.get(8), { val: 8 });
+		} finally {
+			await db.close();
+		}
 	});
 });

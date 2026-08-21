@@ -7,7 +7,7 @@
  * key and recording a `produces` edge from the source node to the proposal.
  */
 
-import type Database from "better-sqlite3";
+import { type AsyncDatabase } from "../db/async-db.js";
 import { shortHash, uuidv7 } from "./input-hash.js";
 import { insertEdge, sumSourceTurnCost } from "../db/analysis-queries.js";
 import { EDGE_KINDS, REF_KINDS } from "./edge-kinds.js";
@@ -58,7 +58,7 @@ export function computeProposalInputKey(p: { sourceOutputKey: string; ordinal: n
  * accepted/rejected — silently resurrecting decided proposals. Matching on
  * input_key alone preserves the existing row and its human decision.
  */
-export function materializeProposalsFromNode(db: Database.Database, params: MaterializeParams): number {
+export async function materializeProposalsFromNode(db: AsyncDatabase, params: MaterializeParams): Promise<number> {
 	const raw = params.contentJson["improvement_proposals"];
 	if (!Array.isArray(raw)) return 0;
 
@@ -74,17 +74,17 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 		// proposal carries no source turns or none of them is priced — never a
 		// synthetic 0, since a silent zero would read as "this was free".
 		const costUsd = proposal.source_message_ids && proposal.source_message_ids.length > 0
-			? sumSourceTurnCost(db, params.sessionId, proposal.source_message_ids)
+			? await sumSourceTurnCost(db, params.sessionId, proposal.source_message_ids)
 			: null;
 
 		const inputKey = computeProposalInputKey({ sourceOutputKey: params.sourceOutputKey, ordinal });
-		const existing = db
+		const existing = (await db
 			.prepare("SELECT id FROM proposals WHERE input_key = ? LIMIT 1")
-			.get(inputKey) as { id: string } | undefined;
+			.get(inputKey)) as { id: string } | undefined;
 		if (existing) continue;
 
 		const proposalId = uuidv7();
-		db.prepare(`
+		await db.prepare(`
 			INSERT INTO proposals
 				(id, created_at, updated_at, session_id, source_node_id, analyzer_id, target_type, target_path,
 				 title, severity, summary, detail, evidence, confidence, cost_usd, status, input_key, source_message_ids)
@@ -111,7 +111,7 @@ export function materializeProposalsFromNode(db: Database.Database, params: Mate
 				: null,
 		);
 
-		insertEdge(db, {
+		await insertEdge(db, {
 			fromNodeId: params.sourceNodeId,
 			toRefKind: REF_KINDS.PROPOSAL,
 			toRefId: proposalId,
@@ -163,10 +163,10 @@ function normalizeProposal(value: unknown): RawProposal | null {
  * validation node's content), so the write-back is independent of row ids and
  * survives a wipe + recompute. Returns true if a proposal row was updated.
  */
-export function applyValidationFromNode(
-	db: Database.Database,
+export async function applyValidationFromNode(
+	db: AsyncDatabase,
 	params: { validationNodeId: string; contentJson: Record<string, unknown>; now: string },
-): boolean {
+): Promise<boolean> {
 	const proposalInputKey = params.contentJson["proposal_input_key"];
 	if (typeof proposalInputKey !== "string" || proposalInputKey.length === 0) return false;
 
@@ -175,7 +175,7 @@ export function applyValidationFromNode(
 	const rawScore = params.contentJson["validated_score"];
 	const score = typeof rawScore === "number" ? rawScore : null;
 
-	const res = db
+	const res = await db
 		.prepare(
 			"UPDATE proposals SET validated_score = ?, validation_status = ?, validation_node_id = ?, updated_at = ? " +
 				"WHERE input_key = ? AND status = 'open'",

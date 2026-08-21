@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { listSessionIdsWithOpenProposals, countOpenProposalsByValidationStatus } from "../db/queries.js";
 import { getAnalyzerPaths, getDbPath, getModelTiers, loadConfig } from "../config.js";
@@ -31,11 +31,11 @@ export async function prospectValidate(rawArgs: string, ctx: ExtensionCommandCon
 	const config = loadConfig();
 	const modelTiers = applyModelOverride(getModelTiers(config), args.model);
 
-	const db = new Database(getDbPath(config));
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath(config));
+	await migrate(db);
 
 	try {
-		const sessionIds = args.session ? [args.session] : listSessionIdsWithOpenProposals(db, args.limit);
+		const sessionIds = args.session ? [args.session] : await listSessionIdsWithOpenProposals(db, args.limit);
 		if (sessionIds.length === 0) {
 			out(ctx, "No open proposals to validate. Run analyze first.", "info");
 			return;
@@ -70,7 +70,7 @@ export async function prospectValidate(rawArgs: string, ctx: ExtensionCommandCon
 		}
 
 		// Report the grounded outcome distribution across all open proposals.
-		const byStatus = countOpenProposalsByValidationStatus(db);
+		const byStatus = await countOpenProposalsByValidationStatus(db);
 
 		const lines = [
 			`Done [${reach}]. ${sessionIds.length} session(s) scanned.`,
@@ -84,7 +84,7 @@ export async function prospectValidate(rawArgs: string, ctx: ExtensionCommandCon
 		}
 		out(ctx, lines.join("\n"), errors.length > 0 ? "warning" : "info");
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

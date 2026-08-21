@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { listRuns } from "../db/analysis-queries.js";
 import { getDbPath } from "../config.js";
@@ -18,10 +18,10 @@ export async function prospectRuns(rawArgs: string, ctx: ExtensionCommandContext
 	const limitArg = parseInt((rawArgs ?? "").trim().split(/\s+/)[0] ?? "", 10);
 	const limit = Number.isNaN(limitArg) || limitArg <= 0 ? 30 : limitArg;
 
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
-		const runs = listRuns(db, limit);
+		const runs = await listRuns(db, limit);
 		if (runs.length === 0) {
 			output(ctx, "No runs recorded yet. Run /prospect-analyze first.");
 			return;
@@ -38,7 +38,7 @@ export async function prospectRuns(rawArgs: string, ctx: ExtensionCommandContext
 		lines.push("", "Use the full run id with: prospect diff --runs <A> <B>   or   prospect stats --as-of-run <id>");
 		output(ctx, lines.join("\n"));
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

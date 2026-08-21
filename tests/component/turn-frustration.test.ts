@@ -57,17 +57,17 @@ function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
 }
 
 function hits(db: Parameters<typeof getNodesByAnalyzer>[0], sessionId: string): TurnFrustrationProperties[] {
-	return getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId).map(
+	return ((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId)).map(
 		(n) => JSON.parse(n.content_json) as TurnFrustrationProperties,
 	);
 }
 
 describe("turn-frustration", () => {
 	it("emits one node per (turn, term) and ignores neutral vocabulary", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
 				{ role: "user", text: "putain that is wrong" },
 				{ role: "assistant", text: "fixing" },
 			]);
@@ -81,15 +81,15 @@ describe("turn-frustration", () => {
 			assert.equal(found.every((h) => h.polarity === "frustration"), true);
 			assert.equal(found[0]!.language, "fr");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("detects frustration expressed with no lexicon word at all", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
 				{ role: "user", text: "hmmmm ????" },
 				{ role: "assistant", text: "let me check" },
 			]);
@@ -102,22 +102,22 @@ describe("turn-frustration", () => {
 			assert.equal(found.every((h) => h.signal_source === "paralinguistic"), true);
 			assert.deepEqual(found.map((h) => h.signal).sort(), ["elongation", "repeated_punctuation"]);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("is additive: learning a word elsewhere leaves an analysed session untouched", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
 
 			const { framework } = build(db);
 			await framework.run("s1");
 
-			const before = getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1").map((n) => n.id);
+			const before = ((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).map((n) => n.id);
 			assert.equal(before.length, 1);
 
 			// s2 teaches the corpus a brand-new frustration word.
@@ -128,22 +128,22 @@ describe("turn-frustration", () => {
 			const notCurrent = scan.filter((u) => u.status !== "current");
 			assert.deepEqual(notCurrent, [], "growing the lexicon must not invalidate settled work");
 			assert.deepEqual(
-				getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1").map((n) => n.id),
+				((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).map((n) => n.id),
 				before,
 				"the existing hit nodes are the same nodes, not replacements",
 			);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("picks up a word the corpus learned earlier when a later session uses it", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: "putain, encore pénible" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain, encore pénible" }, { role: "assistant", text: "ok" }]);
 
 			const { framework, llm } = build(db);
 			await framework.run("s1");
@@ -159,14 +159,14 @@ describe("turn-frustration", () => {
 			assert.equal(putainCalls, 1);
 			assert.ok(llm.calls.length > callsAfterS1, "s2's genuinely new words were still judged");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("anchors each hit to its turn and consumes the term node it matched", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
+			await insertSession(db, "s1");
 			const ids = insertMessages(db, "s1", [
 				{ role: "user", text: "putain" },
 				{ role: "assistant", text: "ok" },
@@ -189,7 +189,7 @@ describe("turn-frustration", () => {
 				"the hit points at the lexicon verdict that justified it",
 			);
 		} finally {
-			close();
+await close();
 		}
 	});
 });

@@ -55,11 +55,11 @@ function wordCalls(llm: ReturnType<typeof build>["llm"]): number {
 
 describe("lexicon cost", () => {
 	it("nominates everything it saw — the ceiling bounds node size, not spend", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			const vocabulary = words("term", 120);
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: vocabulary.join(" ") }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: vocabulary.join(" ") }]);
 
 			const { framework } = build(db);
 			await framework.run("s1", { analyzerIds: [LEXICON_CANDIDATES_DEF.id] });
@@ -69,15 +69,15 @@ describe("lexicon cost", () => {
 			) as LexiconCandidatesProperties;
 			assert.equal(props.terms.length, 120, "no vocabulary is left unoffered");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("re-running produces nothing new, however much was judged", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: words("alpha", 200).join(" ") }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: words("alpha", 200).join(" ") }]);
 
 			const { framework, llm } = build(db);
 			const first = await framework.run("s1");
@@ -92,20 +92,20 @@ describe("lexicon cost", () => {
 			}
 			assert.equal(llm.calls.length, spent, "and must cost nothing");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a session pays only for vocabulary no earlier session used", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			const shared = words("alpha", 60);
 			const novel = words("beta", 25);
 
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [{ role: "user", text: shared.join(" ") }]);
-			insertSession(db, "s2");
-			insertMessages(db, "s2", [{ role: "user", text: [...shared, ...novel].join(" ") }]);
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: shared.join(" ") }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: [...shared, ...novel].join(" ") }]);
 
 			const { framework, llm } = build(db);
 			await framework.run("s1");
@@ -120,7 +120,7 @@ describe("lexicon cost", () => {
 			);
 
 			const judged = new Set(
-				getLatestNodesByAnalyzerAcrossSessions(db, FRUSTRATION_LEXICON_DEF.id).map(
+				((await getLatestNodesByAnalyzerAcrossSessions(db, FRUSTRATION_LEXICON_DEF.id)).map(
 					(n) => (JSON.parse(n.content_json) as { term: string }).term,
 				),
 			);
@@ -128,7 +128,7 @@ describe("lexicon cost", () => {
 				assert.equal(judged.has(w), true, `${w} reached the lexicon`);
 			}
 		} finally {
-			close();
+await close();
 		}
 	});
 

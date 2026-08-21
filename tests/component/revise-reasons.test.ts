@@ -8,8 +8,8 @@ import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import type { Analyzer, ReviseReason } from "../../src/analyze/types.js";
 
 function seed(db: import("better-sqlite3").Database): void {
-	insertSession(db, "s1");
-	insertMessages(db, "s1", [
+	await insertSession(db, "s1");
+	await insertMessages(db, "s1", [
 		{ role: "user", text: "fix the login bug" },
 		{ role: "assistant", text: "looking", toolCalls: [{ name: "read" }] },
 		{ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 50 }] },
@@ -56,7 +56,7 @@ const configChange: Analyzer = {
 
 describe("revise reasons select which stale units to recompute", () => {
 	it("a minor bump is graded `minor`; --revise major skips it, --revise minor revises it", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db);
 			await fillV1(db);
@@ -71,23 +71,23 @@ describe("revise reasons select which stale units to recompute", () => {
 			assert.equal((await run(db, minorBump, ["major"])).nodesRevised, 0, "--revise major skips a minor-only change");
 			assert.ok((await run(db, minorBump, ["minor"])).nodesRevised >= 1, "--revise minor revises it");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a major bump is graded `major` and is revised by --revise major", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db);
 			await fillV1(db);
 			assert.ok((await run(db, majorBump, ["major"])).nodesRevised >= 1, "a major bump is picked up by --revise major");
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("a config change is graded `config` only; --revise config revises, --revise major does not", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			seed(db);
 			await fillV1(db);
@@ -103,7 +103,7 @@ describe("revise reasons select which stale units to recompute", () => {
 			assert.equal((await run(db, configChange, ["major"])).nodesRevised, 0, "--revise major ignores a config-only change");
 			assert.ok((await run(db, configChange, ["config"])).nodesRevised >= 1, "--revise config revises it");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

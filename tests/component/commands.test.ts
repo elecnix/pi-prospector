@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import registerExtension from "../../src/index.js";
 import { insertProposalRow, insertSession } from "./helpers.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 import { getLatestDecision } from "../../src/db/queries.js";
 import type {
@@ -132,7 +132,7 @@ describe("slash commands", () => {
 		const ok = await run("prospect-verify");
 		assert.match(ok, /every reference resolves/);
 
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		try {
 			const rows = db.prepare("SELECT id FROM analysis_nodes LIMIT 2").all() as Array<{ id: string }>;
 			assert.ok(rows.length >= 1, "expected nodes to tamper with");
@@ -141,7 +141,7 @@ describe("slash commands", () => {
 			// Unparseable content → exercises the parse-failure branch.
 			if (rows[1]) db.prepare("UPDATE analysis_nodes SET content_json = 'not json' WHERE id = ?").run(rows[1].id);
 		} finally {
-			db.close();
+			await db.close();
 		}
 		const bad = await run("prospect-verify");
 		assert.match(bad, /integrity problem\(s\) found/);
@@ -156,7 +156,7 @@ describe("slash commands", () => {
 			const ok = await run("prospect-verify");
 			assert.match(ok, /edge\(s\): every reference resolves/);
 
-			const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+			const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 			try {
 				// An edge references its target by id (message/session), so out-of-band SQL
 				// can point it at an id that no longer exists. Break one to emulate the #49
@@ -167,7 +167,7 @@ describe("slash commands", () => {
 				assert.ok(edge, "expected an anchors→message edge to break");
 				db.prepare("UPDATE analysis_edges SET to_ref_id = 'ghost-message-id' WHERE id = ?").run(edge!.id);
 			} finally {
-				db.close();
+				await db.close();
 			}
 			const bad = await run("prospect-verify");
 			assert.match(bad, /dangling reference\(s\)/);
@@ -191,12 +191,12 @@ describe("slash commands", () => {
 	});
 
 	it("prospect-proposals lists, accepts, and rejects", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
 		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
-		insertProposalRow(db, { id: "cmd-p1", sessionId: session.id, title: "Test proposal", severity: "friction" });
-		insertProposalRow(db, { id: "cmd-p2", sessionId: session.id, title: "Second proposal", severity: "waste" });
-		db.close();
+		await insertProposalRow(db, { id: "cmd-p1", sessionId: session.id, title: "Test proposal", severity: "friction" });
+		await insertProposalRow(db, { id: "cmd-p2", sessionId: session.id, title: "Second proposal", severity: "waste" });
+		await db.close();
 
 		const list = await run("prospect-proposals");
 		assert.match(list, /Test proposal/);
@@ -218,16 +218,16 @@ describe("slash commands", () => {
 	});
 
 	it("prospect-accept captures rationale + disposition as a decision", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
 		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
-		insertProposalRow(db, { id: "cmd-p3", sessionId: session.id, title: "Rationale proposal", inputKey: "ik-cmd-p3" });
-		db.close();
+		await insertProposalRow(db, { id: "cmd-p3", sessionId: session.id, title: "Rationale proposal", inputKey: "ik-cmd-p3" });
+		await db.close();
 
 		const accepted = await run("prospect-accept", "cmd-p3 --done already added the rule to AGENTS.md");
 		assert.match(accepted, /applied/);
 
-		const db2 = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		const db2 = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		const d = getLatestDecision(db2, "ik-cmd-p3")!;
 		db2.close();
 		assert.equal(d.decision, "accepted");
@@ -240,17 +240,17 @@ describe("slash commands", () => {
 	});
 
 	it("prospect-remediate accepts many proposals under one shared remediation", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
 		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
-		insertProposalRow(db, { id: "cmd-r1", sessionId: session.id, title: "Remediate A", inputKey: "ik-cmd-r1" });
-		insertProposalRow(db, { id: "cmd-r2", sessionId: session.id, title: "Remediate B", inputKey: "ik-cmd-r2" });
-		db.close();
+		await insertProposalRow(db, { id: "cmd-r1", sessionId: session.id, title: "Remediate A", inputKey: "ik-cmd-r1" });
+		await insertProposalRow(db, { id: "cmd-r2", sessionId: session.id, title: "Remediate B", inputKey: "ik-cmd-r2" });
+		await db.close();
 
 		const out = await run("prospect-remediate", "cmd-r1 cmd-r2 --done consolidated polling guidance into AGENTS.md");
 		assert.match(out, /2 proposal/);
 
-		const db2 = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		const db2 = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		const d1 = getLatestDecision(db2, "ik-cmd-r1")!;
 		const d2 = getLatestDecision(db2, "ik-cmd-r2")!;
 		db2.close();
@@ -281,13 +281,13 @@ describe("slash commands", () => {
 	});
 
 	it("--source filters to one harness and tags the group header", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
-		insertSession(db, "src-pi", "/tmp/pi.jsonl", "/home/user/piProj", "pi");
-		insertSession(db, "src-cl", "/tmp/cl.jsonl", "/home/user/clProj", "claude");
-		insertProposalRow(db, { id: "s-pi-1", sessionId: "src-pi", title: "Pi proposal", inputKey: "ik-s-pi-1" });
-		insertProposalRow(db, { id: "s-cl-1", sessionId: "src-cl", title: "Claude proposal", inputKey: "ik-s-cl-1" });
-		db.close();
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
+		await insertSession(db, "src-pi", "/tmp/pi.jsonl", "/home/user/piProj", "pi");
+		await insertSession(db, "src-cl", "/tmp/cl.jsonl", "/home/user/clProj", "claude");
+		await insertProposalRow(db, { id: "s-pi-1", sessionId: "src-pi", title: "Pi proposal", inputKey: "ik-s-pi-1" });
+		await insertProposalRow(db, { id: "s-cl-1", sessionId: "src-cl", title: "Claude proposal", inputKey: "ik-s-cl-1" });
+		await db.close();
 
 		const all = await run("prospect-proposals");
 		assert.match(all, /Pi proposal/);
@@ -352,9 +352,9 @@ describe("prospect tool", () => {
 			const body = JSON.parse(res.content[0]!.text);
 			assert.equal(body.sessionsProcessed, 1);
 
-			const db = new Database(dbPath);
+			const db = await openAsyncDatabase(dbPath);
 			const rows = db.prepare("SELECT id FROM sessions").all() as Array<{ id: string }>;
-			db.close();
+			await db.close();
 			assert.deepEqual(rows.map((r) => r.id), ["projA-001"]);
 		} finally {
 			process.env.USER = prevUser;
@@ -373,12 +373,12 @@ describe("prospect tool", () => {
 	// ── Issues #18–#22: tool list_proposals / accept / reject improvements ──
 
 	it("#18 list_proposals shows the full 36-char proposal id, not a truncated prefix", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
 		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		const fullId = "11111111-2222-4333-8444-555555555555";
-		insertProposalRow(db, { id: fullId, sessionId: session.id, title: "Full-id proposal", inputKey: "ik-full-18" });
-		db.close();
+		await insertProposalRow(db, { id: fullId, sessionId: session.id, title: "Full-id proposal", inputKey: "ik-full-18" });
+		await db.close();
 
 		const res = await toolExec("id18", { action: "list_proposals" }, signal, null, ctx);
 		const body = res.content[0]!.text;
@@ -388,13 +388,13 @@ describe("prospect tool", () => {
 	});
 
 	it("list_proposals accepts a source param and the header shows the harness", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
-		insertSession(db, "tool-pi", "/tmp/tpi.jsonl", "/home/user/toolPiProj", "pi");
-		insertSession(db, "tool-cl", "/tmp/tcl.jsonl", "/home/user/toolClProj", "claude");
-		insertProposalRow(db, { id: "tp-1-0000-0000-4000-8000-000000000001", sessionId: "tool-pi", title: "Tool Pi proposal", inputKey: "ik-tp-1" });
-		insertProposalRow(db, { id: "tc-1-0000-0000-4000-8000-000000000002", sessionId: "tool-cl", title: "Tool Claude proposal", inputKey: "ik-tc-1" });
-		db.close();
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
+		await insertSession(db, "tool-pi", "/tmp/tpi.jsonl", "/home/user/toolPiProj", "pi");
+		await insertSession(db, "tool-cl", "/tmp/tcl.jsonl", "/home/user/toolClProj", "claude");
+		await insertProposalRow(db, { id: "tp-1-0000-0000-4000-8000-000000000001", sessionId: "tool-pi", title: "Tool Pi proposal", inputKey: "ik-tp-1" });
+		await insertProposalRow(db, { id: "tc-1-0000-0000-4000-8000-000000000002", sessionId: "tool-cl", title: "Tool Claude proposal", inputKey: "ik-tc-1" });
+		await db.close();
 
 		const all = await toolExec("srcAll", { action: "list_proposals" }, signal, null, ctx);
 		assert.match(all.content[0]!.text, /Tool Pi proposal/);
@@ -407,13 +407,13 @@ describe("prospect tool", () => {
 	});
 
 	it("list_proposals accepts a session_id param and only shows that session's proposals", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
-		insertSession(db, "sess-filt-a", "/tmp/filta.jsonl", "/home/user/filtA");
-		insertSession(db, "sess-filt-b", "/tmp/filtb.jsonl", "/home/user/filtB");
-		insertProposalRow(db, { id: "flt-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-filt-a", title: "Filter A proposal", inputKey: "ik-flt-a" });
-		insertProposalRow(db, { id: "flt-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-filt-b", title: "Filter B proposal", inputKey: "ik-flt-b" });
-		db.close();
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
+		await insertSession(db, "sess-filt-a", "/tmp/filta.jsonl", "/home/user/filtA");
+		await insertSession(db, "sess-filt-b", "/tmp/filtb.jsonl", "/home/user/filtB");
+		await insertProposalRow(db, { id: "flt-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-filt-a", title: "Filter A proposal", inputKey: "ik-flt-a" });
+		await insertProposalRow(db, { id: "flt-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-filt-b", title: "Filter B proposal", inputKey: "ik-flt-b" });
+		await db.close();
 
 		const res = await toolExec("flt", { action: "list_proposals", session_id: "sess-filt-b" }, signal, null, ctx);
 		const body = res.content[0]!.text;
@@ -422,12 +422,12 @@ describe("prospect tool", () => {
 	});
 
 	it("#19 list_proposals filters by the severity param", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
 		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
-		insertProposalRow(db, { id: "sev-friction-0001-0000-4000-8000-000000000001", sessionId: session.id, title: "Sev friction keep", severity: "friction", inputKey: "ik-sev-f" });
-		insertProposalRow(db, { id: "sev-waste-0002-0000-4000-8000-000000000002", sessionId: session.id, title: "Sev waste keep", severity: "waste", inputKey: "ik-sev-w" });
-		db.close();
+		await insertProposalRow(db, { id: "sev-friction-0001-0000-4000-8000-000000000001", sessionId: session.id, title: "Sev friction keep", severity: "friction", inputKey: "ik-sev-f" });
+		await insertProposalRow(db, { id: "sev-waste-0002-0000-4000-8000-000000000002", sessionId: session.id, title: "Sev waste keep", severity: "waste", inputKey: "ik-sev-w" });
+		await db.close();
 
 		const res = await toolExec("id19", { action: "list_proposals", severity: "waste" }, signal, null, ctx);
 		const body = res.content[0]!.text;
@@ -436,13 +436,13 @@ describe("prospect tool", () => {
 	});
 
 	it("#20 list_proposals honours the limit param", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
 		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		for (let i = 0; i < 5; i++) {
-			insertProposalRow(db, { id: `lim-${i}-0000-0000-4000-8000-0000000000${i.toString().padStart(2, "0")}`, sessionId: session.id, title: `Limit item ${i}`, inputKey: `ik-lim-${i}` });
+			await insertProposalRow(db, { id: `lim-${i}-0000-0000-4000-8000-0000000000${i.toString().padStart(2, "0")}`, sessionId: session.id, title: `Limit item ${i}`, inputKey: `ik-lim-${i}` });
 		}
-		db.close();
+		await db.close();
 
 		const res = await toolExec("id20", { action: "list_proposals", limit: 2 }, signal, null, ctx);
 		const body = res.content[0]!.text;
@@ -451,13 +451,13 @@ describe("prospect tool", () => {
 	});
 
 	it("#21 list_proposals groups by session and reuses the conciseEntry format", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
-		insertSession(db, "sess-tool-a", "/tmp/a.jsonl", "/home/user/projA");
-		insertSession(db, "sess-tool-b", "/tmp/b.jsonl", "/home/user/projB");
-		insertProposalRow(db, { id: "grp-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-tool-a", title: "Group A proposal", inputKey: "ik-grp-a" });
-		insertProposalRow(db, { id: "grp-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-tool-b", title: "Group B proposal", inputKey: "ik-grp-b" });
-		db.close();
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
+		await insertSession(db, "sess-tool-a", "/tmp/a.jsonl", "/home/user/projA");
+		await insertSession(db, "sess-tool-b", "/tmp/b.jsonl", "/home/user/projB");
+		await insertProposalRow(db, { id: "grp-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-tool-a", title: "Group A proposal", inputKey: "ik-grp-a" });
+		await insertProposalRow(db, { id: "grp-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-tool-b", title: "Group B proposal", inputKey: "ik-grp-b" });
+		await db.close();
 
 		const res = await toolExec("id21", { action: "list_proposals" }, signal, null, ctx);
 		const body = res.content[0]!.text;
@@ -475,13 +475,13 @@ describe("prospect tool", () => {
 	});
 
 	it("#21 tool list_proposals format matches the slash command output", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
-		insertSession(db, "sess-fmt-a", "/tmp/fa.jsonl", "/home/user/fmtA");
-		insertSession(db, "sess-fmt-b", "/tmp/fb.jsonl", "/home/user/fmtB");
-		insertProposalRow(db, { id: "fmt-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-fmt-a", title: "Fmt A proposal", severity: "friction", inputKey: "ik-fmt-a" });
-		insertProposalRow(db, { id: "fmt-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-fmt-b", title: "Fmt B proposal", severity: "reinforcement", inputKey: "ik-fmt-b" });
-		db.close();
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
+		await insertSession(db, "sess-fmt-a", "/tmp/fa.jsonl", "/home/user/fmtA");
+		await insertSession(db, "sess-fmt-b", "/tmp/fb.jsonl", "/home/user/fmtB");
+		await insertProposalRow(db, { id: "fmt-a-00000001-0000-4000-8000-000000000001", sessionId: "sess-fmt-a", title: "Fmt A proposal", severity: "friction", inputKey: "ik-fmt-a" });
+		await insertProposalRow(db, { id: "fmt-b-00000001-0000-4000-8000-000000000002", sessionId: "sess-fmt-b", title: "Fmt B proposal", severity: "reinforcement", inputKey: "ik-fmt-b" });
+		await db.close();
 
 		const toolBody = (await toolExec("id21b", { action: "list_proposals" }, signal, null, ctx)).content[0]!.text;
 		const slashOut = await run("prospect-proposals");
@@ -502,12 +502,12 @@ describe("prospect tool", () => {
 	});
 
 	it("remediate accepts many proposals under one shared remediation", async () => {
-		const db = new Database(process.env["PROSPECTOR_DB_PATH"]!);
-		migrate(db);
+		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
+		await migrate(db);
 		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
-		insertProposalRow(db, { id: "tool-r1-0000-0000-4000-8000-000000000001", sessionId: session.id, title: "Tool remediate A", inputKey: "ik-tool-r1" });
-		insertProposalRow(db, { id: "tool-r2-0000-0000-4000-8000-000000000002", sessionId: session.id, title: "Tool remediate B", inputKey: "ik-tool-r2" });
-		db.close();
+		await insertProposalRow(db, { id: "tool-r1-0000-0000-4000-8000-000000000001", sessionId: session.id, title: "Tool remediate A", inputKey: "ik-tool-r1" });
+		await insertProposalRow(db, { id: "tool-r2-0000-0000-4000-8000-000000000002", sessionId: session.id, title: "Tool remediate B", inputKey: "ik-tool-r2" });
+		await db.close();
 
 		const res = await toolExec(
 			"trem1",
@@ -526,7 +526,7 @@ describe("prospect tool", () => {
 		assert.match(body, /remediation/i);
 		assert.match(body, /missing-id/);
 
-		const db2 = new Database(process.env["PROSPECTOR_DB_PATH"]!);
+		const db2 = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		const d1 = getLatestDecision(db2, "ik-tool-r1")!;
 		const d2 = getLatestDecision(db2, "ik-tool-r2")!;
 		db2.close();

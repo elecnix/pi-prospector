@@ -55,8 +55,8 @@ function respond(req: LLMRequest): import("../../src/analyze/mock-llm.js").MockL
 }
 
 function seed(db: import("better-sqlite3").Database, id: string): void {
-	insertSession(db, id);
-	insertMessages(db, id, [
+	await insertSession(db, id);
+	await insertMessages(db, id, [
 		{ role: "user", text: "fix the login bug" },
 		{ role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 80 }] },
@@ -83,7 +83,7 @@ function copyInputs(from: import("better-sqlite3").Database, to: import("better-
 
 /** Sorted (input_key, output_key) of every node, plus sorted proposal input_keys. */
 function fingerprint(db: import("better-sqlite3").Database): { nodes: string[]; proposals: string[] } {
-	const nodes = (db.prepare("SELECT input_key, output_key FROM analysis_nodes").all() as Array<{ input_key: string; output_key: string }>)
+	const nodes = (await db.prepare("SELECT input_key, output_key FROM analysis_nodes").all()) as Array<{ input_key: string; output_key: string }>
 		.map((n) => `${n.input_key}:${n.output_key}`)
 		.sort();
 	const proposals = listProposals(db)
@@ -95,10 +95,10 @@ function fingerprint(db: import("better-sqlite3").Database): { nodes: string[]; 
 describe("concurrency does not change analysis identity", () => {
 	it("a concurrent session run yields the same nodes + proposals as a sequential one", async () => {
 		// Baseline: process every session sequentially.
-		const seq = tempDb();
+		const seq = await tempDb();
 		// Concurrent: same fixtures, processed with a worker pool over one shared
 		// connection (exactly how the analyze command drives a corpus run).
-		const conc = tempDb();
+		const conc = await tempDb();
 		try {
 			for (const id of SESSIONS) seed(seq.db, id);
 			// Byte-identical inputs: copy the seeded rows rather than re-seeding (the
@@ -126,7 +126,7 @@ describe("concurrency does not change analysis identity", () => {
 	});
 
 	it("a concurrent run is idempotent: a second concurrent pass produces nothing new", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
 			for (const id of SESSIONS) seed(db, id);
 			const fw = new AnalyzerFramework({ db, llm: createMockLLM({ responder: respond }).caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -140,7 +140,7 @@ describe("concurrency does not change analysis identity", () => {
 			const producedSecond = second.reduce((s, r) => s + r.nodesProduced, 0);
 			assert.equal(producedSecond, 0, "a converged corpus produces no new nodes under concurrency");
 		} finally {
-			close();
+await close();
 		}
 	});
 });

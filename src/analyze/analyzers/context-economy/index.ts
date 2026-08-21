@@ -298,7 +298,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 		label: "default",
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		if (ctx.messages.length === 0) return [];
 
 		const cfg = ctx.config as unknown as ContextEconomyConfig;
@@ -310,9 +310,9 @@ export const contextEconomyAnalyzer: Analyzer = {
 		const firedTooLateCarryTokenTurns = cfg.firedTooLateCarryTokenTurns ?? DEFAULT_CONTEXT_ECONOMY_CONFIG.firedTooLateCarryTokenTurns;
 		const firedTooOftenRebuildTokens = cfg.firedTooOftenRebuildTokens ?? DEFAULT_CONTEXT_ECONOMY_CONFIG.firedTooOftenRebuildTokens;
 
-		const rows = ctx.db
+		const rows = (await ctx.db
 			.prepare("SELECT role, tool_calls, tool_results, usage FROM messages WHERE session_id = ? ORDER BY rowid ASC")
-			.all(ctx.sessionId) as DbRow[];
+			.all(ctx.sessionId)) as DbRow[];
 
 		const n = rows.length;
 		// A compaction event flushes context: cacheRead drops to ~0 and rebuilds from

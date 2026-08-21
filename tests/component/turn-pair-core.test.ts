@@ -18,10 +18,10 @@ async function runCore(db: import("better-sqlite3").Database, sessionId: string)
 
 describe("turn-pair-core scoring", () => {
 	it("scores a clean turn with low friction", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
 				{ role: "user", text: "please add a test" },
 				{ role: "assistant", text: "added", toolCalls: [{ name: "edit" }] },
 			]);
@@ -31,15 +31,15 @@ describe("turn-pair-core scoring", () => {
 			assert.equal(props[0]!.high_signal, false);
 			assert.equal(props[0]!.friction_score, 0);
 		} finally {
-			close();
+await close();
 		}
 	});
 
 	it("flags corrections, tool failures, waste, and empty responses", async () => {
-		const { db, close } = tempDb();
+		const { db, close } = await tempDb();
 		try {
-			insertSession(db, "s1");
-			insertMessages(db, "s1", [
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
 				// pair 0: correction + tool failure
 				{ role: "user", text: "no, that's wrong, use yarn" },
 				{ role: "assistant", text: "ok", toolCalls: [{ name: "bash" }] },
@@ -62,7 +62,7 @@ describe("turn-pair-core scoring", () => {
 			assert.equal(p1.empty_response, true);
 			assert.ok(p1.friction_score > 0);
 		} finally {
-			close();
+await close();
 		}
 	});
 });
