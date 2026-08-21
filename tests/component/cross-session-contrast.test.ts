@@ -5,6 +5,7 @@ import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM, type MockLLM } from "../../src/analyze/mock-llm.js";
 import { registerDefaults } from "../../src/analyze/defaults.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
 const REPO = "/repo/app";
@@ -44,7 +45,7 @@ function respond(req: LLMRequest): string {
  * `firstRequest` varies the sibling's *content* (used by the mutation test to
  * change the contrast digest without changing anything else).
  */
-function seedSmooth(db: import("better-sqlite3").Database, id: string, firstRequest = "add a hello endpoint"): void {
+async function seedSmooth(db: AsyncDatabase, id: string, firstRequest = "add a hello endpoint"): Promise<void> {
 	await insertSession(db, id, `/tmp/${id}.jsonl`, REPO);
 	await insertMessages(db, id, [
 		{ id: `${id}-m0`, role: "user", text: firstRequest },
@@ -55,7 +56,7 @@ function seedSmooth(db: import("better-sqlite3").Database, id: string, firstRequ
 }
 
 /** A friction session in REPO: a genuine correction after a failed tool call. */
-function seedFriction(db: import("better-sqlite3").Database, id: string): void {
+async function seedFriction(db: AsyncDatabase, id: string): Promise<void> {
 	await insertSession(db, id, `/tmp/${id}.jsonl`, REPO);
 	await insertMessages(db, id, [
 		{ id: `${id}-m0`, role: "user", text: "fix the login bug" },
@@ -66,10 +67,10 @@ function seedFriction(db: import("better-sqlite3").Database, id: string): void {
 	]);
 }
 
-async function analyze(db: import("better-sqlite3").Database, sessionId: string): Promise<MockLLM> {
+async function analyze(db: AsyncDatabase, sessionId: string): Promise<MockLLM> {
 	const mock = createMockLLM({ responder: respond, tokensPerCall: 100, costPerCall: 0.001 });
 	const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	registerDefaults(fw);
+	await registerDefaults(fw);
 	const summary = await fw.run(sessionId, {});
 	assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 	return mock;
@@ -82,20 +83,20 @@ interface NodeIdentity {
 }
 
 /** The session-overview identity for a given session, or undefined if absent. */
-function overviewIdentity(db: import("better-sqlite3").Database, sessionId: string): NodeIdentity | undefined {
+async function overviewIdentity(db: AsyncDatabase, sessionId: string): Promise<NodeIdentity | undefined> {
 	return db
 		.prepare(
 			"SELECT input_key, output_key, source_set_hash FROM analysis_nodes " +
 				"WHERE analyzer_id = 'session-overview' AND session_id = ?",
 		)
-		.get(sessionId) as NodeIdentity | undefined;
+		.get(sessionId) as Promise<NodeIdentity | undefined>;
 }
 
-function keysOf(db: import("better-sqlite3").Database): string[] {
+async function keysOf(db: AsyncDatabase): Promise<string[]> {
 	return (
-		db
+		(await db
 			.prepare("SELECT analyzer_id, input_key, output_key FROM analysis_nodes ORDER BY analyzer_id, input_key, output_key")
-			.all() as Array<{ analyzer_id: string; input_key: string; output_key: string }>
+			.all()) as Array<{ analyzer_id: string; input_key: string; output_key: string }>
 	).map((r) => `${r.analyzer_id}|${r.input_key}|${r.output_key}`);
 }
 
@@ -103,8 +104,8 @@ describe("cross-session success/failure contrast (#10)", () => {
 	it("hands a friction session's reduce step the smooth sibling as contrast", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSmooth(db, "smooth1");
-			seedFriction(db, "friction1");
+			await seedSmooth(db, "smooth1");
+			await seedFriction(db, "friction1");
 			// Smooth sibling's raw messages are present before the friction session is
 			// analysed; the contrast derives from them, not from any analysis node.
 			const mock = await analyze(db, "friction1");
@@ -116,11 +117,9 @@ describe("cross-session success/failure contrast (#10)", () => {
 			assert.match(reduce!.user, /smooth/, "contrast characterises the sibling as smooth");
 
 			// Provenance: the overview node contrasts_with the smooth sibling session.
-			const edges = db
-				.prepare(
-					"SELECT to_ref_id FROM analysis_edges WHERE edge_kind = 'contrasts_with' AND to_ref_kind = 'session'",
-				)
-				.all() as Array<{ to_ref_id: string }>;
+			const edges = (await db
+				.prepare("SELECT to_ref_id FROM analysis_edges WHERE edge_kind = 'contrasts_with' AND to_ref_kind = 'session'")
+				.all()) as Array<{ to_ref_id: string }>;
 			assert.deepEqual(edges.map((e) => e.to_ref_id), ["smooth1"], "contrasts_with edge points at the smooth sibling");
 
 			// Identity commits to the sibling: the friction overview's source_set_hash
@@ -128,14 +127,14 @@ describe("cross-session success/failure contrast (#10)", () => {
 			// NO smooth sibling present. That difference can only come from the sibling
 			// being folded into the source set — a control the mere existence check
 			// below could not catch.
-			const withSibling = overviewIdentity(db, "friction1");
+			const withSibling = await overviewIdentity(db, "friction1");
 			assert.ok(withSibling, "friction session produced an overview node");
 
 			const control = await tempDb();
 			try {
-				seedFriction(control.db, "friction1"); // same friction session, no smooth sibling
+				await seedFriction(control.db, "friction1"); // same friction session, no smooth sibling
 				await analyze(control.db, "friction1");
-				const withoutSibling = overviewIdentity(control.db, "friction1");
+				const withoutSibling = await overviewIdentity(control.db, "friction1");
 				assert.ok(withoutSibling, "control friction session produced an overview node");
 				assert.notEqual(
 					withSibling!.source_set_hash,
@@ -148,18 +147,18 @@ describe("cross-session success/failure contrast (#10)", () => {
 					"the sibling in the source set changes the friction overview's input_key",
 				);
 			} finally {
-				control.close();
+				await control.close();
 			}
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("a smooth session with no smooth sibling of its own gets no contrast", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSmooth(db, "smooth1");
-			seedFriction(db, "friction1");
+			await seedSmooth(db, "smooth1");
+			await seedFriction(db, "friction1");
 			// The only sibling of the smooth session is the friction session, which is
 			// NOT smooth, so the smooth session receives no cross-session contrast.
 			const mock = await analyze(db, "smooth1");
@@ -167,12 +166,10 @@ await close();
 			assert.ok(reduce, "smooth session ran a reduce call");
 			assert.doesNotMatch(reduce!.user, /CROSS-SESSION CONTRAST/, "no contrast block without a smooth sibling");
 
-			const edges = db
-				.prepare("SELECT COUNT(*) AS n FROM analysis_edges WHERE edge_kind = 'contrasts_with'")
-				.get() as { n: number };
+			const edges = (await db.prepare("SELECT COUNT(*) AS n FROM analysis_edges WHERE edge_kind = 'contrasts_with'").get()) as { n: number };
 			assert.equal(edges.n, 0, "no contrasts_with edge");
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -181,18 +178,18 @@ await close();
 		const b = await tempDb();
 		try {
 			for (const t of [a, b]) {
-				seedSmooth(t.db, "smooth1");
-				seedFriction(t.db, "friction1");
+				await seedSmooth(t.db, "smooth1");
+				await seedFriction(t.db, "friction1");
 				await analyze(t.db, "smooth1");
 				await analyze(t.db, "friction1");
 			}
-			const ka = keysOf(a.db);
-			const kb = keysOf(b.db);
+			const ka = await keysOf(a.db);
+			const kb = await keysOf(b.db);
 			assert.ok(ka.length > 0, "produced nodes");
 			assert.deepEqual(ka, kb, "cross-session contrast keeps input_key/output_key reproducible");
 		} finally {
-			a.close();
-			b.close();
+			await a.close();
+			await b.close();
 		}
 	});
 
@@ -205,23 +202,23 @@ await close();
 		const a = await tempDb();
 		const b = await tempDb();
 		try {
-			seedSmooth(a.db, "smooth1", "add a hello endpoint");
-			seedFriction(a.db, "friction1");
+			await seedSmooth(a.db, "smooth1", "add a hello endpoint");
+			await seedFriction(a.db, "friction1");
 			await analyze(a.db, "friction1");
 
-			seedSmooth(b.db, "smooth1", "wire up a totally different feature flag system");
-			seedFriction(b.db, "friction1");
+			await seedSmooth(b.db, "smooth1", "wire up a totally different feature flag system");
+			await seedFriction(b.db, "friction1");
 			await analyze(b.db, "friction1");
 
-			const ia = overviewIdentity(a.db, "friction1");
-			const ib = overviewIdentity(b.db, "friction1");
+			const ia = await overviewIdentity(a.db, "friction1");
+			const ib = await overviewIdentity(b.db, "friction1");
 			assert.ok(ia && ib, "both friction overviews exist");
 			assert.notEqual(ia!.source_set_hash, ib!.source_set_hash, "differing sibling content ⇒ differing source_set_hash");
 			assert.notEqual(ia!.input_key, ib!.input_key, "differing sibling content ⇒ differing input_key");
 			assert.notEqual(ia!.output_key, ib!.output_key, "differing sibling content ⇒ differing output_key");
 		} finally {
-			a.close();
-			b.close();
+			await a.close();
+			await b.close();
 		}
 	});
 });

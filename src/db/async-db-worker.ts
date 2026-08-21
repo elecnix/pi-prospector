@@ -130,7 +130,15 @@ parentPort!.on("message", (msg: WorkerMsg) => {
 			parentPort!.postMessage({
 				id: msg.id,
 				ok: false,
-				error: { message: e.message, stack: e.stack, code: "ERR_SQLITE" },
+				error: {
+					message: e.message,
+					stack: e.stack,
+					// Preserve the driver's original code (e.g. SQLITE_CONSTRAINT_UNIQUE) so
+					// callers like isDuplicateInputKey can still recognise idempotency
+					// collisions across the thread boundary. Fall back to ERR_SQLITE when
+					// the original carried no code.
+					code: (err as { code?: string })?.code ?? "ERR_SQLITE",
+				},
 			});
 		});
 });

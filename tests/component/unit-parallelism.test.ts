@@ -50,7 +50,7 @@ function trackingLLM(delayMs = 5) {
 	return { caller, peak: () => peak };
 }
 
-function seed(db: Parameters<typeof getNodesByAnalyzer>[0], sessionId: string, vocab: string[]): void {
+async function seed(db: Parameters<typeof getNodesByAnalyzer>[0], sessionId: string, vocab: string[]): Promise<void> {
 	await insertSession(db, sessionId);
 	await insertMessages(db, sessionId, [{ role: "user", text: vocab.join(" ") }]);
 }
@@ -59,7 +59,7 @@ describe("intra-analyzer parallelism", () => {
 	it("runs a single session's units concurrently", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seed(db, "s1", words("alpha", 30));
+			await seed(db, "s1", words("alpha", 30));
 			const llm = trackingLLM();
 			const framework = new AnalyzerFramework({
 				db,
@@ -67,8 +67,8 @@ describe("intra-analyzer parallelism", () => {
 				modelTiers: DEFAULT_MODEL_TIERS,
 				unitConcurrency: 8,
 			});
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
 
 			assert.ok(
@@ -78,22 +78,22 @@ describe("intra-analyzer parallelism", () => {
 			assert.ok(llm.peak() <= 8, `must respect the configured limit; peak was ${llm.peak()}`);
 			assert.equal((((await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).length)), 30);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("defaults to sequential so existing behaviour is opt-in to change", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seed(db, "s1", words("beta", 10));
+			await seed(db, "s1", words("beta", 10));
 			const llm = trackingLLM();
 			const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
 			assert.equal((((await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).length)), 10);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -101,47 +101,47 @@ await close();
 		const { db, close } = await tempDb();
 		try {
 			const vocab = words("gamma", 40);
-			seed(db, "s1", vocab);
+			await seed(db, "s1", vocab);
 			const llm = trackingLLM(1);
 			const framework = new AnalyzerFramework({
 				db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS, unitConcurrency: 16,
 			});
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			const summary = await framework.run("s1");
 
 			assert.equal(summary.errors.length, 0);
-			const terms = getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")
+			const terms = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1"))
 				.map((n) => (JSON.parse(n.content_json) as { term: string }).term);
 			assert.equal(terms.length, vocab.length);
 			assert.equal(new Set(terms).size, terms.length, "no term judged twice");
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("re-running remains a no-op", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seed(db, "s1", words("delta", 20));
+			await seed(db, "s1", words("delta", 20));
 			const llm = trackingLLM(1);
 			const framework = new AnalyzerFramework({
 				db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS, unitConcurrency: 8,
 			});
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
 			const again = await framework.run("s1");
 			assert.equal(again.nodesProduced, 0, "idempotency must survive concurrency");
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("a configuration fault still stops the analyzer instead of failing every unit", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seed(db, "s1", words("epsilon", 40));
+			await seed(db, "s1", words("epsilon", 40));
 			let calls = 0;
 			const llm = async (): Promise<LLMResponse> => {
 				calls++;
@@ -151,8 +151,8 @@ await close();
 			const framework = new AnalyzerFramework({
 				db, llm, modelTiers: DEFAULT_MODEL_TIERS, unitConcurrency: 4,
 			});
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			const summary = await framework.run("s1");
 
 			assert.ok(summary.errors.length > 0);
@@ -160,7 +160,7 @@ await close();
 			// not one, but nowhere near the 40 a per-unit failure would produce.
 			assert.ok(calls <= 8, `expected the run to stop early, got ${calls} calls`);
 		} finally {
-await close();
+			await close();
 		}
 	});
 });

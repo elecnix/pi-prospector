@@ -24,7 +24,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type Database from "better-sqlite3";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { runSync } from "../../src/sync/index.js";
 import { tempDb, NO_CLAUDE_DIR } from "./helpers.js";
 
@@ -32,8 +32,8 @@ import { tempDb, NO_CLAUDE_DIR } from "./helpers.js";
  * Arm (when `armed` is true) a trigger that aborts any message insert whose id
  * ends in `-fail`. Placed on `messages` in the temp DB; harmless otherwise.
  */
-function armMessageFailure(db: Database.Database, armed: boolean): void {
-	db.exec(`
+async function armMessageFailure(db: AsyncDatabase, armed: boolean): Promise<void> {
+	await db.exec(`
 		CREATE TABLE IF NOT EXISTS sync_test_armed (id INTEGER PRIMARY KEY);
 		CREATE TRIGGER IF NOT EXISTS messages_test_fail AFTER INSERT ON messages
 		BEGIN
@@ -42,8 +42,8 @@ function armMessageFailure(db: Database.Database, armed: boolean): void {
 			  AND (SELECT COUNT(*) FROM sync_test_armed) > 0;
 		END;
 	`);
-	if (armed) db.exec("INSERT OR IGNORE INTO sync_test_armed (id) VALUES (1)");
-	else db.exec("DELETE FROM sync_test_armed");
+	if (armed) await db.exec("INSERT OR IGNORE INTO sync_test_armed (id) VALUES (1)");
+	else await db.exec("DELETE FROM sync_test_armed");
 }
 
 interface SessionBuilder {
@@ -72,7 +72,7 @@ function piSessionFile(headerId: string, ...messages: Array<Record<string, unkno
 }
 
 describe("per-session sync transaction (issue #59)", () => {
-	it("a session that fails mid-sync leaves no partial session", () => {
+	it("a session that fails mid-sync leaves no partial session", async () => {
 		const { db, close } = await tempDb();
 		const fx = makePiRoot();
 		try {
@@ -89,9 +89,9 @@ describe("per-session sync transaction (issue #59)", () => {
 			);
 			fs.writeFileSync(path.join(fx.dir("proj-b"), "sess-b.jsonl"), bLines.join("\n") + "\n");
 
-			armMessageFailure(db, true);
+			await armMessageFailure(db, true);
 
-			const result = runSync(db, fx.piRoot, NO_CLAUDE_DIR);
+			const result = await runSync(db, fx.piRoot, NO_CLAUDE_DIR);
 
 			assert.ok(result.errors.some((e) => e.includes("sess-b.jsonl")), `error should mention session B, got: ${result.errors}`);
 			// Session A is unaffected; only A counts as processed.
@@ -100,21 +100,21 @@ describe("per-session sync transaction (issue #59)", () => {
 
 			// B must hold ZERO rows — its session row, messages and cursor all
 			// rolled back together; nothing partial survives.
-			const bSession = db.prepare("SELECT last_line, message_count FROM sessions WHERE id = ?").get("sess-b");
+			const bSession = await db.prepare("SELECT last_line, message_count FROM sessions WHERE id = ?").get("sess-b");
 			assert.equal(bSession, undefined, "no session row for B may survive a partial failure");
-			const bCount = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess-b") as { c: number }).c;
+			const bCount = ((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess-b")) as { c: number }).c;
 			assert.equal(bCount, 0, "no message for B may survive a partial failure");
 
 			// A is fully committed.
-			const aCount = (db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess-a") as { c: number }).c;
+			const aCount = ((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess-a")) as { c: number }).c;
 			assert.equal(aCount, 1);
 		} finally {
 			fx.cleanup();
-await close();
+			await close();
 		}
 	});
 
-	it("a partial failure does not advance the resume cursor past rolled-back rows", () => {
+	it("a partial failure does not advance the resume cursor past rolled-back rows", async () => {
 		const { db, close } = await tempDb();
 		const fx = makePiRoot();
 		try {
@@ -140,11 +140,11 @@ await close();
 			const origLineCount = fs.readFileSync(filePath, "utf-8").split("\n").length;
 
 			// Run 1: a clean sync commits the whole session and advances the cursor.
-			armMessageFailure(db, false);
-			const r1 = runSync(db, fx.piRoot, NO_CLAUDE_DIR);
+			await armMessageFailure(db, false);
+			const r1 = await runSync(db, fx.piRoot, NO_CLAUDE_DIR);
 			assert.equal(r1.errors.length, 0);
-			assert.equal((db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess") as { c: number }).c, 1);
-			let cursor = db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess") as { last_line: number };
+			assert.equal(((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess")) as { c: number }).c, 1);
+			let cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess")) as { last_line: number };
 			assert.equal(cursor.last_line, origLineCount, "run 1 advances the cursor to the end of the file");
 
 			// Run 2: append one good row then one failing row. The good row (m2) is
@@ -157,32 +157,32 @@ await close();
 			];
 			fs.appendFileSync(filePath, "\n" + appended.join("\n") + "\n");
 
-			armMessageFailure(db, true);
-			const r2 = runSync(db, fx.piRoot, NO_CLAUDE_DIR);
+			await armMessageFailure(db, true);
+			const r2 = await runSync(db, fx.piRoot, NO_CLAUDE_DIR);
 
 			assert.ok(r2.errors.some((e) => e.includes("sess.jsonl")), `second run must report the failure, got: ${r2.errors}`);
 			// The already-committed row survives; the appended rows rolled back
 			// together — m2 was written, then undone when m3-fail aborted.
-			const idsAfter = (await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>.map((r) => r.id);
+			const idsAfter = ((await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>).map((r) => r.id);
 			assert.deepEqual(idsAfter, ["m1"], "a successful insert in the session must roll back with the failure");
-			cursor = db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess") as { last_line: number };
+			cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess")) as { last_line: number };
 			assert.equal(cursor.last_line, origLineCount, "the cursor must not advance past rows that were rolled back");
 
 			// Run 3: once the failure is gone, sync resumes and imports the rows the
 			// failed run rolled back — they are not lost to an advanced cursor.
-			armMessageFailure(db, false);
-			const r3 = runSync(db, fx.piRoot, NO_CLAUDE_DIR);
+			await armMessageFailure(db, false);
+			const r3 = await runSync(db, fx.piRoot, NO_CLAUDE_DIR);
 			assert.equal(r3.errors.length, 0, `third run should succeed, got: ${r3.errors}`);
-			const idsRecovered = (await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>.map((r) => r.id);
+			const idsRecovered = ((await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>).map((r) => r.id);
 			assert.deepEqual(idsRecovered, ["m1", "m2", "m3-fail"], "re-sync imports the rows the failed run rolled back");
 			// The cursor tracks `lines.length` (split length), which includes the
 			// trailing empty element after the final newline.
 			const finalLineCount = fs.readFileSync(filePath, "utf-8").split("\n").length;
-			cursor = db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess") as { last_line: number };
+			cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess")) as { last_line: number };
 			assert.equal(cursor.last_line, finalLineCount, "cursor advances past the full file after a successful re-run");
 		} finally {
 			fx.cleanup();
-await close();
+			await close();
 		}
 	});
 });

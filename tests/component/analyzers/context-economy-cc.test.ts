@@ -7,6 +7,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { AsyncDatabase } from "../../../src/db/async-db.js";
 import { tempDb, insertSession, insertMessages, type TempDb } from "../helpers.js";
 import { AnalyzerFramework } from "../../../src/analyze/framework.js";
 import { createMockLLM } from "../../../src/analyze/mock-llm.js";
@@ -14,8 +15,8 @@ import { registerAll } from "../../../src/analyze/defaults.js";
 import { DEFAULT_MODEL_TIERS } from "../../../src/analyze/model-tiers.js";
 import { contextEconomyAnalyzer } from "../../../src/analyze/analyzers/context-economy/index.js";
 
-function setUsage(db: import("better-sqlite3").Database, id: string, u: Record<string, number>): void {
-	db.prepare("UPDATE messages SET usage = ? WHERE id = ?").run(JSON.stringify(u), id);
+async function setUsage(db: AsyncDatabase, id: string, u: Record<string, number>): Promise<void> {
+	await db.prepare("UPDATE messages SET usage = ? WHERE id = ?").run(JSON.stringify(u), id);
 }
 
 describe("context-economy compaction policy", () => {
@@ -36,11 +37,11 @@ describe("context-economy compaction policy", () => {
 				{ id: "a5", role: "assistant", text: "tail" },
 			]);
 			// usage: growing carried prefix on the 3 held turns; small rebuild after.
-			setUsage(t.db, "a1", { input: 100, output: 10, cacheRead: 0, cacheWrite: 500000, totalTokens: 500110 });
-			setUsage(t.db, "a2", { input: 100, output: 10, cacheRead: 400000, cacheWrite: 0, totalTokens: 400110 });
-			setUsage(t.db, "a3", { input: 100, output: 10, cacheRead: 600000, cacheWrite: 0, totalTokens: 600110 });
-			setUsage(t.db, "a4", { input: 100, output: 10, cacheRead: 700000, cacheWrite: 0, totalTokens: 700110 });
-			setUsage(t.db, "a5", { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 110 });
+			await setUsage(t.db, "a1", { input: 100, output: 10, cacheRead: 0, cacheWrite: 500000, totalTokens: 500110 });
+			await setUsage(t.db, "a2", { input: 100, output: 10, cacheRead: 400000, cacheWrite: 0, totalTokens: 400110 });
+			await setUsage(t.db, "a3", { input: 100, output: 10, cacheRead: 600000, cacheWrite: 0, totalTokens: 600110 });
+			await setUsage(t.db, "a4", { input: 100, output: 10, cacheRead: 700000, cacheWrite: 0, totalTokens: 700110 });
+			await setUsage(t.db, "a5", { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 110 });
 
 			// Lower the thresholds so a 3-turn hold of a 10000-token read triggers it.
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
@@ -56,7 +57,7 @@ describe("context-economy compaction policy", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["context-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = t.db
+			const row = await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'context-economy'")
 				.get() as { content_json: string; node_kind: string } | undefined;
 			assert.ok(row, "produced a node");

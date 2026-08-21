@@ -44,10 +44,10 @@ function lexiconMock() {
 	});
 }
 
-function frameworkFor(db: Parameters<typeof getNodesByAnalyzer>[0], llm: ReturnType<typeof lexiconMock>) {
+async function frameworkFor(db: Parameters<typeof getNodesByAnalyzer>[0], llm: ReturnType<typeof lexiconMock>) {
 	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	framework.register(lexiconCandidatesAnalyzer);
-	framework.register(frustrationLexiconAnalyzer);
+	await framework.register(lexiconCandidatesAnalyzer);
+	await framework.register(frustrationLexiconAnalyzer);
 	return framework;
 }
 
@@ -73,10 +73,10 @@ describe("lexicon-candidates", () => {
 			]);
 
 			const llm = lexiconMock();
-			const framework = frameworkFor(db, llm);
+			const framework = await frameworkFor(db, llm);
 			await framework.run("s1", { analyzerIds: [LEXICON_CANDIDATES_DEF.id] });
 
-			const nodes = getNodesByAnalyzer(db, LEXICON_CANDIDATES_DEF.id, "s1");
+			const nodes = await getNodesByAnalyzer(db, LEXICON_CANDIDATES_DEF.id, "s1");
 			assert.equal(nodes.length, 1, "one nomination node per session");
 			const props = JSON.parse(nodes[0]!.content_json) as { terms: Array<{ term: string; count: number }> };
 			assert.deepEqual(props.terms[0], { term: "wrong", count: 3 });
@@ -84,7 +84,7 @@ describe("lexicon-candidates", () => {
 			assert.equal(terms.includes("again"), true);
 			assert.equal(terms.includes("apologies"), false, "assistant vocabulary is never nominated");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });
@@ -97,10 +97,10 @@ describe("frustration-lexicon", () => {
 			await insertMessages(db, "s1", [{ role: "user", text: "putain c'est encore faux" }]);
 
 			const llm = lexiconMock();
-			const framework = frameworkFor(db, llm);
+			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 
-			const termNodes = getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1");
+			const termNodes = await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1");
 			const byTerm = new Map(
 				termNodes.map((n) => {
 					const p = JSON.parse(n.content_json) as FrustrationLexiconProperties;
@@ -113,7 +113,7 @@ describe("frustration-lexicon", () => {
 			assert.equal(byTerm.get("encore")?.polarity, "neutral");
 			assert.equal(classifyCallsFor(llm, "putain"), 1);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -124,7 +124,7 @@ await close();
 			await insertMessages(db, "s1", [{ role: "user", text: "putain c'est encore faux" }]);
 
 			const llm = lexiconMock();
-			const framework = frameworkFor(db, llm);
+			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 			const afterFirst = llm.calls.length;
 			assert.ok(afterFirst > 0, "the first run adjudicates");
@@ -132,7 +132,7 @@ await close();
 			await framework.run("s1");
 			assert.equal(llm.calls.length, afterFirst, "the second run makes no model calls at all");
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -145,7 +145,7 @@ await close();
 			await insertMessages(db, "s2", [{ role: "user", text: "putain, toujours faux" }]);
 
 			const llm = lexiconMock();
-			const framework = frameworkFor(db, llm);
+			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 			await framework.run("s2");
 
@@ -154,15 +154,15 @@ await close();
 			assert.equal(classifyCallsFor(llm, "toujours"), 1, "a term new to s2 is still adjudicated");
 
 			// The verdict lives in exactly one node, owned by the session that paid for it.
-			const s1Terms = getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")
+			const s1Terms = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1"))
 				.map((n) => (JSON.parse(n.content_json) as FrustrationLexiconProperties).term);
-			const s2Terms = getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s2")
+			const s2Terms = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s2"))
 				.map((n) => (JSON.parse(n.content_json) as FrustrationLexiconProperties).term);
 			assert.equal(s1Terms.includes("putain"), true);
 			assert.equal(s2Terms.includes("putain"), false, "s2 reuses s1's verdict rather than making its own");
 			assert.equal(s2Terms.includes("toujours"), true);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -173,19 +173,19 @@ await close();
 			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
 			const llm = lexiconMock();
-			const framework = frameworkFor(db, llm);
+			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 
-			const node = getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")[0]!;
-			const edges = db
+			const node = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1"))[0]!;
+			const edges = (await db
 				.prepare("SELECT to_ref_kind, to_ref_id, edge_kind FROM analysis_edges WHERE from_node_id = ?")
-				.all(node.id) as Array<{ to_ref_kind: string; to_ref_id: string; edge_kind: string }>;
+				.all(node.id)) as unknown as Array<{ to_ref_kind: string; to_ref_id: string; edge_kind: string }>;
 			assert.ok(
 				edges.some((e) => e.edge_kind === "anchors" && e.to_ref_kind === "session" && e.to_ref_id === "s1"),
 				"the term links back to the session that surfaced it",
 			);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -198,25 +198,25 @@ await close();
 			await insertMessages(db, "s2", [{ role: "user", text: "putain" }]);
 
 			const llm = lexiconMock();
-			const framework = frameworkFor(db, llm);
+			const framework = await frameworkFor(db, llm);
 			// Concurrent runs mirror how `prospect analyze` fans sessions out. Both see
 			// the term as missing and both insert the same input_key; the loser must
 			// treat that as "already done", not as a failure.
 			await Promise.all([framework.run("s1"), framework.run("s2")]);
 
-			const errors = db
+			const errors = (await db
 				.prepare("SELECT COUNT(*) AS n FROM analysis_nodes WHERE node_kind = 'error'")
-				.get() as { n: number };
+				.get()) as unknown as { n: number };
 			assert.equal(errors.n, 0, "an identity collision is idempotency, not an error");
 
-			const putain = db
+			const putain = (await db
 				.prepare(
 					"SELECT COUNT(*) AS n FROM analysis_nodes WHERE analyzer_id = ? AND content_json LIKE '%\"putain\"%'",
 				)
-				.get(FRUSTRATION_LEXICON_DEF.id) as { n: number };
+				.get(FRUSTRATION_LEXICON_DEF.id)) as unknown as { n: number };
 			assert.equal(putain.n, 1, "exactly one verdict node exists for the term");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });

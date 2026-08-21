@@ -8,6 +8,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { AsyncDatabase } from "../../../src/db/async-db.js";
 import { tempDb, insertSession, insertMessages, type TempDb } from "../helpers.js";
 import { AnalyzerFramework } from "../../../src/analyze/framework.js";
 import { createMockLLM } from "../../../src/analyze/mock-llm.js";
@@ -15,9 +16,9 @@ import { registerAll } from "../../../src/analyze/defaults.js";
 import { DEFAULT_MODEL_TIERS } from "../../../src/analyze/model-tiers.js";
 import { contextEconomyAnalyzer } from "../../../src/analyze/analyzers/context-economy/index.js";
 
-function setUsage(db: import("better-sqlite3").Database, id: string, output: number): void {
+async function setUsage(db: AsyncDatabase, id: string, output: number): Promise<void> {
 	const usage = JSON.stringify({ input: 100, output, cacheRead: 1000, cacheWrite: 0, totalTokens: 1200 });
-	db.prepare("UPDATE messages SET usage = ? WHERE id = ?").run(usage, id);
+	await db.prepare("UPDATE messages SET usage = ? WHERE id = ?").run(usage, id);
 }
 
 describe("context-economy analyzer", () => {
@@ -47,7 +48,7 @@ describe("context-economy analyzer", () => {
 				{ id: "r3", role: "toolResult", toolResults: [{ toolName: "edit", isError: false, textLength: 70 }] },
 			]);
 			// three billed assistant turns, output 50 each → 150 total
-			for (const id of ["a1", "a2", "a3"]) setUsage(t.db, id, 50);
+			for (const id of ["a1", "a2", "a3"]) await setUsage(t.db, id, 50);
 
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -57,7 +58,7 @@ describe("context-economy analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["context-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = t.db
+			const row = await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'context-economy'")
 				.get() as { content_json: string; node_kind: string } | undefined;
 			assert.ok(row, "produced a node");
@@ -137,7 +138,7 @@ describe("context-economy analyzer", () => {
 				{ id: "a2", role: "assistant", text: "more reading", toolCalls: [{ name: "read", arguments: { path: "/foo.ts" } }] },
 				{ id: "r2", role: "toolResult", toolResults: [{ toolName: "read", isError: false, textLength: 100000 }] },
 			]);
-			for (const id of ["a1", "a2"]) setUsage(t.db, id, 50);
+			for (const id of ["a1", "a2"]) await setUsage(t.db, id, 50);
 
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -147,7 +148,7 @@ describe("context-economy analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["context-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = t.db
+			const row = await t.db
 				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'context-economy'")
 				.get() as { content_json: string } | undefined;
 			assert.ok(row, "produced a node");
@@ -186,7 +187,7 @@ describe("context-economy analyzer", () => {
 				{ id: "a3", role: "assistant", text: "editing", toolCalls: [{ name: "edit", arguments: { path: "/big.ts" } }] },
 				{ id: "r3", role: "toolResult", toolResults: [{ toolName: "edit", isError: false, textLength: 70 }] },
 			]);
-			for (const id of ["a1", "a2", "a3"]) setUsage(t.db, id, 50);
+			for (const id of ["a1", "a2", "a3"]) await setUsage(t.db, id, 50);
 
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -196,7 +197,7 @@ describe("context-economy analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["context-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = t.db
+			const row = await t.db
 				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'context-economy'")
 				.get() as { content_json: string } | undefined;
 			assert.ok(row, "produced a node");

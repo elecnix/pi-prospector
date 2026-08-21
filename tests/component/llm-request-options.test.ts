@@ -48,15 +48,15 @@ describe("analyzer-owned reasoning level", () => {
 
 			const llm = createMockLLM({ responder: verdict });
 			const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
 
 			const termCalls = llm.calls.filter((c: LLMRequest) => c.tool?.name === "classify_term");
 			assert.ok(termCalls.length > 0);
 			assert.equal(termCalls.every((c) => c.reasoning === "off"), true);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -73,14 +73,14 @@ await close();
 				modelTiers: DEFAULT_MODEL_TIERS,
 				configOverrides: { [FRUSTRATION_LEXICON_DEF.id]: { reasoning: "low" } },
 			});
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
 
 			const termCalls = llm.calls.filter((c: LLMRequest) => c.tool?.name === "classify_term");
 			assert.equal(termCalls.every((c) => c.reasoning === "low"), true);
 		} finally {
-await close();
+			await close();
 		}
 	});
 });
@@ -99,16 +99,18 @@ describe("failing fast on a broken model configuration", () => {
 				throw new Error("Model not found in Pi registry: inclusionai/ling-2.6-flash. Configure it via Pi or set modelTiers in prospector.json.");
 			};
 			const framework = new AnalyzerFramework({ db, llm, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			const summary = await framework.run("s1");
 
 			assert.ok(summary.errors.length > 0, "the failure is reported");
 			assert.equal(calls, 1, "the model is only asked once — the fault is not per-unit");
-			const errorNodes = getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1").filter((n) => n.node_kind === "error");
+			const errorNodes = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).filter(
+				(n) => n.node_kind === "error",
+			);
 			assert.ok(errorNodes.length <= 1, `expected at most one error node, got ${errorNodes.length}`);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -134,14 +136,14 @@ await close();
 				};
 			};
 			const framework = new AnalyzerFramework({ db, llm, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(lexiconCandidatesAnalyzer);
-			framework.register(frustrationLexiconAnalyzer);
+			await framework.register(lexiconCandidatesAnalyzer);
+			await framework.register(frustrationLexiconAnalyzer);
 			const summary = await framework.run("s1");
 
 			assert.ok(calls > 2, "a single unit's failure does not abort the analyzer");
 			assert.ok(summary.nodesProduced > 1, "the other terms were still judged");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });

@@ -91,10 +91,29 @@ export async function resolveConfig(
 	}
 
 	const id = uuidv7();
-	await prep(db, `
+	const result = await prep(db, `
 		INSERT INTO analyzer_configs (id, analyzer_id, config_hash, config_json, label, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(config_hash) DO NOTHING
 	`).run(id, params.analyzerId, configHash, JSON.stringify(params.configJson), params.label ?? null, new Date().toISOString());
+
+	if ((result as unknown as { changes: number }).changes === 0) {
+		// A concurrent run inserted the same content-addressed config first. Identity
+		// is the hash, so reuse the winner rather than collide on the unique key.
+		const winner = (await prep(db, "SELECT id, analyzer_id, config_hash, config_json, label FROM analyzer_configs WHERE config_hash = ?")
+			.get(configHash)) as
+			| { id: string; analyzer_id: string; config_hash: string; config_json: string; label: string | null }
+			| undefined;
+		if (winner) {
+			return {
+				id: winner.id,
+				analyzerId: winner.analyzer_id,
+				configHash: winner.config_hash,
+				configJson: JSON.parse(winner.config_json) as Record<string, unknown>,
+				label: winner.label ?? undefined,
+			};
+		}
+	}
 
 	return {
 		id,

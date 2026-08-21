@@ -134,12 +134,12 @@ describe("slash commands", () => {
 
 		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		try {
-			const rows = db.prepare("SELECT id FROM analysis_nodes LIMIT 2").all() as Array<{ id: string }>;
+			const rows = await db.prepare("SELECT id FROM analysis_nodes LIMIT 2").all() as Array<{ id: string }>;
 			assert.ok(rows.length >= 1, "expected nodes to tamper with");
 			// Valid-but-different content → output_key mismatch.
-			db.prepare("UPDATE analysis_nodes SET content_json = '{\"x\":1}' WHERE id = ?").run(rows[0]!.id);
+			await db.prepare("UPDATE analysis_nodes SET content_json = '{\"x\":1}' WHERE id = ?").run(rows[0]!.id);
 			// Unparseable content → exercises the parse-failure branch.
-			if (rows[1]) db.prepare("UPDATE analysis_nodes SET content_json = 'not json' WHERE id = ?").run(rows[1].id);
+			if (rows[1]) await db.prepare("UPDATE analysis_nodes SET content_json = 'not json' WHERE id = ?").run(rows[1].id);
 		} finally {
 			await db.close();
 		}
@@ -163,9 +163,9 @@ describe("slash commands", () => {
 				// incident: a dangling trail that content-hash verify misses. (turn-pair-core
 				// produces `anchors`→message edges but no `consumes` edges — those are
 				// added by the session-overview step.)
-				const edge = db.prepare("SELECT id FROM analysis_edges WHERE edge_kind = 'anchors' AND to_ref_kind = 'message' LIMIT 1").get() as { id: string } | undefined;
+				const edge = await db.prepare("SELECT id FROM analysis_edges WHERE edge_kind = 'anchors' AND to_ref_kind = 'message' LIMIT 1").get() as { id: string } | undefined;
 				assert.ok(edge, "expected an anchors→message edge to break");
-				db.prepare("UPDATE analysis_edges SET to_ref_id = 'ghost-message-id' WHERE id = ?").run(edge!.id);
+				await db.prepare("UPDATE analysis_edges SET to_ref_id = 'ghost-message-id' WHERE id = ?").run(edge!.id);
 			} finally {
 				await db.close();
 			}
@@ -193,7 +193,7 @@ describe("slash commands", () => {
 	it("prospect-proposals lists, accepts, and rejects", async () => {
 		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		await migrate(db);
-		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		const session = await db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		await insertProposalRow(db, { id: "cmd-p1", sessionId: session.id, title: "Test proposal", severity: "friction" });
 		await insertProposalRow(db, { id: "cmd-p2", sessionId: session.id, title: "Second proposal", severity: "waste" });
 		await db.close();
@@ -220,7 +220,7 @@ describe("slash commands", () => {
 	it("prospect-accept captures rationale + disposition as a decision", async () => {
 		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		await migrate(db);
-		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		const session = await db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		await insertProposalRow(db, { id: "cmd-p3", sessionId: session.id, title: "Rationale proposal", inputKey: "ik-cmd-p3" });
 		await db.close();
 
@@ -228,8 +228,8 @@ describe("slash commands", () => {
 		assert.match(accepted, /applied/);
 
 		const db2 = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
-		const d = getLatestDecision(db2, "ik-cmd-p3")!;
-		db2.close();
+		const d = await getLatestDecision(db2, "ik-cmd-p3")!;
+		await db2.close();
 		assert.equal(d.decision, "accepted");
 		assert.equal(d.disposition, "done");
 		assert.match(d.rationale!, /already added the rule/);
@@ -242,7 +242,7 @@ describe("slash commands", () => {
 	it("prospect-remediate accepts many proposals under one shared remediation", async () => {
 		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		await migrate(db);
-		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		const session = await db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		await insertProposalRow(db, { id: "cmd-r1", sessionId: session.id, title: "Remediate A", inputKey: "ik-cmd-r1" });
 		await insertProposalRow(db, { id: "cmd-r2", sessionId: session.id, title: "Remediate B", inputKey: "ik-cmd-r2" });
 		await db.close();
@@ -251,9 +251,9 @@ describe("slash commands", () => {
 		assert.match(out, /2 proposal/);
 
 		const db2 = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
-		const d1 = getLatestDecision(db2, "ik-cmd-r1")!;
-		const d2 = getLatestDecision(db2, "ik-cmd-r2")!;
-		db2.close();
+		const d1 = await getLatestDecision(db2, "ik-cmd-r1")!;
+		const d2 = await getLatestDecision(db2, "ik-cmd-r2")!;
+		await db2.close();
 		assert.equal(d1.decision, "accepted");
 		assert.equal(d1.disposition, "done");
 		assert.match(d1.rationale!, /consolidated polling guidance/);
@@ -353,7 +353,7 @@ describe("prospect tool", () => {
 			assert.equal(body.sessionsProcessed, 1);
 
 			const db = await openAsyncDatabase(dbPath);
-			const rows = db.prepare("SELECT id FROM sessions").all() as Array<{ id: string }>;
+			const rows = await db.prepare("SELECT id FROM sessions").all() as Array<{ id: string }>;
 			await db.close();
 			assert.deepEqual(rows.map((r) => r.id), ["projA-001"]);
 		} finally {
@@ -375,7 +375,7 @@ describe("prospect tool", () => {
 	it("#18 list_proposals shows the full 36-char proposal id, not a truncated prefix", async () => {
 		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		await migrate(db);
-		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		const session = await db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		const fullId = "11111111-2222-4333-8444-555555555555";
 		await insertProposalRow(db, { id: fullId, sessionId: session.id, title: "Full-id proposal", inputKey: "ik-full-18" });
 		await db.close();
@@ -424,7 +424,7 @@ describe("prospect tool", () => {
 	it("#19 list_proposals filters by the severity param", async () => {
 		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		await migrate(db);
-		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		const session = await db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		await insertProposalRow(db, { id: "sev-friction-0001-0000-4000-8000-000000000001", sessionId: session.id, title: "Sev friction keep", severity: "friction", inputKey: "ik-sev-f" });
 		await insertProposalRow(db, { id: "sev-waste-0002-0000-4000-8000-000000000002", sessionId: session.id, title: "Sev waste keep", severity: "waste", inputKey: "ik-sev-w" });
 		await db.close();
@@ -438,7 +438,7 @@ describe("prospect tool", () => {
 	it("#20 list_proposals honours the limit param", async () => {
 		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		await migrate(db);
-		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		const session = await db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		for (let i = 0; i < 5; i++) {
 			await insertProposalRow(db, { id: `lim-${i}-0000-0000-4000-8000-0000000000${i.toString().padStart(2, "0")}`, sessionId: session.id, title: `Limit item ${i}`, inputKey: `ik-lim-${i}` });
 		}
@@ -504,7 +504,7 @@ describe("prospect tool", () => {
 	it("remediate accepts many proposals under one shared remediation", async () => {
 		const db = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
 		await migrate(db);
-		const session = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
+		const session = await db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 		await insertProposalRow(db, { id: "tool-r1-0000-0000-4000-8000-000000000001", sessionId: session.id, title: "Tool remediate A", inputKey: "ik-tool-r1" });
 		await insertProposalRow(db, { id: "tool-r2-0000-0000-4000-8000-000000000002", sessionId: session.id, title: "Tool remediate B", inputKey: "ik-tool-r2" });
 		await db.close();
@@ -527,9 +527,9 @@ describe("prospect tool", () => {
 		assert.match(body, /missing-id/);
 
 		const db2 = await openAsyncDatabase(process.env["PROSPECTOR_DB_PATH"]!);
-		const d1 = getLatestDecision(db2, "ik-tool-r1")!;
-		const d2 = getLatestDecision(db2, "ik-tool-r2")!;
-		db2.close();
+		const d1 = await getLatestDecision(db2, "ik-tool-r1")!;
+		const d2 = await getLatestDecision(db2, "ik-tool-r2")!;
+		await db2.close();
 		assert.ok(d1.remediation_id);
 		assert.equal(d1.remediation_id, d2.remediation_id);
 		assert.equal(d1.disposition, "done");

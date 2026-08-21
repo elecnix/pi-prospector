@@ -7,6 +7,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { AsyncDatabase } from "../../../src/db/async-db.js";
 import { tempDb, insertSession, insertMessages, type TempDb } from "../helpers.js";
 import { AnalyzerFramework } from "../../../src/analyze/framework.js";
 import { createMockLLM } from "../../../src/analyze/mock-llm.js";
@@ -14,12 +15,12 @@ import { registerAll } from "../../../src/analyze/defaults.js";
 import { DEFAULT_MODEL_TIERS } from "../../../src/analyze/model-tiers.js";
 import { cacheEconomyAnalyzer } from "../../../src/analyze/analyzers/cache-economy/index.js";
 
-function setUsage(db: import("better-sqlite3").Database, id: string, u: Record<string, number>): void {
-	db.prepare("UPDATE messages SET usage = ? WHERE id = ?").run(JSON.stringify(u), id);
+async function setUsage(db: AsyncDatabase, id: string, u: Record<string, number>): Promise<void> {
+	await db.prepare("UPDATE messages SET usage = ? WHERE id = ?").run(JSON.stringify(u), id);
 }
-function setTimestamps(db: import("better-sqlite3").Database, sessionId: string, stamps: Record<string, number>): void {
-	const stmt = db.prepare("UPDATE messages SET timestamp = ? WHERE id = ?");
-	for (const [id, t] of Object.entries(stamps)) stmt.run(new Date(t * 1000).toISOString(), id);
+async function setTimestamps(db: AsyncDatabase, sessionId: string, stamps: Record<string, number>): Promise<void> {
+	const stmt = await db.prepare("UPDATE messages SET timestamp = ? WHERE id = ?");
+	for (const [id, t] of Object.entries(stamps)) await stmt.run(new Date(t * 1000).toISOString(), id);
 }
 
 describe("cache-economy analyzer", () => {
@@ -39,11 +40,11 @@ describe("cache-economy analyzer", () => {
 				{ id: "a4", role: "assistant", text: "hit", model: "m-a", costUsd: 0.002 },
 			]);
 			// usage per assistant turn
-			setUsage(t.db, "a1", { input: 30000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 30100 }); // cold-start
-			setUsage(t.db, "a2", { input: 30000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 30100 }); // gap 360 > 300 → ttl
-			setUsage(t.db, "a3", { input: 30000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 30100 }); // gap 10 → prefix
-			setUsage(t.db, "a4", { input: 1000, output: 50, cacheRead: 9000, cacheWrite: 1000, totalTokens: 11050 }); // write + read → churn? read later none but hit
-			setTimestamps(t.db, sid, { a1: 1_700_000_000, a2: 1_700_000_360, a3: 1_700_000_370, a4: 1_700_000_380 });
+			await setUsage(t.db, "a1", { input: 30000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 30100 }); // cold-start
+			await setUsage(t.db, "a2", { input: 30000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 30100 }); // gap 360 > 300 → ttl
+			await setUsage(t.db, "a3", { input: 30000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 30100 }); // gap 10 → prefix
+			await setUsage(t.db, "a4", { input: 1000, output: 50, cacheRead: 9000, cacheWrite: 1000, totalTokens: 11050 }); // write + read → churn? read later none but hit
+			await setTimestamps(t.db, sid, { a1: 1_700_000_000, a2: 1_700_000_360, a3: 1_700_000_370, a4: 1_700_000_380 });
 
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -53,7 +54,7 @@ describe("cache-economy analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["cache-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = t.db
+			const row = await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'cache-economy'")
 				.get() as { content_json: string; node_kind: string } | undefined;
 			assert.ok(row, "produced a node");
@@ -107,8 +108,8 @@ describe("cache-economy analyzer", () => {
 				{ id: "a1", role: "assistant", text: "hit 1", model: "m-a", costUsd: 0.001 },
 				{ id: "a2", role: "assistant", text: "hit 2", model: "m-a", costUsd: 0.001 },
 			]);
-			setUsage(t.db, "a1", { input: 1000, output: 50, cacheRead: 9000, cacheWrite: 0, totalTokens: 10050 });
-			setUsage(t.db, "a2", { input: 1000, output: 50, cacheRead: 9000, cacheWrite: 0, totalTokens: 10050 });
+			await setUsage(t.db, "a1", { input: 1000, output: 50, cacheRead: 9000, cacheWrite: 0, totalTokens: 10050 });
+			await setUsage(t.db, "a2", { input: 1000, output: 50, cacheRead: 9000, cacheWrite: 0, totalTokens: 10050 });
 
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -117,7 +118,7 @@ describe("cache-economy analyzer", () => {
 
 			await fw.run(sid, { analyzerIds: ["cache-economy"] });
 
-			const row = t.db
+			const row = await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'cache-economy'")
 				.get() as { content_json: string; node_kind: string } | undefined;
 			assert.ok(row);
@@ -141,14 +142,14 @@ describe("cache-economy analyzer", () => {
 				{ id: "a2", role: "assistant", text: "measured zero", model: "m-a" },
 			]);
 			// a2 records usage with all-zero buckets except a small input → measured cold, not absent
-			setUsage(t.db, "a2", { input: 30000, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 30010 });
+			await setUsage(t.db, "a2", { input: 30000, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 30010 });
 
 			const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
 			await registerAll(fw, { builtins: [cacheEconomyAnalyzer] });
 			await fw.run(sid, { analyzerIds: ["cache-economy"] });
 
-			const row = t.db
+			const row = await t.db
 				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'cache-economy'")
 				.get() as { content_json: string } | undefined;
 			const c = JSON.parse(row!.content_json);

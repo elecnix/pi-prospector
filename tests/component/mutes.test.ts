@@ -19,6 +19,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { tempDb, insertSession, insertMessages } from "./helpers.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
@@ -41,7 +42,7 @@ import type { LLMRequest } from "../../src/analyze/types.js";
 
 const FRUSTRATED_TERMS = new Set(["putain", "wrong", "pénible"]);
 
-function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
+async function build(db: AsyncDatabase) {
 	const llm = createMockLLM({
 		responder: (req: LLMRequest) => {
 			const term = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
@@ -59,15 +60,15 @@ function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
 		},
 	});
 	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	framework.register(turnPairCoreAnalyzer);
-	framework.register(lexiconCandidatesAnalyzer);
-	framework.register(frustrationLexiconAnalyzer);
-	framework.register(turnFrustrationAnalyzer);
+	await framework.register(turnPairCoreAnalyzer);
+	await framework.register(lexiconCandidatesAnalyzer);
+	await framework.register(frustrationLexiconAnalyzer);
+	await framework.register(turnFrustrationAnalyzer);
 	return { framework, llm };
 }
 
-function tfProps(db: Parameters<typeof getNodesByAnalyzer>[0], sessionId: string): TurnFrustrationProperties[] {
-	return ((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId)).map((n) => JSON.parse(n.content_json) as TurnFrustrationProperties);
+async function tfProps(db: AsyncDatabase, sessionId: string): Promise<TurnFrustrationProperties[]> {
+	return (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId)).map((n) => JSON.parse(n.content_json) as TurnFrustrationProperties);
 }
 
 describe("muting a lexicon term", () => {
@@ -77,26 +78,26 @@ describe("muting a lexicon term", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1");
-			assert.deepEqual(tfProps(db, "s1").map((h) => h.signal), ["wrong"]);
-			const hitNodeId = getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")[0]!.id;
+			assert.deepEqual((await tfProps(db, "s1")).map((h) => h.signal), ["wrong"]);
+			const hitNodeId = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!.id;
 
 			// The operator mutes 'wrong'.
-			muteTerm(db, { term: "wrong", reason: "ordinary grammar for this corpus", by: "operator" });
+			await muteTerm(db, { term: "wrong", reason: "ordinary grammar for this corpus", by: "operator" });
 			assert.equal(await isTermMuted(db, "wrong"), true);
 
 			// A later session that also says "wrong" must now match nothing for it.
 			await insertSession(db, "s2");
 			await insertMessages(db, "s2", [{ role: "user", text: "wrong again" }, { role: "assistant", text: "ok" }]);
 			await framework.run("s2");
-			assert.deepEqual(tfProps(db, "s2"), [], "the muted term produces no hit in a new turn");
+			assert.deepEqual(await tfProps(db, "s2"), [], "the muted term produces no hit in a new turn");
 
 			// The earlier hit node is untouched and still reachable.
-			assert.equal((((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).length)), 1);
-			assert.equal(getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")[0]!.id, hitNodeId);
+			assert.equal((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).length, 1);
+			assert.equal((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!.id, hitNodeId);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -106,30 +107,30 @@ await close();
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "wrong and putain" }, { role: "assistant", text: "ok" }]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1");
-			const before = ((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).map((n) => ({ id: n.id, sig: (JSON.parse(n.content_json) as TurnFrustrationProperties).signal }));
+			const before = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).map((n) => ({ id: n.id, sig: (JSON.parse(n.content_json) as TurnFrustrationProperties).signal }));
 			assert.deepEqual(before.map((b) => b.sig).sort(), ["putain", "wrong"]);
-			const beforeFingerprint = getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")[0]!.config_fingerprint;
+			const beforeFingerprint = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!.config_fingerprint;
 
 			// Mute one term. cursor: the config fingerprint is a hash of the active
 			// assertion set, so it must change.
-			muteTerm(db, { term: "wrong", reason: "grammar", by: "operator" });
-			const ver = verifyNodes(db);
+			await muteTerm(db, { term: "wrong", reason: "grammar", by: "operator" });
+			const ver = await verifyNodes(db);
 			assert.equal(ver.mismatches.length, 0, "muting modifies no node, so verify stays clean");
 
 			// A plain fill recomputes nothing: the stale units are not touched.
 			const fill = await framework.run("s1");
 			assert.equal(fill.nodesProduced, 0, "plain fill leaves everything alone");
-			assert.equal((((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).length)), 2, "no node deleted");
-			assert.equal(getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")[0]!.config_fingerprint, beforeFingerprint, "existing nodes unchanged");
+			assert.equal((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).length, 2, "no node deleted");
+			assert.equal((await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!.config_fingerprint, beforeFingerprint, "existing nodes unchanged");
 
 			// `--revise config` recomputes: the unmuted 'putain' gets a fresh node
 			// (a new version that revises the old), while the muted 'wrong' is not
 			// recreated and its old node stays as lineage.
 			const revise = await framework.run("s1", { revise: ["config"] });
 			assert.equal(revise.nodesRevised, 1, "only the unmuted term is revised");
-			const after = getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1");
+			const after = await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1");
 			assert.equal(after.length, 3, "the recomputed node is added, not replacing");
 			assert.equal(
 				after.filter((n) => (JSON.parse(n.content_json) as TurnFrustrationProperties).signal === "wrong").length,
@@ -143,48 +144,48 @@ await close();
 			);
 
 			// Verify stays clean after the revise too.
-			assert.equal(verifyNodes(db).mismatches.length, 0);
+			assert.equal((await verifyNodes(db)).mismatches.length, 0);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("is content-keyed, so mutes survive a wipe-and-recompute", async () => {
 		const { db, close } = await tempDb();
 		try {
-			muteTerm(db, { term: "wrong", reason: "corpus taste", by: "operator" });
+			await muteTerm(db, { term: "wrong", reason: "corpus taste", by: "operator" });
 			// Mutes key on the term, not a row id — re-derive the active set.
-			assert.deepEqual(getMutedTerms(db), ["wrong"]);
-			assert.deepEqual(((await getActiveAssertions(db)).map((a) => a.subject_key), ["wrong"]);
+			assert.deepEqual(await getMutedTerms(db), ["wrong"]);
+			assert.deepEqual((await getActiveAssertions(db)).map((a) => a.subject_key), ["wrong"]);
 			// The assertion id is content-addressed, not a random row id.
-			assert.match(getActiveAssertions(db)[0]!.id, /^[0-9a-f]{16}$/);
+			assert.match((await getActiveAssertions(db))[0]!.id, /^[0-9a-f]{16}$/);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("unmutes append-only via superseded_at and restores matching", async () => {
 		const { db, close } = await tempDb();
 		try {
-			muteTerm(db, { term: "wrong", reason: "not a signal", by: "operator" });
+			await muteTerm(db, { term: "wrong", reason: "not a signal", by: "operator" });
 			assert.equal(await isTermMuted(db, "wrong"), true);
 
-			const n = unmuteTerm(db, "wrong");
+			const n = await unmuteTerm(db, "wrong");
 			assert.equal(n, 1, "one active mute superseded");
 			assert.equal(await isTermMuted(db, "wrong"), false);
-			assert.deepEqual(getMutedTerms(db), []);
+			assert.deepEqual(await getMutedTerms(db), []);
 
 			// The mute row stays inspectable (append-only) — just superseded.
-			const rows = listAssertions(db, "term");
+			const rows = await listAssertions(db, "term");
 			assert.equal(rows.length, 1);
 			assert.ok(rows[0]!.superseded_at !== null, "the original mute is superseded, not deleted");
 
 			// Re-muting reactivates the same content-addressed row.
-			muteTerm(db, { term: "wrong" });
+			await muteTerm(db, { term: "wrong" });
 			assert.equal(await isTermMuted(db, "wrong"), true);
-			assert.equal((((await listAssertions(db, "term")).length)), 1, "one logical assertion, reactivated");
+			assert.equal((await listAssertions(db, "term")).length, 1, "one logical assertion, reactivated");
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -194,25 +195,26 @@ await close();
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1");
 
-			const result = muteTerm(db, { term: "wrong", by: "operator" });
+			const result = await muteTerm(db, { term: "wrong", by: "operator" });
 			// The frustration-lexicon node for 'wrong' should now carry a mutes edge
 			// to the assertion.
-			const lexNodes = getNodesByAnalyzer(db, "frustration-lexicon", "s1");
-			const edges = lexNodes.flatMap((n) => getEdgesFrom(db, n.id));
+			const lexNodes = await getNodesByAnalyzer(db, "frustration-lexicon", "s1");
+			const edges = (await Promise.all(lexNodes.flatMap((n) => getEdgesFrom(db, n.id)))).flat();
 			const mutesEdge = edges.find((e) => e.edge_kind === "mutes");
 			assert.ok(mutesEdge, "a mutes edge exists from the lexicon node");
 			assert.equal(mutesEdge!.to_ref_kind, "assertion");
 			assert.equal(mutesEdge!.to_ref_id, result.assertionId);
 
 			// Idempotent: re-muting does not duplicate the edge.
-			muteTerm(db, { term: "wrong", by: "operator" });
-			const edgeCount = getNodesByAnalyzer(db, "frustration-lexicon", "s1").flatMap((n) => getEdgesFrom(db, n.id)).filter((e) => e.edge_kind === "mutes").length;
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			const allNodes = await getNodesByAnalyzer(db, "frustration-lexicon", "s1");
+			const edgeCount = (await Promise.all(allNodes.flatMap((n) => getEdgesFrom(db, n.id)))).flat().filter((e) => e.edge_kind === "mutes").length;
 			assert.equal(edgeCount, 1);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -222,33 +224,33 @@ await close();
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1");
-			const lexFpBefore = getNodesByAnalyzer(db, "frustration-lexicon", "s1")[0]!.config_fingerprint;
+			const lexFpBefore = (await getNodesByAnalyzer(db, "frustration-lexicon", "s1"))[0]!.config_fingerprint;
 
-			muteTerm(db, { term: "wrong", by: "operator" });
+			await muteTerm(db, { term: "wrong", by: "operator" });
 
 			// Judging a term is unaffected by muting it: the lexicon's fingerprint does
 			// not fold in the mute set, so a recompute never re-adjudicates the corpus.
 			const fill = await framework.run("s1");
 			assert.equal(fill.nodesProduced, 0);
-			assert.equal(getNodesByAnalyzer(db, "frustration-lexicon", "s1")[0]!.config_fingerprint, lexFpBefore);
+			assert.equal((await getNodesByAnalyzer(db, "frustration-lexicon", "s1"))[0]!.config_fingerprint, lexFpBefore);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("reports the active mute corpus", async () => {
 		const { db, close } = await tempDb();
 		try {
-			muteTerm(db, { term: "cannot", by: "operator" });
-			muteTerm(db, { term: "do", by: "agent" });
+			await muteTerm(db, { term: "cannot", by: "operator" });
+			await muteTerm(db, { term: "do", by: "agent" });
 			await supersedeAssertion(db, { subjectKind: "term", subjectKey: "do", verdict: "muted" });
-			const rows = listAssertions(db, "term");
+			const rows = await listAssertions(db, "term");
 			assert.equal(rows.length, 2, "both mutes are recorded");
 			assert.equal(rows.filter((r) => r.superseded_at === null).length, 1, "one remains active");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });

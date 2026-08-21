@@ -26,7 +26,7 @@ import { frustrationLexiconAnalyzer, FRUSTRATION_LEXICON_DEF } from "../../src/a
 import { getNodesByAnalyzer, getLatestNodesByAnalyzerAcrossSessions } from "../../src/db/analysis-queries.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
-function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
+async function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
 	const llm = createMockLLM({
 		responder: (_req: LLMRequest) => ({
 			text: "x",
@@ -34,8 +34,8 @@ function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
 		}),
 	});
 	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	framework.register(lexiconCandidatesAnalyzer);
-	framework.register(frustrationLexiconAnalyzer);
+	await framework.register(lexiconCandidatesAnalyzer);
+	await framework.register(frustrationLexiconAnalyzer);
 	return { framework, llm };
 }
 
@@ -61,15 +61,15 @@ describe("lexicon cost", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: vocabulary.join(" ") }]);
 
-			const { framework } = build(db);
+			const { framework } = await build(db);
 			await framework.run("s1", { analyzerIds: [LEXICON_CANDIDATES_DEF.id] });
 
 			const props = JSON.parse(
-				getNodesByAnalyzer(db, LEXICON_CANDIDATES_DEF.id, "s1")[0]!.content_json,
+				((await getNodesByAnalyzer(db, LEXICON_CANDIDATES_DEF.id, "s1"))[0])!.content_json,
 			) as LexiconCandidatesProperties;
 			assert.equal(props.terms.length, 120, "no vocabulary is left unoffered");
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -79,7 +79,7 @@ await close();
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: words("alpha", 200).join(" ") }]);
 
-			const { framework, llm } = build(db);
+			const { framework, llm } = await build(db);
 			const first = await framework.run("s1");
 			assert.ok(first.nodesProduced > 200, `expected a large first pass, got ${first.nodesProduced}`);
 			const spent = llm.calls.length;
@@ -92,7 +92,7 @@ await close();
 			}
 			assert.equal(llm.calls.length, spent, "and must cost nothing");
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -107,7 +107,7 @@ await close();
 			await insertSession(db, "s2");
 			await insertMessages(db, "s2", [{ role: "user", text: [...shared, ...novel].join(" ") }]);
 
-			const { framework, llm } = build(db);
+			const { framework, llm } = await build(db);
 			await framework.run("s1");
 			const afterFirst = wordCalls(llm);
 			assert.equal(afterFirst, shared.length, "the first session pays for its own vocabulary");
@@ -122,13 +122,13 @@ await close();
 			const judged = new Set(
 				((await getLatestNodesByAnalyzerAcrossSessions(db, FRUSTRATION_LEXICON_DEF.id)).map(
 					(n) => (JSON.parse(n.content_json) as { term: string }).term,
-				),
+				)),
 			);
 			for (const w of [...shared, ...novel]) {
 				assert.equal(judged.has(w), true, `${w} reached the lexicon`);
 			}
 		} finally {
-await close();
+			await close();
 		}
 	});
 

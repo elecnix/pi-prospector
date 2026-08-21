@@ -57,15 +57,15 @@ function llmAnalyzer(id: string): Analyzer {
 }
 
 describe("whole-run completion record + terminal state", () => {
-	it("persists a run record that starts 'running' and finalizes with real counts", () => {
+	it("persists a run record that starts 'running' and finalizes with real counts", async () => {
 		const { db, close } = await tempDb();
 		try {
-			createAnalyzeRun(db, { id: "run-1", mode: "fill", sessionAttempted: 320 });
-			let row = getLatestAnalyzeRuns(db, 1)[0] as Record<string, unknown>;
+			await createAnalyzeRun(db, { id: "run-1", mode: "fill", sessionAttempted: 320 });
+			let row = (await getLatestAnalyzeRuns(db, 1))[0] as Record<string, unknown>;
 			assert.equal(row.status, "running");
 			assert.equal(row.session_attempted, 320);
 
-			finalizeAnalyzeRun(db, "run-1", {
+			await finalizeAnalyzeRun(db, "run-1", {
 				status: "partial",
 				sessionCompleted: 312,
 				sessionFailed: 8,
@@ -78,7 +78,7 @@ describe("whole-run completion record + terminal state", () => {
 				errorCount: 12,
 				errorExamples: ["turn-pair-llm: …timed out…"],
 			});
-			row = getLatestAnalyzeRuns(db, 1)[0] as Record<string, unknown>;
+			row = (await getLatestAnalyzeRuns(db, 1))[0] as Record<string, unknown>;
 			assert.equal(row.status, "partial");
 			assert.equal(row.session_completed, 312);
 			assert.equal(row.session_failed, 8);
@@ -87,7 +87,7 @@ describe("whole-run completion record + terminal state", () => {
 			const examples = JSON.parse(String(row.error_examples)) as string[];
 			assert.deepEqual(examples, ["turn-pair-llm: …timed out…"]);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -102,7 +102,7 @@ await close();
 				llm: () => Promise.resolve({ text: "x", model: "anthropic/c", costUsd: 0.001, tokensUsed: 5 }),
 				modelTiers: DEFAULT_MODEL_TIERS,
 			});
-			fw.register(llmAnalyzer("one-shot"));
+			await fw.register(llmAnalyzer("one-shot"));
 
 			// Mirrors analyze.ts: wrap every LLM call with withTimeout so a provider
 			// call that neither resolves nor rejects becomes a terminal error.
@@ -119,7 +119,7 @@ await close();
 				withTimeout(baseLlm(req), timeoutMs, () => new Error(`LLM call to ${req.model} exceeded ${timeoutMs}ms`));
 
 			const fwBounded = new AnalyzerFramework({ db, llm, modelTiers: DEFAULT_MODEL_TIERS });
-			fwBounded.register(llmAnalyzer("one-shot"));
+			await fwBounded.register(llmAnalyzer("one-shot"));
 
 			let accounting = emptyAccounting();
 			// Sequential fan-out (concurrency 1) so call order == session order, making
@@ -142,7 +142,7 @@ await close();
 			assert.equal(runStatus(accounting), "partial");
 			assert.match(accounting.errorExamples[0] ?? "", /exceeded 120ms/);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -167,7 +167,7 @@ await close();
 			const llm: LLMCaller = (req) => callWithRetry(() => baseLlm(req), retryPolicy, retryStats);
 
 			const fw = new AnalyzerFramework({ db, llm, modelTiers: DEFAULT_MODEL_TIERS });
-			fw.register(llmAnalyzer("one-shot"));
+			await fw.register(llmAnalyzer("one-shot"));
 
 			let accounting = emptyAccounting();
 			await mapWithConcurrency(["s-throttled"], 1, async (sessionId) => {
@@ -188,8 +188,8 @@ await close();
 
 			// The run record persists the retries so the next person can tell
 			// "throttled and recovered" from "throttled and gave up".
-			createAnalyzeRun(db, { id: "run-throttle", mode: "fill", sessionAttempted: 1 });
-			finalizeAnalyzeRun(db, "run-throttle", {
+			await createAnalyzeRun(db, { id: "run-throttle", mode: "fill", sessionAttempted: 1 });
+			await finalizeAnalyzeRun(db, "run-throttle", {
 				status: runStatus(accounting),
 				sessionCompleted: accounting.completed,
 				sessionFailed: accounting.failed,
@@ -202,11 +202,11 @@ await close();
 				errorCount: accounting.errorCount,
 				errorExamples: accounting.errorExamples,
 			});
-			const row = getLatestAnalyzeRuns(db, 1)[0] as Record<string, unknown>;
+			const row = (await getLatestAnalyzeRuns(db, 1))[0] as Record<string, unknown>;
 			assert.equal(row.status, "ok");
 			assert.equal(row.retried, retryStats.retries);
 		} finally {
-await close();
+			await close();
 		}
 	});
 

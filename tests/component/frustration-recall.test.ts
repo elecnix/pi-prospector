@@ -98,12 +98,12 @@ describe("multilingual friction recall", () => {
 
 			const llm = createMockLLM({ responder: respond });
 			const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			framework.register(turnPairCoreAnalyzer);
+			await framework.register(turnPairCoreAnalyzer);
 			await framework.run("fr1", { analyzerIds: [TURN_PAIR_CORE_DEF.id] });
 
 			const core = ((await getNodesByAnalyzer(db, TURN_PAIR_CORE_DEF.id, "fr1")).map(
 				(n) => JSON.parse(n.content_json) as TurnPairCoreProperties,
-			);
+			));
 			assert.equal(core.length, 2);
 			assert.equal(
 				core.some((p) => p.high_signal),
@@ -111,7 +111,7 @@ describe("multilingual friction recall", () => {
 				"English correction patterns cannot see a French correction",
 			);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -119,17 +119,17 @@ await close();
 		const { db, close } = await tempDb();
 		try {
 			await insertSession(db, "fr1");
-			const ids = insertMessages(db, "fr1", FRENCH_SESSION);
+			const ids = await insertMessages(db, "fr1", FRENCH_SESSION);
 
 			const llm = createMockLLM({ responder: respond });
 			const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			registerDefaults(framework);
+			await registerDefaults(framework);
 			await framework.run("fr1");
 
 			// The turn the deterministic layer scored at zero is now classified.
 			const enriched = ((await getNodesByAnalyzer(db, TURN_PAIR_LLM_DEF.id, "fr1")).map(
 				(n) => JSON.parse(n.content_json) as { user_message_id: string; sentiment: string },
-			);
+			));
 			assert.equal(enriched.length, 1, "exactly the frustrated turn was promoted");
 			assert.equal(enriched[0]!.user_message_id, ids[2], "and it is the French correction");
 
@@ -142,12 +142,12 @@ await close();
 			assert.match(reduce!.user, /"frustration_languages": \[\s*"fr"\s*\]/);
 
 			// And a proposal comes out the far end of the ordinary pipeline.
-			const summaries = getNodesByAnalyzer(db, SESSION_OVERVIEW_DEF.id, "fr1");
+			const summaries = await getNodesByAnalyzer(db, SESSION_OVERVIEW_DEF.id, "fr1");
 			assert.equal(summaries.length, 1);
-			const proposals = db.prepare("SELECT COUNT(*) AS n FROM proposals WHERE session_id = ?").get("fr1") as { n: number };
+			const proposals = (await db.prepare("SELECT COUNT(*) AS n FROM proposals WHERE session_id = ?").get("fr1")) as { n: number };
 			assert.ok(proposals.n > 0, "the friction reaches a reviewable proposal");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });

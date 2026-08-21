@@ -8,11 +8,11 @@ import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 
 async function runCore(db: import("better-sqlite3").Database, sessionId: string): Promise<TurnPairCoreProperties[]> {
 	const fw = new AnalyzerFramework({ db, llm: createThrowingLLM(), modelTiers: DEFAULT_MODEL_TIERS });
-	fw.register(turnPairCoreAnalyzer);
+	await fw.register(turnPairCoreAnalyzer);
 	await fw.run(sessionId, {});
-	const rows = db
+	const rows = (await db
 		.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'turn-pair-core' ORDER BY rowid")
-		.all() as Array<{ content_json: string }>;
+		.all()) as unknown as Array<{ content_json: string }>;
 	return rows.map((r) => JSON.parse(r.content_json) as TurnPairCoreProperties);
 }
 
@@ -31,7 +31,7 @@ describe("turn-pair-core scoring", () => {
 			assert.equal(props[0]!.high_signal, false);
 			assert.equal(props[0]!.friction_score, 0);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -62,7 +62,7 @@ await close();
 			assert.equal(p1.empty_response, true);
 			assert.ok(p1.friction_score > 0);
 		} finally {
-await close();
+			await close();
 		}
 	});
 });

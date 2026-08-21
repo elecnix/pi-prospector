@@ -60,15 +60,15 @@ async function buildTwoVersionGraph(): Promise<{ sessionId: string; sourceSetHas
 	]);
 	const mock = createMockLLM({ responder: respond });
 	const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	fw.register(turnPairCoreAnalyzer);
+	await fw.register(turnPairCoreAnalyzer);
 	await fw.run("sess-diff", {});
 
-	const sset = (db
+	const sset = ((await db
 		.prepare("SELECT source_set_hash FROM analysis_nodes WHERE analyzer_id = 'turn-pair-core' AND session_id = ? LIMIT 1")
-		.get("sess-diff") as { source_set_hash: string }).source_set_hash;
+		.get("sess-diff")) as { source_set_hash: string }).source_set_hash;
 
 	const fw2 = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	fw2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
+	await fw2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
 	await fw2.run("sess-diff", { revise: ["major"], analyzerIds: ["turn-pair-core"] });
 	await db.close();
 	return { sessionId: "sess-diff", sourceSetHash: sset };
@@ -93,17 +93,17 @@ describe("prospect diff (#53)", () => {
 		]);
 		const mock = createMockLLM({ responder: respond });
 		const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-		fw.register(turnPairCoreAnalyzer);
+		await fw.register(turnPairCoreAnalyzer);
 		await fw.run("sess-ts", {});
 		await db.close();
 
 		const before = new Date().toISOString();
 		const db2 = await openAsyncDatabase(dbPath);
-		migrate(db2);
+		await migrate(db2);
 		const fw2 = new AnalyzerFramework({ db: db2, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-		fw2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
+		await fw2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
 		await fw2.run("sess-ts", { revise: ["major"], analyzerIds: ["turn-pair-core"] });
-		db2.close();
+		await db2.close();
 
 		// The future timepoint (well after the v2 node) → the unit's latest changed.
 		const future = "2038-01-01T00:00:00.000Z";

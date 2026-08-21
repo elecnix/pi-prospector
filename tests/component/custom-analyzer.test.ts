@@ -15,6 +15,7 @@ import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { registerAll } from "../../src/analyze/defaults.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 
 let tmp: string;
 
@@ -35,15 +36,15 @@ function customSource(label: string): string {
   plan(ctx) {
     return [{ sources: [{ kind: "session", id: ctx.sessionId }], sourceSetHash: "sset-" + ctx.sessionId, anchorKind: "session", anchorRef: ctx.sessionId }];
   },
-  analyze(unit, ctx) {
-    const n = ctx.getSessionMessages(ctx.sessionId).length;
+  analyze: async function(unit, ctx) {
+    const n = (await ctx.getSessionMessages(ctx.sessionId)).length;
     return { nodeKind: "metric", contentJson: { messageCount: n, label: ${JSON.stringify(label)} }, anchorKind: "session", anchorRef: ctx.sessionId, edges: [] };
   }
 };
 `;
 }
 
-function seed(db: import("better-sqlite3").Database, id: string): void {
+async function seed(db: AsyncDatabase, id: string): Promise<void> {
 	await insertSession(db, id);
 	await insertMessages(db, id, [
 		{ id: `${id}-m0`, role: "user", text: "hello" },
@@ -51,13 +52,13 @@ function seed(db: import("better-sqlite3").Database, id: string): void {
 	]);
 }
 
-function customNodes(db: import("better-sqlite3").Database): Array<{ input_key: string; content_json: string }> {
-	return db
+async function customNodes(db: AsyncDatabase): Promise<Array<{ input_key: string; content_json: string }>> {
+	return (await db
 		.prepare("SELECT input_key, content_json FROM analysis_nodes WHERE analyzer_id = 'msg-count' ORDER BY created_at")
-		.all() as Array<{ input_key: string; content_json: string }>;
+		.all()) as Array<{ input_key: string; content_json: string }>;
 }
 
-async function run(db: import("better-sqlite3").Database, paths: string[], revise: ("config")[] = []): Promise<void> {
+async function run(db: AsyncDatabase, paths: string[], revise: ("config")[] = []): Promise<void> {
 	const mock = createMockLLM({ responder: () => "{}", tokensPerCall: 0, costPerCall: 0 });
 	const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
 	const { customRegistered, errors } = await registerAll(fw, { paths });
@@ -71,28 +72,28 @@ describe("custom analyzer end-to-end", () => {
 	it("a disk-loaded custom analyzer produces a node", async () => {
 		const t: TempDb = await tempDb();
 		try {
-			seed(t.db, "s1");
+			await seed(t.db, "s1");
 			fs.writeFileSync(path.join(tmp, "count.analyzer.mjs"), customSource("v1"));
 			await run(t.db, [tmp]);
 
-			const nodes = customNodes(t.db);
+			const nodes = await customNodes(t.db);
 			assert.equal(nodes.length, 1);
 			const content = JSON.parse(nodes[0]!.content_json);
 			assert.equal(content.messageCount, 2);
 			assert.equal(content.label, "v1");
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 
 	it("editing the analyzer source revises its node under --revise config (identity-on-edit)", async () => {
 		const t: TempDb = await tempDb();
 		try {
-			seed(t.db, "s1");
+			await seed(t.db, "s1");
 			const file = path.join(tmp, "count.analyzer.mjs");
 			fs.writeFileSync(file, customSource("v1"));
 			await run(t.db, [tmp]);
-			const firstKey = customNodes(t.db)[0]!.input_key;
+			const firstKey = (await customNodes(t.db))[0]!.input_key;
 
 			// Edit source (behaviour identical count, different label) + bump mtime.
 			fs.writeFileSync(file, customSource("v2"));
@@ -104,22 +105,22 @@ describe("custom analyzer end-to-end", () => {
 			// it; a `config` revise recomputes it into a new node linked by `revises`.
 			await run(t.db, [tmp], ["config"]);
 
-			const nodes = customNodes(t.db);
+			const nodes = await customNodes(t.db);
 			assert.equal(nodes.length, 2, "edit produced a second (revised) node");
 			assert.notEqual(nodes[0]!.input_key, nodes[1]!.input_key, "new recipe → new input_key");
 			assert.equal(nodes[0]!.input_key, firstKey);
 			assert.equal(JSON.parse(nodes[1]!.content_json).label, "v2");
 
 			// A revises edge links the new node to its predecessor.
-			const revEdges = t.db
+			const revEdges = (await t.db
 				.prepare(
 					"SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON e.from_node_id = n.id " +
 						"WHERE n.analyzer_id = 'msg-count' AND e.edge_kind = 'revises'",
 				)
-				.get() as { c: number };
+				.get()) as { c: number };
 			assert.equal(revEdges.c, 1);
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 });

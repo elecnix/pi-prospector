@@ -55,11 +55,11 @@ describe("as-of reads (#50)", () => {
 			seedNodeAt(db, "n1", T1);
 			seedNodeAt(db, "n2", T2);
 			seedNodeAt(db, "n3", T3);
-			assert.equal(getAllAnalysisNodes(db).length, 3);
-			assert.equal(getAllAnalysisNodes(db, T2).length, 2);
-			assert.equal(getAllAnalysisNodes(db, T1).length, 1);
+			assert.equal((await getAllAnalysisNodes(db)).length, 3);
+			assert.equal((await getAllAnalysisNodes(db, T2)).length, 2);
+			assert.equal((await getAllAnalysisNodes(db, T1)).length, 1);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -72,7 +72,7 @@ await close();
 			assert.equal((((await getStats(db)).analysis)).nodes, 2);
 			assert.equal((((await getStats(db, T2)).analysis)).nodes, 1);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -93,7 +93,7 @@ await close();
 			push("d1", "ik-p1", "accepted", T2);
 			push("d2", "ik-p2", "rejected", T2);
 			// p1 decided after T1, so at T1 it must still be open.
-			const atT1 = listProposalsAsOf(db, T1);
+			const atT1 = await listProposalsAsOf(db, T1);
 			// proposals created by T1 (all have created_at = now, but the filter is
 			// created_at <= T; insertProposalRow uses now() so they exist at all T).
 			const byId = new Map(atT1.map((p) => [p.id, p.status]));
@@ -101,13 +101,13 @@ await close();
 			assert.equal(byId.get("p2"), "open");
 			assert.equal(byId.get("p3"), "open");
 
-			const atT2 = listProposalsAsOf(db, T2);
+			const atT2 = await listProposalsAsOf(db, T2);
 			const byId2 = new Map(atT2.map((p) => [p.id, p.status]));
 			assert.equal(byId2.get("p1"), "applied");
 			assert.equal(byId2.get("p2"), "rejected");
 			assert.equal(byId2.get("p3"), "open");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });

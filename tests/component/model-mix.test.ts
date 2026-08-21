@@ -22,6 +22,7 @@ import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { aggregateModels } from "../../src/analyze/analyzers/model-mix/index.js";
 import { DEFAULT_MODEL_MIX_CONFIG } from "../../src/analyze/analyzers/model-mix/config.js";
 import type { AnalysisNodeRow } from "../../src/analyze/types.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 
 function easyTurn(model: string, costUsd: number, n: number, sid: string) {
 	return [
@@ -31,10 +32,10 @@ function easyTurn(model: string, costUsd: number, n: number, sid: string) {
 	];
 }
 
-function queryRoutingNodes(db: import("better-sqlite3").Database): AnalysisNodeRow[] {
-	return db
+async function queryRoutingNodes(db: AsyncDatabase): Promise<AnalysisNodeRow[]> {
+	return (await db
 		.prepare("SELECT id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind, content_json, source_set_hash, input_key, output_key, config_fingerprint, model_used, cost_usd, tokens_used, duration_ms, created_at FROM analysis_nodes WHERE analyzer_id = 'routing-opportunity'")
-		.all() as AnalysisNodeRow[];
+		.all()) as unknown as AnalysisNodeRow[];
 }
 
 describe("routing-opportunity + model-mix frontier", () => {
@@ -65,7 +66,7 @@ describe("routing-opportunity + model-mix frontier", () => {
 			assert.equal(r2.errors.length, 0, r2.errors.join("; "));
 
 			// ── routing labels every turn ──
-			const routingNodes = queryRoutingNodes(t.db);
+			const routingNodes = await queryRoutingNodes(t.db);
 			assert.equal(routingNodes.length, 50, "one routing node per turn across the corpus");
 			const first = JSON.parse(routingNodes[0]!.content_json);
 			assert.equal(first.verdict, "downshift", "easy turn labelled downshift");
@@ -88,7 +89,7 @@ describe("routing-opportunity + model-mix frontier", () => {
 			assert.ok(dominated, "pricey, no-better model flagged as dominated");
 			assert.ok(dominated!.title.includes("m-pricey"));
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 
@@ -106,12 +107,12 @@ describe("routing-opportunity + model-mix frontier", () => {
 			await registerAll(fw, { builtins: [turnPairCoreAnalyzer, toolTrajectoryAnalyzer, routingOpportunityAnalyzer] });
 			await fw.run(s1, { analyzerIds: ["routing-opportunity"] });
 
-			const nodes = queryRoutingNodes(t.db);
+			const nodes = await queryRoutingNodes(t.db);
 			assert.equal(nodes.length, 2);
 			const { suggestions } = aggregateModels(nodes, DEFAULT_MODEL_MIX_CONFIG);
 			assert.equal(suggestions.length, 0, "two-turn sample must not produce a verdict");
 		} finally {
-			t.close();
+			await t.close();
 		}
 	});
 });

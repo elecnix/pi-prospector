@@ -134,10 +134,10 @@ function newFramework(db: import("better-sqlite3").Database) {
 }
 
 /** Read and parse the single trajectory metric node for a session. */
-function readTrajectoryNode(db: import("better-sqlite3").Database): ToolTrajectoryProperties {
-	const rows = db
+async function readTrajectoryNode(db: import("better-sqlite3").Database): Promise<ToolTrajectoryProperties> {
+	const rows = (await db
 		.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = ?")
-		.all(TOOL_TRAJECTORY_DEF.id) as Array<{ content_json: string }>;
+		.all(TOOL_TRAJECTORY_DEF.id)) as unknown as Array<{ content_json: string }>;
 	assert.ok(rows.length >= 1, "trajectory analyzer should produce at least one node");
 	const parsed = JSON.parse(rows[0]!.content_json) as ToolTrajectoryProperties;
 	return parsed;
@@ -155,17 +155,17 @@ describe("tool-trajectory component test", () => {
 			await insertMessages(baseline.db, "thrash-baseline", thrashSessionMessages());
 
 			const baselineFw = newFramework(baseline.db);
-			baselineFw.register(turnPairCoreAnalyzer);
-			baselineFw.register(turnPairLLMAnalyzer);
-			baselineFw.register(sessionOverviewAnalyzer);
+			await baselineFw.register(turnPairCoreAnalyzer);
+			await baselineFw.register(turnPairLLMAnalyzer);
+			await baselineFw.register(sessionOverviewAnalyzer);
 			const baselineSummary = await baselineFw.run("thrash-baseline", {});
 			assert.equal(baselineSummary.errors.length, 0, "baseline run should have no errors");
 
-			baselineProposalCount = (baseline.db
+			baselineProposalCount = ((await baseline.db
 				.prepare("SELECT COUNT(*) as count FROM proposals WHERE session_id = ?")
-				.get("thrash-baseline") as { count: number }).count;
+				.get("thrash-baseline")) as { count: number }).count;
 		} finally {
-			baseline.close();
+			await baseline.close();
 		}
 
 		// The baseline never sees a trajectory signal, so it produces no proposal.
@@ -178,15 +178,15 @@ describe("tool-trajectory component test", () => {
 			await insertMessages(full.db, "thrash-traj", thrashSessionMessages());
 
 			const trajFw = newFramework(full.db);
-			trajFw.register(turnPairCoreAnalyzer);
-			trajFw.register(turnPairLLMAnalyzer);
-			trajFw.register(toolTrajectoryAnalyzer);
-			trajFw.register(sessionOverviewAnalyzer);
+			await trajFw.register(turnPairCoreAnalyzer);
+			await trajFw.register(turnPairLLMAnalyzer);
+			await trajFw.register(toolTrajectoryAnalyzer);
+			await trajFw.register(sessionOverviewAnalyzer);
 			const trajSummary = await trajFw.run("thrash-traj", {});
 			assert.equal(trajSummary.errors.length, 0, "trajectory run should have no errors");
 
 			// (1) The trajectory analyzer detected real signals through the framework.
-			const props = readTrajectoryNode(full.db);
+			const props = await readTrajectoryNode(full.db);
 			assert.equal(props.tool_call_count, 8, "should have parsed all 8 bash tool calls");
 			assert.ok(props.signals.length >= 1, `expected >=1 trajectory signal, got ${props.signals.length}`);
 
@@ -198,16 +198,16 @@ describe("tool-trajectory component test", () => {
 			assert.equal(polling.count, 5, "polling loop should span all 5 gh pr view calls");
 
 			// (2) The signal reaches the digest and drives at least one proposal.
-			const trajProposalCount = (full.db
+			const trajProposalCount = ((await full.db
 				.prepare("SELECT COUNT(*) as count FROM proposals WHERE session_id = ?")
-				.get("thrash-traj") as { count: number }).count;
+				.get("thrash-traj")) as { count: number }).count;
 			assert.ok(trajProposalCount >= 1, "trajectory signals should drive at least one proposal");
 			assert.ok(
 				trajProposalCount > baselineProposalCount,
 				`trajectory run (${trajProposalCount}) should produce more proposals than baseline (${baselineProposalCount})`,
 			);
 		} finally {
-			full.close();
+			await full.close();
 		}
 	});
 
@@ -225,15 +225,15 @@ describe("tool-trajectory component test", () => {
 			]);
 
 			const fw = newFramework(db);
-			fw.register(turnPairCoreAnalyzer);
-			fw.register(toolTrajectoryAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
+			await fw.register(toolTrajectoryAnalyzer);
 
 			const summary = await fw.run("traj-struct", {});
 			assert.equal(summary.errors.length, 0, "no errors in run");
 
-			const trajNodes = db
+			const trajNodes = (await db
 				.prepare("SELECT * FROM analysis_nodes WHERE analyzer_id = ?")
-				.all(TOOL_TRAJECTORY_DEF.id) as Array<Record<string, unknown>>;
+				.all(TOOL_TRAJECTORY_DEF.id)) as unknown as Array<Record<string, unknown>>;
 			assert.ok(trajNodes.length >= 1, "trajectory analyzer should produce a node");
 
 			const node = trajNodes[0]!;
@@ -247,13 +247,13 @@ describe("tool-trajectory component test", () => {
 			assert.ok(content.trajectory_friction_score >= 0 && content.trajectory_friction_score <= 1, "friction score should be in [0,1]");
 			assert.equal(typeof content.pattern_counts, "object", "content should have pattern_counts");
 
-			const edges = db
+			const edges = (await db
 				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
-				.all(node["id"]) as Array<Record<string, unknown>>;
+				.all(node["id"])) as unknown as Array<Record<string, unknown>>;
 			const anchorEdge = edges.find((e) => e["edge_kind"] === "anchors");
 			assert.ok(anchorEdge, "trajectory node should have an anchors edge");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });
@@ -286,12 +286,12 @@ describe("trajectory signal pricing", () => {
 			]);
 
 			const fw = newFramework(db);
-			fw.register(turnPairCoreAnalyzer);
-			fw.register(toolTrajectoryAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
+			await fw.register(toolTrajectoryAnalyzer);
 			const summary = await fw.run("priced", {});
 			assert.equal(summary.errors.length, 0, "no errors in run");
 
-			const props = readTrajectoryNode(db);
+			const props = await readTrajectoryNode(db);
 			const polling = props.signals.find((s) => s.pattern === "polling-loop")!;
 			// The 5 priced assistant turns each cost $0.02 → the loop prices at $0.10.
 			assert.ok(polling, "expected a polling-loop signal");
@@ -304,7 +304,7 @@ describe("trajectory signal pricing", () => {
 			assert.ok(props.trajectory_cost_usd !== null, "aggregate cost should be present when fully priced");
 			assert.ok(Math.abs(props.trajectory_cost_usd! - 0.1) < 1e-9, `aggregate should be $0.10, got ${props.trajectory_cost_usd}`);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -329,12 +329,12 @@ await close();
 			]);
 
 			const fw = newFramework(db);
-			fw.register(turnPairCoreAnalyzer);
-			fw.register(toolTrajectoryAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
+			await fw.register(toolTrajectoryAnalyzer);
 			const summary = await fw.run("partial", {});
 			assert.equal(summary.errors.length, 0, "no errors in run");
 
-			const props = readTrajectoryNode(db);
+			const props = await readTrajectoryNode(db);
 			const polling = props.signals.find((s) => s.pattern === "polling-loop")!;
 			const osc = props.signals.find((s) => s.pattern === "oscillation")!;
 			assert.ok(polling, "expected a polling-loop signal");
@@ -353,7 +353,7 @@ await close();
 			assert.ok(props.trajectory_cost_usd !== null, "aggregate reflects the priced subset");
 			assert.ok(Math.abs(props.trajectory_cost_usd! - 0.1) < 1e-9, `aggregate must be the $0.10 of priced signals (a lower bound), got ${props.trajectory_cost_usd}`);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -368,12 +368,12 @@ await close();
 			]);
 
 			const fw = newFramework(db);
-			fw.register(turnPairCoreAnalyzer);
-			fw.register(toolTrajectoryAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
+			await fw.register(toolTrajectoryAnalyzer);
 			const summary = await fw.run("unpriced", {});
 			assert.equal(summary.errors.length, 0, "no errors in run");
 
-			const props = readTrajectoryNode(db);
+			const props = await readTrajectoryNode(db);
 			const polling = props.signals.find((s) => s.pattern === "polling-loop")!;
 			assert.ok(polling, "expected a polling-loop signal");
 			assert.equal(polling.cost_usd, null, "unpriced signal cost stays null");
@@ -381,7 +381,7 @@ await close();
 			assert.equal(props.unpriced_signal_count, 1, "the signal is reported as unpriced");
 			assert.equal(props.trajectory_cost_usd, null, "aggregate stays null (unknown), never 0");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });
@@ -412,18 +412,18 @@ describe("tool-trajectory dogfood regressions (through the framework)", () => {
 			]);
 
 			const fw = newFramework(db);
-			fw.register(turnPairCoreAnalyzer);
-			fw.register(toolTrajectoryAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
+			await fw.register(toolTrajectoryAnalyzer);
 			const summary = await fw.run("poll-loop", {});
 			assert.equal(summary.errors.length, 0, "no errors in run");
 
-			const props = readTrajectoryNode(db);
+			const props = await readTrajectoryNode(db);
 			const polling = props.signals.filter((s) => s.pattern === "polling-loop");
 			assert.ok(polling.length >= 1, `expected a polling-loop signal, got ${JSON.stringify(props.signals.map((s) => s.pattern))}`);
 			assert.equal(polling[0]!.count, 5, "polling loop should span all 5 read-only calls");
 			assert.equal(polling[0]!.tool, "bash");
 		} finally {
-await close();
+			await close();
 		}
 	});
 
@@ -444,12 +444,12 @@ await close();
 			]);
 
 			const fw = newFramework(db);
-			fw.register(turnPairCoreAnalyzer);
-			fw.register(toolTrajectoryAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
+			await fw.register(toolTrajectoryAnalyzer);
 			const summary = await fw.run("oscillation", {});
 			assert.equal(summary.errors.length, 0, "no errors in run");
 
-			const props = readTrajectoryNode(db);
+			const props = await readTrajectoryNode(db);
 			const oscillations = props.signals.filter((s) => s.pattern === "oscillation");
 			assert.ok(
 				oscillations.length >= 1,
@@ -457,7 +457,7 @@ await close();
 			);
 			assert.equal(oscillations[0]!.tool, "bash");
 		} finally {
-await close();
+			await close();
 		}
 	});
 });

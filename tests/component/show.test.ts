@@ -60,7 +60,7 @@ before(async () => {
 	]);
 	const mock = createMockLLM({ responder: respond, tokensPerCall: 50, costPerCall: 0.001 });
 	const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	registerDefaults(fw);
+	await registerDefaults(fw);
 	const summary = await fw.run("s1", {});
 	assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 	await db.close();

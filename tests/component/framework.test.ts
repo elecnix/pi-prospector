@@ -6,13 +6,14 @@ import { createThrowingLLM } from "../../src/analyze/mock-llm.js";
 import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
 import { getNodeVersions, getRevisedNode, getRevisions } from "../../src/db/analysis-queries.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
 import type { Analyzer, AnalysisResult, AnalyzerPlanContext, AnalyzerRunContext } from "../../src/analyze/types.js";
 
-function frameworkFor(db: import("better-sqlite3").Database): AnalyzerFramework {
+function frameworkFor(db: AsyncDatabase): AnalyzerFramework {
 	return new AnalyzerFramework({ db, llm: createThrowingLLM(), modelTiers: DEFAULT_MODEL_TIERS });
 }
 
-function seedSession(db: import("better-sqlite3").Database, id = "s1"): void {
+async function seedSession(db: AsyncDatabase, id = "s1"): Promise<void> {
 	await insertSession(db, id);
 	await insertMessages(db, id, [
 		{ role: "user", text: "fix the login bug" },
@@ -27,9 +28,9 @@ describe("framework: incremental scan + fill run", () => {
 	it("classifies all units as missing, then current after a run", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSession(db);
+			await seedSession(db);
 			const fw = frameworkFor(db);
-			fw.register(turnPairCoreAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
 
 			const before = await fw.scan("s1");
 			assert.ok(before.length >= 2);
@@ -42,36 +43,36 @@ describe("framework: incremental scan + fill run", () => {
 			const after = await fw.scan("s1");
 			assert.ok(after.every((c) => c.status === "current"));
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("is idempotent: re-running a fill produces nothing new", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSession(db);
+			await seedSession(db);
 			const fw = frameworkFor(db);
-			fw.register(turnPairCoreAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
 			await fw.run("s1", {});
 			const second = await fw.run("s1", {});
 			assert.equal(second.nodesProduced, 0);
 			assert.ok(second.nodesSkipped > 0);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("deterministic analyzer never calls the LLM", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSession(db);
+			await seedSession(db);
 			const fw = frameworkFor(db); // throwing LLM
-			fw.register(turnPairCoreAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
 			const summary = await fw.run("s1", {});
 			assert.equal(summary.errors.length, 0);
 			assert.ok(summary.nodesProduced > 0);
 		} finally {
-await close();
+			await close();
 		}
 	});
 });
@@ -80,10 +81,10 @@ describe("framework: version lineage (revise)", () => {
 	it("re-analyses stale units into new versions linked by revises edges", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSession(db);
+			await seedSession(db);
 
 			const v1 = frameworkFor(db);
-			v1.register(turnPairCoreAnalyzer);
+			await v1.register(turnPairCoreAnalyzer);
 			await v1.run("s1", {});
 
 			// A new major version over the same logical units.
@@ -92,7 +93,7 @@ describe("framework: version lineage (revise)", () => {
 				version: { ...turnPairCoreAnalyzer.version, major: 2 },
 			};
 			const v2 = frameworkFor(db);
-			v2.register(v2Analyzer);
+			await v2.register(v2Analyzer);
 
 			const scan = await v2.scan("s1");
 			assert.ok(scan.every((c) => c.status === "stale"));
@@ -109,16 +110,16 @@ describe("framework: version lineage (revise)", () => {
 
 			// Both versions coexist for the same logical unit, newest revises oldest.
 			const firstUnit = scan[0]!;
-			const versions = getNodeVersions(db, "turn-pair-core", firstUnit.unit.sourceSetHash);
+			const versions = await getNodeVersions(db, "turn-pair-core", firstUnit.unit.sourceSetHash);
 			assert.equal(versions.length, 2);
 
 			const newest = versions[versions.length - 1]!;
 			const oldest = versions[0]!;
-			const revised = getRevisedNode(db, newest.id);
+			const revised = await getRevisedNode(db, newest.id);
 			assert.equal(revised!.id, oldest.id);
-			assert.equal(getRevisions(db, oldest.id)[0]!.id, newest.id);
+			assert.equal((await getRevisions(db, oldest.id))[0]!.id, newest.id);
 		} finally {
-await close();
+			await close();
 		}
 	});
 });
@@ -127,7 +128,7 @@ describe("framework: dependency visibility & ordering", () => {
 	it("throws when an analyzer reads an undeclared dependency", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSession(db);
+			await seedSession(db);
 			const sneaky: Analyzer = {
 				def: { id: "sneaky", label: "Sneaky", description: "", anchorSpan: "full_session", dependencies: [] },
 				version: { analyzerId: "sneaky", major: 1, minor: 0, implementationKind: "deterministic" },
@@ -142,16 +143,16 @@ describe("framework: dependency visibility & ordering", () => {
 				},
 			};
 			const fw = frameworkFor(db);
-			fw.register(sneaky);
+			await fw.register(sneaky);
 			const summary = await fw.run("s1");
 			assert.equal(summary.errors.length, 1);
 			assert.match(summary.errors[0]!, /without declaring it/);
 
 			// The failure is recorded as an append-only error node (visibility + history),
 			// carrying the message.
-			const errNode = db
+			const errNode = (await db
 				.prepare("SELECT * FROM analysis_nodes WHERE node_kind = 'error'")
-				.get() as { content_json: string; input_key: string } | undefined;
+				.get()) as { content_json: string; input_key: string } | undefined;
 			assert.ok(errNode);
 			assert.match(JSON.parse(errNode!.content_json).error, /without declaring it/);
 
@@ -162,14 +163,14 @@ describe("framework: dependency visibility & ordering", () => {
 			assert.ok(after.every((c) => c.status === "missing"));
 			assert.notEqual(errNode!.input_key, after[0]!.inputKey);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("self-heals: a failed unit stays missing and is recomputed on the next run, keeping the error node", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSession(db);
+			await seedSession(db);
 			let attempts = 0;
 			const flaky: Analyzer = {
 				def: { id: "flaky", label: "Flaky", description: "", anchorSpan: "full_session", dependencies: [] },
@@ -186,17 +187,17 @@ await close();
 				},
 			};
 			const fw = frameworkFor(db);
-			fw.register(flaky);
+			await fw.register(flaky);
 
-			const countErr = () => (db.prepare("SELECT COUNT(*) c FROM analysis_nodes WHERE node_kind='error'").get() as { c: number }).c;
-			const countOk = () => (db.prepare("SELECT COUNT(*) c FROM analysis_nodes WHERE analyzer_id='flaky' AND node_kind='metric'").get() as { c: number }).c;
+			const countErr = async () => ((await db.prepare("SELECT COUNT(*) c FROM analysis_nodes WHERE node_kind='error'").get()) as { c: number }).c;
+			const countOk = async () => ((await db.prepare("SELECT COUNT(*) c FROM analysis_nodes WHERE analyzer_id='flaky' AND node_kind='metric'").get()) as { c: number }).c;
 
 			// First run fails: error node recorded, no result, unit still missing.
 			const run1 = await fw.run("s1", {});
 			assert.equal(run1.errors.length, 1);
 			assert.equal(run1.nodesProduced, 0);
-			assert.equal(countErr(), 1);
-			assert.equal(countOk(), 0);
+			assert.equal(await countErr(), 1);
+			assert.equal(await countOk(), 0);
 			const scan1 = (await fw.scan("s1")).filter((c) => c.analyzerId === "flaky");
 			assert.ok(scan1.every((c) => c.status === "missing"));
 
@@ -204,19 +205,19 @@ await close();
 			const run2 = await fw.run("s1", {});
 			assert.equal(run2.errors.length, 0);
 			assert.equal(run2.nodesProduced, 1);
-			assert.equal(countErr(), 1);
-			assert.equal(countOk(), 1);
+			assert.equal(await countErr(), 1);
+			assert.equal(await countOk(), 1);
 			const scan2 = (await fw.scan("s1")).filter((c) => c.analyzerId === "flaky");
 			assert.ok(scan2.every((c) => c.status === "current"));
 		} finally {
-await close();
+			await close();
 		}
 	});
 
 	it("dedups two same-recipe units in one run (no UNIQUE collision, no wasted analyze)", async () => {
 		const { db, close } = await tempDb();
 		try {
-			seedSession(db);
+			await seedSession(db);
 			let analyzeCalls = 0;
 			// Plans TWO units that resolve to the SAME source_set_hash. By the
 			// framework's contract they are the same logical unit; only one node
@@ -237,15 +238,15 @@ await close();
 				},
 			};
 			const fw = frameworkFor(db);
-			fw.register(dupe);
+			await fw.register(dupe);
 
 			const summary = await fw.run("s1", {});
 			assert.equal(summary.errors.length, 0);
 			assert.equal(summary.nodesProduced, 1);
 			assert.equal(analyzeCalls, 1, "the duplicate unit must not be analysed twice");
-			const counts = db
+			const counts = (await db
 				.prepare("SELECT node_kind, COUNT(*) c FROM analysis_nodes WHERE analyzer_id='dupe' GROUP BY node_kind")
-				.all() as Array<{ node_kind: string; c: number }>;
+				.all()) as Array<{ node_kind: string; c: number }>;
 			assert.deepEqual(counts, [{ node_kind: "metric", c: 1 }]);
 
 			// Convergence: a re-run produces nothing new and never collides.
@@ -253,15 +254,15 @@ await close();
 			assert.equal(second.errors.length, 0);
 			assert.equal(second.nodesProduced, 0);
 		} finally {
-await close();
+			await close();
 		}
 	});
 
-	it("orders analyzers by dependency and detects cycles", () => {
+	it("orders analyzers by dependency and detects cycles", async () => {
 		const { db, close } = await tempDb();
 		try {
 			const fw = frameworkFor(db);
-			fw.register(turnPairCoreAnalyzer);
+			await fw.register(turnPairCoreAnalyzer);
 			const order = fw.topologicalSort();
 			assert.deepEqual(order, ["turn-pair-core"]);
 
@@ -274,11 +275,11 @@ await close();
 				analyze: () => ({ nodeKind: "metric", contentJson: {}, anchorKind: "session", anchorRef: "s", edges: [] }),
 			};
 			const cyclicB: Analyzer = { ...cyclicA, def: { ...cyclicA.def, id: "B", dependencies: ["A"] }, version: { analyzerId: "B", major: 1, minor: 0, implementationKind: "deterministic" }, defaultConfig: { id: "", analyzerId: "B", configHash: "h", configJson: {} } };
-			fw.register(cyclicA);
-			fw.register(cyclicB);
+			await fw.register(cyclicA);
+			await fw.register(cyclicB);
 			assert.throws(() => fw.topologicalSort(["A"]), /cycle/i);
 		} finally {
-await close();
+			await close();
 		}
 	});
 });
