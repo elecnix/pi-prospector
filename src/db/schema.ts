@@ -37,6 +37,10 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			source TEXT NOT NULL DEFAULT 'pi',
 			cwd TEXT NOT NULL DEFAULT '',
 			parent_session TEXT,
+			-- The human-readable session name from the host's session_info record
+			-- (Pi) or AI title (Claude), for display in reports. NULL when the
+			-- transcript recorded none — never an empty string.
+			name TEXT,
 			started_at TEXT,
 			last_line INTEGER NOT NULL DEFAULT 0,
 			last_modified REAL NOT NULL DEFAULT 0,
@@ -427,10 +431,16 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 		return rows.some((r) => r.name === column);
 	};
 
-	// sessions: add source column if missing
+	// sessions: source column if missing
 	if (!await hasColumn("sessions", "source")) {
 		await db.exec("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'pi'");
 		await db.exec("UPDATE sessions SET source = 'pi' WHERE source IS NULL");
+	}
+
+	// sessions: human-readable name (issue #207), captured at sync time. Nullable;
+	// existing rows are backfilled only by a full re-sync from transcripts.
+	if (!await hasColumn("sessions", "name")) {
+		await db.exec("ALTER TABLE sessions ADD COLUMN name TEXT");
 	}
 
 	// messages: add source column if missing

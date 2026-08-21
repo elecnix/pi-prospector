@@ -48,7 +48,11 @@ roughly the order concepts build on one another.
 
 - **Session** — one recorded conversation between a user and a coding agent,
   from start to end. Sessions are the raw material. They are treated as
-  **read-only**: the system observes them and never alters them.
+  **read-only**: the system observes them and never alters them. A session may
+  carry a **session name** — the human-readable label its host records in the
+  transcript (Pi's `session_info` record, Claude Code's AI title). It is
+  captured at sync time for display only; it is never an input to identity or
+  analysis.
 - **Coding harness** (or **harness**) — which host produced a session: **Pi** or
   **Claude Code**. The sync layer records it as the session's **source**
   (`pi` | `claude`) from which directory tree the session file was discovered.

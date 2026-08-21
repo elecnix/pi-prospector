@@ -114,3 +114,24 @@ describe("end-to-end sync", () => {
 		}
 	});
 });
+
+	it("captures the session name from session_info records (issue #207)", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			const rows = (await db.prepare("SELECT id, name FROM sessions ORDER BY id").all()) as Array<{ id: string; name: string | null }>;
+			const named = rows.find((r) => r.id === "bbbb0002-cccc-dddd-eeee-ffffffffffff");
+			assert.ok(named, "named fixture session is indexed");
+			assert.equal(named.name, "rusty-dragon-17");
+			// A session with no session_info record keeps null — never an empty string.
+			const plain = rows.find((r) => r.id === "aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee");
+			assert.ok(plain, "unnamed fixture session is indexed");
+			assert.equal(plain.name, null);
+
+			// Idempotent: a re-sync (all files unchanged → skipped) leaves the names alone.
+			const result2 = await runSync(db, FIXTURES, NO_CLAUDE_DIR);
+			assert.ok(result2.sessionsSkipped >= 1);
+		} finally {
+			await close();
+		}
+	});

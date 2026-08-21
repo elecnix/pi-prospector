@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseLine, parseClaudeLine } from "../../src/sync/parser.js";
+import { parseLine, parseClaudeLine, extractSessionName } from "../../src/sync/parser.js";
 
 describe("parseLine", () => {
 	it("parses a v3 session header", () => {
@@ -267,5 +267,43 @@ describe("parseClaudeLine — assistant turn failure capture", () => {
 		assert.equal(parsed.entry.stopReason, "tool_use");
 		assert.equal(parsed.entry.errorMessage, null);
 		assert.deepEqual(parsed.entry.tool_calls, [{ id: "toolu_1", name: "bash", arguments: { command: "ls" } }]);
+	});
+});
+
+describe("parseLine — session_info records (issue #207)", () => {
+	it("returns a session-info kind carrying the name", () => {
+		const line = JSON.stringify({ type: "session_info", id: "si1", parentId: null, timestamp: "2026-08-21T03:25:31.696Z", name: "rusty-dragon-17" });
+		const result = parseLine(line);
+		assert.ok(result);
+		assert.equal(result.kind, "session-info");
+		if (result.kind === "session-info") assert.equal(result.name, "rusty-dragon-17");
+	});
+
+	it("is never mistaken for a conversation message", () => {
+		const line = JSON.stringify({ type: "session_info", id: "si1", parentId: null, timestamp: "2026-08-21T03:25:31.696Z", name: "quiet-marlin-91" });
+		const result = parseLine(line);
+		assert.ok(result && result.kind !== "message");
+	});
+
+	it("a missing or empty name yields null, never an empty string", () => {
+		const bare = JSON.stringify({ type: "session_info", id: "si2", parentId: null, timestamp: "2026-08-21T03:25:31.696Z" });
+		const empty = JSON.stringify({ type: "session_info", id: "si3", parentId: null, timestamp: "2026-08-21T03:25:31.696Z", name: "   " });
+		const bareResult = parseLine(bare);
+		assert.ok(bareResult && bareResult.kind === "session-info");
+		assert.equal(bareResult.name, null);
+		const emptyResult = parseLine(empty);
+		assert.ok(emptyResult && emptyResult.kind === "session-info");
+		assert.equal(emptyResult.name, null);
+	});
+
+	it("extractSessionName returns the last non-empty name in the file", () => {
+		const lines = [
+			JSON.stringify({ type: "session", version: 3, id: "abc", timestamp: "2026-08-21T03:25:27.690Z", cwd: "/x" }),
+			JSON.stringify({ type: "session_info", id: "si1", parentId: null, timestamp: "2026-08-21T03:25:31.696Z", name: "quiet-marlin-91" }),
+			JSON.stringify({ type: "message", id: "m1", parentId: null, timestamp: "2026-08-21T03:26:00.000Z", message: { role: "user", content: "hi" } }),
+			JSON.stringify({ type: "session_info", id: "si2", parentId: null, timestamp: "2026-08-21T03:46:22.578Z", name: "quiet-marlin-91: renamed" }),
+		];
+		assert.equal(extractSessionName(lines), "quiet-marlin-91: renamed");
+		assert.equal(extractSessionName([lines[0]!, lines[2]!]), null);
 	});
 });

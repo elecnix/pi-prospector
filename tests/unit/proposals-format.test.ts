@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseProposalsArgs, parseDecisionArgs, parseRemediateArgs, formatDecisionLine, rankProposals, sessionLabel, statusLabel } from "../../src/commands/proposals.js";
+import { parseProposalsArgs, parseDecisionArgs, parseRemediateArgs, formatDecisionLine, rankProposals, sessionLabel, sessionGroupHeader, statusLabel } from "../../src/commands/proposals.js";
 import type { Proposal, ProposalDecision } from "../../src/types.js";
 import { homedir } from "node:os";
 
@@ -235,4 +235,17 @@ test("formatDecisionLine: shows the shared remediation id when present", () => {
 	assert.match(formatDecisionLine(linked), /remediation rem-1/);
 	const solo = makeDecision({ rationale: "solo" });
 	assert.doesNotMatch(formatDecisionLine(solo), /remediation/);
+});
+
+test("sessionGroupHeader: shows the captured session name beside the id (issue #207)", () => {
+	const cwd = `${homedir()}/Source/pi-prospector/main`;
+	const header = sessionGroupHeader({ project: "proj", cwd, source: "pi", name: "rusty-dragon-17" }, "01a025e8-abcd", 5);
+	assert.equal(header, `═══ 01a025e8 rusty-dragon-17 [Pi] · ~/Source/pi-prospector/main · 5 proposal(s) ═══`);
+});
+
+test("sessionGroupHeader: a session without a name degrades to today's label", () => {
+	const withUndefined = sessionGroupHeader({ project: "proj", cwd: "/x", source: "pi", name: undefined }, "abcdef1234", 1);
+	const withoutField = sessionGroupHeader({ project: "proj", cwd: "/x", source: "claude" }, "abcdef1234", 2);
+	assert.equal(withUndefined, "═══ abcdef12 [Pi] · /x · 1 proposal(s) ═══");
+	assert.equal(withoutField, "═══ abcdef12 [Claude] · /x · 2 proposal(s) ═══");
 });
