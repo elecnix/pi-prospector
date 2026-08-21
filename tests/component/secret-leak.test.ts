@@ -196,9 +196,9 @@ describe("secret-leak component test", () => {
 			assert.equal(props.has_leaks, false);
 			assert.equal(props.leak_count, 0);
 			// Anchors only to the session (no leaked messages).
-			const row = (await db
+			const row = ((await db
 				.prepare("SELECT id FROM analysis_nodes WHERE analyzer_id = ?")
-				.get(SECRET_LEAK_DEF.id)) as { id: string };
+				.get(SECRET_LEAK_DEF.id)) as { id: string });
 			const edges = (await db
 				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'anchors'")
 				.all(row.id)) as unknown as Array<Record<string, unknown>>;

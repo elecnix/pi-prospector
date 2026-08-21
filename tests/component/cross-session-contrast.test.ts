@@ -84,7 +84,7 @@ interface NodeIdentity {
 
 /** The session-overview identity for a given session, or undefined if absent. */
 async function overviewIdentity(db: AsyncDatabase, sessionId: string): Promise<NodeIdentity | undefined> {
-	return db
+	return await db
 		.prepare(
 			"SELECT input_key, output_key, source_set_hash FROM analysis_nodes " +
 				"WHERE analyzer_id = 'session-overview' AND session_id = ?",

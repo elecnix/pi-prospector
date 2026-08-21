@@ -23,6 +23,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 			`  Sessions skipped:   ${result.sessionsSkipped}`,
 			`  Messages inserted:  ${result.messagesInserted}`,
 			`  Forks resolved:     ${result.forksResolved}`,
+			`  Subagent runs:      ${result.subagentRunsProcessed} ingested, ${result.subagentRunsSkipped} unchanged`,
 		];
 		if (args.project || args.source) {
 			lines.push(`  Scope: ${[args.project && `project ${args.project}`, args.source && `source ${args.source}`].filter(Boolean).join(" + ")}`);

@@ -11,9 +11,11 @@
 import { shortHash } from "../../input-hash.js";
 import type { ToolStream } from "../../tool-stream.js";
 import {
+	classifyChildRun,
 	classifyFailure,
 	failureClass,
 	UNCLASSIFIED,
+	type ChildRunFacts,
 	type FailureAxis,
 } from "./classes.js";
 import type { FailureModesConfig } from "./config.js";
@@ -36,10 +38,10 @@ export interface FailureCause {
 export interface FailureGroup {
 	axis: FailureAxis;
 	class_id: string;
-	/** The tool involved, for tool-axis groups; "" on the turn axis. */
+	/** The tool involved, for tool-axis groups, or the child agent's name on the child axis; "" on the turn axis. */
 	tool: string;
 	count: number;
-	/** The messages that failed, so the finding can be walked back to the turns. */
+	/** The messages that failed, so the finding can be walked back to the turns. Empty on the child axis — a failed child run may have written no messages at all. */
 	message_ids: string[];
 	causes: FailureCause[];
 	/** Summed billed cost of the *priced* failures, or null when none was priced. */
@@ -128,19 +130,129 @@ export function groupFailures(stream: ToolStream): FailureGroup[] {
 
 	// Deterministic order: the classes as catalogued, then by tool. An analyzer's
 	// output is content-addressed, so a stable order is identity, not cosmetics.
-	return [...groups.values()].sort((a, b) =>
-		a.axis !== b.axis
-			? a.axis.localeCompare(b.axis)
-			: a.class_id !== b.class_id
-				? a.class_id.localeCompare(b.class_id)
-				: a.tool.localeCompare(b.tool),
-	);
+	return [...groups.values()].sort(compareGroups);
+}
+
+/** The canonical ordering of failure groups — axis, then class, then tool. */
+export function compareGroups(a: FailureGroup, b: FailureGroup): number {
+	return a.axis !== b.axis
+		? a.axis.localeCompare(b.axis)
+		: a.class_id !== b.class_id
+			? a.class_id.localeCompare(b.class_id)
+			: a.tool.localeCompare(b.tool);
 }
 
 /** The command a tool call ran, when it has one. Non-shell tools have none. */
 function commandOf(args: Record<string, unknown>): string {
 	const raw = args["command"];
 	return typeof raw === "string" ? raw : "";
+}
+
+/**
+ * The slice of a `subagent_runs` row that child-run classification reads.
+ *
+ * A structural subset rather than the DB row type, so detection stays decoupled
+ * from storage and a test can pass plain objects.
+ */
+export interface ChildRunInput {
+	run_id: string;
+	agent: string | null;
+	exit_code: number | null;
+	error: string | null;
+	model_attempts: string | null;
+	usage: string | null;
+}
+
+/**
+ * Whether every recorded model attempt failed.
+ *
+ * False — not an exception — when nothing was recorded: a run with no attempt
+ * list is classified by its other facts, and "no evidence of success" must not
+ * be read as "evidence of total failure". Unrecorded stays unrecorded.
+ */
+function allModelAttemptsFailed(modelAttemptsJson: string | null): boolean {
+	if (!modelAttemptsJson) return false;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(modelAttemptsJson);
+	} catch {
+		return false;
+	}
+	if (!Array.isArray(parsed) || parsed.length === 0) return false;
+	return parsed.every((a) => (a as { success?: unknown } | null)?.success !== true);
+}
+
+/** The recorded billed cost of a child run, or null when it was not priced. */
+function childRunCost(usageJson: string | null): number | null {
+	if (!usageJson) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(usageJson);
+	} catch {
+		return null;
+	}
+	const cost = (parsed as { cost?: unknown } | null)?.cost;
+	return typeof cost === "number" && Number.isFinite(cost) ? cost : null;
+}
+
+/**
+ * Group failed child runs by class and agent, from artifact metadata.
+ *
+ * A healthy run classifies as `unclassified` and is dropped — on this axis,
+ * unlike the transcript axes, unclassified means "did not fail", not "the
+ * catalogue has a gap", because the classification starts from the run's own
+ * claim about itself. Groups carry no message ids: a spawn-level failure wrote
+ * no messages anywhere, which is precisely why it is visible only here.
+ */
+export function groupChildRunFailures(runs: readonly ChildRunInput[]): FailureGroup[] {
+	const groups = new Map<string, FailureGroup>();
+
+	for (const run of runs) {
+		const facts: ChildRunFacts = {
+			error: run.error ?? "",
+			exitCode: run.exit_code,
+			allModelAttemptsFailed: allModelAttemptsFailed(run.model_attempts),
+		};
+		const { classId, label } = classifyChildRun(facts);
+		if (classId === UNCLASSIFIED.classId) continue;
+
+		const agent = run.agent ?? "unknown";
+		const key = `child|${classId}|${agent}`;
+		let group = groups.get(key);
+		if (!group) {
+			group = {
+				axis: "child",
+				class_id: classId,
+				tool: agent,
+				count: 0,
+				message_ids: [],
+				causes: [],
+				cost_usd: null,
+				priced_count: 0,
+				unpriced_count: 0,
+			};
+			groups.set(key, group);
+		}
+		group.count++;
+
+		const cost = childRunCost(run.usage);
+		if (cost !== null && cost > 0) {
+			group.cost_usd = (group.cost_usd ?? 0) + cost;
+			group.priced_count++;
+		} else {
+			group.unpriced_count++;
+		}
+
+		// Same discipline as the transcript axes: the fingerprint covers the
+		// normalised error text so repeat occurrences count as one cause. When the
+		// artifact recorded no text at all, the curated label is all there is.
+		const fingerprint = shortHash(normalizeForFingerprint(facts.error || label));
+		const cause = group.causes.find((c) => c.label === label && c.fingerprint === fingerprint);
+		if (cause) cause.count++;
+		else group.causes.push({ label, fingerprint, count: 1 });
+	}
+
+	return [...groups.values()].sort(compareGroups);
 }
 
 /**
@@ -179,10 +291,11 @@ export interface ProposalInputs {
  *
  * A class earns a proposal only when it cleared its threshold — a single
  * transient failure is noise, and proposing on it trains the reader to ignore
- * the output. When the class has verified extensions and none of them is
- * already installed, the proposal targets an `extension`; otherwise it targets
- * the ordinary remedy, because a class whose fix is "top up the account" should
- * not be dressed up as a package recommendation.
+ * the output. When the class's remedy kind is `extension` and one of its
+ * verified extensions is not already installed, the proposal targets an
+ * `extension`; otherwise it targets the ordinary remedy, because a class whose
+ * fix is "top up the account" or "fix PATH" should not be dressed up as a
+ * package recommendation.
  */
 export function buildProposals(input: ProposalInputs): RawProposal[] {
 	const proposals: RawProposal[] = [];
@@ -198,29 +311,27 @@ export function buildProposals(input: ProposalInputs): RawProposal[] {
 		const threshold = group.axis === "turn" ? input.config.minTurnFailures : input.config.minToolFailures;
 		if (group.count < threshold) continue;
 
-		const denominator = group.axis === "turn" ? input.assistantTurnCount : input.toolCallCount;
+		// A child run has no per-session denominator of its own kind here — only
+		// failed runs are grouped, so a rate would need the healthy-run count, which
+		// the grouping deliberately does not carry. The absolute count speaks.
+		const denominator = group.axis === "turn" ? input.assistantTurnCount : group.axis === "tool" ? input.toolCallCount : 0;
 		const rate = denominator > 0 ? group.count / denominator : null;
-		const subject = group.axis === "turn" ? "turns" : `${group.tool} calls`;
+		const subject =
+			group.axis === "turn" ? "turns" : group.axis === "child" ? `${group.tool} child runs` : `${group.tool} calls`;
 
 		const costNote =
 			group.priced_count > 0
 				? ` ${group.priced_count}/${group.count} priced occurrences sum to $${group.cost_usd!.toFixed(4)} (lower bound).`
 				: " None of these occurrences carried a recorded cost, so the money lost is unknown.";
 		const rateNote = rate === null ? "" : ` That is ${(rate * 100).toFixed(1)}% of the session's ${denominator} ${group.axis === "turn" ? "assistant turns" : "tool calls"}.`;
-		// Merge causes by label for the reader. The node keeps one entry per
-		// distinct error (label + fingerprint), which is what makes "the same
-		// failure, forty times" distinguishable from "forty different failures" —
-		// but a fingerprint means nothing to a person, and listing it repeated
-		// reads as "a search that found nothing ×1; a search that found nothing ×1".
-		const byLabel = new Map<string, number>();
-		for (const c of group.causes) byLabel.set(c.label, (byLabel.get(c.label) ?? 0) + c.count);
-		const causeNote = [...byLabel.entries()]
-			.sort((a, b) => b[1] - a[1])
-			.slice(0, 3)
-			.map(([label, count]) => `${label} ×${count}`)
-			.join("; ");
 
-		const candidates = cls.extensions.filter((e) => !input.installed.names.has(e.pkg));
+		// The remedy-kind gate: only a class whose fix *is* a package may name one.
+		// An environment class with extensions in its entry (a curation mistake this
+		// gate exists to contain) falls through to its prose remedy instead of
+		// producing an install suggestion that cannot work.
+		const candidates = cls.remedyKind === "extension"
+			? cls.extensions.filter((e) => !input.installed.names.has(e.pkg))
+			: [];
 		const alreadyInstalled = cls.extensions.filter((e) => input.installed.names.has(e.pkg));
 
 		if (candidates.length > 0) {
@@ -245,32 +356,61 @@ export function buildProposals(input: ProposalInputs): RawProposal[] {
 						: "") +
 					installedNote +
 					" Review it before installing — this is a pointer to a package, not an endorsement, and nothing is installed for you.",
-				evidence: `${causeNote}; ${group.count} occurrence(s) across ${new Set(group.message_ids).size} message(s)`,
+				evidence: evidenceFor(group),
 				confidence: confidenceFor(group.count, threshold),
 				severity: "waste",
 			});
 			continue;
 		}
 
-		// No package to recommend — either the class has none, or every candidate
-		// is already installed. Both mean the same thing for the reader: here is
-		// the finding and the fix that does not involve installing anything.
-		const exhaustedNote = cls.extensions.length > 0
+		// No package to recommend — the class is environment or prompt kind, or
+		// every candidate is already installed. Both mean the same thing for the
+		// reader: here is the finding and the fix that does not involve installing
+		// anything.
+		const exhaustedNote = cls.remedyKind === "extension" && cls.extensions.length > 0
 			? ` Every extension this system knows of for this class is already installed (${alreadyInstalled.map((e) => e.pkg).join(", ")}), so the remaining fix is not a package.`
 			: "";
 
+		// Where the finding lives: an environment failure points at the machine's
+		// setup; everything else at configuration or the standing instructions.
+		const targetType = cls.remedyKind === "environment"
+			? "environment"
+			: group.axis === "turn"
+				? "config"
+				: "agents_md";
+
 		proposals.push({
-			target_type: group.axis === "turn" ? "config" : "agents_md",
+			target_type: targetType,
 			title: `${cls.label}: ${group.count} ${subject}`,
 			summary: `${group.count} ${subject} in this session ended in ${cls.label}.${rateNote}${costNote}`,
 			detail: cls.remedy + exhaustedNote,
-			evidence: `${causeNote}; ${group.count} occurrence(s) across ${new Set(group.message_ids).size} message(s)`,
+			evidence: evidenceFor(group),
 			confidence: confidenceFor(group.count, threshold),
 			severity: "waste",
 		});
 	}
 
 	return proposals;
+}
+
+/**
+ * What the proposal quotes as evidence.
+ *
+ * Transcript-axis groups walk back to the exact messages; child-run groups have
+ * no messages to point at — a spawn-level failure wrote none — so they state
+ * the run count instead. Either way the number is counted, never estimated.
+ */
+function evidenceFor(group: FailureGroup): string {
+	const byLabel = new Map<string, number>();
+	for (const c of group.causes) byLabel.set(c.label, (byLabel.get(c.label) ?? 0) + c.count);
+	const causeNote = [...byLabel.entries()]
+		.sort((a, b) => b[1] - a[1])
+		.slice(0, 3)
+		.map(([label, count]) => `${label} ×${count}`)
+		.join("; ");
+	return group.message_ids.length > 0
+		? `${causeNote}; ${group.count} occurrence(s) across ${new Set(group.message_ids).size} message(s)`
+		: `${causeNote}; ${group.count} child run(s) recorded in artifact metadata`;
 }
 
 /**

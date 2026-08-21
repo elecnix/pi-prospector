@@ -112,7 +112,7 @@ describe("custom analyzer end-to-end", () => {
 			assert.equal(JSON.parse(nodes[1]!.content_json).label, "v2");
 
 			// A revises edge links the new node to its predecessor.
-			const revEdges = (await t.db
+			const revEdges = (await await t.db
 				.prepare(
 					"SELECT COUNT(*) AS c FROM analysis_edges e JOIN analysis_nodes n ON e.from_node_id = n.id " +
 						"WHERE n.analyzer_id = 'msg-count' AND e.edge_kind = 'revises'",

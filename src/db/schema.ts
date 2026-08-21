@@ -10,6 +10,7 @@ import { migrateDecisionsToAssertions } from "./assertions.js";
  *
  * Tables:
  *   sessions, messages, messages_fts   — the read-only session index
+ *   subagent_runs                      — child-run artifact metadata, joined by project
  *   proposals                          — materialised, user-reviewable proposals
  *   proposal_decisions                 — append-only human accept/reject + rationale
  *   remediations                       — one human action addressing many proposals
@@ -68,6 +69,31 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			stop_reason TEXT,
 			error_message TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+
+		-- ───────────────────────── subagent runs ─────────────────────────
+		-- The durable record of child-agent runs, ingested from the artifact
+		-- metadata files the host writes beside the parent session
+		-- (<project-dir>/subagent-artifacts/<runId>_<agent>_meta.json). A spawn-level
+		-- failure produces no assistant messages anywhere, so without this table the
+		-- failure is indistinguishable from "nothing happened". The join to the
+		-- parent is by directory nesting: the project column is the directory the artifacts
+		-- sat beside, the same project name sessions carry. error/model_attempts/
+		-- usage are stored verbatim from the artifact; classifying them is an
+		-- analyzer's job, not the ingest layer's. Unrecorded fields stay NULL rather
+		-- than becoming zero — a run whose artifact recorded no exit code did not
+		-- exit zero.
+		CREATE TABLE IF NOT EXISTS subagent_runs (
+			run_id TEXT PRIMARY KEY,
+			project TEXT NOT NULL DEFAULT '',
+			agent TEXT,
+			task_excerpt TEXT,
+			exit_code INTEGER,
+			error TEXT,
+			model_attempts TEXT, -- JSON array of { model, success, exitCode, error, usage }
+			usage TEXT,          -- JSON object { input, output, cacheRead, cacheWrite, cost, turns }
+			file_mtime REAL NOT NULL DEFAULT 0,
+			ingested_at TEXT NOT NULL
 		);
 
 		-- ───────────────────────── proposals (v2) ─────────────────────────
@@ -337,6 +363,7 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 
 	// Create indexes after schema evolution (they may reference new columns)
 	await db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_subagent_runs_project ON subagent_runs(project);
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
 		CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
@@ -551,6 +578,17 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 		if (!await hasColumn("assertions", col)) {
 			await db.exec(`ALTER TABLE assertions ADD COLUMN ${col} TEXT`);
 		}
+	}
+
+	// prompt_registry: legacy (pre-0.2.0) databases declare full_hash TEXT NOT
+	// NULL, which breaks registerPrompt — v0.2.0 no longer supplies the column,
+	// so the first prompt registration fails with "NOT NULL constraint failed:
+	// prompt_registry.full_hash". Nothing reads full_hash (hash is derived in
+	// code from the content), so rather than carry the dead column forward we
+	// drop it where it exists. SQLite ≥ 3.35 supports DROP COLUMN for a plain
+	// column like this one.
+	if (await hasColumn("prompt_registry", "full_hash")) {
+		await db.exec("ALTER TABLE prompt_registry DROP COLUMN full_hash");
 	}
 }
 

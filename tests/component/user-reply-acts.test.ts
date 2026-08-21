@@ -115,7 +115,7 @@ describe("user-reply-acts custom analyzer", () => {
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 			assert.ok(summary.nodesProduced > 0);
 
-			const rows = (await t.db
+			const rows = (await await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'user-reply-acts' ORDER BY created_at")
 				.all()) as unknown as Array<{ content_json: string; node_kind: string }>;
 			assert.ok(rows.length >= 6, `expected ≥6 reply nodes, got ${rows.length}`);

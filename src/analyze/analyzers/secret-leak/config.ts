@@ -64,18 +64,6 @@ export const DEFAULT_SECRET_LEAK_CONFIG: SecretLeakConfig = {
 	minSeverity: "medium",
 };
 
-/** Severity rank used to compare against `minSeverity`. */
-export const SEVERITY_RANK: Record<SecretLeakConfig["minSeverity"], number> = {
-	medium: 1,
-	high: 2,
-	critical: 3,
-};
-
-/** Rule severities used by the detector catalogue. */
-export type LeakSeverity = "medium" | "high" | "critical";
-
-/** Does `sev` meet the configured `minSeverity` floor? */
-export function meetsMinSeverity(sev: LeakSeverity, minSeverity: SecretLeakConfig["minSeverity"]): boolean {
-	const rank: Record<LeakSeverity, number> = { medium: 1, high: 2, critical: 3 };
-	return rank[sev] >= SEVERITY_RANK[minSeverity];
-}
+// Severity ranking and the floor comparison live in the shared scanner engine
+// so every detector analyzer applies them identically.
+export { SEVERITY_RANK, meetsMinSeverity, type LeakSeverity } from "../secret-scanner.js";

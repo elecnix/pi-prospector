@@ -2,9 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { tempDb } from "./helpers.js";
 import { migrate } from "../../src/db/schema.js";
+import { registerPrompt } from "../../src/db/analysis-queries.js";
 
 /** A unique temp-file path (AsyncDatabase is file-backed, not in-memory). */
 function memPath(): string {
@@ -81,8 +83,8 @@ describe("schema migration", () => {
 		const { db, close } = await tempDb();
 		try {
 			await db.prepare("INSERT INTO sessions (id, file_path) VALUES ('s', '/tmp/s.jsonl')").run();
-			const insert = (inputKey: string) =>
-				db
+			const insert = async (inputKey: string) =>
+				await db
 					.prepare(
 						"INSERT INTO analysis_nodes (id, session_id, analyzer_id, analyzer_version_id, config_id, node_kind, content_json, source_set_hash, input_key, created_at) " +
 							"VALUES (?, 's', 'a', '1', 'c', 'metric', '{}', 'ssh', ?, ?)",
@@ -229,6 +231,69 @@ describe("schema migration", () => {
 			assert.equal(row.usage, null, "existing rows should keep null usage");
 		} finally {
 			await db.close();
+		}
+	});
+});
+
+describe("prompt_registry full_hash", () => {
+	it("drops the legacy NOT NULL full_hash column and registers prompts afterwards", async () => {
+		// Reproduces the field failure: databases created by the pre-0.2.0
+		// analyzer-framework build carry prompt_registry.full_hash as NOT NULL,
+		// which broke the first registerPrompt insert. Nothing reads full_hash,
+		// so migrate drops the dead column instead of feeding it.
+		const db = await openAsyncDatabase(memPath());
+		try {
+			await db.exec(`CREATE TABLE prompt_registry (
+				hash TEXT PRIMARY KEY,
+				content TEXT NOT NULL,
+				role TEXT,
+				full_hash TEXT NOT NULL,
+				created_at TEXT NOT NULL
+			)`);
+			// A legacy row: hash was the 16-char prefix of sha256(content).
+			const legacyContent = "legacy prompt";
+			const legacyFull = createHash("sha256").update(legacyContent).digest("hex");
+			await db.prepare("INSERT INTO prompt_registry (hash, content, role, full_hash, created_at) VALUES (?, ?, ?, ?, ?)")
+				.run(legacyFull.slice(0, 16), legacyContent, null, legacyFull, new Date().toISOString());
+
+			await migrate(db);
+			assert.ok(!(await tableColumns(db, "prompt_registry")).has("full_hash"), "full_hash should be dropped");
+			const legacyRow = (await db.prepare("SELECT hash, content FROM prompt_registry").get()) as { hash: string; content: string };
+			assert.equal(legacyRow.content, legacyContent);
+			await assert.doesNotReject(async () => {
+				await registerPrompt(db, { hash: "abc123", content: "hello world" });
+			});
+		} finally {
+			await db.close();
+		}
+	});
+
+	it("leaves a prompt_registry without the column alone", async () => {
+		const db = await openAsyncDatabase(memPath());
+		try {
+			await db.exec(`CREATE TABLE prompt_registry (
+				hash TEXT PRIMARY KEY,
+				content TEXT NOT NULL,
+				role TEXT,
+				created_at TEXT NOT NULL
+			)`);
+			await migrate(db);
+			assert.ok(!(await tableColumns(db, "prompt_registry")).has("full_hash"));
+			await assert.doesNotReject(async () => {
+				await registerPrompt(db, { hash: "deadbeef", content: "no legacy column" });
+			});
+		} finally {
+			await db.close();
+		}
+	});
+
+	it("creates prompt_registry without a full_hash column on fresh databases", async () => {
+		const { db, close } = await tempDb();
+		try {
+			assert.ok(!(await tableColumns(db, "prompt_registry")).has("full_hash"));
+			await registerPrompt(db, { hash: "abc123", content: "fresh" });
+		} finally {
+			await close();
 		}
 	});
 });

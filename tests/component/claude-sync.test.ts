@@ -128,9 +128,9 @@ describe("Claude session sync", () => {
 			);
 			try {
 				await runSync(db, piRoot, claudeRoot);
-				const assistant = (await db
+				const assistant = ((await db
 					.prepare("SELECT role, model, cost_usd, usage FROM messages WHERE role = 'assistant'")
-					.get()) as { role: string; model: string | null; cost_usd: number | null; usage: string | null };
+					.get()) as { role: string; model: string | null; cost_usd: number | null; usage: string | null });
 				assert.equal(assistant.model, "claude-opus-5");
 				assert.equal(assistant.cost_usd, null);
 				assert.ok(assistant.usage);

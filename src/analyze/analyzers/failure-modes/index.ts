@@ -14,7 +14,9 @@
  * asked twice — *what failed, how often, and what would stop it* — and the
  * answer has one shape: a class from the curated catalogue, a count, a price,
  * and a remedy. Splitting them across two analyzers would duplicate the
- * catalogue and let the two halves drift.
+ * catalogue and let the two halves drift. The child-run axis (subagent artifact
+ * metadata) is here for the same reason: a spawn-level child failure leaves no
+ * transcript at all, and its classification belongs to the same catalogue.
  *
  * Deterministic: no LLM, no network, no guessing. Every figure is counted from
  * the transcript, unrecorded costs stay unrecorded rather than becoming zero,
@@ -40,11 +42,14 @@ import type {
 import { computeConfigHash, shortHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { buildToolStream } from "../../tool-stream.js";
+import { getSubagentRunsForSession } from "../../../db/queries.js";
 import { DEFAULT_FAILURE_MODES_CONFIG, type FailureModesConfig } from "./config.js";
 import { curatedPackages } from "./classes.js";
 import { readInstalledPackages, type InstalledPackages } from "./installed.js";
 import {
 	buildProposals,
+	compareGroups,
+	groupChildRunFailures,
 	groupFailures,
 	normalizeForFingerprint,
 	unclassifiedCount,
@@ -56,7 +61,7 @@ export const FAILURE_MODES_DEF: AnalyzerDef = {
 	id: "failure-modes",
 	label: "Failure Modes (deterministic)",
 	description:
-		"Classifies every recorded failure in a session — failed generations (rate limits, transport drops, malformed tool calls, context ceilings, auth) and failed tool calls — against a curated catalogue, prices them, and proposes the remedy, including hand-verified extensions that address the class. Never installs anything. No LLM.",
+		"Classifies every recorded failure in a session — failed generations (rate limits, transport drops, malformed tool calls, context ceilings, auth), failed tool calls, and failed child-agent runs read from subagent artifact metadata — against a curated catalogue, prices them, and proposes the remedy, including hand-verified extensions that address the class. Never installs anything. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [],
 };
@@ -66,8 +71,11 @@ export const FAILURE_MODES_VERSION: AnalyzerVersion = {
 	// 1.0: turn failures (from the stop_reason/error_message columns sync now
 	// keeps) and tool failures, both classified against the curated catalogue,
 	// priced from recorded billed cost, and proposed on above a threshold.
+	// 1.1: child-run failures, classified from subagent artifact metadata — the
+	// only record a spawn-level child failure leaves — with a remedy-kind axis
+	// that keeps environment classes away from extension proposals.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/failure-modes/index.ts",
 };
@@ -80,6 +88,10 @@ export interface FailureModesProperties {
 	turn_failure_count: number;
 	/** Failed tool calls. */
 	tool_failure_count: number;
+	/** Failed child runs, counted from artifact metadata. */
+	child_run_failure_count: number;
+	/** Every child run visible for this session's project — the coverage figure the failure count reads against. */
+	child_run_count: number;
 	/** Denominator for the turn-failure rate. */
 	assistant_turn_count: number;
 	/** Denominator for the tool-failure rate. */
@@ -137,8 +149,12 @@ export const failureModesAnalyzer: Analyzer = {
 		return [`installed:${shortHash(relevant.join(","))}`];
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
-		if (ctx.messages.length === 0) return [];
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
+		// Child runs are ingested beside the sessions they belong to; a session of a
+		// project with failed child runs is worth a node even if its own transcript
+		// is empty, because the artifacts are its corpus's evidence.
+		const childRuns = await getSubagentRunsForSession(ctx.db, ctx.sessionId);
+		if (ctx.messages.length === 0 && childRuns.length === 0) return [];
 
 		const stream = buildToolStream(ctx.messages);
 
@@ -156,7 +172,8 @@ export const failureModesAnalyzer: Analyzer = {
 				...stream.invocations
 					.filter((i) => i.outcome?.isError)
 					.map((i) => `x:${i.messageId}:${i.name}:${normalizeForFingerprint(i.outcome?.errorText ?? "")}`),
-				`n:${stream.coverage.assistantTurnCount}:${stream.coverage.toolCallCount}:${stream.coverage.stopReasonRecorded}`,
+				...childRuns.map((r) => `c:${r.run_id}:${r.exit_code ?? ""}:${normalizeForFingerprint(r.error ?? "")}:${r.model_attempts ?? ""}`),
+				`n:${stream.coverage.assistantTurnCount}:${stream.coverage.toolCallCount}:${stream.coverage.stopReasonRecorded}:${childRuns.length}`,
 			].join("\n"),
 		);
 
@@ -175,7 +192,8 @@ export const failureModesAnalyzer: Analyzer = {
 		const config = resolveConfig(ctx.config.configJson);
 		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const stream = buildToolStream(messages);
-		const groups = groupFailures(stream);
+		const childRuns = await ctx.getSubagentRuns(ctx.sessionId);
+		const groups = [...groupFailures(stream), ...groupChildRunFailures(childRuns)].sort(compareGroups);
 
 		// `recommendExtensions: false` is expressed by making every curated package
 		// look already-present, so the proposal falls through to the non-package
@@ -199,12 +217,14 @@ export const failureModesAnalyzer: Analyzer = {
 		let costSum = 0;
 		let turnFailures = 0;
 		let toolFailures = 0;
+		let childFailures = 0;
 		for (const g of groups) {
 			pricedCount += g.priced_count;
 			unpricedCount += g.unpriced_count;
 			if (typeof g.cost_usd === "number") costSum += g.cost_usd;
 			if (g.axis === "turn") turnFailures += g.count;
-			else toolFailures += g.count;
+			else if (g.axis === "tool") toolFailures += g.count;
+			else childFailures += g.count;
 		}
 
 		const properties: FailureModesProperties = {
@@ -212,6 +232,8 @@ export const failureModesAnalyzer: Analyzer = {
 			groups,
 			turn_failure_count: turnFailures,
 			tool_failure_count: toolFailures,
+			child_run_failure_count: childFailures,
+			child_run_count: childRuns.length,
 			assistant_turn_count: stream.coverage.assistantTurnCount,
 			tool_call_count: stream.coverage.toolCallCount,
 			unclassified_failure_count: unclassifiedCount(groups),

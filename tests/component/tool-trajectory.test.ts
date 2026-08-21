@@ -161,7 +161,7 @@ describe("tool-trajectory component test", () => {
 			const baselineSummary = await baselineFw.run("thrash-baseline", {});
 			assert.equal(baselineSummary.errors.length, 0, "baseline run should have no errors");
 
-			baselineProposalCount = ((await baseline.db
+			baselineProposalCount = ((await await baseline.db
 				.prepare("SELECT COUNT(*) as count FROM proposals WHERE session_id = ?")
 				.get("thrash-baseline")) as { count: number }).count;
 		} finally {

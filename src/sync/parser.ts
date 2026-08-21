@@ -26,7 +26,7 @@ export interface ParsedMessage {
 		text: string | null;
 		thinking: string | null;
 		tool_calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null;
-		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number }> | null;
+		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number; subagent?: SubagentOutcome }> | null;
 		usage: UsageData | null;
 		model: string | null;
 		costUsd: number | null;
@@ -55,6 +55,84 @@ export interface ParsedMessage {
 }
 
 export type ParsedLine = ParsedSession | ParsedMessage;
+
+// ─── Orchestration toolResult classification ───
+
+/**
+ * Tools whose toolResult text records the *outcome of delegated work* rather
+ * than ordinary tool output. The host emits well-known status markers into that
+ * text ("Children: N failed", "Revived async subagent from <runId>.", …), and
+ * for these tools the markers are the only record of how the delegation ended —
+ * the transcript stores nothing else. Keep this set small and explicit; each
+ * entry is a promise that the classifier below knows that tool's markers.
+ */
+export const ORCHESTRATION_TOOLS: readonly string[] = ["subagent"];
+
+/** How a delegated run ended, as classified from the host's status markers. */
+export type SubagentOutcomeStatus = "completed" | "child_failed" | "revived";
+
+export interface SubagentOutcome {
+	status: SubagentOutcomeStatus;
+	/** How many children the host reported as failed ("Children: N failed"). */
+	failedChildren?: number;
+	/** The opaque run id from a revive marker, for chaining to the revived run. */
+	runId?: string;
+	/**
+	 * First {@link SUBAGENT_EXCERPT_LIMIT} chars of the result text.
+	 *
+	 * The excerpt is bounded deliberately: it is diagnostic context for a human
+	 * or an analyzer, not a transcript copy. Storing the full text would
+	 * duplicate every orchestration result into the graph and grow the database
+	 * without bound; the classification above is the durable record.
+	 */
+	excerpt: string;
+}
+
+/** Maximum characters of result text kept in the classified outcome. */
+export const SUBAGENT_EXCERPT_LIMIT = 500;
+
+/**
+ * Classify an orchestration tool's result text into a structured outcome, or
+ * undefined when the tool is not orchestration or the text carries no marker.
+ *
+ * Why classify here at all, when sync is supposed to record structure and
+ * leave interpretation to analyzers: the markers are a stable host-emitted
+ * protocol, not model output — the same trade the parser already makes for
+ * `stopReason`/`errorMessage`. And `isError` cannot carry the signal: the host
+ * sets it only when the *tool call* itself failed, so a subagent result that
+ * reports "Children: 3 failed" is a clean, successful call that happens to
+ * describe a fleet of failures. Without this classification, a parent session
+ * whose every delegation failed reads downstream as a run of clean tool calls.
+ *
+ * Matching is case-insensitive substring matching on purpose: the markers are
+ * emitted into free text that may carry surrounding lines.
+ */
+export function classifySubagentResult(toolName: string, text: string | null): SubagentOutcome | undefined {
+	if (!ORCHESTRATION_TOOLS.includes(toolName) || !text) return undefined;
+
+	const excerpt = text.slice(0, SUBAGENT_EXCERPT_LIMIT);
+
+	// Revive first: a revive line names a prior run and must not be shadowed by
+	// any incidental "failed" wording in the surrounding text.
+	const revived = text.match(/revived\s+(?:async|foreground)\s+subagent\s+from\s+(\S+?)\s*\./i);
+	if (revived) {
+		return { status: "revived", runId: revived[1], excerpt };
+	}
+
+	// A child failure is reported either as a counted summary or as a per-child
+	// "[failed]:" line; the counted form may be absent when only the latter is
+	// present, so failedChildren stays optional.
+	if (/children:\s*\d+\s+failed/i.test(text) || text.includes("[failed]:")) {
+		const count = text.match(/children:\s*(\d+)\s+failed/i);
+		return { status: "child_failed", failedChildren: count ? Number(count[1]) : undefined, excerpt };
+	}
+
+	if (/delivered single subagent result via intercom/i.test(text) || /children:\s*\d+\s+completed/i.test(text)) {
+		return { status: "completed", excerpt };
+	}
+
+	return undefined;
+}
 
 export function parseLine(line: string, source?: SessionSource, toolNamesById?: Map<string, string>): ParsedLine | null {
 	if (source === "claude") return parseClaudeLine(line, toolNamesById);
@@ -133,13 +211,20 @@ function parsePiLine(line: string): ParsedLine | null {
 
 		// Tool results
 		if (role === "toolResult") {
-			const textLen = text?.length ?? 0;
-			tool_results = [{
+			const resultText = text ?? "";
+			const toolName = String(msg.toolName ?? "");
+			const result = {
 				toolCallId: String(msg.toolCallId ?? ""),
-				toolName: String(msg.toolName ?? ""),
+				toolName,
 				isError: Boolean(msg.isError),
-				textLength: textLen,
-			}];
+				textLength: resultText.length,
+			};
+			// The outcome of delegated work lives only in the discarded result text
+			// (see classifySubagentResult); attach it when the tool is orchestration
+			// and its markers are present. The field is omitted entirely otherwise,
+			// so ordinary tool rows stay byte-identical to before.
+			const subagent = classifySubagentResult(toolName, text);
+			tool_results = [subagent ? { ...result, subagent } : result];
 		}
 
 		const usage = role === "assistant" ? extractUsage(msg, "pi") : null;
@@ -309,12 +394,18 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 							.join("\n");
 					}
 					const toolUseId = String(p.tool_use_id ?? "");
-					results.push({
+					const toolName = toolNamesById?.get(toolUseId) ?? "";
+					const result = {
 						toolCallId: toolUseId,
-						toolName: toolNamesById?.get(toolUseId) ?? "",
+						toolName,
 						isError: Boolean(p.is_error),
 						textLength: resultText.length,
-					});
+					};
+					// Same classification as the Pi path: a Claude-side orchestration
+					// result (name resolved from the tool_use map) carrying Pi's markers
+					// is classified identically, so both hosts feed one vocabulary.
+					const subagent = classifySubagentResult(toolName, resultText || null);
+					results.push(subagent ? { ...result, subagent } : result);
 					if (resultText) textParts.push(resultText);
 				}
 			}

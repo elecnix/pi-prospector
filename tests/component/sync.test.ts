@@ -104,9 +104,9 @@ describe("end-to-end sync", () => {
 			assert.equal(assistant[1]!.cost_usd, 0.007);
 
 			// Non-assistant rows carry neither field (NULL, never a guessed 0).
-			const user = (await db
+			const user = ((await db
 				.prepare("SELECT model, cost_usd FROM messages WHERE session_id = 'aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee' AND role = 'user'")
-				.get()) as { model: string | null; cost_usd: number | null };
+				.get()) as { model: string | null; cost_usd: number | null });
 			assert.equal(user.model, null);
 			assert.equal(user.cost_usd, null);
 		} finally {

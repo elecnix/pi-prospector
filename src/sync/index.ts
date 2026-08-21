@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { migrate } from "../db/schema.js";
 import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages } from "../db/queries.js";
 import { discoverSessions, type DiscoverOptions } from "./scanner.js";
+import { ingestSubagentArtifacts } from "./subagent-artifacts.js";
 import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "./parser.js";
 import { resolveFork } from "./forks.js";
 import type { SyncResult, SessionSource } from "../types.js";
@@ -25,7 +26,7 @@ export async function runSync(
 	opts?: DiscoverOptions,
 ): Promise<SyncResult> {
 	const discovered = await discoverSessions(sessionsDir, claudeSessionsDir, opts);
-	const result: SyncResult = { sessionsProcessed: 0, sessionsSkipped: 0, messagesInserted: 0, forksResolved: 0, errors: [] };
+	const result: SyncResult = { sessionsProcessed: 0, sessionsSkipped: 0, messagesInserted: 0, forksResolved: 0, subagentRunsProcessed: 0, subagentRunsSkipped: 0, errors: [] };
 
 	for (const disc of discovered) {
 		try {
@@ -49,6 +50,15 @@ export async function runSync(
 			result.errors.push(`${disc.filePath}: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	}
+
+	// Child-run artifact metadata, beside the sessions it belongs to. Ingested in
+	// the same pass — and under the same project scope — so one `/prospect-sync`
+	// fills everything the analyzers read, and a spawn-level child failure is in
+	// the index by the time anyone looks for it.
+	const artifacts = await ingestSubagentArtifacts(db, sessionsDir, opts?.project);
+	result.subagentRunsProcessed = artifacts.processed;
+	result.subagentRunsSkipped = artifacts.skipped;
+	result.errors.push(...artifacts.errors);
 
 	return result;
 }

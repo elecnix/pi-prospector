@@ -173,7 +173,7 @@ export async function buildLeaves(opts: BuildLeavesOptions): Promise<BuildLeaves
 	}
 
 	const previewOf = opts.previews
-		? db.prepare("SELECT content_text FROM messages WHERE id = ?")
+		? await db.prepare("SELECT content_text FROM messages WHERE id = ?")
 		: null;
 
 	const leaves: Leaf[] = [];

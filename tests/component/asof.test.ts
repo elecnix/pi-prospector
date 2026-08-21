@@ -84,14 +84,14 @@ describe("as-of reads (#50)", () => {
 			await insertProposalRow(db, { id: "p2", sessionId: "s1", title: "Two", status: "rejected", inputKey: "ik-p2" });
 			await insertProposalRow(db, { id: "p3", sessionId: "s1", title: "Three", status: "open", inputKey: "ik-p3" });
 
-			const push = (id: string, key: string, decision: string, at: string) =>
-				db
+			const push = async (id: string, key: string, decision: string, at: string) =>
+				await db
 					.prepare("INSERT INTO proposal_decisions (id, proposal_input_key, decision, decided_at) VALUES (?, ?, ?, ?)")
 					.run(id, key, decision, at);
 
 			// p1 accepted at T2, then its decision is overwritten by a later decision? no.
-			push("d1", "ik-p1", "accepted", T2);
-			push("d2", "ik-p2", "rejected", T2);
+			await push("d1", "ik-p1", "accepted", T2);
+			await push("d2", "ik-p2", "rejected", T2);
 			// p1 decided after T1, so at T1 it must still be open.
 			const atT1 = await listProposalsAsOf(db, T1);
 			// proposals created by T1 (all have created_at = now, but the filter is
