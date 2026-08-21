@@ -21,6 +21,7 @@
  */
 
 import type { MessageRow } from "./types.js";
+import type { SubagentOutcome } from "../sync/parser.js";
 
 /** A tool result, as recorded on the message that carried it. */
 export interface ToolOutcome {
@@ -29,6 +30,13 @@ export interface ToolOutcome {
 	isError: boolean;
 	/** Length of the result text, as recorded at ingest. */
 	textLength: number;
+	/**
+	 * The ingest-time classification of an orchestration tool's result (see
+	 * `classifySubagentResult`), or null for every other result. The revive
+	 * marker's run id lives here — it is what ties a revived call back to the
+	 * child run it resumed, and with it to that run's artifact metadata.
+	 */
+	subagent: SubagentOutcome | null;
 	/**
 	 * The failed result's text, or null.
 	 *
@@ -98,6 +106,7 @@ interface RawResult {
 	toolName: string;
 	isError: boolean;
 	textLength: number;
+	subagent: SubagentOutcome | null;
 }
 
 /**
@@ -162,6 +171,7 @@ export function buildToolStream(messages: MessageRow[]): ToolStream {
 				textLength: r.textLength,
 				// One result on the row → its text is unambiguously this result's.
 				errorText: r.isError && results.length === 1 ? (m.content_text ?? null) : null,
+				subagent: r.subagent,
 			};
 		}
 	}
@@ -229,6 +239,10 @@ function parseToolResults(json: string): RawResult[] {
 			toolName: typeof tr["toolName"] === "string" ? tr["toolName"] : "",
 			isError: Boolean(tr["isError"]),
 			textLength: typeof tr["textLength"] === "number" ? tr["textLength"] : 0,
+			subagent:
+				tr["subagent"] && typeof tr["subagent"] === "object"
+					? (tr["subagent"] as SubagentOutcome)
+					: null,
 		});
 	}
 	return out;
