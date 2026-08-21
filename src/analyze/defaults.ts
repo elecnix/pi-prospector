@@ -22,6 +22,7 @@ import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
 import { detectSecretsAnalyzer } from "./analyzers/detect-secrets/index.js";
 import { trufflehogAnalyzer } from "./analyzers/trufflehog/index.js";
+import { secretScannerAnalyzer } from "./analyzers/secret-scanner/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -42,6 +43,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"nosey-parker",
 	"detect-secrets",
 	"trufflehog",
+	"secret-scanner",
 	"token-units",
 	"request-classes",
 	"session-overview",
@@ -102,6 +104,16 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// live credential. Enabling it marks prior nodes stale/config, which is the
 	// correct visible behaviour for a materially different analysis.
 	trufflehogAnalyzer,
+	// The SecretScanner-style container/filesystem evidence detector, same seam
+	// as the other detectors: session-level, standalone, deterministic, metric
+	// nodes only, redacted findings. Its value is the extraction layer — it
+	// recognises which artifact a value lived in (Dockerfile ENV/ARG, compose
+	// env blocks, .env entries, build logs, CI logs, shell exports) and detects
+	// with the bundled catalogue families plus a structural name/shape check.
+	// Implements Deepfence SecretScanner's method only; nothing was vendored.
+	// Enabled by default; a user narrows it via config (extraction toggles /
+	// disabledRules / allowlists), never by editing this list.
+	secretScannerAnalyzer,
 	// Cost accounting. token-units is deterministic and depends on nothing;
 	// request-classes labels the same request segments it prices. Neither depends
 	// on the other — the report joins them at read time, through token-units'
