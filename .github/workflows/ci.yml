@@ -30,3 +30,14 @@ jobs:
           node-version: 22
       - run: npm install --legacy-peer-deps
       - run: node --import tsx test/integration/test-commands.ts
+
+  dupdelta:
+    # Reports only the duplication this pull request introduces, as inline
+    # warnings on the diff. Never fails the build.
+    if: github.event_name == 'pull_request'
+    runs-on: arc-runners
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the merge-base has to be reachable
+      - uses: elecnix/dupdelta@v0.1.0
