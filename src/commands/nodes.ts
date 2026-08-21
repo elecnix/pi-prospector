@@ -23,7 +23,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { TSchema } from "typebox";
@@ -350,12 +350,12 @@ export interface NodesReadResult {
  * action. Reads only — nothing is written, and no dependency is declared
  * (outputs are exempt from the dependency rule; see DESIGN.md).
  */
-export async function readNodes(db: Database.Database, q: NodesQuery): Promise<NodesReadResult> {
+export async function readNodes(db: AsyncDatabase, q: NodesQuery): Promise<NodesReadResult> {
 	if (!q.analyzerId && !q.all) throw new Error(nodesUsage());
 	if (q.analyzerId && q.all) throw new Error("use either --analyzer <id> or --all, not both");
 	if (q.nodeKind) assertValidNodeKind(q.nodeKind);
 
-	const asOf = q.asOf || q.asOfRun ? resolveTimepoint(db, { "as-of": q.asOf ?? "", "as-of-run": q.asOfRun ?? "" })?.at : undefined;
+	const asOf = q.asOf || q.asOfRun ? (await resolveTimepoint(db, { "as-of": q.asOf ?? "", "as-of-run": q.asOfRun ?? "" }))?.at : undefined;
 	const filter: NodeListFilter = {
 		analyzerId: q.analyzerId,
 		nodeKind: q.nodeKind,
@@ -363,8 +363,8 @@ export async function readNodes(db: Database.Database, q: NodesQuery): Promise<N
 		asOf,
 		limit: MAX_SCAN,
 	};
-	const totalLive = countAnalysisNodes(db, filter);
-	let rows = listAnalysisNodes(db, filter);
+	const totalLive = await countAnalysisNodes(db, filter);
+	let rows = await listAnalysisNodes(db, filter);
 
 	// Typed filters over the analyzer's declared outputSchema; best-effort when
 	// the analyzer declares none or is not registered locally.
@@ -422,17 +422,17 @@ function describeMessage(id: string, m: MessageRow | undefined): string {
 }
 
 /** Resolve one edge to a human-readable line, walking node refs to their targets. */
-function describeEdge(db: Database.Database, edge: AnalysisEdgeRow): string {
+async function describeEdge(db: AsyncDatabase, edge: AnalysisEdgeRow): Promise<string> {
 	const pad = (s: string) => s.padEnd(13);
 	if (edge.to_ref_kind === "analysis_node") {
-		const target = getNodeByOutputKey(db, edge.to_ref_id) ?? getNode(db, edge.to_ref_id);
+		const target = (await getNodeByOutputKey(db, edge.to_ref_id)) ?? (await getNode(db, edge.to_ref_id));
 		if (target) {
 			return `${pad(edge.edge_kind)}→ node ${short(target.output_key, 12)} (${target.analyzer_id}, ${target.node_kind})  ${summarizeContent(target.content_json, 3)}`;
 		}
 		return `${pad(edge.edge_kind)}→ node ${edge.to_ref_id} (unresolved)`;
 	}
 	if (edge.to_ref_kind === "message") {
-		return `${pad(edge.edge_kind)}→ message ${describeMessage(edge.to_ref_id, getMessage(db, edge.to_ref_id))}`;
+		return `${pad(edge.edge_kind)}→ message ${describeMessage(edge.to_ref_id, await getMessage(db, edge.to_ref_id))}`;
 	}
 	return `${pad(edge.edge_kind)}→ ${edge.to_ref_kind} ${edge.to_ref_id}`;
 }
@@ -447,10 +447,10 @@ export interface NodeDetailResult {
  * outgoing edges resolved to their target nodes and messages — the walk
  * `prospect show` performs for a proposal, available for any node.
  */
-export async function readNodeDetail(db: Database.Database, ref: string): Promise<NodeDetailResult> {
+export async function readNodeDetail(db: AsyncDatabase, ref: string): Promise<NodeDetailResult> {
 	const trimmed = ref.trim();
 	if (!trimmed) throw new Error("Usage: prospect node <output-key>");
-	const node = resolveNode(db, trimmed);
+	const node = await resolveNode(db, trimmed);
 	const head = [
 		`Node ${node.output_key}`,
 		`  kind:       ${node.node_kind}`,
@@ -472,21 +472,21 @@ export async function readNodeDetail(db: Database.Database, ref: string): Promis
 	}
 	const lines = [...head, "  content:", indent(truncate(JSON.stringify(content, null, 2), 4000))];
 
-	const edges = getEdgesFrom(db, node.id);
+	const edges = await getEdgesFrom(db, node.id);
 	if (edges.length === 0) {
 		lines.push("", "(no outgoing edges — this node consumed nothing and produced nothing yet)");
 	} else {
 		lines.push("", `Outgoing edges (${edges.length}):`);
-		for (const edge of edges) lines.push(`  ${describeEdge(db, edge)}`);
+		for (const edge of edges) lines.push(`  ${await describeEdge(db, edge)}`);
 	}
 	return { text: lines.join("\n"), node };
 }
 
 /** Resolve a node by exact output_key, then output-key prefix, then node id. */
-function resolveNode(db: Database.Database, ref: string): AnalysisNodeRow {
-	const exact = getNodeByOutputKey(db, ref);
+async function resolveNode(db: AsyncDatabase, ref: string): Promise<AnalysisNodeRow> {
+	const exact = await getNodeByOutputKey(db, ref);
 	if (exact) return exact;
-	const byPrefix = getNodesByOutputKeyPrefix(db, ref);
+	const byPrefix = await getNodesByOutputKeyPrefix(db, ref);
 	if (byPrefix.length === 1) return byPrefix[0]!;
 	if (byPrefix.length > 1) {
 		throw new Error(
@@ -494,7 +494,7 @@ function resolveNode(db: Database.Database, ref: string): AnalysisNodeRow {
 				byPrefix.slice(0, 10).map((n) => `  ${short(n.output_key, 16)}  ${n.analyzer_id} ${n.node_kind}`).join("\n"),
 		);
 	}
-	const byId = getNode(db, ref);
+	const byId = await getNode(db, ref);
 	if (byId) return byId;
 	throw new Error(`No node matches '${ref}' (tried output-key, output-key prefix, node id).`);
 }
@@ -515,8 +515,8 @@ function out(ctx: ExtensionCommandContext, text: string, level: "info" | "warnin
 
 /** `/prospect-nodes` — list analyzer nodes from the surface. */
 export async function prospectNodes(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		let q: NodesQuery;
 		try {
@@ -532,14 +532,14 @@ export async function prospectNodes(rawArgs: string, ctx: ExtensionCommandContex
 			out(ctx, `prospect nodes: ${err instanceof Error ? err.message : String(err)}`, "warning");
 		}
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 
 /** `/prospect-node <output-key>` — one node's detail with resolved outgoing edges. */
 export async function prospectNode(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		try {
 			const result = await readNodeDetail(db, rawArgs ?? "");
@@ -548,7 +548,7 @@ export async function prospectNode(rawArgs: string, ctx: ExtensionCommandContext
 			out(ctx, `prospect node: ${err instanceof Error ? err.message : String(err)}`, "warning");
 		}
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

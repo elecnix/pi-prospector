@@ -8,6 +8,7 @@ import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
 import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
 import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
+import { readSessionSummary } from "./show.js";
 import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
 import type { AnalysisNodeRow } from "../analyze/types.js";
@@ -61,7 +62,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			"For muting: the reviewing agent performs the mute after operator feedback — pass the muted term and an optional reason; " +
 			"the term stops matching new turns and its prior hit nodes become stale/config, cleanly recomputed by analyze --revise config. " +
 			"Use action nodes to read analyzer output from the surface (filter by analyzer/node-kind/content, counts over a property, " +
-			"latest-per-key for newest verdict per term) and action node with output_key for one node's detail plus its resolved outgoing edges.",
+			"latest-per-key for newest verdict per term) and action node with output_key for one node's detail plus its resolved outgoing edges. " +
+			"Use action session_summary with session_id for the session-level summary with its evidence: what happened, what went well, " +
+			"what caused friction (textual gradients), the verbatim consumed turns behind it, the proposals it produced, and its cross-session contrast siblings.",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
@@ -75,6 +78,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				Type.Literal("mutes"),
 				Type.Literal("nodes"),
 				Type.Literal("node"),
+				Type.Literal("session_summary"),
 				Type.Literal("help"),
 			]),
 			status: Type.Optional(
@@ -114,6 +118,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			counts: Type.Optional(Type.String({ description: "Group counts over this top-level content property across all matching nodes (nodes action)." })),
 			latest_per_key: Type.Optional(Type.String({ description: "Keep only the newest node per distinct value of this content property, e.g. 'term' for the newest lexicon verdict per term (nodes action)." })),
 			output_key: Type.Optional(Type.String({ description: "The node's content-addressed output key, or an unambiguous prefix (node action)." })),
+			// session_id is declared above (list_proposals filter); session_summary reuses it.
 		}),
 		async execute(
 			_toolCallId: string,
@@ -277,7 +282,17 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						return text(`prospect node: ${err instanceof Error ? err.message : String(err)}`, {});
 					}
 				}
-				case "help": {
+				case "session_summary": {
+				const sessionId = params.session_id as string | undefined;
+				if (!sessionId) return text("session_id required (use list_proposals or nodes to find one)", {});
+				try {
+					const result = await readSessionSummary(db, sessionId);
+					return text(result.text, { node: serialiseNodeSummary(result.node) });
+				} catch (err) {
+					return text(`prospect show --session: ${err instanceof Error ? err.message : String(err)}`, {});
+				}
+			}
+			case "help": {
 						return text(`=== prospect tool ===
 
 Workflow:
@@ -292,6 +307,8 @@ Analysis-graph & point-in-time commands (slash commands):
   - prospect tool actions: nodes (--analyzer <id> | all=true, node_kind, filter[], counts, latest_per_key, limit, offset) and node (output_key) — read analyzer output from the surface
   - /prospect-nodes --analyzer <id> [--node-kind <k>] [--filter k=v]... [--counts <prop>] [--latest-per-key <prop>] [--limit n] [--offset n]
   - /prospect-node <output-key> — one node + resolved outgoing edges (consumes/anchors/produces/revises)
+  - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
+  - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)

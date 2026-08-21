@@ -377,7 +377,7 @@ export interface NodeListFilter {
  * analysis already found — it writes nothing and declares no dependencies
  * (outputs are exempt from the dependency rule, see DESIGN.md).
  */
-export function listAnalysisNodes(db: Database.Database, filter: NodeListFilter = {}): AnalysisNodeRow[] {
+export async function listAnalysisNodes(db: AsyncDatabase, filter: NodeListFilter = {}): Promise<AnalysisNodeRow[]> {
 	const asOf = filter.asOf;
 	const table = asOf ? "analysis_nodes" : "live_nodes";
 	const where: string[] = [];
@@ -403,11 +403,11 @@ export function listAnalysisNodes(db: Database.Database, filter: NodeListFilter 
 		`SELECT * FROM ${table}${where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""} ` +
 		"ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?";
 	params.push(filter.limit ?? 200, filter.offset ?? 0);
-	return prep(db, sql).all(...params) as AnalysisNodeRow[];
+	return (await prep(db, sql).all(...params)) as AnalysisNodeRow[];
 }
 
 /** How many live nodes match a {@link NodeListFilter}, ignoring limit/offset — the denominator for paging. */
-export function countAnalysisNodes(db: Database.Database, filter: NodeListFilter = {}): number {
+export async function countAnalysisNodes(db: AsyncDatabase, filter: NodeListFilter = {}): Promise<number> {
 	const asOf = filter.asOf;
 	const table = asOf ? "analysis_nodes" : "live_nodes";
 	const where: string[] = [];
@@ -430,7 +430,7 @@ export function countAnalysisNodes(db: Database.Database, filter: NodeListFilter
 		params.push(asOf, asOf);
 	}
 	const sql = `SELECT COUNT(*) AS c FROM ${table}${where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""}`;
-	return (prep(db, sql).get(...params) as { c: number }).c;
+	return ((await prep(db, sql).get(...params)) as { c: number }).c;
 }
 
 /**
@@ -439,12 +439,12 @@ export function countAnalysisNodes(db: Database.Database, filter: NodeListFilter
  * short prefix is usually unambiguous; when it is not, every match is returned
  * and the caller asks for a longer prefix.
  */
-export function getNodesByOutputKeyPrefix(db: Database.Database, prefix: string): AnalysisNodeRow[] {
+export async function getNodesByOutputKeyPrefix(db: AsyncDatabase, prefix: string): Promise<AnalysisNodeRow[]> {
 	if (!prefix) return [];
 	// Escape LIKE metacharacters so a hash prefix is matched literally.
 	const escaped = prefix.replace(/[\\%_]/g, (c) => `\\${c}`);
-	return prep(db, "SELECT * FROM live_nodes WHERE output_key LIKE ? ESCAPE '\\' ORDER BY created_at DESC, id DESC")
-		.all(`${escaped}%`) as AnalysisNodeRow[];
+	return (await prep(db, "SELECT * FROM live_nodes WHERE output_key LIKE ? ESCAPE '\\' ORDER BY created_at DESC, id DESC")
+		.all(`${escaped}%`)) as AnalysisNodeRow[];
 }
 
 /**
@@ -479,6 +479,24 @@ export async function getNodesByAnalyzer(db: AsyncDatabase, analyzerId: string, 
 	}
 	return (await prep(db, "SELECT * FROM live_nodes WHERE analyzer_id = ? AND session_id = ? ORDER BY created_at ASC, id ASC")
 		.all(analyzerId, sessionId)) as AnalysisNodeRow[];
+}
+
+/**
+ * The newest live summary node for a session — the session-level synthesis a
+ * summarizing analyzer (session-overview) produced for it. This is the read
+ * behind `prospect show --session` (issue #105): a reporting surface over an
+ * existing node, never a recomputation. Errors are never summaries; a session
+ * whose overview has not completed has none.
+ */
+export async function getLatestSummaryNode(db: AsyncDatabase, sessionId: string, analyzerId?: string): Promise<AnalysisNodeRow | undefined> {
+	const where = ["session_id = ?", "node_kind = 'summary'"];
+	const params: Array<string | number> = [sessionId];
+	if (analyzerId) {
+		where.push("analyzer_id = ?");
+		params.push(analyzerId);
+	}
+	return (await prep(db, `SELECT * FROM live_nodes WHERE ${where.join(" AND ")} ORDER BY created_at DESC, id DESC LIMIT 1`)
+		.get(...params)) as AnalysisNodeRow | undefined;
 }
 
 /**

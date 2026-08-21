@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 import { insertSession, insertMessages } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
@@ -43,7 +43,7 @@ const ctx: ExtensionCommandContext = {
 
 let tmpDir: string;
 let dbPath: string;
-let db: Database.Database;
+let db: AsyncDatabase;
 
 /**
  * Two synthetic frustration-lexicon verdicts for the same term (a versioned
@@ -51,8 +51,8 @@ let db: Database.Database;
  * second term. This is the corpus the generic `--latest-per-key term` option
  * exists for: newest verdict per term without a lexicon-specific command.
  */
-function insertLexiconNode(id: string, outputKey: string, createdAt: string, content: Record<string, unknown>): void {
-	insertNode(db, {
+async function insertLexiconNode(id: string, outputKey: string, createdAt: string, content: Record<string, unknown>): Promise<void> {
+	await insertNode(db, {
 		id,
 		sessionId: "s1",
 		analyzerId: "frustration-lexicon",
@@ -72,10 +72,10 @@ before(async () => {
 	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-nodes-"));
 	dbPath = path.join(tmpDir, "nodes.db");
 	process.env["PROSPECTOR_DB_PATH"] = dbPath;
-	db = new Database(dbPath);
-	migrate(db);
-	insertSession(db, "s1");
-	insertMessages(db, "s1", [
+	db = openAsyncDatabase(dbPath);
+	await migrate(db);
+	await insertSession(db, "s1");
+	await insertMessages(db, "s1", [
 		{ id: "s1-m0", role: "user", text: "fix the login bug" },
 		{ id: "s1-m1", role: "assistant", text: "reading auth", toolCalls: [{ name: "read" }] },
 		{ id: "s1-m2", role: "toolResult", toolResults: [{ toolName: "read", isError: true, textLength: 40 }] },
@@ -84,24 +84,24 @@ before(async () => {
 	]);
 	const mock = createMockLLM({ responder: respond, tokensPerCall: 50, costPerCall: 0.001 });
 	const fw = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
-	registerDefaults(fw);
+	await registerDefaults(fw);
 	const summary = await fw.run("s1", {});
 	assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-	insertLexiconNode("lex-old", "ok-lex-old", "2026-01-01T00:00:00.000Z", {
+	await insertLexiconNode("lex-old", "ok-lex-old", "2026-01-01T00:00:00.000Z", {
 		term: "putain", polarity: "frustration", category: "profanity", language: "fr", confidence: 0.8, rationale: "older verdict",
 	});
-	insertLexiconNode("lex-new", "ok-lex-new", "2026-02-01T00:00:00.000Z", {
+	await insertLexiconNode("lex-new", "ok-lex-new", "2026-02-01T00:00:00.000Z", {
 		term: "putain", polarity: "praise", category: "praise", language: "fr", confidence: 0.9, rationale: "newer verdict",
 	});
-	insertLexiconNode("lex-other", "ok-lex-other", "2026-01-15T00:00:00.000Z", {
+	await insertLexiconNode("lex-other", "ok-lex-other", "2026-01-15T00:00:00.000Z", {
 		term: "не то", polarity: "frustration", category: "negation", language: "ru", confidence: 0.85, rationale: "another term",
 	});
 });
 
-after(() => {
+after(async () => {
 	delete process.env["PROSPECTOR_DB_PATH"];
-	db.close();
+	await db.close();
 	try {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	} catch {
