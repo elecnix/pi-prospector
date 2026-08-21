@@ -18,6 +18,7 @@ import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
+import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -34,6 +35,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"cache-economy",
 	"routing-opportunity",
 	"secret-leak",
+	"gitleaks",
 	"token-units",
 	"request-classes",
 	"session-overview",
@@ -61,6 +63,13 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// future session-overview consumer can declare it as a dependency without
 	// reordering. Emits redacted findings only — never the matched secret.
 	secretLeakAnalyzer,
+	// The ported gitleaks catalogue, same seam as secret-leak: session-level,
+	// standalone, deterministic, metric nodes only, redacted findings. Enabled by
+	// default; a user narrows it via config (disabledRules / allowlists), never by
+	// editing this list. Findings from both detectors carry identically derived
+	// fingerprints so the future proposal synthesiser can collapse the same leak
+	// into one proposal.
+	gitleaksAnalyzer,
 	// Cost accounting. token-units is deterministic and depends on nothing;
 	// request-classes labels the same request segments it prices. Neither depends
 	// on the other — the report joins them at read time, through token-units'
