@@ -53,9 +53,46 @@ import {
 	groupFailures,
 	normalizeForFingerprint,
 	unclassifiedCount,
-	type FailureGroup,
-	type RawProposal,
+	FailureGroup,
+	RawProposal,
 } from "./detect.js";
+import { Type, type Static } from "typebox";
+
+export const FailureModesProperties = Type.Object({
+	session_id: Type.String(),
+	/** Every failure, grouped by class (and by tool on the tool axis). */
+	groups: Type.Array(FailureGroup),
+	/** Failed generations. */
+	turn_failure_count: Type.Number(),
+	/** Failed tool calls. */
+	tool_failure_count: Type.Number(),
+	/** Failed child runs, counted from artifact metadata. */
+	child_run_failure_count: Type.Number(),
+	/** Every child run visible for this session's project — the coverage figure the failure count reads against. */
+	child_run_count: Type.Number(),
+	/** Denominator for the turn-failure rate. */
+	assistant_turn_count: Type.Number(),
+	/** Denominator for the tool-failure rate. */
+	tool_call_count: Type.Number(),
+	/** Failures the catalogue could not name — the honest measure of its gaps. */
+	unclassified_failure_count: Type.Number(),
+	/** Summed billed cost of the *priced* failures, or null when none was priced. */
+	failure_cost_usd: Type.Union([Type.Number(), Type.Null()]),
+	priced_failure_count: Type.Number(),
+	unpriced_failure_count: Type.Number(),
+	/**
+	 * Whether this session's rows carry the host's stop reason at all.
+	 *
+	 * False means they were indexed before sync kept it, so a turn-failure count
+	 * of zero means "not known", not "none happened". Stating it is the
+	 * difference between a clean session and an unread one.
+	 */
+	turn_failure_capture: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
+	/** Whether the installed-package list could be read, for the already-installed check. */
+	installed_check: Type.Union([Type.Literal("performed"), Type.Literal("unavailable")]),
+	improvement_proposals: Type.Array(RawProposal),
+});
+export type FailureModesProperties = Static<typeof FailureModesProperties>;
 
 export const FAILURE_MODES_DEF: AnalyzerDef = {
 	id: "failure-modes",
@@ -64,6 +101,7 @@ export const FAILURE_MODES_DEF: AnalyzerDef = {
 		"Classifies every recorded failure in a session — failed generations (rate limits, transport drops, malformed tool calls, context ceilings, auth), failed tool calls, and failed child-agent runs read from subagent artifact metadata — against a curated catalogue, prices them, and proposes the remedy, including hand-verified extensions that address the class. Never installs anything. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: FailureModesProperties,
 };
 
 export const FAILURE_MODES_VERSION: AnalyzerVersion = {
@@ -80,41 +118,7 @@ export const FAILURE_MODES_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/failure-modes/index.ts",
 };
 
-export interface FailureModesProperties {
-	session_id: string;
-	/** Every failure, grouped by class (and by tool on the tool axis). */
-	groups: FailureGroup[];
-	/** Failed generations. */
-	turn_failure_count: number;
-	/** Failed tool calls. */
-	tool_failure_count: number;
-	/** Failed child runs, counted from artifact metadata. */
-	child_run_failure_count: number;
-	/** Every child run visible for this session's project — the coverage figure the failure count reads against. */
-	child_run_count: number;
-	/** Denominator for the turn-failure rate. */
-	assistant_turn_count: number;
-	/** Denominator for the tool-failure rate. */
-	tool_call_count: number;
-	/** Failures the catalogue could not name — the honest measure of its gaps. */
-	unclassified_failure_count: number;
-	/** Summed billed cost of the *priced* failures, or null when none was priced. */
-	failure_cost_usd: number | null;
-	priced_failure_count: number;
-	unpriced_failure_count: number;
-	/**
-	 * Whether this session's rows carry the host's stop reason at all.
-	 *
-	 * False means they were indexed before sync kept it, so a turn-failure count
-	 * of zero means "not known", not "none happened". Stating it is the
-	 * difference between a clean session and an unread one.
-	 */
-	turn_failure_capture: "present" | "absent";
-	/** Whether the installed-package list could be read, for the already-installed check. */
-	installed_check: "performed" | "unavailable";
-	improvement_proposals: RawProposal[];
-}
-
+// ──────────────────────────── analyzer ────────────────────────────
 /** Config plus the resolved install state — everything the run needs beyond the messages. */
 function resolveConfig(raw: unknown): FailureModesConfig {
 	return (raw as FailureModesConfig) ?? DEFAULT_FAILURE_MODES_CONFIG;

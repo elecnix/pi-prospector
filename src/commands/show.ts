@@ -2,13 +2,13 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getProposal, listProposals, getSessionLabels, getLatestDecision } from "../db/queries.js";
-import { getNode, getNodeByOutputKey, getEdgesFrom, getAnchoredMessageIds, getSessionNodes, getSessionMessageRows } from "../db/analysis-queries.js";
+import { getNode, getNodeByOutputKey, getEdgesFrom, getAnchoredMessageIds, getSessionNodes, getSessionMessageRows, getLatestSummaryNode } from "../db/analysis-queries.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 import { buildTurnPairs, type TurnPair } from "../analyze/analyzers/turn-pair-core/build.js";
 import { sessionLabel, formatDecisionLine } from "./proposals.js";
 import { getDbPath } from "../config.js";
 import type { Proposal } from "../types.js";
-import type { MessageRow } from "../analyze/types.js";
+import type { AnalysisNodeRow, MessageRow } from "../analyze/types.js";
 
 function out(ctx: ExtensionCommandContext, text: string, level: "info" | "warning" | "error" = "info"): void {
 	ctx.ui.notify(text, level);
@@ -133,6 +133,10 @@ function indent(s: string): string {
 		.join("\n");
 }
 
+function short(s: string, n = 8): string {
+	return s.length > n ? s.slice(0, n) : s;
+}
+
 function parseToolCalls(json: string | null): ToolCallRaw[] {
 	if (!json) return [];
 	try {
@@ -161,10 +165,57 @@ function safeParse(json: string): Record<string, unknown> {
 	}
 }
 
+/**
+ * Per-turn deterministic + LLM signals for a session, keyed by anchoring user
+ * message. Shared by the proposal walk (`prospect show <id>`) and the session
+ * walk (`prospect show --session <id>`) so both annotate turns identically.
+ */
+export async function collectTurnSignals(
+	db: AsyncDatabase,
+	sessionId: string,
+): Promise<{ coreByUser: Map<string, Record<string, unknown>>; llmByUser: Map<string, Record<string, unknown>> }> {
+	const coreByUser = new Map<string, Record<string, unknown>>();
+	const llmByUser = new Map<string, Record<string, unknown>>();
+	for (const n of await getSessionNodes(db, sessionId)) {
+		if (n.analyzer_id === "turn-pair-core") {
+			const c = safeParse(n.content_json);
+			if (typeof c["user_message_id"] === "string") coreByUser.set(c["user_message_id"] as string, c);
+		} else if (n.analyzer_id === "turn-pair-llm") {
+			const c = safeParse(n.content_json);
+			if (typeof c["user_message_id"] === "string") llmByUser.set(c["user_message_id"] as string, c);
+		}
+	}
+	return { coreByUser, llmByUser };
+}
+
 export async function prospectShow(args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const ref = args.trim().split(/\s+/)[0] ?? "";
+	const toks = args.trim().split(/\s+/).filter((t) => t.length > 0);
+	if (toks[0] === "--session") {
+		const sessionId = toks[1] ?? "";
+		if (!sessionId) {
+			out(ctx, showUsage(), "warning");
+			return;
+		}
+		const db = openAsyncDatabase(getDbPath());
+		await migrate(db);
+		try {
+			try {
+				out(ctx, (await readSessionSummary(db, sessionId)).text);
+			} catch (err) {
+				out(ctx, `prospect show --session: ${err instanceof Error ? err.message : String(err)}`, "warning");
+			}
+		} finally {
+			await db.close();
+		}
+		return;
+	}
+	if (toks[0]?.startsWith("--")) {
+		out(ctx, `Unknown flag: ${toks[0]}\n${showUsage()}`, "warning");
+		return;
+	}
+	const ref = toks[0] ?? "";
 	if (!ref) {
-		out(ctx, "Usage: prospect show <proposal-id>", "warning");
+		out(ctx, showUsage(), "warning");
 		return;
 	}
 	const db = openAsyncDatabase(getDbPath());
@@ -220,17 +271,7 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 		}
 
 		// Per-turn deterministic + LLM signals, keyed by anchoring user message.
-		const coreByUser = new Map<string, Record<string, unknown>>();
-		const llmByUser = new Map<string, Record<string, unknown>>();
-		for (const n of await getSessionNodes(db, proposal.session_id)) {
-			if (n.analyzer_id === "turn-pair-core") {
-				const c = safeParse(n.content_json);
-				if (typeof c["user_message_id"] === "string") coreByUser.set(c["user_message_id"] as string, c);
-			} else if (n.analyzer_id === "turn-pair-llm") {
-				const c = safeParse(n.content_json);
-				if (typeof c["user_message_id"] === "string") llmByUser.set(c["user_message_id"] as string, c);
-			}
-		}
+		const { coreByUser, llmByUser } = await collectTurnSignals(db, proposal.session_id);
 
 		// The overview consumes EVERY turn; focus review on the turns that actually
 		// carry friction (high-signal core metric, or an LLM classification).
@@ -255,9 +296,156 @@ export async function prospectShow(args: string, ctx: ExtensionCommandContext): 
 	}
 }
 
+/** The usage line for both modes of `prospect show`. */
+export function showUsage(): string {
+	return "Usage: prospect show <proposal-id>\n       prospect show --session <session-id>";
+}
+
+/**
+ * The session-level evidence walk (issue #105): the existing session-overview
+ * summary node, rendered for a reader, with its typed edges resolved — the same
+ * walk-back `prospect show <proposal-id>` performs, generalised to the session
+ * that produced the proposals. A reporting surface only: it reads the graph and
+ * writes nothing, analyses nothing new, and calls no model.
+ *
+ * Evidence attached:
+ * - `consumes` → the turn nodes behind the summary, each walked to its
+ *   `anchors` messages and rendered verbatim (high-signal turns first, since
+ *   the overview consumes every turn);
+ * - `produces` → the proposals materialised from this summary;
+ * - `contrasts_with` → the smooth sibling sessions used as negative examples.
+ */
+export async function readSessionSummary(
+	db: AsyncDatabase,
+	sessionId: string,
+	opts: { maxTurns?: number } = {},
+): Promise<{ text: string; node: AnalysisNodeRow }> {
+	const trimmed = sessionId.trim();
+	if (!trimmed) throw new Error(showUsage());
+	const node = await getLatestSummaryNode(db, trimmed);
+	if (!node) {
+		throw new Error(`No session summary found for '${trimmed}' — run analyze first (the session-overview analyzer produces it).`);
+	}
+
+	let content: Record<string, unknown>;
+	try {
+		content = JSON.parse(node.content_json) as Record<string, unknown>;
+	} catch {
+		content = {};
+	}
+
+	const head = [
+		`Session summary ${short(node.output_key, 12)}  (${node.analyzer_id})`,
+		`  session:  ${node.session_id}`,
+		`  created:  ${node.created_at}`,
+		node.model_used ? `  model:    ${node.model_used}` : "",
+	].filter(Boolean);
+	const lines = [...head, ...formatSummaryContent(content)];
+
+	// What this summary yielded: the proposals materialised from it.
+	const producedIds = (await getEdgesFrom(db, node.id))
+		.filter((e) => e.edge_kind === EDGE_KINDS.PRODUCES && e.to_ref_kind === REF_KINDS.PROPOSAL)
+		.map((e) => e.to_ref_id);
+	if (producedIds.length > 0) {
+		lines.push("", `Proposals from this summary (${producedIds.length}) — see prospect show <id> for each one's own evidence:`);
+		for (const pid of producedIds) {
+			const p = await getProposal(db, pid);
+			lines.push(`  ${pid.slice(0, 8)}  [${p?.severity ?? "?"}] ${p ? p.title : "(proposal no longer present)"}`);
+		}
+	}
+
+	// Cross-session contrast provenance: the smooth sibling sessions this
+	// synthesis was handed as negative examples.
+	const contrastSessions = (await getEdgesFrom(db, node.id))
+		.filter((e) => e.edge_kind === EDGE_KINDS.CONTRASTS_WITH && e.to_ref_kind === REF_KINDS.SESSION)
+		.map((e) => e.to_ref_id);
+	if (contrastSessions.length > 0) {
+		lines.push("", `Cross-session contrast (${contrastSessions.length} smooth sibling session(s) used as negative examples):`);
+		for (const sid of contrastSessions) lines.push(`  ${sid.slice(0, 12)}`);
+	}
+
+	// Evidence walk-back: summary --consumes--> turn nodes --anchors--> messages.
+	const consumed = (await getEdgesFrom(db, node.id)).filter(
+		(e) => e.edge_kind === EDGE_KINDS.CONSUMES && e.to_ref_kind === REF_KINDS.ANALYSIS_NODE,
+	);
+	const anchorIds = new Set<string>();
+	// `consumes` edges reference the turn node's content-addressed output_key; resolve
+	// it back to the node to walk its `anchors` edges to messages.
+	for (const edge of consumed) {
+		const turnNode = await getNodeByOutputKey(db, edge.to_ref_id);
+		if (!turnNode) continue;
+		for (const mid of await getAnchoredMessageIds(db, turnNode.id)) anchorIds.add(mid);
+	}
+
+	if (anchorIds.size === 0) {
+		lines.push("", "(The summary consumed no turn-anchored evidence.)");
+		return { text: lines.join("\n"), node };
+	}
+
+	const { coreByUser, llmByUser } = await collectTurnSignals(db, trimmed);
+	// The overview consumes EVERY turn; focus review on the turns that actually
+	// carry friction (high-signal core metric, or an LLM classification).
+	const signalIds = new Set([...anchorIds].filter((id) => Boolean(coreByUser.get(id)?.["high_signal"]) || llmByUser.has(id)));
+	const renderIds = signalIds.size > 0 ? signalIds : anchorIds;
+
+	const messages = await getSessionMessageRows(db, trimmed);
+	const byId = new Map(messages.map((m) => [m.id, m]));
+	const pairs = buildTurnPairs(messages);
+
+	const noun = signalIds.size > 0 ? "high-signal" : "consumed";
+	lines.push(
+		"",
+		`Anchored turns — ${renderIds.size} ${noun} turn(s) of ${anchorIds.size} consumed, the evidence this summary was synthesised from:\n`,
+	);
+	lines.push(...renderAnchoredTurns(pairs, byId, renderIds, coreByUser, llmByUser, opts.maxTurns ?? 15));
+	return { text: lines.join("\n"), node };
+}
+
+/**
+ * Render the summary node's content — the synthesis itself — as readable
+ * lines. Pure over its argument so the format is unit-testable without a DB.
+ */
+export function formatSummaryContent(content: Record<string, unknown>): string[] {
+	const lines: string[] = [];
+	const summary = typeof content["session_summary"] === "string" ? (content["session_summary"] as string).trim() : "";
+	lines.push("  what happened:");
+	lines.push(indent(truncate(summary || "(no summary text recorded)", 2000)));
+
+	const friction = Array.isArray(content["friction_points"]) ? (content["friction_points"] as Array<Record<string, unknown>>) : [];
+	lines.push("", `Friction (${friction.length}):`);
+	if (friction.length === 0) lines.push("  (none enumerated)");
+	for (const f of friction) {
+		const description = typeof f["description"] === "string" ? f["description"] : "(undescribed)";
+		const change = typeof f["what_to_change"] === "string" ? f["what_to_change"] : "";
+		const evidence = typeof f["evidence"] === "string" ? f["evidence"] : "";
+		const severity = typeof f["severity"] === "string" ? f["severity"] : "?";
+		lines.push(`  • [${severity}] ${truncate(description.replace(/\s+/g, " "), 300)}`);
+		if (change) lines.push(`    change: ${truncate(change.replace(/\s+/g, " "), 300)}`);
+		if (evidence) lines.push(`    evidence: ${truncate(evidence.replace(/\s+/g, " "), 300)}`);
+	}
+
+	const positive = Array.isArray(content["key_positive_signals"]) ? (content["key_positive_signals"] as Array<Record<string, unknown>>) : [];
+	lines.push("", `What went well (${positive.length}):`);
+	if (positive.length === 0) lines.push("  (none recorded)");
+	for (const s of positive) {
+		const description = typeof s["description"] === "string" ? s["description"] : "(undescribed)";
+		const signal = typeof s["signal"] === "string" ? s["signal"] : "";
+		lines.push(`  • ${truncate(description.replace(/\s+/g, " "), 300)}${signal ? ` (${signal})` : ""}`);
+	}
+
+	const stats = content["stats"];
+	if (stats && typeof stats === "object" && !Array.isArray(stats)) {
+		const parts = Object.entries(stats as Record<string, unknown>).map(([k, v]) => `${k}=${typeof v === "number" ? v : JSON.stringify(v)}`);
+		lines.push("", `Stats: ${parts.join(" ")}`);
+	}
+	return lines;
+}
+
 export function registerShowCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-show", {
-		description: "Show a proposal with the verbatim anchored turns (user/assistant text + tool calls) it was synthesised from.",
+		description:
+			"Show a proposal with the verbatim anchored turns (user/assistant text + tool calls) it was synthesised from, " +
+			"or --session <id> for the session-level summary with its evidence (consumed turns, produced proposals, contrast siblings).",
 		handler: prospectShow,
 	});
 }

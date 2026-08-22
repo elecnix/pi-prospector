@@ -22,8 +22,7 @@ export interface TempDb {
 }
 
 /** A migrated SQLite database backed by an async worker + unique temp file, with cleanup. */
-export function tempDb(): Promise<TempDb> {
-	const dbPath = path.join(os.tmpdir(), `prospect-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+export function tempDb(dbPath = path.join(os.tmpdir(), `prospect-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)): Promise<TempDb> {
 	const db = openAsyncDatabase(dbPath);
 	return migrate(db).then(() => ({
 		db,

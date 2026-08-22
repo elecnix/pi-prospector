@@ -10,56 +10,60 @@
 
 import { shortHash } from "../../input-hash.js";
 import type { ToolStream } from "../../tool-stream.js";
+import { Type, type Static } from "typebox";
 import {
 	classifyChildRun,
 	classifyFailure,
 	failureClass,
 	UNCLASSIFIED,
 	type ChildRunFacts,
-	type FailureAxis,
+	FailureAxis,
 } from "./classes.js";
 import type { FailureModesConfig } from "./config.js";
 import type { InstalledPackages } from "./installed.js";
 
 /** One recognised cause within a class, counted. */
-export interface FailureCause {
+export const FailureCause = Type.Object({
 	/** The curated matcher label. Never text taken from the error. */
-	label: string;
+	label: Type.String(),
 	/**
 	 * A short digest of the raw error text, so distinct underlying errors within
 	 * one cause stay countable without any of them being readable. Recovering the
 	 * text means opening the session — which is the point.
 	 */
-	fingerprint: string;
-	count: number;
-}
+	fingerprint: Type.String(),
+	count: Type.Number(),
+});
+export type FailureCause = Static<typeof FailureCause>;
 
 /** All failures of one class (and, on the tool axis, one tool), aggregated. */
-export interface FailureGroup {
-	axis: FailureAxis;
-	class_id: string;
+export const FailureGroup = Type.Object({
+	axis: FailureAxis,
+	class_id: Type.String(),
 	/** The tool involved, for tool-axis groups, or the child agent's name on the child axis; "" on the turn axis. */
-	tool: string;
-	count: number;
+	tool: Type.String(),
+	count: Type.Number(),
 	/** The messages that failed, so the finding can be walked back to the turns. Empty on the child axis — a failed child run may have written no messages at all. */
-	message_ids: string[];
-	causes: FailureCause[];
+	message_ids: Type.Array(Type.String()),
+	causes: Type.Array(FailureCause),
 	/** Summed billed cost of the *priced* failures, or null when none was priced. */
-	cost_usd: number | null;
-	priced_count: number;
-	unpriced_count: number;
-}
+	cost_usd: Type.Union([Type.Number(), Type.Null()]),
+	priced_count: Type.Number(),
+	unpriced_count: Type.Number(),
+});
+export type FailureGroup = Static<typeof FailureGroup>;
 
-export interface RawProposal {
-	target_type: string;
-	target_path?: string;
-	title: string;
-	summary: string;
-	detail: string;
-	evidence: string;
-	confidence: number;
-	severity: string;
-}
+export const RawProposal = Type.Object({
+	target_type: Type.String(),
+	target_path: Type.Optional(Type.String()),
+	title: Type.String(),
+	summary: Type.String(),
+	detail: Type.String(),
+	evidence: Type.String(),
+	confidence: Type.Number(),
+	severity: Type.String(),
+});
+export type RawProposal = Static<typeof RawProposal>;
 
 /** Group a session's failures by class, on both axes. */
 export function groupFailures(stream: ToolStream): FailureGroup[] {

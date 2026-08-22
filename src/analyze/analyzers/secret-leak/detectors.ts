@@ -33,11 +33,11 @@ export {
 	redact,
 	meetsMinSeverity,
 	SEVERITY_RANK,
-	type LeakField,
-	type LeakSeverity,
-	type SecretLeakFinding,
+	LeakField,
+	LeakSeverity,
+	SecretLeakFinding,
 	type SecretLeakRule,
-	type SecretLeakScanResult,
+	SecretLeakScanResult,
 } from "../secret-scanner.js";
 
 // ──────────────────────────── rule catalogue ────────────────────────────

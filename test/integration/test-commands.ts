@@ -17,7 +17,7 @@ import { createMockLLM, type MockLLMReply } from "../../src/analyze/mock-llm.js"
 import { getNodeVersions, getRevisedNode } from "../../src/db/analysis-queries.js";
 import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
-import type { LLMRequest } from "../../src/analyze/types.js";
+import type { LLMRequest, Analyzer, AnalysisUnit } from "../../src/analyze/types.js";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-prospector-int-"));
 const dbPath = path.join(tmpDir, "test.db");
@@ -110,6 +110,15 @@ assert(s1.analysis.nodes > 0, "analysis nodes recorded");
 assert((s1.analysis.nodesByKind["summary"] ?? 0) >= 1, "summary nodes present");
 assert((s1.analysis.nodesByKind["metric"] ?? 0) >= 1, "metric nodes present");
 
+console.log("\nPer-analyzer node counts (#155):");
+{
+	const byAnalyzer = s1.analysis.nodesByAnalyzer;
+	const analyzerTotal = Object.values(byAnalyzer).reduce((a, b) => a + b, 0);
+	assert(Object.keys(byAnalyzer).length > 0, "nodesByAnalyzer is populated", JSON.stringify(byAnalyzer));
+	assert(analyzerTotal === s1.analysis.nodes, "per-analyzer counts sum to the live node count", `${analyzerTotal} vs ${s1.analysis.nodes}`);
+	assert((byAnalyzer["turn-pair-core"] ?? 0) >= 1, "turn-pair-core nodes counted per analyzer");
+}
+
 console.log("\nIdempotent re-run (fill):");
 let reRunNodes = 0;
 for (const session of sessions) {
@@ -142,6 +151,74 @@ console.log("\nLexicon muting (generic assertions relation, #72):");
 	assert(!(await isTermMuted(db, "putain")), "term is unmuted");
 	assert((await getMutedTerms(db)).length === 0, "no active mutes remain");
 	assert((await getActiveAssertions(db)).length === 0, "all mutes superseded");
+}
+
+console.log("\nAnalyzer coverage + targeted backfill (#195):");
+{
+	const { getAnalyzerCoverage } = await import("../../src/db/analysis-queries.js");
+
+	// A deterministic analyzer that "ships" only now: every session was already
+	// analysed without it, and all of them are retired from the unanalysed queue.
+	const probe: Analyzer = {
+		def: { id: "coverage-probe", label: "probe", description: "one metric per session", anchorSpan: "full_session", dependencies: [] },
+		version: { analyzerId: "coverage-probe", major: 1, minor: 0, implementationKind: "deterministic" },
+		prompts: {},
+		defaultConfig: { id: "", analyzerId: "coverage-probe", configHash: "h", configJson: {}, label: "default" },
+		plan: (ctx) =>
+			[
+				{
+					sources: [{ kind: "session", id: ctx.sessionId }],
+					sourceSetHash: `coverage-probe:${ctx.sessionId}`,
+					anchorKind: "session",
+					anchorRef: ctx.sessionId,
+				},
+			] as AnalysisUnit[],
+		analyze: (unit) => ({
+			nodeKind: "metric",
+			contentJson: { analyzer: "coverage-probe", value: 1 },
+			anchorKind: "session",
+			anchorRef: unit.anchorRef,
+			edges: [],
+		}),
+	};
+
+	// Coverage against the registry the sessions were analysed with: closed.
+	// (The command marks analysed sessions via markAnalyzed; this harness does
+	// that here so the onlyAnalyzed filter has something to consider.)
+	for (const session of sessions) {
+		await db.prepare("UPDATE sessions SET analyzed_at = ? WHERE id = ?").run(new Date().toISOString(), session.id);
+	}
+	const coveredIds = fw.list().map((a) => a.def.id);
+	const closed = await getAnalyzerCoverage(db, coveredIds, { onlyAnalyzed: true });
+	assert(closed.gaps.length === 0, "no gaps against the analysing registry");
+
+	// After the new analyzer registers, every analysed session has exactly one gap.
+	const upgraded = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
+	await registerDefaults(upgraded);
+	await upgraded.register(probe);
+	const upgradeIds = upgraded.list().map((a) => a.def.id);
+	const gapped = await getAnalyzerCoverage(db, upgradeIds, { onlyAnalyzed: true });
+	assert(gapped.sessionsConsidered === sessions.length, "all analysed sessions considered");
+	assert(gapped.gaps.length === sessions.length, "every analysed session misses the new analyzer", `got ${gapped.gaps.length}`);
+	assert(gapped.gaps.every((g) => g.missingAnalyzers.length === 1 && g.missingAnalyzers[0] === "coverage-probe"), "only the new analyzer is missing");
+
+	// Targeted backfill: each session runs under its missing analyzers only.
+	const nodesBeforeBackfill = (await getStats(db)).analysis.nodes;
+	let backfilled = 0;
+	for (const gap of gapped.gaps) {
+		const summary = await upgraded.run(gap.sessionId, { analyzerIds: gap.missingAnalyzers });
+		assert(summary.errors.length === 0, `backfill of ${gap.sessionId.slice(0, 8)} ran clean`, summary.errors.join("; "));
+		backfilled += summary.nodesProduced;
+	}
+	assert(backfilled === sessions.length, "the new analyzer adds one node per session", `got ${backfilled}`);
+	assert((await getStats(db)).analysis.nodes === nodesBeforeBackfill + sessions.length, "nothing else was added or duplicated");
+
+	// Coverage is closed; a targeted re-run is a no-op.
+	const reclosed = await getAnalyzerCoverage(db, upgradeIds, { onlyAnalyzed: true });
+	assert(reclosed.gaps.length === 0, "coverage gaps are closed after the backfill");
+	let rerun = 0;
+	for (const session of sessions) rerun += (await upgraded.run(session.id, {})).nodesProduced;
+	assert(rerun === 0, "full plain fill after backfill is still a no-op", `got ${rerun}`);
 }
 
 console.log("\nRevise re-run with a new analyzer version (lineage):");
@@ -182,6 +259,17 @@ console.log("\nDecisions/remediations replay through the assertions relation (#7
 	assert(r.missingDecisions.length === 0, "no decision without a matching assertion", `missing: ${r.missingDecisions.join(", ")}`);
 	assert(r.extraAssertions.length === 0, "no assertion decision without a legacy row", `extra: ${r.extraAssertions.join(", ")}`);
 	assert(r.missingRemediations.length === 0, "every remediation has an assertion", `missing: ${r.missingRemediations.join(", ")}`);
+}
+
+console.log("\nRetraction excluded from per-analyzer stats (#155, end of run — keeps earlier assertions untouched):");
+{
+	const { getAnalysisStats } = await import("../../src/db/analysis-queries.js");
+	const before = await getAnalysisStats(db);
+	const beforeCount = before.nodesByAnalyzer["turn-pair-core"] ?? 0;
+	await db.prepare("UPDATE analysis_nodes SET retracted_at = ? WHERE id = (SELECT id FROM live_nodes WHERE analyzer_id = 'turn-pair-core' LIMIT 1)").run(new Date().toISOString());
+	const after = await getAnalysisStats(db);
+	assert((after.nodesByAnalyzer["turn-pair-core"] ?? 0) === beforeCount - 1, "retracted nodes are excluded from nodesByAnalyzer");
+	assert(after.nodes === before.nodes - 1, "total node count drops with the retraction");
 }
 
 await db.close();

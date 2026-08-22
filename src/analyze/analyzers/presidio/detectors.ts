@@ -22,7 +22,8 @@
  */
 
 import type { MessageRow } from "../../types.js";
-import { fingerprintOf, redact, type LeakField } from "../secret-scanner.js";
+import { fingerprintOf, redact, LeakField } from "../secret-scanner.js";
+import { Type, type Static } from "typebox";
 import {
 	PII_RECOGNIZERS,
 	judge,
@@ -59,55 +60,62 @@ export {
 } from "./recognizers.js";
 
 /** One detected PII occurrence. Never carries the full matched value. */
-export interface PiiFinding {
+export const PiiFinding = Type.Object({
 	/** Recognizer that matched. */
-	recognizer_id: string;
+	recognizer_id: Type.String(),
 	/** Presidio-style entity label. */
-	entity_type: string;
+	entity_type: Type.String(),
 	/** Human-readable recognizer label. */
-	entity_label: string;
+	entity_label: Type.String(),
 	/** Finding severity. */
-	severity: PiiSeverity;
+	severity: Type.Union([
+		Type.Literal("low"),
+		Type.Literal("medium"),
+		Type.Literal("high"),
+		Type.Literal("critical"),
+	]),
 	/** Confidence 0..1 (Presidio-style). */
-	score: number;
+	score: Type.Number(),
 	/** True when the recognizer's validator confirmed the value (or none exists). */
-	validated: boolean;
+	validated: Type.Boolean(),
 	/** True when the value was deny-listed (flagged regardless of score/allowlist). */
-	denied: boolean;
+	denied: Type.Boolean(),
 	/** Message id the value appeared in. */
-	message_id: string;
+	message_id: Type.String(),
 	/** Which message field contained the value. */
-	field: LeakField;
+	field: LeakField,
 	/** First/last few characters, middle truncated. Never the full value. */
-	redacted_preview: string;
+	redacted_preview: Type.String(),
 	/** Short SHA-256 fingerprint of the full value — dedup/allow/deny key. */
-	fingerprint: string;
+	fingerprint: Type.String(),
 	/** Character offset of the match within the field (for `prospect show`). */
-	match_index: number;
+	match_index: Type.Number(),
 	/** Length of the matched value, so magnitude is visible without content. */
-	match_length: number;
-}
+	match_length: Type.Number(),
+});
+export type PiiFinding = Static<typeof PiiFinding>;
 
-export interface PiiScanResult {
+export const PiiScanResult = Type.Object({
 	/** Total findings, after deny/allow/score filtering and capping. */
-	pii_count: number;
+	pii_count: Type.Number(),
 	/** The findings, capped at `maxMatchesPerField` per field. */
-	piis: PiiFinding[];
+	piis: Type.Array(PiiFinding),
 	/** Matches dropped for exceeding `maxMatchesPerField` in a field. */
-	truncated_matches: number;
+	truncated_matches: Type.Number(),
 	/** Matches dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_matches: number;
+	allowlisted_matches: Type.Number(),
 	/** Matches below the configured `minScore` floor (deny-listed values excepted). */
-	below_score_matches: number;
+	below_score_matches: Type.Number(),
 	/** Candidates dropped by a mandatory checksum validator. */
-	invalid_matches: number;
+	invalid_matches: Type.Number(),
 	/** Candidates subsumed by a longer overlapping match (e.g. an IBAN's digit tail outscoring a spurious card match). */
-	overlap_matches: number;
+	overlap_matches: Type.Number(),
 	/** Findings per entity type. */
-	entity_counts: Record<string, number>;
+	entity_counts: Type.Record(Type.String(), Type.Number()),
 	/** Distinct message ids that contained at least one finding. */
-	affected_message_ids: string[];
-}
+	affected_message_ids: Type.Array(Type.String()),
+});
+export type PiiScanResult = Static<typeof PiiScanResult>;
 
 /** Fields of a MessageRow to scan, mirroring the shared engine's field set. */
 const SCAN_FIELDS: ReadonlyArray<{ row: keyof MessageRow; label: LeakField }> = [

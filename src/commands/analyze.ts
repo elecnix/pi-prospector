@@ -9,7 +9,7 @@ import { makePiLLMCaller } from "../analyze/pi-llm.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
 import { parseReviseArg, reachLabel } from "../analyze/version.js";
 import { parseHarnessSource } from "../harness.js";
-import { createAnalyzeRun, finalizeAnalyzeRun } from "../db/analysis-queries.js";
+import { createAnalyzeRun, finalizeAnalyzeRun, getAnalyzerCoverage } from "../db/analysis-queries.js";
 import { uuidv7 } from "../analyze/input-hash.js";
 import {
 	emptyAccounting,
@@ -35,6 +35,8 @@ interface AnalyzeArgs {
 	revise: ReviseReason[];
 	/** Plain-fill every session, not just the not-yet-analysed ones. */
 	all?: boolean;
+	/** Run only the analyzers each analysed session is missing (#195). */
+	backfillMissing?: boolean;
 	limit?: number;
 	/** Get the N most-recent sessions (by started_at DESC). */
 	recent?: number;
@@ -65,28 +67,6 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 	const startedAt = new Date().toISOString();
 
 	try {
-		// A plain fill focuses on not-yet-analysed sessions; any revise reason
-		// re-scans every session so stale nodes can be picked up.
-		//
-		// `--all` is the back-fill path for the learned frustration lexicon. When a
-		// session teaches the corpus a new frustration word, turns in *earlier*
-		// sessions that contain that word have genuinely missing units — but those
-		// sessions were retired from the unanalysed queue, so a plain fill never looks
-		// at them again. `--all` re-scans everything while staying frugal: scanning is
-		// cheap, and only the genuinely missing units are computed.
-		const sessions = args.session
-			? [{ id: args.session, file_path: "", started_at: "" }]
-			: args.recent
-				? await getRecentSessions(db, args.recent, args.source)
-			: reviseActive || args.all
-				? await getAllSessions(db, args.limit, args.source)
-				: await getUnanalyzedSessions(db, args.limit, args.source);
-
-		if (sessions.length === 0) {
-			out(ctx, "No sessions to analyse. Run /prospect-sync first.", "info");
-			return;
-		}
-
 		const baseLlm = makePiLLMCaller(ctx, { modelTiers });
 		// Hard cap on concurrent LLM calls: a global semaphore wrapping the caller, so
 		// the limit holds regardless of how sessions are dispatched above it.
@@ -143,6 +123,62 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		for (const e of loadErrors) out(ctx, `Skipped analyzer ${e.path}: ${e.message}`, "warning");
 		const analyzerIds = args.analyzer ? [args.analyzer] : undefined;
 
+		// A plain fill focuses on not-yet-analysed sessions; any revise reason
+		// re-scans every session so stale nodes can be picked up.
+		//
+		// `--all` is the back-fill path for the learned frustration lexicon. When a
+		// session teaches the corpus a new frustration word, turns in *earlier*
+		// sessions that contain that word have genuinely missing units — but those
+		// sessions were retired from the unanalysed queue, so a plain fill never looks
+		// at them again. `--all` re-scans everything while staying frugal: scanning is
+		// cheap, and only the genuinely missing units are computed.
+		//
+		// `--backfill-missing` is the targeted alternative for *coverage* gaps
+		// (#195): an analyzer that shipped (or was narrowed away with --analyzer)
+		// after a session was analysed has never been scanned against it, and the
+		// unanalysed queue will never revisit that session. Coverage is read from
+		// the graph itself (recorded runs ∪ live nodes — see getAnalyzerCoverage);
+		// only the gapped sessions are run, and each only under its missing
+		// analyzers. The idempotency machinery makes this safe: covered work
+		// classifies `current` and adds nothing, missing work simply adds nodes.
+		let gapBySession: Map<string, string[]> | undefined;
+		let sessions: Array<{ id: string; file_path: string; started_at: string }>;
+		if (args.session) {
+			sessions = [{ id: args.session, file_path: "", started_at: "" }];
+		} else if (args.recent) {
+			sessions = await getRecentSessions(db, args.recent, args.source);
+		} else if (args.backfillMissing) {
+			const coverageIds = args.analyzer ? [args.analyzer] : framework.list().map((a) => a.def.id);
+			const coverage = await getAnalyzerCoverage(db, coverageIds, {
+				onlyAnalyzed: true,
+				source: args.source,
+			});
+			gapBySession = new Map(coverage.gaps.map((g) => [g.sessionId, g.missingAnalyzers]));
+			const gaps = args.limit ? coverage.gaps.slice(0, args.limit) : coverage.gaps;
+			sessions = gaps.map((g) => ({ id: g.sessionId, file_path: "", started_at: "" }));
+			out(
+				ctx,
+				`Analyzer coverage: ${coverage.sessionsConsidered} analysed session(s), ` +
+					`${coverage.gaps.length} with one or more missing analyzer(s).`,
+				"info",
+			);
+		} else if (reviseActive || args.all) {
+			sessions = await getAllSessions(db, args.limit, args.source);
+		} else {
+			sessions = await getUnanalyzedSessions(db, args.limit, args.source);
+		}
+
+		if (sessions.length === 0) {
+			out(
+				ctx,
+				args.backfillMissing
+					? "No coverage gaps — every registered analyzer has run against every analysed session."
+					: "No sessions to analyse. Run /prospect-sync first.",
+				"info",
+			);
+			return;
+		}
+
 		// Session fan-out: a run that touches an LLM analyzer is paced by the LLM
 		// gate (so the fan-out matches the LLM budget); a deterministic-only run has
 		// no provider to protect and uses the wider deterministic limit.
@@ -151,7 +187,10 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		// frustration-lexicon, which is not. Judging by the requested ids alone would
 		// fan sessions out at the wide deterministic limit with no LLM gate in front
 		// of a run that really does call a provider.
-		const effectiveIds = new Set(framework.topologicalSort(analyzerIds));
+		// Under `--backfill-missing` the per-session analyzer set varies, so size the
+		// fan-out against the whole registry — the conservative choice.
+		const planIds = gapBySession && !analyzerIds ? undefined : analyzerIds;
+		const effectiveIds = new Set(framework.topologicalSort(planIds));
 		const selected = framework.list().filter((a) => effectiveIds.has(a.def.id));
 		const runHasLLM = selected.some((a) => a.version.implementationKind !== "deterministic");
 		const sessionConcurrency = runHasLLM ? llmConcurrency : analyzerConcurrency;
@@ -179,7 +218,10 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			try {
 				const summary = await framework.run(session.id, {
 					revise: args.revise,
-					analyzerIds,
+					// Targeted backfill: only the analyzers this session is actually
+					// missing (dependencies are re-added by the framework's topological
+					// order). Everything else stays untouched.
+					analyzerIds: gapBySession ? gapBySession.get(session.id) : analyzerIds,
 					modelSpec: args.model,
 				});
 				outcome = {
@@ -256,6 +298,12 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		if (retryStats.retries > 0) {
 			lines.push(`  LLM throttling: ${retryStats.retries} call(s) retried after 429/5xx and absorbed.`);
 		}
+		if (args.backfillMissing) {
+			lines.push(
+				`  Coverage backfill: only each session's missing analyzer(s) were run — ` +
+					`already-covered work classified current and was untouched.`,
+			);
+		}
 		if (newTerms > 0 && !args.all && !args.session) {
 			lines.push(
 				`  Frustration lexicon: learned ${newTerms} new term(s).`,
@@ -279,7 +327,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --source pi|claude (restrict to sessions from one coding harness), --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --backfill-missing (run only the analyzers each analysed session is missing — closes coverage gaps after a new or previously-unselected analyzer ships, without re-running everything), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --source pi|claude (restrict to sessions from one coding harness), --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		handler: prospectAnalyze,
 	});
 }
@@ -319,6 +367,7 @@ function parseArgs(raw: string): AnalyzeArgs {
 			const n = parseInt(parts[++i]!, 10);
 			if (!Number.isNaN(n) && n > 0) result.recent = n;
 		} else if (p === "--all") result.all = true;
+		else if (p === "--backfill-missing") result.backfillMissing = true;
 		else if (p === "--session" && parts[i + 1]) result.session = parts[++i];
 		else if (p === "--source" && parts[i + 1]) result.source = parts[++i];
 		else if (p === "--analyzer" && parts[i + 1]) result.analyzer = parts[++i];

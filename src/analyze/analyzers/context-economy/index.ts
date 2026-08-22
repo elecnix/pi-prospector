@@ -43,6 +43,116 @@ import type {
 } from "../../types.js";
 import { computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
+import { Type, type Static } from "typebox";
+
+// ── emitted-node schema ──
+
+export const CompactionCycle = Type.Object({
+	/** Row ordinal of the compaction event that ends this cycle. */
+	flushOrdinal: Type.Number(),
+	/** Billed assistant turns in the cycle before the flush. */
+	turnsSpanned: Type.Number(),
+	/** Peak cacheRead across the cycle's billed turns — the carried context at flush time. */
+	peakCarriedTokens: Type.Number(),
+	/**
+	 * Carry that an EARLIER flush (at the cycle start) would have avoided — the
+	 * token-turns accrued by results loaded in this cycle before the flush.
+	 * A LOWER BOUND of the saving: it only counts what moving THIS flush earlier
+	 * would remove, never the future conservation beyond the cycle.
+	 */
+	carryAvoidedTokenTurns: Type.Number(),
+	/** Context re-established after the flush (first billed turn's input + cacheWrite). */
+	rebuildTokens: Type.Number(),
+	firedTooLate: Type.Boolean(),
+	firedTooOften: Type.Boolean(),
+});
+export type CompactionCycle = Static<typeof CompactionCycle>;
+
+export const CompactionPolicy = Type.Object({
+	compactionCount: Type.Number(),
+	cycles: Type.Array(CompactionCycle),
+	/** Sum of carryAvoidedTokenTurns across cycles (lower bound). */
+	totalCarryAvoidedTokenTurns: Type.Number(),
+	totalRebuildTokens: Type.Number(),
+	firedTooLateCount: Type.Number(),
+	firedTooOftenCount: Type.Number(),
+	/** A session with substantial carry but no compaction at all. */
+	neverCompacted: Type.Boolean(),
+});
+export type CompactionPolicy = Static<typeof CompactionPolicy>;
+
+const ContextEconomyFlag = Type.Union([
+	Type.Object({
+		kind: Type.Literal("high-carry-result"),
+		tool: Type.String(),
+		tokens: Type.Number(),
+		turnsAfter: Type.Number(),
+		carryTokenTurns: Type.Number(),
+		ordinal: Type.Number(),
+	}),
+	Type.Object({
+		kind: Type.Literal("oversized-tool-result"),
+		tool: Type.String(),
+		tokens: Type.Number(),
+		ordinal: Type.Number(),
+	}),
+	Type.Object({
+		kind: Type.Literal("redundant-read"),
+		path: Type.String(),
+		count: Type.Number(),
+	}),
+]);
+
+const ContextEconomyRawProposal = Type.Object({
+	target_type: Type.String(),
+	target_path: Type.Optional(Type.String()),
+	title: Type.String(),
+	summary: Type.String(),
+	detail: Type.Optional(Type.String()),
+	evidence: Type.Optional(Type.String()),
+	confidence: Type.Optional(Type.Number()),
+	severity: Type.String(),
+});
+
+/** The properties a context-economy metric node carries in its `contentJson`. */
+export const ContextEconomyProperties = Type.Object({
+	turns: Type.Number(),
+	compactionCount: Type.Number(),
+	billed: Type.Object({
+		input: Type.Number(),
+		output: Type.Number(),
+		cacheRead: Type.Number(),
+		cacheWrite: Type.Number(),
+		total: Type.Number(),
+	}),
+	carry: Type.Object({
+		totalTokenTurns: Type.Number(),
+		byTool: Type.Record(Type.String(), Type.Number()),
+	}),
+	readAmplification: Type.Number(),
+	flags: Type.Array(ContextEconomyFlag),
+	compactionPolicy: Type.Optional(CompactionPolicy),
+	topResults: Type.Array(
+		Type.Object({
+			tool: Type.String(),
+			tokens: Type.Number(),
+			turnsAfter: Type.Number(),
+			carryTokenTurns: Type.Number(),
+			ordinal: Type.Number(),
+		}),
+	),
+	skills: Type.Array(
+		Type.Object({
+			skill: Type.String(),
+			invocationCount: Type.Number(),
+			tokensLoadedAfter: Type.Number(),
+			/** Stream ordinal of first use; serialised null when never re-used after loading. */
+			firstOrdinal: Type.Union([Type.Number(), Type.Null()]),
+		}),
+	),
+	improvement_proposals: Type.Array(ContextEconomyRawProposal),
+});
+export type ContextEconomyProperties = Static<typeof ContextEconomyProperties>;
 
 export const CONTEXT_ECONOMY_DEF: AnalyzerDef = {
 	id: "context-economy",
@@ -51,6 +161,7 @@ export const CONTEXT_ECONOMY_DEF: AnalyzerDef = {
 		"Attributes a session's carried (cacheRead) tokens to the tool results that cause them, and flags oversized / high-carry / redundant reads.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: ContextEconomyProperties,
 };
 
 export const CONTEXT_ECONOMY_VERSION: AnalyzerVersion = {
@@ -91,50 +202,7 @@ type SkillStats = {
 	firstOrdinal: number;
 };
 
-interface RawProposal {
-	target_type: string;
-	target_path?: string;
-	title: string;
-	summary: string;
-	detail?: string;
-	evidence?: string;
-	confidence?: number;
-	severity: string;
-}
-
-// ── compaction policy (issue #67) ──
-
-export interface CompactionCycle {
-	/** Row ordinal of the compaction event that ends this cycle. */
-	flushOrdinal: number;
-	/** Billed assistant turns in the cycle before the flush. */
-	turnsSpanned: number;
-	/** Peak cacheRead across the cycle's billed turns — the carried context at flush time. */
-	peakCarriedTokens: number;
-	/**
-	 * Carry that an EARLIER flush (at the cycle start) would have avoided — the
-	 * token-turns accrued by results loaded in this cycle before the flush.
-	 * A LOWER BOUND of the saving: it only counts what moving THIS flush earlier
-	 * would remove, never the future conservation beyond the cycle.
-	 */
-	carryAvoidedTokenTurns: number;
-	/** Context re-established after the flush (first billed turn's input + cacheWrite). */
-	rebuildTokens: number;
-	firedTooLate: boolean;
-	firedTooOften: boolean;
-}
-
-export interface CompactionPolicy {
-	compactionCount: number;
-	cycles: CompactionCycle[];
-	/** Sum of carryAvoidedTokenTurns across cycles (lower bound). */
-	totalCarryAvoidedTokenTurns: number;
-	totalRebuildTokens: number;
-	firedTooLateCount: number;
-	firedTooOftenCount: number;
-	/** A session with substantial carry but no compaction at all. */
-	neverCompacted: boolean;
-}
+type RawProposal = Static<typeof ContextEconomyRawProposal>;
 
 // ── config ──
 

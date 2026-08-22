@@ -35,6 +35,7 @@ import type {
 	AnalysisUnit,
 } from "../../types.js";
 import { resolveModelSpec } from "../../model-tiers.js";
+import { Type, type Static } from "typebox";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 
 // ── config ──
@@ -64,22 +65,24 @@ export const DEFAULT_REQUEST_CLASSES_CONFIG: RequestClassesConfig = {
 
 // ── shapes ──
 
-export interface RequestClass {
+export const RequestClass = Type.Object({
 	/** The model's own name for the class, verbatim. */
-	name: string;
+	name: Type.String(),
 	/** 1-based indices into the numbered request list. */
-	requests: number[];
-}
+	requests: Type.Array(Type.Number()),
+});
+export type RequestClass = Static<typeof RequestClass>;
 
-export interface RequestClassesProperties {
-	session_id: string;
+export const RequestClassesProperties = Type.Object({
+	session_id: Type.String(),
 	/** The classes the model named, in the order it named them. */
-	classes: RequestClass[];
+	classes: Type.Array(RequestClass),
 	/** The user-message id behind each 1-based request number. */
-	request_message_ids: string[];
+	request_message_ids: Type.Array(Type.String()),
 	/** Requests omitted because the session exceeded `max_requests`. */
-	truncated: number;
-}
+	truncated: Type.Number(),
+});
+export type RequestClassesProperties = Static<typeof RequestClassesProperties>;
 
 // ── prompt ──
 
@@ -186,6 +189,7 @@ export const requestClassesAnalyzer: Analyzer = {
 			"Asks the model to name its own set of classes describing the types of request in a session, with no taxonomy supplied, and to assign each request to them. The emergent vocabulary is the finding.",
 		anchorSpan: "full_session",
 		dependencies: [],
+		outputSchema: RequestClassesProperties,
 	},
 	version: {
 		analyzerId: "request-classes",

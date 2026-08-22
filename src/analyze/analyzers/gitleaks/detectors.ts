@@ -24,11 +24,11 @@ export {
 	redact,
 	meetsMinSeverity,
 	SEVERITY_RANK,
-	type LeakField,
-	type LeakSeverity,
-	type SecretLeakFinding,
+	LeakField,
+	LeakSeverity,
+	SecretLeakFinding,
 	type SecretLeakRule,
-	type SecretLeakScanResult,
+	SecretLeakScanResult,
 } from "../secret-scanner.js";
 export { GITLEAKS_RULES, GITLEAKS_UPSTREAM } from "./rules.js";
 export { DEFAULT_GITLEAKS_CONFIG, type GitleaksConfig } from "./config.js";

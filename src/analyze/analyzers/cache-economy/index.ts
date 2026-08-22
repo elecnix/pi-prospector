@@ -48,6 +48,83 @@ import type {
 import { computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 
+export const CacheClassification = Type.Union([
+	Type.Literal("hit"),
+	Type.Literal("cold-ttl"),
+	Type.Literal("cold-prefix"),
+	Type.Literal("cold-start"),
+	Type.Literal("partial"),
+	Type.Literal("unbilled"),
+]);
+export type CacheClassification = Static<typeof CacheClassification>;
+
+export const CacheTurn = Type.Object({
+	/** Message row ordinal (billed assistant turns only). */
+	ordinal: Type.Number(),
+	/** Serving model, or null when unrecorded. */
+	model: Type.Union([Type.String(), Type.Null()]),
+	/** Fresh input tokens (usage.input). */
+	inputTokens: Type.Number(),
+	/** Cache-read tokens (usage.cacheRead). */
+	cacheReadTokens: Type.Number(),
+	/** Cache-write tokens (usage.cacheWrite). */
+	cacheWriteTokens: Type.Number(),
+	/** Output tokens (usage.output). */
+	outputTokens: Type.Number(),
+	/** Total billed tokens (usage.totalTokens). */
+	totalTokens: Type.Number(),
+	/** cacheRead / (cacheRead + cacheWrite + input), in [0,1]. NaN when unbilled. */
+	hitRatio: Type.Union([Type.Number(), Type.Null()]),
+	/** Wall-clock seconds since the previous billed turn, or null when first/unparseable. */
+	gapSeconds: Type.Union([Type.Number(), Type.Null()]),
+	/** Billed dollar cost of the whole turn, or null when unrecorded. */
+	costUsd: Type.Union([Type.Number(), Type.Null()]),
+	classification: CacheClassification,
+});
+export type CacheTurn = Static<typeof CacheTurn>;
+
+export const CacheEconomyProperties = Type.Object({
+	session_id: Type.String(),
+	/** Per-billed-turn measurements, in order. */
+	turns: Type.Array(CacheTurn),
+	/** Coverage: how many billed turns recorded usage vs recorded none. */
+	usage_recorded_turn_count: Type.Number(),
+	unbilled_turn_count: Type.Number(),
+	/** Coverage: how many billed turns carried a billed dollar cost vs not. */
+	priced_turn_count: Type.Number(),
+	unpriced_turn_count: Type.Number(),
+	/** Aggregate hit ratio over the whole session: totalCacheRead / (totalCacheRead + totalCacheWrite + totalInput). Null when no usage was recorded at all. */
+	aggregate_hit_ratio: Type.Union([Type.Number(), Type.Null()]),
+	aggregate_input_tokens: Type.Number(),
+	aggregate_cache_read_tokens: Type.Number(),
+	aggregate_cache_write_tokens: Type.Number(),
+	/** Raw tallies per classification. */
+	classification_counts: Type.Object({
+		hit: Type.Number(),
+		"cold-ttl": Type.Number(),
+		"cold-prefix": Type.Number(),
+		"cold-start": Type.Number(),
+		partial: Type.Number(),
+		unbilled: Type.Number(),
+	}),
+	/** Cache writes that were never followed by any cache read before the session ended (pure loss), in tokens. */
+	write_churn_tokens: Type.Number(),
+	/**
+	 * The billed dollar cost of the turns classified as cold misses (ttl + prefix),
+	 * or null when none of them could be priced. Money is never guessed.
+	 * There is no per-bucket dollar figure (only `usage.cost.total`), so this is a
+	 * LOWER BOUND of the cache-specific waste — it is the whole turn's bill, not
+	 * the cacheRead dollars in particular — and is labelled as such. See
+	 * `cold_priced_turn_count`/`cold_turn_count` for coverage.
+	 */
+	cold_miss_cost_usd: Type.Union([Type.Number(), Type.Null()]),
+	/** Of the cold-miss turns, how many carried a recorded cost. */
+	cold_priced_turn_count: Type.Number(),
+	/** Total cold-miss turns (ttl + prefix). */
+	cold_turn_count: Type.Number(),
+});
+export type CacheEconomyProperties = Static<typeof CacheEconomyProperties>;
+
 export const CACHE_ECONOMY_DEF: AnalyzerDef = {
 	id: "cache-economy",
 	label: "Cache Economy (deterministic)",
@@ -55,6 +132,7 @@ export const CACHE_ECONOMY_DEF: AnalyzerDef = {
 		"Measures per-turn prompt-cache hit ratio, separates TTL-expiry from prefix-instability cold misses, and counts write churn. Flags sessions that silently pay the full input rate with near-zero cache reads. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: CacheEconomyProperties,
 };
 
 export const CACHE_ECONOMY_VERSION: AnalyzerVersion = {
@@ -67,6 +145,8 @@ export const CACHE_ECONOMY_VERSION: AnalyzerVersion = {
 
 // ── types ──
 
+import { Type, type Static } from "typebox";
+
 type UsageRow = {
 	role: string;
 	timestamp: string | null;
@@ -75,65 +155,6 @@ type UsageRow = {
 	cost_usd: number | null;
 };
 
-export type CacheClassification = "hit" | "cold-ttl" | "cold-prefix" | "cold-start" | "partial" | "unbilled";
-
-export interface CacheTurn {
-	/** Message row ordinal (billed assistant turns only). */
-	ordinal: number;
-	/** Serving model, or null when unrecorded. */
-	model: string | null;
-	/** Fresh input tokens (usage.input). */
-	inputTokens: number;
-	/** Cache-read tokens (usage.cacheRead). */
-	cacheReadTokens: number;
-	/** Cache-write tokens (usage.cacheWrite). */
-	cacheWriteTokens: number;
-	/** Output tokens (usage.output). */
-	outputTokens: number;
-	/** Total billed tokens (usage.totalTokens). */
-	totalTokens: number;
-	/** cacheRead / (cacheRead + cacheWrite + input), in [0,1]. NaN when unbilled. */
-	hitRatio: number | null;
-	/** Wall-clock seconds since the previous billed turn, or null when first/unparseable. */
-	gapSeconds: number | null;
-	/** Billed dollar cost of the whole turn, or null when unrecorded. */
-	costUsd: number | null;
-	classification: CacheClassification;
-}
-
-export interface CacheEconomyProperties {
-	session_id: string;
-	/** Per-billed-turn measurements, in order. */
-	turns: CacheTurn[];
-	/** Coverage: how many billed turns recorded usage vs recorded none. */
-	usage_recorded_turn_count: number;
-	unbilled_turn_count: number;
-	/** Coverage: how many billed turns carried a billed dollar cost vs not. */
-	priced_turn_count: number;
-	unpriced_turn_count: number;
-	/** Aggregate hit ratio over the whole session: totalCacheRead / (totalCacheRead + totalCacheWrite + totalInput). Null when no usage was recorded at all. */
-	aggregate_hit_ratio: number | null;
-	aggregate_input_tokens: number;
-	aggregate_cache_read_tokens: number;
-	aggregate_cache_write_tokens: number;
-	/** Raw tallies per classification. */
-	classification_counts: Record<CacheClassification, number>;
-	/** Cache writes that were never followed by any cache read before the session ended (pure loss), in tokens. */
-	write_churn_tokens: number;
-	/**
-	 * The billed dollar cost of the turns classified as cold misses (ttl + prefix),
-	 * or null when none of them could be priced. Money is never guessed.
-	 * There is no per-bucket dollar figure (only `usage.cost.total`), so this is a
-	 * LOWER BOUND of the cache-specific waste — it is the whole turn's bill, not
-	 * the cacheRead dollars in particular — and is labelled as such. See
-	 * `cold_priced_turn_count`/`cold_turn_count` for coverage.
-	 */
-	cold_miss_cost_usd: number | null;
-	/** Of the cold-miss turns, how many carried a recorded cost. */
-	cold_priced_turn_count: number;
-	/** Total cold-miss turns (ttl + prefix). */
-	cold_turn_count: number;
-}
 
 // ── config ──
 

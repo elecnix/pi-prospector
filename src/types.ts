@@ -285,6 +285,8 @@ export interface Stats {
 		edges: number;
 		runs: number;
 		nodesByKind: Record<string, number>;
+		/** Non-retracted node count per analyzer_id */
+		nodesByAnalyzer: Record<string, number>;
 	};
 	/** Per-source token and tool-call stats */
 	tokens: SourceTokenStats;

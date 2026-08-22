@@ -57,6 +57,39 @@ import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF, type ToolTrajectoryProperties } from "../tool-trajectory/index.js";
 import { DEFAULT_ROUTING_CONFIG, type RoutingConfig } from "./config.js";
+import { Type, type Static } from "typebox";
+
+export const RoutingVerdict = Type.Union([
+	Type.Literal("downshift"),
+	Type.Literal("escalate"),
+	Type.Literal("neutral"),
+]);
+export type RoutingVerdict = Static<typeof RoutingVerdict>;
+
+export const RoutingProperties = Type.Object({
+	user_message_id: Type.String(),
+	pair_index: Type.Number(),
+	/** The serving model of the turn's assistant steps, or "unrecorded" when none was recorded. */
+	model: Type.String(),
+	model_recorded: Type.Boolean(),
+	/** Billed dollar cost of the turn's assistant steps, or null when none recorded. */
+	turn_cost_usd: Type.Union([Type.Number(), Type.Null()]),
+	features: Type.Object({
+		tool_call_count: Type.Number(),
+		context_tokens: Type.Number(),
+		edit_chars: Type.Number(),
+		correction_detected: Type.Boolean(),
+		tool_failure_count: Type.Number(),
+		frustration: Type.Boolean(),
+		stuck_loop: Type.Boolean(),
+		oscillation: Type.Boolean(),
+		preflight_gap: Type.Boolean(),
+	}),
+	easy: Type.Boolean(),
+	hard: Type.Boolean(),
+	verdict: RoutingVerdict,
+});
+export type RoutingProperties = Static<typeof RoutingProperties>;
 
 export const ROUTING_OPPORTUNITY_DEF: AnalyzerDef = {
 	id: "routing-opportunity",
@@ -65,6 +98,7 @@ export const ROUTING_OPPORTUNITY_DEF: AnalyzerDef = {
 		"Labels each turn downshiftable or escalation-worthy from existing friction/trajectory signals (no LLM), attaching the serving model and billed cost so the corpus-level efficiency frontier can be computed honestly.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_FRUSTRATION_DEF.id, TOOL_TRAJECTORY_DEF.id],
+	outputSchema: RoutingProperties,
 };
 
 export const ROUTING_OPPORTUNITY_VERSION: AnalyzerVersion = {
@@ -74,32 +108,6 @@ export const ROUTING_OPPORTUNITY_VERSION: AnalyzerVersion = {
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/routing-opportunity/index.ts",
 };
-
-export type RoutingVerdict = "downshift" | "escalate" | "neutral";
-
-export interface RoutingProperties {
-	user_message_id: string;
-	pair_index: number;
-	/** The serving model of the turn's assistant steps, or "unrecorded" when none was recorded. */
-	model: string;
-	model_recorded: boolean;
-	/** Billed dollar cost of the turn's assistant steps, or null when none recorded. */
-	turn_cost_usd: number | null;
-	features: {
-		tool_call_count: number;
-		context_tokens: number;
-		edit_chars: number;
-		correction_detected: boolean;
-		tool_failure_count: number;
-		frustration: boolean;
-		stuck_loop: boolean;
-		oscillation: boolean;
-		preflight_gap: boolean;
-	};
-	easy: boolean;
-	hard: boolean;
-	verdict: RoutingVerdict;
-}
 
 type DbUsageRow = { id: string; usage: string | null };
 

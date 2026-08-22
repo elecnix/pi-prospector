@@ -60,10 +60,38 @@ import { DEFAULT_TRUFFLEHOG_CONFIG, type TruffleHogConfig } from "./config.js";
 import {
 	detectTrufflehogLeaks,
 	verifyFindings,
-	type TruffleHogFinding,
-	type VerificationSummary,
+	TruffleHogFinding,
+	VerificationSummary,
 } from "./detectors.js";
 import { PRODUCTION_VERIFIERS, type CredentialVerifier } from "./verifiers.js";
+import { Type, type Static } from "typebox";
+
+/** The node content: the TruffleHog-style scan result plus envelope and verification fields. */
+export const TruffleHogProperties = Type.Object({
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any leaks found? */
+	has_leaks: Type.Boolean(),
+	/** Total findings, after allowlisting and severity filtering. */
+	leak_count: Type.Number(),
+	/** The findings, capped at `maxMatchesPerField` per field. */
+	leaks: Type.Array(TruffleHogFinding),
+	/** Count of matches dropped for exceeding `maxMatchesPerField` in a field. */
+	truncated_matches: Type.Number(),
+	/** Count of matches dropped by the allowlist (fingerprint or pattern). */
+	allowlisted_matches: Type.Number(),
+	/** Count of matches dropped by disabled rules... reported by rule id. */
+	rule_counts: Type.Record(Type.String(), Type.Number()),
+	/** Distinct message ids that contained at least one leak. */
+	affected_message_ids: Type.Array(Type.String()),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+	/** Whether live verification ran for this node (mirrors config.verify). */
+	verify_enabled: Type.Boolean(),
+	/** Verification tally; present only when verification ran. */
+	verification: Type.Optional(VerificationSummary),
+});
+export type TruffleHogProperties = Static<typeof TruffleHogProperties>;
 
 export const TRUFFLEHOG_DEF: AnalyzerDef = {
 	id: "trufflehog",
@@ -72,6 +100,7 @@ export const TRUFFLEHOG_DEF: AnalyzerDef = {
 		"Scans session transcripts with a self-written catalogue of new provider-token patterns over the shared secret engine, and — only when config enables it — live-verifies findings against their issuing providers. No AGPL material; no LLM; never stores the matched secret.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: TruffleHogProperties,
 };
 
 export const TRUFFLEHOG_VERSION: AnalyzerVersion = {
@@ -86,30 +115,6 @@ export const TRUFFLEHOG_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/trufflehog/index.ts",
 };
 
-export interface TruffleHogProperties {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any leaks found? */
-	has_leaks: boolean;
-	/** Total findings, after allowlisting and severity filtering. */
-	leak_count: number;
-	/** The findings, capped at `maxMatchesPerField` per field. */
-	leaks: TruffleHogFinding[];
-	/** Count of matches dropped for exceeding `maxMatchesPerField` in a field. */
-	truncated_matches: number;
-	/** Count of matches dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_matches: number;
-	/** Count of matches dropped by disabled rules... reported by rule id. */
-	rule_counts: Record<string, number>;
-	/** Distinct message ids that contained at least one leak. */
-	affected_message_ids: string[];
-	/** Total messages scanned. */
-	message_count: number;
-	/** Whether live verification ran for this node (mirrors config.verify). */
-	verify_enabled: boolean;
-	/** Verification tally; present only when verification ran. */
-	verification?: VerificationSummary;
-}
 
 // ──────────────────────────── analyzer ────────────────────────────
 

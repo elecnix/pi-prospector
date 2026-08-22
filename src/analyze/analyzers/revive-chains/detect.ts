@@ -25,28 +25,30 @@
 import type { SubagentRunRow } from "../../types.js";
 import type { ToolStream } from "../../tool-stream.js";
 import { ORCHESTRATION_TOOLS } from "../../../sync/parser.js";
+import { Type, type Static } from "typebox";
 
 /** One maximal run of consecutive revived subagent results. */
-export interface ReviveChain {
+export const ReviveChain = Type.Object({
 	/** Consecutive revived results in the chain. */
-	length: number;
+	length: Type.Number(),
 	/** Spawns this chain implies: one per revive. Equals `length`. */
-	spawn_count: number;
+	spawn_count: Type.Number(),
 	/** Spawns a persistent multi-turn primitive would have saved: `length - 1`. */
-	redundant_spawns: number;
+	redundant_spawns: Type.Number(),
 	/**
 	 * The run id each revived marker names — the run the call resumed *from*,
 	 * in stream order. The final spawn's new run id appears only if the chain
 	 * continued past it, so the last spawn of a chain is typically not listed.
 	 */
-	run_ids: string[];
+	run_ids: Type.Array(Type.String()),
 	/** Messages that carried the revived results, in stream order. */
-	message_ids: string[];
+	message_ids: Type.Array(Type.String()),
 	/** Stream ordinal of the chain's first revived call. */
-	first_ordinal: number;
+	first_ordinal: Type.Number(),
 	/** Stream ordinal of the chain's last revived call. */
-	last_ordinal: number;
-}
+	last_ordinal: Type.Number(),
+});
+export type ReviveChain = Static<typeof ReviveChain>;
 
 /**
  * Find every maximal run of consecutive revived subagent results in the
@@ -105,41 +107,37 @@ export function chainLengthHistogram(chains: readonly ReviveChain[]): Record<str
 }
 
 /** One usage field's rollup: the summed recorded value, or null when no run recorded it. */
-interface RolledField {
-	value: number | null;
-	/** Runs whose artifact recorded this field. */
-	recorded_runs: number;
-}
-
-/** Child-side usage attributed to revive chains, kept strictly apart from the parent's own spend. */
-export interface DelegatedUsageRollup {
-	/** Runs whose artifact row was found and read. */
-	attributed_runs: number;
-	/**
-	 * Revived markers whose run id matched no artifact row — the run is counted
-	 * as unattributed rather than contributing zero.
-	 */
-	unattributed_runs: number;
-	/** Runs with an artifact row but no recorded (or parseable) usage object. */
-	runs_without_usage: number;
-	/** Token and cost totals; a field is null when no attributed run recorded it. */
-	input: RolledFieldValue;
-	output: RolledFieldValue;
-	cache_read: RolledFieldValue;
-	cache_write: RolledFieldValue;
-	cost_usd: RolledFieldValue;
-	turns: RolledFieldValue;
-}
-
 /**
  * A rolled-up value plus how many runs backed it, so a small total resting on
  * one run reads differently from a small total resting on twenty.
  */
-export interface RolledFieldValue {
-	value: number | null;
+export const RolledFieldValue = Type.Object({
+	value: Type.Union([Type.Number(), Type.Null()]),
 	/** Attributed runs whose usage recorded this field. */
-	recorded_runs: number;
-}
+	recorded_runs: Type.Number(),
+});
+export type RolledFieldValue = Static<typeof RolledFieldValue>;
+
+/** Child-side usage attributed to revive chains, kept strictly apart from the parent's own spend. */
+export const DelegatedUsageRollup = Type.Object({
+	/** Runs whose artifact row was found and read. */
+	attributed_runs: Type.Number(),
+	/**
+	 * Revived markers whose run id matched no artifact row — the run is counted
+	 * as unattributed rather than contributing zero.
+	 */
+	unattributed_runs: Type.Number(),
+	/** Runs with an artifact row but no recorded (or parseable) usage object. */
+	runs_without_usage: Type.Number(),
+	/** Token and cost totals; a field is null when no attributed run recorded it. */
+	input: RolledFieldValue,
+	output: RolledFieldValue,
+	cache_read: RolledFieldValue,
+	cache_write: RolledFieldValue,
+	cost_usd: RolledFieldValue,
+	turns: RolledFieldValue,
+});
+export type DelegatedUsageRollup = Static<typeof DelegatedUsageRollup>;
 
 /**
  * Aggregate the child usage behind every revive chain.
@@ -162,7 +160,7 @@ export function rollupDelegatedUsage(
 	let attributed = 0;
 	let unattributed = 0;
 	let runsWithoutUsage = 0;
-	const fields: Record<"input" | "output" | "cacheRead" | "cacheWrite" | "cost" | "turns", RolledField> = {
+	const fields: Record<"input" | "output" | "cacheRead" | "cacheWrite" | "cost" | "turns", RolledFieldValue> = {
 		input: { value: null, recorded_runs: 0 },
 		output: { value: null, recorded_runs: 0 },
 		cacheRead: { value: null, recorded_runs: 0 },

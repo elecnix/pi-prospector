@@ -21,7 +21,8 @@
  * keeps a cached node from meaning something different after a flight.
  */
 
-import { DEFAULT_WEIGHTS, EQUIVALENTS_PER_MITE, type UnitWeights } from "./config.js";
+import { DEFAULT_WEIGHTS, EQUIVALENTS_PER_MITE, UnitWeights } from "./config.js";
+import { Type, type Static } from "typebox";
 
 /** A transcript row as this fold reads it, in `rowid` order. */
 export interface UsageRow {
@@ -33,53 +34,56 @@ export interface UsageRow {
 	provider_message_id: string | null;
 }
 
-export interface TokenTotals {
-	input: number;
-	output: number;
-	cache_read: number;
-	cache_write: number;
+export const TokenTotals = Type.Object({
+	input: Type.Number(),
+	output: Type.Number(),
+	cache_read: Type.Number(),
+	cache_write: Type.Number(),
 	/** Weighted input-token equivalents, before dividing by a million. */
-	equivalents: number;
+	equivalents: Type.Number(),
 	/** `equivalents / EQUIVALENTS_PER_MITE`. */
-	mite: number;
+	mite: Type.Number(),
 	/** Billed API calls, after de-duplication. */
-	calls: number;
-}
+	calls: Type.Number(),
+});
+export type TokenTotals = Static<typeof TokenTotals>;
 
 /** A user turn and everything the agent spent answering it. */
-export interface RequestSegment {
+export const RequestSegment = Type.Object({
 	/** Position in the session. -1 is the preamble before any user turn. */
-	ordinal: number;
+	ordinal: Type.Number(),
 	/** The user message that opened it, or null for the preamble. */
-	user_message_id: string | null;
+	user_message_id: Type.Union([Type.String(), Type.Null()]),
 	/** ISO instant of the user turn, or of the first call for the preamble. */
-	started_at: string | null;
+	started_at: Type.Union([Type.String(), Type.Null()]),
 	/** ISO instant of the last billed call in the segment. */
-	ended_at: string | null;
-	totals: TokenTotals;
+	ended_at: Type.Union([Type.String(), Type.Null()]),
+	totals: TokenTotals,
 	/** Serving models used, in first-seen order. */
-	models: string[];
-}
+	models: Type.Array(Type.String()),
+});
+export type RequestSegment = Static<typeof RequestSegment>;
 
-export interface TokenUnitsProperties {
-	session_id: string;
-	unit: "MITE";
-	equivalents_per_mite: number;
-	weights: UnitWeights;
-	totals: TokenTotals;
-	by_model: Record<string, TokenTotals>;
-	segments: RequestSegment[];
-	coverage: {
+export const TokenUnitsProperties = Type.Object({
+	session_id: Type.String(),
+	unit: Type.Literal("MITE"),
+	equivalents_per_mite: Type.Number(),
+	weights: UnitWeights,
+	totals: TokenTotals,
+	by_model: Type.Record(Type.String(), TokenTotals),
+	segments: Type.Array(RequestSegment),
+	coverage: Type.Object({
 		/** Assistant rows seen, before de-duplication. */
-		assistant_rows: number;
+		assistant_rows: Type.Number(),
 		/** Distinct billed calls after folding by provider_message_id. */
-		billed_calls: number;
+		billed_calls: Type.Number(),
 		/** Calls whose transcript recorded no usage — unknown, never zero. */
-		calls_without_usage: number;
+		calls_without_usage: Type.Number(),
 		/** Rows with no provider id, which fell back to their own row id. */
-		rows_without_key: number;
-	};
-}
+		rows_without_key: Type.Number(),
+	}),
+});
+export type TokenUnitsProperties = Static<typeof TokenUnitsProperties>;
 
 export function emptyTotals(): TokenTotals {
 	return { input: 0, output: 0, cache_read: 0, cache_write: 0, equivalents: 0, mite: 0, calls: 0 };

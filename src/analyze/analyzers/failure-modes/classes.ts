@@ -27,6 +27,8 @@
  *     agent. It is recorded, counted, and never proposed against.
  */
 
+import { Type, type Static } from "typebox";
+
 /** Which of the failure axes a class describes. */
 /**
  * The axis a class lives on.
@@ -35,7 +37,12 @@
  * subagent artifact metadata (`subagent_runs`), which is the only record a
  * spawn-level child failure ever leaves — the child wrote no messages anywhere.
  */
-export type FailureAxis = "turn" | "tool" | "child";
+export const FailureAxis = Type.Union([
+	Type.Literal("turn"),
+	Type.Literal("tool"),
+	Type.Literal("child"),
+]);
+export type FailureAxis = Static<typeof FailureAxis>;
 
 /**
  * What kind of fix a class's remedy is — the axis that keeps a diagnosis from

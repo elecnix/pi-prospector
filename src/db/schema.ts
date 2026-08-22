@@ -10,6 +10,7 @@ import { migrateDecisionsToAssertions } from "./assertions.js";
  *
  * Tables:
  *   sessions, messages, messages_fts   — the read-only session index
+ *   proposals_fts                      — full-text over the proposal store (search)
  *   subagent_runs                      — child-run artifact metadata, joined by project
  *   proposals                          — materialised, user-reviewable proposals
  *   proposal_decisions                 — append-only human accept/reject + rationale
@@ -349,6 +350,42 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 		CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
 			INSERT INTO messages_fts(messages_fts, rowid, content_text, content_thinking)
 			VALUES ('delete', OLD.rowid, OLD.content_text, OLD.content_thinking);
+		END;
+	`);
+
+	// Proposal full-text index (issue #194): the searchable half of the corpus
+	// search surface. External-content over proposals, kept in sync by triggers
+	// exactly like messages_fts — gc deletes proposals, so the delete trigger
+	// is load-bearing, not decorative.
+	db.exec(`
+		DROP TABLE IF EXISTS proposals_fts;
+		CREATE VIRTUAL TABLE proposals_fts USING fts5(
+			title,
+			summary,
+			detail,
+			evidence,
+			content='proposals',
+			content_rowid='rowid'
+		);
+
+		DROP TRIGGER IF EXISTS proposals_ai;
+		CREATE TRIGGER proposals_ai AFTER INSERT ON proposals BEGIN
+			INSERT INTO proposals_fts(rowid, title, summary, detail, evidence)
+			VALUES (NEW.rowid, NEW.title, NEW.summary, NEW.detail, NEW.evidence);
+		END;
+
+		DROP TRIGGER IF EXISTS proposals_au;
+		CREATE TRIGGER proposals_au AFTER UPDATE OF title, summary, detail, evidence ON proposals BEGIN
+			INSERT INTO proposals_fts(proposals_fts, rowid, title, summary, detail, evidence)
+			VALUES ('delete', OLD.rowid, OLD.title, OLD.summary, OLD.detail, OLD.evidence);
+			INSERT INTO proposals_fts(rowid, title, summary, detail, evidence)
+			VALUES (NEW.rowid, NEW.title, NEW.summary, NEW.detail, NEW.evidence);
+		END;
+
+		DROP TRIGGER IF EXISTS proposals_ad;
+		CREATE TRIGGER proposals_ad AFTER DELETE ON proposals BEGIN
+			INSERT INTO proposals_fts(proposals_fts, rowid, title, summary, detail, evidence)
+			VALUES ('delete', OLD.rowid, OLD.title, OLD.summary, OLD.detail, OLD.evidence);
 		END;
 	`);
 

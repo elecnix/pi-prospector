@@ -7,13 +7,39 @@ import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposal
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
 import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
+import { prospectAnalyze } from "./analyze.js";
+import { getLatestAnalyzeRuns } from "../db/analysis-queries.js";
+import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
+import { readSessionSummary } from "./show.js";
+import { readLeaks, type LeaksQuery } from "./leaks.js";
+import { readSearch, searchSyntaxHelp, type SearchQuery } from "./search.js";
 import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
+import type { AnalysisNodeRow } from "../analyze/types.js";
 import { parseHarnessSource } from "../harness.js";
 import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
 function text(body: string, details: unknown): ToolResult {
 	return { content: [{ type: "text", text: body }], details };
+}
+
+/** A compact JSON-safe summary of one node row for tool `details`. */
+function serialiseNodeSummary(n: AnalysisNodeRow): Record<string, unknown> {
+	let content: unknown;
+	try {
+		content = JSON.parse(n.content_json) as unknown;
+	} catch {
+		content = n.content_json;
+	}
+	return {
+		output_key: n.output_key,
+		input_key: n.input_key,
+		analyzer_id: n.analyzer_id,
+		node_kind: n.node_kind,
+		session_id: n.session_id,
+		created_at: n.created_at,
+		content,
+	};
 }
 
 /** Build the optional decision payload from tool params (all fields optional). */
@@ -30,7 +56,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		name: "prospect",
 		label: "Prospect",
 		description:
-			"Index sessions, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, help. " +
+			"Index sessions, run analysis, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, analyze, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, help. " +
 			"list_proposals accepts source (pi|claude) to filter by coding harness. " +
 			"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 			"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
@@ -38,10 +64,23 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			"Use remediate when ONE action addresses MANY proposals: pass proposal_ids and a description, and all of them " +
 			"are accepted linked to a single shared remediation record instead of N duplicated rationales. " +
 			"For muting: the reviewing agent performs the mute after operator feedback — pass the muted term and an optional reason; " +
-			"the term stops matching new turns and its prior hit nodes become stale/config, cleanly recomputed by analyze --revise config.",
+			"the term stops matching new turns and its prior hit nodes become stale/config, cleanly recomputed by analyze with revise=[\"config\"]. " +
+			"Use action analyze to run the analyzer framework over sessions: a frugal plain fill by default (only missing work), " +
+			"revise widens the reach to recompute stale nodes (major/minor analyzer bumps, config = user setup changed), " +
+			"analyzer restricts the run to one analyzer, model pins every tier to one model for the run (part of node identity), " +
+			"and all=true back-fills every session (use after the frustration lexicon learns new words). " +
+			"Use action nodes to read analyzer output from the surface (filter by analyzer/node-kind/content, counts over a property, " +
+			"latest-per-key for newest verdict per term) and action node with output_key for one node's detail plus its resolved outgoing edges. " +
+			"Use action session_summary with session_id for the session-level summary with its evidence: what happened, what went well, " +
+			"what caused friction (textual gradients), the verbatim consumed turns behind it, the proposals it produced, and its cross-session contrast siblings. " +
+			"Use action leaks to report which sessions contain detected secrets: findings from the credential-detector analyzers with severity, rule, " +
+			"redacted preview, fingerprint, and message anchor (params: severity floor, limit, source). " +
+			"Use action search with query for content and pattern search over proposals and the session corpus (FTS5): hits carry record kind, id, session, " +
+			"a highlighted snippet ranked by bm25, and links into show / node (params: query required; kind all|messages|proposals; limit; source).",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("sync"),
+				Type.Literal("analyze"),
 				Type.Literal("stats"),
 				Type.Literal("list_proposals"),
 				Type.Literal("accept"),
@@ -50,6 +89,11 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				Type.Literal("mute"),
 				Type.Literal("unmute"),
 				Type.Literal("mutes"),
+				Type.Literal("nodes"),
+				Type.Literal("node"),
+				Type.Literal("session_summary"),
+				Type.Literal("leaks"),
+				Type.Literal("search"),
 				Type.Literal("help"),
 			]),
 			status: Type.Optional(
@@ -60,9 +104,9 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					Type.Literal("duplicate"),
 				]),
 			),
-			severity: Type.Optional(Type.String({ description: "Filter by severity: friction, correction, waste, suggestion, reinforcement" })),
+			severity: Type.Optional(Type.String({ description: "list_proposals: filter by severity (friction, correction, waste, suggestion, reinforcement). leaks: minimum severity floor — report this severity (medium|high|critical) and above." })),
 			source: Type.Optional(Type.String({ description: "Filter by coding harness: pi or claude." })),
-			session_id: Type.Optional(Type.String({ description: "Scope list_proposals to a single session (only that session's proposals)." })),
+			session_id: Type.Optional(Type.String({ description: "Scope list_proposals to a single session (only that session's proposals); analyze runs just that one session." })),
 			project: Type.Optional(Type.String({ description: "Scope sync to one project (derived from the session directory name) so a fresh install skips every other project on disk." })),
 			proposal_id: Type.Optional(Type.String()),
 			proposal_ids: Type.Optional(Type.Array(Type.String(), { description: "Proposal ids to accept/reject together (accept/reject/remediate actions)." })),
@@ -78,13 +122,41 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			actual_change: Type.Optional(Type.String({ description: "Commit sha / path / note of what was actually done." })),
 			term: Type.Optional(Type.String({ description: "The lexicon term to mute or unmute (mute/unmute actions)." })),
 			reason: Type.Optional(Type.String({ description: "Operator's free-text reason for muting a term (mute action)." })),
+			revise: Type.Optional(
+				Type.Array(
+					Type.Union([Type.Literal("major"), Type.Literal("minor"), Type.Literal("config"), Type.Literal("all")]),
+					{ description: "analyze: revise reasons — which stale nodes the run may recompute (major/minor = analyzer version bumps graded by the author, config = user setup changed, all = every reason). Omit for a frugal plain fill that only fills missing work." },
+				),
+			),
+			recent: Type.Optional(Type.Number({ description: "analyze: run over the N most-recent sessions (by started_at DESC), e.g. for pilots." })),
+			model: Type.Optional(Type.String({ description: "analyze: provider/model pinning every tier to one model for this run (the resolved model is part of node identity)." })),
+			analyzer: Type.Optional(Type.String({ description: "Analyzer id to read (nodes action; required unless all=true) or to run (analyze action)." })),
+			all: Type.Optional(Type.Boolean({ description: "Read nodes of every analyzer (nodes action); analyze: plain-fill every session, not just unanalysed ones." })),
+			node_kind: Type.Optional(
+				Type.Union([Type.Literal("metric"), Type.Literal("classification"), Type.Literal("summary"), Type.Literal("proposal"), Type.Literal("validation"), Type.Literal("error")], {
+					description: "Restrict nodes to one kind (nodes action).",
+				}),
+			),
+			filter: Type.Optional(Type.Array(Type.String(), { description: "key=value content filters, repeatable (nodes action); typed against the analyzer's declared outputSchema when it declares one." })),
+			counts: Type.Optional(Type.String({ description: "Group counts over this top-level content property across all matching nodes (nodes action)." })),
+			latest_per_key: Type.Optional(Type.String({ description: "Keep only the newest node per distinct value of this content property, e.g. 'term' for the newest lexicon verdict per term (nodes action)." })),
+			output_key: Type.Optional(Type.String({ description: "The node's content-addressed output key, or an unambiguous prefix (node action)." })),
+			query: Type.Optional(
+				Type.String({ description: "search action: FTS5 MATCH query — plain terms (implicit AND), \"quoted phrases\", prefix terms (lexicon*), OR/NOT/AND, NEAR(a b, n), column:term." }),
+			),
+			kind: Type.Optional(
+				Type.Union([Type.Literal("all"), Type.Literal("messages"), Type.Literal("proposals")], {
+					description: "search: restrict which record kinds are searched (default all).",
+				}),
+			),
+			// session_id is declared above (list_proposals filter); session_summary reuses it.
 		}),
 		async execute(
 			_toolCallId: string,
 			params: Record<string, unknown>,
 			_signal: AbortSignal,
 			_onUpdate: unknown,
-			_ctx: ExtensionCommandContext,
+			ctx: ExtensionCommandContext,
 		): Promise<ToolResult> {
 			const db = openAsyncDatabase(getDbPath());
 			await migrate(db);
@@ -96,6 +168,27 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 							source: parseHarnessSource(params.source as string | undefined),
 						});
 						return text(JSON.stringify(result), result);
+					}
+					case "analyze": {
+						// Thin exposure of /prospect-analyze (#193): translate params into the
+						// same flag string the slash command parses, then report the run record
+						// so the caller gets the tallies without re-parsing human output.
+						const parts: string[] = [];
+						const revise = params.revise as string[] | undefined;
+						if (revise && revise.length > 0) parts.push(`--revise ${revise.join(",")}`);
+						if (params.all === true) parts.push("--all");
+						if (typeof params.limit === "number") parts.push(`--limit ${params.limit}`);
+						if (typeof params.recent === "number") parts.push(`--recent ${params.recent}`);
+						if (params.session_id) parts.push(`--session ${params.session_id}`);
+						if (params.source) parts.push(`--source ${params.source}`);
+						if (params.analyzer) parts.push(`--analyzer ${params.analyzer}`);
+						if (params.model) parts.push(`--model ${params.model}`);
+						await prospectAnalyze(parts.join(" "), ctx);
+						const runs = await getLatestAnalyzeRuns(db, 1);
+						const run = runs[0];
+						return run
+							? text(`Analyze complete. Run record:\n${JSON.stringify(run, null, 2)}`, run)
+							: text("Analyze complete (no run record found).", {});
 					}
 					case "stats": {
 						const stats = await getStats(db);
@@ -213,18 +306,93 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						const active = rows.filter((r) => r.superseded_at === null).length;
 						return text(`Term assertions (${rows.length} total, ${active} active):\n${rows.map(formatAssertion).join("\n")}`, rows);
 					}
-					case "help": {
+					case "nodes": {
+					const q: NodesQuery = {
+						analyzerId: params.analyzer as string | undefined,
+						all: params.all as boolean | undefined,
+						nodeKind: params.node_kind as string | undefined,
+						filters: Array.isArray(params.filter) ? (params.filter as string[]) : [],
+						counts: params.counts as string | undefined,
+						latestPerKey: params.latest_per_key as string | undefined,
+						limit: params.limit as number | undefined,
+						offset: params.offset as number | undefined,
+						sessionId: params.session_id as string | undefined,
+					};
+					try {
+						const result = await readNodes(db, q);
+						return text(result.text, { total: result.total, nodes: result.rows.map(serialiseNodeSummary) });
+					} catch (err) {
+						return text(`prospect nodes: ${err instanceof Error ? err.message : String(err)}`, {});
+					}
+				}
+				case "node": {
+					if (!params.output_key) return text("output_key required (use action nodes to find one)", {});
+					try {
+						const result = await readNodeDetail(db, params.output_key as string);
+						return text(result.text, { node: serialiseNodeSummary(result.node) });
+					} catch (err) {
+						return text(`prospect node: ${err instanceof Error ? err.message : String(err)}`, {});
+					}
+				}
+				case "leaks": {
+					const q: LeaksQuery = {
+						minSeverity: params.severity as string | undefined,
+						limit: params.limit as number | undefined,
+						source: params.source as string | undefined,
+					};
+					try {
+						const { text: body, report } = await readLeaks(db, q);
+						return text(body, report);
+					} catch (err) {
+						return text(`prospect leaks: ${err instanceof Error ? err.message : String(err)}`, {});
+					}
+				}
+				case "search": {
+				if (!params.query) return text(`query required. ${searchSyntaxHelp()}`, {});
+				const q: SearchQuery = {
+					query: params.query as string,
+					kind: (params.kind as SearchQuery["kind"]) ?? "all",
+					limit: params.limit as number | undefined,
+					source: parseHarnessSource(params.source as string | undefined),
+				};
+				try {
+					const { text: body, report } = await readSearch(db, q);
+					return text(body, report);
+				} catch (err) {
+					return text(`prospect search: ${err instanceof Error ? err.message : String(err)}`, {});
+				}
+			}
+			case "session_summary": {
+				const sessionId = params.session_id as string | undefined;
+				if (!sessionId) return text("session_id required (use list_proposals or nodes to find one)", {});
+				try {
+					const result = await readSessionSummary(db, sessionId);
+					return text(result.text, { node: serialiseNodeSummary(result.node) });
+				} catch (err) {
+					return text(`prospect show --session: ${err instanceof Error ? err.message : String(err)}`, {});
+				}
+			}
+			case "help": {
 						return text(`=== prospect tool ===
 
 Workflow:
   1. sync   — index new sessions from disk; scope with { project } and/or { source } to skip every other project on disk (the fresh-install escape hatch)
-  2. stats  — see proposal counts, token ratios, analysis depth
-  3. list_proposals [status] [severity] [limit] [offset] — ranked by confidence
+  2. analyze — run the analyzer framework over sessions; a frugal plain fill by default, { revise: ["config"] } recomputes stale nodes,
+      { all: true } back-fills every session, { analyzer } restricts to one analyzer, { recent }/ { limit }/ { session_id }/ { source } scope the run
+  3. stats  — see proposal counts, token ratios, analysis depth
+  4. list_proposals [status] [severity] [limit] [offset] — ranked by confidence
       (add { session_id } to scope to one session; --as-of <ts|7d> / --as-of-run <id> for a point-in-time view)
-  4. accept/reject — decide proposals singly or in bulk (proposal_ids array)
-  5. remediate — accept many proposals under one shared remediation record
+  5. accept/reject — decide proposals singly or in bulk (proposal_ids array)
+  6. remediate — accept many proposals under one shared remediation record
 
 Analysis-graph & point-in-time commands (slash commands):
+  - prospect tool actions: nodes (--analyzer <id> | all=true, node_kind, filter[], counts, latest_per_key, limit, offset) and node (output_key) — read analyzer output from the surface
+  - /prospect-nodes --analyzer <id> [--node-kind <k>] [--filter k=v]... [--counts <prop>] [--latest-per-key <prop>] [--limit n] [--offset n]
+  - /prospect-node <output-key> — one node + resolved outgoing edges (consumes/anchors/produces/revises)
+  - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
+  - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
+  - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
+  - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)

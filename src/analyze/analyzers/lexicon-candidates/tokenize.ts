@@ -17,6 +17,8 @@
  * a user whose vocabulary the lexicon has never seen.
  */
 
+import { Type, type Static } from "typebox";
+
 /** Shortest accepted word token. Single letters carry no lexical signal. */
 const MIN_TERM_LENGTH = 2;
 
@@ -142,10 +144,11 @@ export function tokenSet(text: string): Set<string> {
 	return new Set(tokenize(text));
 }
 
-export interface TermCount {
-	term: string;
-	count: number;
-}
+export const TermCount = Type.Object({
+	term: Type.String(),
+	count: Type.Number(),
+});
+export type TermCount = Static<typeof TermCount>;
 
 /**
  * Distinct terms across several texts, ranked by frequency then alphabetically,

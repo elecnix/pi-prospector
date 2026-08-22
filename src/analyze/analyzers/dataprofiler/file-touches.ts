@@ -25,6 +25,7 @@
  * extension sets, stream order preserved.
  */
 
+import { Type } from "typebox";
 import type { MessageRow } from "../../types.js";
 import { buildToolStream, type ToolInvocation } from "../../tool-stream.js";
 import type { DataprofilerConfig } from "./config.js";
@@ -35,6 +36,12 @@ export type TouchDirection = "read" | "write";
 /** The textual tabular formats a finding can name. */
 export const FILE_FORMATS = ["csv", "tsv", "json"] as const;
 export type FileFormat = (typeof FILE_FORMATS)[number];
+
+export const FileFormatSchema = Type.Union([
+	Type.Literal("csv"),
+	Type.Literal("tsv"),
+	Type.Literal("json"),
+]);
 
 /** Binary tabular formats: recognised so they can be *counted as skipped*, never extracted. */
 const BINARY_TABULAR_EXTENSIONS = [

@@ -21,7 +21,7 @@
 import type { MessageRow } from "../../types.js";
 import {
 	scanMessages,
-	type SecretLeakScanResult,
+	SecretLeakScanResult,
 } from "../secret-scanner.js";
 import {
 	DETECT_SECRETS_GENERATORS,
@@ -44,13 +44,27 @@ export {
 	meetsMinConfidence,
 	SEVERITY_RANK,
 	CONFIDENCE_RANK,
-	type LeakField,
-	type LeakSeverity,
-	type LeakConfidence,
-	type SecretLeakFinding,
+	LeakField,
+	LeakSeverity,
+	LeakConfidence,
+	SecretLeakFinding,
 	type SecretLeakRule,
-	type SecretLeakScanResult,
+	SecretLeakScanResult,
 } from "../secret-scanner.js";
+import { Type, type Static } from "typebox";
+
+/** Result of one detect-secrets scan over a session's messages. */
+export const DetectSecretsScanResult = Type.Object({
+	...SecretLeakScanResult.properties,
+	/**
+	 * Matches dropped by the exclusion filters (each counted in
+	 * `filter_counts` by the filter that rejected it).
+	 */
+	filtered_matches: Type.Number(),
+	/** Per-filter id: how many candidates that heuristic rejected. */
+	filter_counts: Type.Record(Type.String(), Type.Number()),
+});
+export type DetectSecretsScanResult = Static<typeof DetectSecretsScanResult>;
 export {
 	DETECT_SECRETS_GENERATORS,
 	DETECT_SECRETS_UPSTREAM,
@@ -83,16 +97,6 @@ export {
 	type DetectSecretsConfig,
 } from "./config.js";
 
-/** Result of one detect-secrets scan over a session's messages. */
-export interface DetectSecretsScanResult extends SecretLeakScanResult {
-	/**
-	 * Matches dropped by the exclusion filters (each counted in
-	 * `filter_counts` by the filter that rejected it).
-	 */
-	filtered_matches: number;
-	/** Per-filter id: how many candidates that heuristic rejected. */
-	filter_counts: Record<string, number>;
-}
 
 /** Rule ids disabled when the given plugins are disabled. */
 function disabledRuleIdsFor(disabledPlugins: readonly string[]): Set<string> {

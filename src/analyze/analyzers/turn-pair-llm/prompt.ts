@@ -7,7 +7,7 @@
  */
 
 import { shortHash } from "../../input-hash.js";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 
 export const CLASSIFY_PROMPT = `You classify a single turn in a coding-agent session.
 A "turn" is one user message and the assistant's response to it.
@@ -124,13 +124,14 @@ export function buildClassifyPrompt(input: ClassifyInput): string {
 }
 
 /** The fields the model returns for a single turn. */
-export interface ClassifyResult {
-	sentiment: string;
-	friction_type: string;
-	is_genuine_correction: boolean;
-	severity: string;
-	rationale: string;
-}
+export const ClassifyResult = Type.Object({
+	sentiment: Type.String(),
+	friction_type: Type.String(),
+	is_genuine_correction: Type.Boolean(),
+	severity: Type.String(),
+	rationale: Type.String(),
+});
+export type ClassifyResult = Static<typeof ClassifyResult>;
 
 /**
  * The stored classification node content: the model's result plus the id of the
@@ -138,9 +139,15 @@ export interface ClassifyResult {
  * unit, not the model, so the session-overview digest can merge LLM enrichment
  * back onto the matching deterministic pair by `user_message_id`.
  */
-export interface TurnPairLLMProperties extends ClassifyResult {
-	user_message_id: string;
-}
+export const TurnPairLLMProperties = Type.Object({
+	sentiment: Type.String(),
+	friction_type: Type.String(),
+	is_genuine_correction: Type.Boolean(),
+	severity: Type.String(),
+	rationale: Type.String(),
+	user_message_id: Type.String(),
+});
+export type TurnPairLLMProperties = Static<typeof TurnPairLLMProperties>;
 
 const VALID_SENTIMENT = new Set(["positive", "neutral", "frustrated"]);
 const VALID_FRICTION = new Set(["none", "wrong_approach", "missed_instruction", "tool_misuse", "repetition", "other"]);

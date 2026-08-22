@@ -40,6 +40,7 @@ import type {
 	PromptVersion,
 	SourceRef,
 } from "../../types.js";
+import { Type, type Static } from "typebox";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import {
@@ -48,8 +49,20 @@ import {
 } from "./config.js";
 import {
 	detectNoseyParkerLeaks,
-	type SecretLeakScanResult,
+	SecretLeakScanResult,
 } from "./detectors.js";
+
+/** The node content: the shared scan result plus the session-level envelope fields. */
+export const NoseyParkerProperties = Type.Object({
+	...SecretLeakScanResult.properties,
+	/** Session id this analysis covers. */
+	session_id: Type.String(),
+	/** Convenience boolean: were any leaks found? */
+	has_leaks: Type.Boolean(),
+	/** Total messages scanned. */
+	message_count: Type.Number(),
+});
+export type NoseyParkerProperties = Static<typeof NoseyParkerProperties>;
 
 export const NOSEY_PARKER_DEF: AnalyzerDef = {
 	id: "nosey-parker",
@@ -58,6 +71,7 @@ export const NOSEY_PARKER_DEF: AnalyzerDef = {
 		"Scans session transcripts with the ported Nosey Parker rule catalogue (captured credentials, passive/active confidence) and records redacted findings. No LLM; never stores the matched secret.",
 	anchorSpan: "full_session",
 	dependencies: [],
+	outputSchema: NoseyParkerProperties,
 };
 
 export const NOSEY_PARKER_VERSION: AnalyzerVersion = {
@@ -72,14 +86,8 @@ export const NOSEY_PARKER_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/nosey-parker/index.ts",
 };
 
-export interface NoseyParkerProperties extends SecretLeakScanResult {
-	/** Session id this analysis covers. */
-	session_id: string;
-	/** Convenience boolean: were any leaks found? */
-	has_leaks: boolean;
-	/** Total messages scanned. */
-	message_count: number;
-}
+
+// ──────────────────────────── analyzer ────────────────────────────
 
 // ──────────────────────────── analyzer ────────────────────────────
 

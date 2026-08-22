@@ -41,6 +41,8 @@ import { fingerprintOf, redact } from "../secret-scanner.js";
 import type { PiiEntityType } from "../presidio/recognizers.js";
 import type { DataprofilerConfig } from "./config.js";
 import { inferHeaderLabels, type HeaderLabelRule } from "./headers.js";
+import { Type, type Static } from "typebox";
+import { FileFormatSchema } from "./file-touches.js";
 import type { FileFormat } from "./file-touches.js";
 
 export { fingerprintOf, redact } from "../secret-scanner.js";
@@ -55,6 +57,37 @@ export interface ProfiledTable {
 export const COLUMN_VERDICTS = ["confirmed", "label-only", "values-only"] as const;
 export type ColumnVerdict = (typeof COLUMN_VERDICTS)[number];
 
+export const ColumnVerdictSchema = Type.Union([
+	Type.Literal("confirmed"),
+	Type.Literal("label-only"),
+	Type.Literal("values-only"),
+]);
+
+export const SensitiveColumn = Type.Object({
+	/** 0-based column position. */
+	column_index: Type.Number(),
+	/** Header cell text, or `column_N` when the file had no usable header. */
+	column_name: Type.String(),
+	/** Label groups that fired on the header (catalogue order). */
+	labels: Type.Array(Type.String()),
+	/** Sampled values, including empty cells (the denominator). */
+	sample_size: Type.Number(),
+	/** Sampled values matching an implied (or any) sensitive shape. */
+	match_count: Type.Number(),
+	/** `match_count / sample_size`. */
+	value_ratio: Type.Number(),
+	/** Combined score: `weight·value_ratio + (1−weight)·labelScore`. */
+	score: Type.Number(),
+	verdict: ColumnVerdictSchema,
+	/** Entity types matched over the sample, with per-type counts. */
+	entity_types: Type.Record(Type.String(), Type.Number()),
+	/** Redacted preview of the first matching value (sample order). */
+	redacted_preview: Type.String(),
+	/** Short SHA-256 fingerprint of that value — dedup/allow/deny key. */
+	fingerprint: Type.String(),
+});
+export type SensitiveColumn = Static<typeof SensitiveColumn>;
+
 /** Severity per verdict, ordered as the presidio scale. */
 export const VERDICT_SEVERITY: Record<ColumnVerdict, "low" | "medium" | "high"> = {
 	confirmed: "high",
@@ -62,30 +95,6 @@ export const VERDICT_SEVERITY: Record<ColumnVerdict, "low" | "medium" | "high"> 
 	"values-only": "medium",
 };
 
-/** One sensitive-column verdict inside a file finding. Never carries raw values. */
-export interface SensitiveColumn {
-	/** 0-based column position. */
-	column_index: number;
-	/** Header cell text, or `column_N` when the file had no usable header. */
-	column_name: string;
-	/** Label groups that fired on the header (catalogue order). */
-	labels: string[];
-	/** Sampled values, including empty cells (the denominator). */
-	sample_size: number;
-	/** Sampled values matching an implied (or any) sensitive shape. */
-	match_count: number;
-	/** `match_count / sample_size`. */
-	value_ratio: number;
-	/** Combined score: `weight·value_ratio + (1−weight)·labelScore`. */
-	score: number;
-	verdict: ColumnVerdict;
-	/** Entity types matched over the sample, with per-type counts. */
-	entity_types: Record<string, number>;
-	/** Redacted preview of the first matching value (sample order). */
-	redacted_preview: string;
-	/** Short SHA-256 fingerprint of that value — dedup/allow/deny key. */
-	fingerprint: string;
-}
 
 export interface ColumnProfileResult {
 	/** Columns whose verdict flagged them sensitive. */

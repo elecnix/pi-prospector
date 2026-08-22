@@ -16,7 +16,7 @@
 
 import { shortHash } from "../../input-hash.js";
 import { extractJsonObject } from "../turn-pair-llm/prompt.js";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 
 export const CLASSIFY_TERM_PROMPT = `You judge single words for a multilingual lexicon used to detect
 user frustration in coding-agent conversations.
@@ -108,13 +108,14 @@ export function buildClassifyTermPrompt(term: string): string {
 }
 
 /** The fields the model returns for a single term. */
-export interface ClassifyTermResult {
-	polarity: string;
-	category: string;
-	language: string;
-	confidence: number;
-	rationale: string;
-}
+export const ClassifyTermResult = Type.Object({
+	polarity: Type.String(),
+	category: Type.String(),
+	language: Type.String(),
+	confidence: Type.Number(),
+	rationale: Type.String(),
+});
+export type ClassifyTermResult = Static<typeof ClassifyTermResult>;
 
 const VALID_POLARITY = new Set(["frustration", "praise", "neutral"]);
 const VALID_CATEGORY = new Set([

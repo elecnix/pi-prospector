@@ -40,9 +40,21 @@ import {
 	buildClassifyTermPrompt,
 	parseClassifyTermObject,
 	extractVerdict,
-	type ClassifyTermResult,
 } from "./prompt.js";
 import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, type FrustrationLexiconConfig } from "./config.js";
+import { Type, type Static } from "typebox";
+
+/** The stored verdict for one term. */
+export const FrustrationLexiconProperties = Type.Object({
+	polarity: Type.String(),
+	category: Type.String(),
+	language: Type.String(),
+	confidence: Type.Number(),
+	rationale: Type.String(),
+	/** The normalised term this verdict is about. */
+	term: Type.String(),
+});
+export type FrustrationLexiconProperties = Static<typeof FrustrationLexiconProperties>;
 
 export const FRUSTRATION_LEXICON_DEF: AnalyzerDef = {
 	id: "frustration-lexicon",
@@ -51,6 +63,7 @@ export const FRUSTRATION_LEXICON_DEF: AnalyzerDef = {
 		"Judges each previously unseen term nominated by a session — in any language — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the term alone, so a word is adjudicated once for the entire corpus and reused by every later session for free.",
 	anchorSpan: "full_session",
 	dependencies: [LEXICON_CANDIDATES_DEF.id],
+	outputSchema: FrustrationLexiconProperties,
 };
 
 export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
@@ -83,10 +96,6 @@ const PROMPTS: Record<string, PromptVersion> = {
 };
 
 /** The stored verdict for one term. */
-export interface FrustrationLexiconProperties extends ClassifyTermResult {
-	/** The normalised term this verdict is about. */
-	term: string;
-}
 
 interface TermMeta {
 	term: string;

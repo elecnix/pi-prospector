@@ -34,11 +34,12 @@ import {
 	fingerprintOf,
 	redact,
 	scanFieldCandidates,
-	type LeakConfidence,
-	type LeakField,
-	type LeakSeverity,
+	LeakConfidence,
+	LeakField,
+	LeakSeverity,
 	type SecretLeakRule,
 } from "../secret-scanner.js";
+import { Type, type Static } from "typebox";
 import { SECRET_LEAK_RULES } from "../secret-leak/detectors.js";
 import { GITLEAKS_RULES } from "../gitleaks/rules.js";
 import { NOSEY_PARKER_RULES } from "../nosey-parker/rules.js";
@@ -48,7 +49,7 @@ import {
 	normalizeFieldText,
 	ARTIFACT_KINDS,
 	type ArtifactCandidate,
-	type ArtifactKind,
+	ArtifactKind,
 	type ExtractorToggles,
 } from "./extractors.js";
 import {
@@ -61,7 +62,7 @@ export { fingerprintOf, redact } from "../secret-scanner.js";
 export {
 	ARTIFACT_KINDS,
 	type ArtifactCandidate,
-	type ArtifactKind,
+	ArtifactKind,
 	type ExtractorToggles,
 } from "./extractors.js";
 export {
@@ -139,54 +140,57 @@ function isReportableValue(value: string, minLength: number): boolean {
 export type ScannerField = LeakField;
 
 /** One leak found inside a container/filesystem artifact context. */
-export interface SecretScannerFinding {
+export const SecretScannerFinding = Type.Object({
 	/**
 	 * The rule that fired: a catalogue rule family id when a catalogue rule
 	 * matched the value, or `artifact-sensitive-name` for a structural match.
 	 */
-	rule_id: string;
+	rule_id: Type.String(),
 	/** Human-readable rule label. */
-	rule_label: string;
+	rule_label: Type.String(),
 	/** Severity (the catalogue rule's own, or `high` for structural matches). */
-	severity: LeakSeverity;
+	severity: LeakSeverity,
 	/** Confidence (`active` for structural matches: name + shape confirm context). */
-	confidence: LeakConfidence;
+	confidence: LeakConfidence,
 	/** Message id the artifact evidence appeared in. */
-	message_id: string;
+	message_id: Type.String(),
 	/** Which message field contained the artifact text. */
-	field: LeakField;
+	field: LeakField,
 	/** The artifact context the value was extracted from. */
-	artifact_kind: ArtifactKind;
+	artifact_kind: ArtifactKind,
 	/** Where it lived, e.g. "ENV in Dockerfile", ".env entry", "shell export". */
-	artifact_location: string;
+	artifact_location: Type.String(),
 	/** The variable/entry name (names are configuration, not secrets). */
-	key_name: string;
+	key_name: Type.String(),
 	/** First/last characters of the matched value, middle truncated. Never the full secret. */
-	redacted_preview: string;
+	redacted_preview: Type.String(),
 	/** Short SHA-256 fingerprint of the full value — dedup/allowlist key across detectors. */
-	fingerprint: string;
+	fingerprint: Type.String(),
 	/** Character offset of the assignment within the field text. */
-	match_index: number;
+	match_index: Type.Number(),
 	/** Byte length of the matched value. */
-	match_length: number;
-}
+	match_length: Type.Number(),
+});
+export type SecretScannerFinding = Static<typeof SecretScannerFinding>;
 
-export interface SecretScannerScanResult {
+export const SecretScannerScanResult = Type.Object({
 	/** Total findings, after allowlisting and per-field capping. */
-	leak_count: number;
+	leak_count: Type.Number(),
 	/** The findings, capped at `maxMatchesPerField` per field. */
-	leaks: SecretScannerFinding[];
-	/** Count of matches dropped for exceeding `maxMatchesPerField` in a field. */
-	truncated_matches: number;
+	leaks: Type.Array(SecretScannerFinding),
+	/** Count of matches dropped for exceeding `maxMatchesPerField` per field. */
+	truncated_matches: Type.Number(),
 	/** Count of matches dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_matches: number;
+	allowlisted_matches: Type.Number(),
 	/** Findings per rule id. */
-	rule_counts: Record<string, number>;
+	rule_counts: Type.Record(Type.String(), Type.Number()),
 	/** Findings per artifact kind. */
-	artifact_counts: Record<ArtifactKind, number>;
+	artifact_counts: Type.Record(Type.String(), Type.Number()),
 	/** Distinct message ids that contained at least one leak. */
-	affected_message_ids: string[];
-}
+	affected_message_ids: Type.Array(Type.String()),
+});
+export type SecretScannerScanResult = Static<typeof SecretScannerScanResult>;
+
 
 /** The fields scanned, mirroring the shared engine's SCAN_FIELDS order. */
 const SCAN_FIELDS: ReadonlyArray<{ row: keyof MessageRow; label: LeakField }> = [

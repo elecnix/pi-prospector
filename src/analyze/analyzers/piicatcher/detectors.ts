@@ -17,34 +17,36 @@ import {
 	DEFAULT_PIICATCHER_CONFIG,
 	type PiicatcherConfig,
 } from "./config.js";
-import { detectFragments, type FragmentKind } from "./fragments.js";
-import { classifyFragment, type ColumnFinding } from "./columns.js";
+import { detectFragments, type FragmentKind, FRAGMENT_KINDS } from "./fragments.js";
+import { Type, type Static } from "typebox";
+import { classifyFragment, ColumnFinding } from "./columns.js";
 
 export { fingerprintOf, redact } from "../secret-scanner.js";
 export { DEFAULT_PIICATCHER_CONFIG, PiicatcherConfigSchema, type PiicatcherConfig } from "./config.js";
 export { detectFragments, FRAGMENT_KINDS, type FragmentKind, type TabularFragment } from "./fragments.js";
 export { classifyFragment, classifyValue, type ColumnFinding } from "./columns.js";
 
-export interface PiicatcherScanResult {
+export const PiicatcherScanResult = Type.Object({
 	/** Total column findings, after filtering and per-field capping. */
-	finding_count: number;
+	finding_count: Type.Number(),
 	/** The findings, capped at `maxMatchesPerField` per message field. */
-	findings: ColumnFinding[];
+	findings: Type.Array(ColumnFinding),
 	/** Findings dropped for exceeding `maxMatchesPerField` in a field. */
-	truncated_matches: number;
+	truncated_matches: Type.Number(),
 	/** Sampled values dropped by the allowlist (fingerprint or pattern). */
-	allowlisted_values: number;
+	allowlisted_values: Type.Number(),
 	/** Columns whose match ratio stayed below `sensitivityThreshold`. */
-	below_threshold_columns: number;
+	below_threshold_columns: Type.Number(),
 	/** Tabular fragments detected across all scanned fields. */
-	fragments_scanned: number;
+	fragments_scanned: Type.Number(),
 	/** Columns examined across all fragments. */
-	columns_classified: number;
+	columns_classified: Type.Number(),
 	/** Findings per fragment kind. */
-	format_counts: Record<FragmentKind, number>;
+	format_counts: Type.Record(Type.String(), Type.Number()),
 	/** Distinct message ids that carried at least one finding. */
-	affected_message_ids: string[];
-}
+	affected_message_ids: Type.Array(Type.String()),
+});
+export type PiicatcherScanResult = Static<typeof PiicatcherScanResult>;
 
 /** Fields of a MessageRow to scan, mirroring the shared engine's field set. */
 const SCAN_FIELDS: ReadonlyArray<{ row: keyof MessageRow; label: LeakField }> = [
