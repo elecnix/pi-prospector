@@ -356,7 +356,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 					source: parseHarnessSource(params.source as string | undefined),
 				};
 				try {
-					const { text: body, report } = readSearch(db, q);
+					const { text: body, report } = await readSearch(db, q);
 					return text(body, report);
 				} catch (err) {
 					return text(`prospect search: ${err instanceof Error ? err.message : String(err)}`, {});

@@ -19,7 +19,7 @@
  * result list answers "where does this appear in my corpus at all".
  */
 
-import Database from "better-sqlite3";
+import type { AsyncDatabase } from "./async-db.js";
 
 /** Snippet highlight markers wrapped around each matched term. */
 export const SNIPPET_OPEN = "⟦";
@@ -110,7 +110,7 @@ const hasMark = (s: string | null): s is string => s !== null && s.includes(SNIP
  * Run the corpus search. Throws an Error with a user-facing message when the
  * query is empty or not valid FTS5 MATCH syntax.
  */
-export function searchCorpus(db: Database.Database, query: string, opts: SearchOptions = {}): SearchResult {
+export async function searchCorpus(db: AsyncDatabase, query: string, opts: SearchOptions = {}): Promise<SearchResult> {
 	const q = query.trim();
 	if (q.length === 0) {
 		throw new Error("empty search query (FTS5 MATCH syntax: terms, \"quoted phrases\", a*, AND/OR/NOT, NEAR, column:term)");
@@ -127,7 +127,7 @@ export function searchCorpus(db: Database.Database, query: string, opts: SearchO
 		const params: (string | number)[] = opts.source ? [q, opts.source, MAX_PER_KIND] : [q, MAX_PER_KIND];
 		let rows: FtsMessageRow[];
 		try {
-			rows = db
+			rows = (await db
 				.prepare(
 					`SELECT m.id AS message_id, m.session_id, m.role, m.source,
 						bm25(messages_fts) AS rank,
@@ -137,7 +137,7 @@ export function searchCorpus(db: Database.Database, query: string, opts: SearchO
 					WHERE messages_fts MATCH ?${sourceClause}
 					ORDER BY rank LIMIT ?`,
 				)
-				.all(...params) as FtsMessageRow[];
+				.all(...params)) as FtsMessageRow[];
 		} catch (err) {
 			throw wrapFtsError(err, q);
 		}
@@ -164,7 +164,7 @@ export function searchCorpus(db: Database.Database, query: string, opts: SearchO
 		const params: (string | number)[] = opts.source ? [q, opts.source, MAX_PER_KIND] : [q, MAX_PER_KIND];
 		let rows: FtsProposalRow[];
 		try {
-			rows = db
+			rows = (await db
 				.prepare(
 					`SELECT p.id AS proposal_id, p.session_id, p.title, p.severity, p.status, p.analyzer_id,
 						bm25(proposals_fts) AS rank,
@@ -176,7 +176,7 @@ export function searchCorpus(db: Database.Database, query: string, opts: SearchO
 					WHERE proposals_fts MATCH ?${sourceClause}
 					ORDER BY rank LIMIT ?`,
 				)
-				.all(...params) as FtsProposalRow[];
+				.all(...params)) as FtsProposalRow[];
 		} catch (err) {
 			throw wrapFtsError(err, q);
 		}

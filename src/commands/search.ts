@@ -14,7 +14,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { Type, type Static } from "typebox";
 import { migrate } from "../db/schema.js";
 import { searchCorpus, type SearchKind, type SearchOptions, type SearchResult } from "../db/search-queries.js";
@@ -196,9 +196,9 @@ export function renderSearch(report: SearchResult, opts: SearchOptions): string 
  * The shared core of `prospect search` for the slash command and the tool
  * action. Runs the FTS5 query and renders the report.
  */
-export function readSearch(db: Database.Database, q: SearchQuery): { text: string; report: SearchReport } {
+export async function readSearch(db: AsyncDatabase, q: SearchQuery): Promise<{ text: string; report: SearchReport }> {
 	const opts: SearchOptions = { kind: q.kind, limit: q.limit, source: q.source };
-	const result = searchCorpus(db, q.query, opts);
+	const result = await searchCorpus(db, q.query, opts);
 	const report: SearchReport = {
 		query: result.query,
 		hits: result.hits,
@@ -218,18 +218,18 @@ function out(ctx: ExtensionCommandContext, text: string, level: "info" | "warnin
 
 /** `/prospect-search` — content and pattern search over the corpus. */
 export async function prospectSearch(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		try {
 			const q = parseSearchArgs(rawArgs ?? "");
-			const { text } = readSearch(db, q);
+			const { text } = await readSearch(db, q);
 			out(ctx, text);
 		} catch (err) {
 			out(ctx, `prospect search: ${err instanceof Error ? err.message : String(err)}`, "warning");
 		}
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 
