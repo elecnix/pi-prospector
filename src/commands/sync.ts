@@ -2,8 +2,31 @@ import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
+import type { SessionSourceAdapter } from "../sync/adapter.js";
+import { PiFileSource } from "../sync/sources/pi-file.js";
+import { ClaudeFileSource } from "../sync/sources/claude-file.js";
+import { PiSubagentSource } from "../sync/sources/pi-subagent.js";
 import { parseHarnessSource } from "../harness.js";
-import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
+import { loadConfig, getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
+
+/**
+ * Composition root for session sources: the two built-in file sources, plus
+ * any extra source named in config `sources` (e.g. "pi-subagent").
+ */
+export function buildAdapters(): SessionSourceAdapter[] {
+	const adapters: SessionSourceAdapter[] = [
+		new PiFileSource(getSessionsDir()),
+		new ClaudeFileSource(getClaudeSessionsDir()),
+	];
+
+	const sources = loadConfig().sources ?? [];
+
+	if (sources.includes("pi-subagent")) {
+		adapters.push(new PiSubagentSource(getSessionsDir()));
+	}
+
+	return adapters;
+}
 
 export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
 	const dbPath = getDbPath();
@@ -13,7 +36,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 	const args = parseSyncArgs(rawArgs ?? "");
 
 	try {
-		const result = await runSync(db, getSessionsDir(), getClaudeSessionsDir(), {
+		const result = await runSync(db, buildAdapters(), {
 			project: args.project,
 			source: args.source,
 		});

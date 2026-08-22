@@ -76,7 +76,6 @@ import {
 	getAnchoredMessageIds,
 	getMessage,
 	getNode,
-	getNodesByAnalyzer,
 	getSessionNodes,
 	insertEdge,
 	insertNode,
@@ -89,6 +88,7 @@ import { prep } from "../db/prepared.js";
 import { getSubagentRunsForSession } from "../db/queries.js";
 import { materializeProposalsFromNode, applyValidationFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { buildTurnPairs, type TurnPair } from "./analyzers/turn-pair-core/build.js";
 
 export interface FrameworkDeps {
 	db: AsyncDatabase;
@@ -119,6 +119,24 @@ interface ResolvedAnalyzer {
 	config: AnalyzerConfig;
 	promptBundleHash: string;
 	configFingerprint: string;
+}
+
+/**
+ * Session-scoped inputs, memoised once per `run()`/`scan()` invocation and keyed
+ * by session id so a sibling (cross-session contrast) or an id-taking accessor
+ * (proposal-validate) can never be served another session's analysis. Messages
+ * and turn pairs are immutable for a session's lifetime; the node set is
+ * invalidated on write so a later analyzer in the same run sees fresh dependency
+ * output (the same discipline as the corpus-wide `globalNodeCache`).
+ */
+interface SessionInputCache {
+	messages: Map<string, MessageRow[]>;
+	sessionNodes: Map<string, AnalysisNodeRow[]>;
+	turnPairs: Map<string, TurnPair[]>;
+}
+
+function newSessionInputCache(): SessionInputCache {
+	return { messages: new Map(), sessionNodes: new Map(), turnPairs: new Map() };
 }
 
 export class AnalyzerFramework {
@@ -164,10 +182,11 @@ export class AnalyzerFramework {
 	 */
 	async scan(sessionId: string, analyzerIds?: string[]): Promise<ClassifiedUnit[]> {
 		const order = this.topologicalSort(analyzerIds);
+		const cache = newSessionInputCache();
 		const out: ClassifiedUnit[] = [];
 		for (const analyzerId of order) {
 			const resolved = await this.resolve(analyzerId);
-			const planCtx = await this.buildPlanContext(resolved.analyzer, resolved.config, sessionId);
+			const planCtx = await this.buildPlanContext(resolved.analyzer, resolved.config, sessionId, cache);
 			const units = await resolved.analyzer.plan(planCtx);
 			for (const unit of units) {
 				out.push(await this.classify(resolved, unit));
@@ -202,8 +221,13 @@ export class AnalyzerFramework {
 			errors: [],
 		};
 
+		// Session-scoped inputs are computed once per invocation and shared by every
+		// analyzer in this run. Scoped here (not on the instance) so concurrent runs
+		// over other sessions — the CLI drives one framework across a whole corpus —
+		// can never cross-contaminate each other's cached input.
+		const cache = newSessionInputCache();
 		for (const analyzerId of order) {
-			const result = await this.runAnalyzer(analyzerId, sessionId, requested, opts.modelSpec, summary);
+			const result = await this.runAnalyzer(analyzerId, sessionId, requested, opts.modelSpec, summary, cache);
 			summary.analyzerResults.push(result);
 		}
 
@@ -216,11 +240,12 @@ export class AnalyzerFramework {
 		requested: ReadonlySet<ReviseReason>,
 		modelSpec: string | undefined,
 		summary: RunSummary,
+		cache: SessionInputCache,
 	): Promise<AnalyzerRunResult> {
 		const resolved = await this.resolve(analyzerId);
 		const { analyzer, config, promptBundleHash } = resolved;
 
-		const planCtx = await this.buildPlanContext(analyzer, config, sessionId);
+		const planCtx = await this.buildPlanContext(analyzer, config, sessionId, cache);
 		const units = await analyzer.plan(planCtx);
 
 		const classified = await Promise.all(units.map((unit) => this.classify(resolved, unit)));
@@ -268,7 +293,7 @@ export class AnalyzerFramework {
 			status: "ok",
 		};
 
-		const runCtx = this.buildRunContext(analyzer, config, sessionId);
+		const runCtx = this.buildRunContext(analyzer, config, sessionId, cache);
 
 		// Units of one analyzer run concurrently, bounded by `unitConcurrency`.
 		//
@@ -310,7 +335,7 @@ export class AnalyzerFramework {
 				// Cost is booked whether or not the node lands: the call was made.
 				result.costUsd += analysis.costUsd ?? 0;
 				result.tokensUsed += analysis.tokensUsed ?? 0;
-				const created = await this.persistNode(resolved, runId, sessionId, item, analysis);
+				const created = await this.persistNode(resolved, runId, sessionId, item, analysis, cache);
 				if (created === null) {
 					// A peer run produced this exact recipe first. Identity *is* the recipe,
 					// so the work is done — that is idempotency, not a failure. Reachable
@@ -325,7 +350,7 @@ export class AnalyzerFramework {
 				const message = err instanceof Error ? err.message : String(err);
 				result.status = "partial";
 				summary.errors.push(`${analyzer.def.id}: ${message}`);
-				await this.persistErrorNode(resolved, runId, sessionId, item, message, Date.now() - analyzeStart);
+				await this.persistErrorNode(resolved, runId, sessionId, item, message, Date.now() - analyzeStart, cache);
 				// A misconfiguration is not a per-unit failure. Every remaining unit will
 				// fail identically for one root cause that was knowable before the first
 				// one ran, so continuing turns a single typo into an error node per unit —
@@ -419,6 +444,7 @@ export class AnalyzerFramework {
 		sessionId: string,
 		item: ClassifiedUnit,
 		analysis: AnalysisResult,
+		cache: SessionInputCache,
 	): Promise<{ nodeId: string; proposalsCreated: number } | null> {
 		const { analyzer, config } = resolved;
 		const nodeId = uuidv7();
@@ -485,6 +511,9 @@ export class AnalyzerFramework {
 
 		// This analyzer's corpus-wide view just changed, so any cached copy is stale.
 		this.globalNodeCache.delete(analyzer.def.id);
+		// …and this session's node set is stale too: a later analyzer in the same run
+		// must see this freshly written node as a dependency.
+		cache.sessionNodes.delete(sessionId);
 
 		let proposalsCreated = 0;
 		if (analysis.nodeKind === "summary" || analysis.nodeKind === "proposal") {
@@ -539,7 +568,8 @@ export class AnalyzerFramework {
 		sessionId: string,
 		item: ClassifiedUnit,
 		message: string,
-		durationMs?: number,
+		durationMs: number | undefined,
+		cache: SessionInputCache,
 	): Promise<void> {
 		const { analyzer, config } = resolved;
 		const nodeId = uuidv7();
@@ -568,6 +598,9 @@ export class AnalyzerFramework {
 				durationMs: durationMs ?? null,
 				createdAt: now,
 			});
+			// An error node is still a node: a downstream dependency read must see it,
+			// so drop this session's cached node set on write.
+			cache.sessionNodes.delete(sessionId);
 		} catch {
 			// Defensive: never let error-node persistence abort the run.
 		}
@@ -575,9 +608,14 @@ export class AnalyzerFramework {
 
 	// ───────────────────────── contexts ─────────────────────────
 
-	private async buildPlanContext(analyzer: Analyzer, config: AnalyzerConfig, sessionId: string): Promise<AnalyzerPlanContext> {
-		const messages = await this.loadMessages(sessionId);
-		const allNodes = await getSessionNodes(this.deps.db, sessionId);
+	private async buildPlanContext(
+		analyzer: Analyzer,
+		config: AnalyzerConfig,
+		sessionId: string,
+		cache: SessionInputCache,
+	): Promise<AnalyzerPlanContext> {
+		const messages = await this.loadMessagesCached(cache, sessionId);
+		const allNodes = await this.loadSessionNodesCached(cache, sessionId);
 		const ownNodes = allNodes.filter((n) => n.analyzer_id === analyzer.def.id);
 		const dependencyNodes: Record<string, AnalysisNodeRow[]> = {};
 		for (const depId of analyzer.def.dependencies) {
@@ -590,6 +628,7 @@ export class AnalyzerFramework {
 			ownNodes,
 			dependencyNodes,
 			getGlobalDependencyNodes: (depId) => this.globalDependencyNodes(analyzer, depId),
+			getTurnPairs: (sid) => this.turnPairsCached(cache, sid),
 			config: config.configJson,
 			db: this.deps.db,
 		};
@@ -614,7 +653,12 @@ export class AnalyzerFramework {
 		return rows;
 	}
 
-	private buildRunContext(analyzer: Analyzer, config: AnalyzerConfig, sessionId: string): AnalyzerRunContext {
+	private buildRunContext(
+		analyzer: Analyzer,
+		config: AnalyzerConfig,
+		sessionId: string,
+		cache: SessionInputCache,
+	): AnalyzerRunContext {
 		const db = this.deps.db;
 		const prompts: Record<string, string> = {};
 		for (const [name, p] of Object.entries(analyzer.prompts)) prompts[name] = p.content;
@@ -623,6 +667,10 @@ export class AnalyzerFramework {
 			sessionId,
 			getMessage: (id) => getMessage(db, id),
 			getNode: (id) => getNode(db, id),
+			// Derived from the cached per-session node set, so a dependency is read once
+			// per session and stays fresh after this analyzer's writes invalidate it.
+			// The declared-dependency guard throws synchronously (not via a rejected
+			// promise) so a misuse is attributed to the caller that made it.
 			getDependencyNodes: (depId) => {
 				if (!analyzer.def.dependencies.includes(depId)) {
 					throw new Error(
@@ -630,11 +678,14 @@ export class AnalyzerFramework {
 						`Add '${depId}' to def.dependencies.`,
 					);
 				}
-				return getNodesByAnalyzer(db, depId, sessionId);
+				return this.loadSessionNodesCached(cache, sessionId).then((rows) =>
+					rows.filter((n) => n.analyzer_id === depId),
+				);
 			},
 			getGlobalDependencyNodes: (depId) => this.globalDependencyNodes(analyzer, depId),
-			getSessionMessages: (sid) => this.loadMessages(sid),
+			getSessionMessages: (sid) => this.loadMessagesCached(cache, sid),
 			getSubagentRuns: (sid) => getSubagentRunsForSession(db, sid),
+			getTurnPairs: (sid) => this.turnPairsCached(cache, sid),
 			llm: this.deps.llm,
 			config,
 			prompts,
@@ -642,8 +693,37 @@ export class AnalyzerFramework {
 		};
 	}
 
-	private async loadMessages(sessionId: string): Promise<MessageRow[]> {
-		return db_loadMessages(this.deps.db, sessionId);
+	private async loadMessagesCached(cache: SessionInputCache, sessionId: string): Promise<MessageRow[]> {
+		let rows = cache.messages.get(sessionId);
+		if (!rows) {
+			rows = await db_loadMessages(this.deps.db, sessionId);
+			cache.messages.set(sessionId, rows);
+		}
+		return rows;
+	}
+
+	private async loadSessionNodesCached(cache: SessionInputCache, sessionId: string): Promise<AnalysisNodeRow[]> {
+		let rows = cache.sessionNodes.get(sessionId);
+		if (!rows) {
+			rows = await getSessionNodes(this.deps.db, sessionId);
+			cache.sessionNodes.set(sessionId, rows);
+		}
+		return rows;
+	}
+
+	/**
+	 * A session's turn pairs, built once. Keyed by session id so a sibling lookup
+	 * (cross-session contrast) or an id-taking accessor (proposal-validate) reads
+	 * the exact session's pairs — never another session's, which would silently
+	 * corrupt content-addressed identities.
+	 */
+	private async turnPairsCached(cache: SessionInputCache, sessionId: string): Promise<TurnPair[]> {
+		let pairs = cache.turnPairs.get(sessionId);
+		if (!pairs) {
+			pairs = buildTurnPairs(await this.loadMessagesCached(cache, sessionId));
+			cache.turnPairs.set(sessionId, pairs);
+		}
+		return pairs;
 	}
 
 	// ───────────────────────── helpers ─────────────────────────

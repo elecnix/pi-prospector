@@ -35,7 +35,6 @@ import type {
 import { computeConfigHash, computeSourceSetHash, shortHash } from "../../input-hash.js";
 import { resolveModelSpec } from "../../model-tiers.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { buildTurnPairs } from "../turn-pair-core/build.js";
 import {
 	CLASSIFY_PROMPT,
 	CLASSIFY_PROMPT_HASH,
@@ -190,7 +189,7 @@ export const proposalValidateAnalyzer: Analyzer = {
 		const meta = unit.meta as unknown as ValidateMeta;
 		const validatorModel = resolveModelSpec(config.validatorTier, ctx.modelTiers);
 
-		const pairs = buildTurnPairs(await ctx.getSessionMessages(ctx.sessionId));
+		const pairs = await ctx.getTurnPairs(ctx.sessionId);
 		const pairByUser = new Map(pairs.map((p) => [p.userMessageId, p]));
 
 		const replayTurns: ReplayTurnResult[] = [];

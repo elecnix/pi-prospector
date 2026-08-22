@@ -3,6 +3,7 @@ import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { Type } from "typebox";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
+import { buildAdapters } from "./sync.js";
 import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposalsBulk, rejectProposalsBulk, acceptProposalsWithRemediation, getLatestDecision, getSessionLabels } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
@@ -17,7 +18,7 @@ import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
 import type { AnalysisNodeRow } from "../analyze/types.js";
 import { parseHarnessSource } from "../harness.js";
-import { getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
+import { getDbPath } from "../config.js";
 
 function text(body: string, details: unknown): ToolResult {
 	return { content: [{ type: "text", text: body }], details };
@@ -163,7 +164,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			try {
 				switch (params.action) {
 					case "sync": {
-						const result = await runSync(db, getSessionsDir(), getClaudeSessionsDir(), {
+						const result = await runSync(db, buildAdapters(), {
 							project: params.project as string | undefined,
 							source: parseHarnessSource(params.source as string | undefined),
 						});

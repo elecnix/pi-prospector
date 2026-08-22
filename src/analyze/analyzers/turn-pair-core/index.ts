@@ -21,7 +21,7 @@ import type {
 import { Type, type Static } from "typebox";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { buildTurnPairs, type TurnPair } from "./build.js";
+import { type TurnPair } from "./build.js";
 import { classifyCorrection, detectRepetition } from "./patterns.js";
 import { DEFAULT_TURN_PAIR_CORE_CONFIG, type TurnPairCoreConfig } from "./config.js";
 
@@ -105,8 +105,8 @@ export const turnPairCoreAnalyzer: Analyzer = {
 		label: "default",
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
-		const pairs = buildTurnPairs(ctx.messages);
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
+		const pairs = await ctx.getTurnPairs(ctx.sessionId);
 		return pairs.map((pair) => {
 			const sources: SourceRef[] = pair.messageIds.map((id) => ({ kind: "message" as const, id }));
 			return {

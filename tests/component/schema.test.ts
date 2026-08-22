@@ -66,6 +66,24 @@ describe("schema migration", () => {
 		}
 	});
 
+	it("sessions carries the tool inventory with UNKNOWN semantics", async () => {
+		const { db, close } = await tempDb();
+		try {
+			const col = await tableColumns(db, "sessions");
+			assert.ok(col.has("tool_inventory"), "sessions missing tool_inventory");
+			// Default must be NULL = never captured (UNKNOWN), never an empty list.
+			await db.prepare("INSERT INTO sessions (id, file_path) VALUES ('s1', '/tmp/s1.jsonl')").run();
+			const row = (await db.prepare("SELECT tool_inventory FROM sessions WHERE id = 's1'").get()) as { tool_inventory: string | null };
+			assert.equal(row.tool_inventory, null);
+			// A captured-but-empty inventory is stored as an explicit empty tools list.
+			await db.prepare("UPDATE sessions SET tool_inventory = ? WHERE id = 's1'").run('{"source":"pi-session-header","tools":[]}');
+			const updated = (await db.prepare("SELECT tool_inventory FROM sessions WHERE id = 's1'").get()) as { tool_inventory: string };
+			assert.equal(updated.tool_inventory, '{"source":"pi-session-header","tools":[]}');
+		} finally {
+			await close();
+		}
+	});
+
 	it("analysis_nodes records compute-cost columns: wall-clock and token split", async () => {
 		const { db, close } = await tempDb();
 		try {

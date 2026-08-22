@@ -9,6 +9,7 @@
 
 import { Type, type Static } from "typebox";
 import type { AsyncDatabase } from "../db/async-db.js";
+import type { TurnPair } from "./analyzers/turn-pair-core/build.js";
 
 // ─────────────────────────── enumerations ───────────────────────────
 
@@ -438,6 +439,16 @@ export interface AnalyzerPlanContext {
 	 * nothing.
 	 */
 	getGlobalDependencyNodes: (analyzerId: string) => Promise<AnalysisNodeRow[]>;
+	/**
+	 * A session's turn pairs, computed once by the framework and keyed by session
+	 * id. Sharing pairs here (rather than each consumer rebuilding them from
+	 * messages) is what makes the turn-pair construction a one-time cost per
+	 * session instead of ~5x. Keying by session id is load-bearing: a sibling
+	 * lookup (cross-session contrast) or an id-taking accessor (proposal-validate)
+	 * must read the *exact* session's pairs, never the current run's, or
+	 * content-addressed identities silently corrupt.
+	 */
+	getTurnPairs: (sessionId: string) => Promise<TurnPair[]>;
 	/** The resolved config JSON for this analyzer, so plan() can honour cost guards. */
 	config: Record<string, unknown>;
 	db: AsyncDatabase;
@@ -464,6 +475,12 @@ export interface AnalyzerRunContext {
 	 * alongside the transcript.
 	 */
 	getSubagentRuns: (sessionId: string) => Promise<SubagentRunRow[]>;
+	/**
+	 * A session's turn pairs, computed once by the framework and keyed by session
+	 * id — see {@link AnalyzerPlanContext.getTurnPairs}. Session-keyed so sibling
+	 * and proposal-validate lookups never receive another session's pairs.
+	 */
+	getTurnPairs: (sessionId: string) => Promise<TurnPair[]>;
 	llm: LLMCaller;
 	config: AnalyzerConfig;
 	/** Prompt content keyed by prompt name. */

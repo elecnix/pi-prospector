@@ -52,7 +52,7 @@ import type {
 } from "../../types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { buildTurnPairs, type TurnPair, type PairToolResult } from "../turn-pair-core/build.js";
+import { type TurnPair, type PairToolResult } from "../turn-pair-core/build.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF, type ToolTrajectoryProperties } from "../tool-trajectory/index.js";
@@ -293,7 +293,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 		}
 
 		const units: AnalysisUnit[] = [];
-		for (const pair of buildTurnPairs(ctx.messages)) {
+		for (const pair of await ctx.getTurnPairs(ctx.sessionId)) {
 			const core = coreProps.get(pair.userMessageId) ?? null;
 			const frustration = frustrationTurns.has(pair.userMessageId);
 			const properties = evaluateTurn({

@@ -1,7 +1,7 @@
 /**
  * JSONL line parser for Pi and Claude session files.
  */
-import type { SessionHeader, MessageRole, ClaudeSessionMeta, SessionSource, UsageInfo } from "../types.js";
+import type { SessionHeader, MessageRole, ClaudeSessionMeta, SessionSource, UsageInfo, CostInfo } from "../types.js";
 
 export interface ParsedSession {
 	kind: "session";
@@ -26,6 +26,8 @@ export interface UsageData {
 	cacheRead: number;
 	cacheWrite: number;
 	totalTokens: number;
+	/** Billed dollar breakdown (Pi `usage.cost`); null when unreported. */
+	cost: CostInfo | null;
 }
 
 export interface ParsedMessage {
@@ -192,6 +194,7 @@ function parsePiLine(line: string): ParsedLine | null {
 				timestamp: obj.timestamp as string | undefined,
 				cwd: obj.cwd as string | undefined,
 				parentSession: obj.parentSession as string | undefined,
+				tools: normalizeManifestTools(obj.tools),
 			},
 		};
 	}
@@ -591,7 +594,8 @@ export function extractUsage(msg: Record<string, unknown>, source: SessionSource
 		const cacheWrite = safeNum(usage.cache_creation_input_tokens);
 		const totalTokens = input + output;
 		if (input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0) return null;
-		return { input, output, cacheRead, cacheWrite, totalTokens };
+		// Claude transcripts carry no billed dollar figure; the token buckets are all we have.
+		return { input, output, cacheRead, cacheWrite, totalTokens, cost: null };
 	}
 
 	// Pi format
@@ -601,12 +605,32 @@ export function extractUsage(msg: Record<string, unknown>, source: SessionSource
 	const cacheWrite = safeNum(usage.cacheWrite);
 	const totalTokens = safeNum(usage.totalTokens) || input + output;
 	if (input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0) return null;
-	return { input, output, cacheRead, cacheWrite, totalTokens };
+	return { input, output, cacheRead, cacheWrite, totalTokens, cost: extractCost(usage.cost) };
+}
+
+/**
+ * Capture the per-bucket billed dollar cost (Pi's `usage.cost` sub-object) so
+ * cache-economy can be priced in dollars. Returns null when the host reported no
+ * cost figure for this turn.
+ */
+export function extractCost(costValue: unknown): CostInfo | null {
+	if (!costValue || typeof costValue !== "object") return null;
+	const c = costValue as Record<string, unknown>;
+	const input = safeNum(c.input);
+	const output = safeNum(c.output);
+	const cacheRead = safeNum(c.cacheRead);
+	const cacheWrite = safeNum(c.cacheWrite);
+	const total = safeNum(c.total);
+	// Absent cost (all zero, as the host emits for some zero-billed providers) is
+	// still a *reported* cost — preserve it so "zero dollars" is not confused with
+	// "no cost reported". Only a missing sub-object (null above) means UNKNOWN cost.
+	return { input, output, cacheRead, cacheWrite, total };
 }
 
 function safeNum(v: unknown): number {
 	return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
+
 
 /**
  * Extract the serving model from an assistant message.
@@ -662,4 +686,27 @@ function extractStopReason(msg: Record<string, unknown>): string | null {
 function extractErrorMessage(msg: Record<string, unknown>): string | null {
 	const raw = msg.errorMessage;
 	return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+/**
+ * Normalize an optional tool manifest carried on the session header into the
+ * typed form the sync layer persists. Tolerates malformed entries (skips them)
+ * and returns `undefined` when the header carried no manifest at all — which the
+ * storage maps to UNKNOWN, never to an empty inventory.
+ */
+export function normalizeManifestTools(value: unknown): Array<{ name: string; definitionChars?: number }> | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out: Array<{ name: string; definitionChars?: number }> = [];
+	for (const item of value) {
+		if (!item || typeof item !== "object") continue;
+		const t = item as Record<string, unknown>;
+		const name = typeof t.name === "string" && t.name ? t.name : null;
+		if (!name) continue;
+		const entry: { name: string; definitionChars?: number } = { name };
+		if (typeof t.definitionChars === "number" && Number.isFinite(t.definitionChars)) {
+			entry.definitionChars = t.definitionChars;
+		}
+		out.push(entry);
+	}
+	return out;
 }

@@ -26,9 +26,9 @@
  */
 
 import { type AsyncDatabase } from "../../../db/async-db.js";
-import type { MessageRow, SourceRef } from "../../types.js";
+import type { SourceRef } from "../../types.js";
+import type { TurnPair } from "../turn-pair-core/build.js";
 import { shortHash } from "../../input-hash.js";
-import { buildTurnPairs } from "../turn-pair-core/build.js";
 import { scorePair } from "../turn-pair-core/index.js";
 import { DEFAULT_TURN_PAIR_CORE_CONFIG } from "../turn-pair-core/config.js";
 import type { CrossSessionContrastConfig } from "./config.js";
@@ -55,15 +55,6 @@ const EMPTY: CrossSessionContrast = { siblings: [], sourceRefs: [] };
 const MAX_REQUEST_SNIPPETS = 2;
 const REQUEST_SNIPPET_MAX = 120;
 
-/** Load a session's messages in stream order (mirrors the framework's loader). */
-export async function loadMessagesForContrast(db: AsyncDatabase, sessionId: string): Promise<MessageRow[]> {
-	return (await db
-		.prepare(
-			"SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results " +
-			"FROM messages WHERE session_id = ? ORDER BY rowid ASC",
-		)
-		.all(sessionId)) as MessageRow[];
-}
 
 /** The current session's `cwd` (repo grouping key), or "" if unknown. */
 export async function getSessionCwd(db: AsyncDatabase, sessionId: string): Promise<string> {
@@ -81,9 +72,8 @@ export async function getSiblingSessionIds(db: AsyncDatabase, sessionId: string,
 	).map((r) => r.id);
 }
 
-/** Deterministic smoothness assessment of a sibling from its raw messages. */
-function assessSibling(messages: MessageRow[]): { pairCount: number; smooth: boolean; requests: string[] } {
-	const pairs = buildTurnPairs(messages);
+/** Deterministic smoothness assessment of a sibling from its turn pairs. */
+function assessSibling(pairs: TurnPair[]): { pairCount: number; smooth: boolean; requests: string[] } {
 	let frictionCount = 0;
 	let correctionCount = 0;
 	const requests: string[] = [];
@@ -104,11 +94,15 @@ function assessSibling(messages: MessageRow[]): { pairCount: number; smooth: boo
  * Select up to `maxContrastSiblings` smooth sibling sessions in the same repo and
  * distil each into a compact contrast digest. Pure function of raw DB content —
  * deterministic and reproducible.
+ *
+ * `getTurnPairs` is the framework's session-keyed pair accessor: a sibling's
+ * pairs are computed once per sibling id and shared, never reused across sessions.
  */
 export async function selectCrossSessionContrast(
 	db: AsyncDatabase,
 	sessionId: string,
 	config: CrossSessionContrastConfig,
+	getTurnPairs: (sessionId: string) => Promise<TurnPair[]>,
 ): Promise<CrossSessionContrast> {
 	if (!config.crossSessionContrast) return EMPTY;
 	const cwd = await getSessionCwd(db, sessionId);
@@ -116,7 +110,7 @@ export async function selectCrossSessionContrast(
 
 	const candidates: SiblingContrast[] = [];
 	for (const siblingId of await getSiblingSessionIds(db, sessionId, cwd)) {
-		const assessment = assessSibling(await loadMessagesForContrast(db, siblingId));
+		const assessment = assessSibling(await getTurnPairs(siblingId));
 		if (!assessment.smooth || assessment.pairCount < config.minSiblingPairs) continue;
 		const digestText = formatSiblingDigest(siblingId, assessment.pairCount, assessment.requests);
 		candidates.push({

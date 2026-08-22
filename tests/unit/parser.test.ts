@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseLine, parseClaudeLine, extractSessionName } from "../../src/sync/parser.js";
+import { parseLine, parseClaudeLine, extractSessionName, extractUsage, extractCost, normalizeManifestTools } from "../../src/sync/parser.js";
 
 describe("parseLine", () => {
 	it("parses a v3 session header", () => {
@@ -307,3 +307,104 @@ describe("parseLine — session_info records (issue #207)", () => {
 		assert.equal(extractSessionName([lines[0]!, lines[2]!]), null);
 	});
 });
+
+describe("usage cost extraction", () => {
+	it("captures Pi per-bucket dollar cost from usage.cost", () => {
+		const u = extractUsage(
+			{
+				role: "assistant",
+				usage: {
+					input: 100,
+					output: 50,
+					cacheRead: 900,
+					cacheWrite: 200,
+					totalTokens: 1250,
+					cost: { input: 0.001, output: 0.002, cacheRead: 0.01, cacheWrite: 0.004, total: 0.017 },
+				},
+			},
+			"pi",
+		);
+		assert.ok(u);
+		assert.deepEqual(u!.cost, { input: 0.001, output: 0.002, cacheRead: 0.01, cacheWrite: 0.004, total: 0.017 });
+	});
+
+	it("leaves cost null when Pi usage has no cost sub-object", () => {
+		const u = extractUsage({ role: "assistant", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15 } }, "pi");
+		assert.ok(u);
+		assert.equal(u!.cost, null);
+	});
+
+	it("keeps a reported all-zero cost rather than collapsing to UNKNOWN", () => {
+		assert.deepEqual(extractCost({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }), {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			total: 0,
+		});
+	});
+
+	it("returns null cost for a missing sub-object (UNKNOWN not zero)", () => {
+		assert.equal(extractCost(undefined), null);
+		assert.equal(extractCost(null), null);
+	});
+
+	it("Claude usage carries token buckets but no dollar cost", () => {
+		const u = extractUsage(
+			{ usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 8, cache_creation_input_tokens: 0 } },
+			"claude",
+		);
+		assert.ok(u);
+		assert.equal(u!.cost, null);
+		assert.equal(u!.input, 10);
+		assert.equal(u!.output, 4);
+		assert.equal(u!.cacheRead, 8);
+	});
+});
+
+describe("tool manifest normalization", () => {
+	it("captures a populated manifest with per-tool sizing", () => {
+		const tools = normalizeManifestTools([
+			{ name: "bash", definitionChars: 512 },
+			{ name: "read", definitionChars: 300 },
+			{ name: "webSearch" },
+		]);
+		assert.deepEqual(tools, [
+			{ name: "bash", definitionChars: 512 },
+			{ name: "read", definitionChars: 300 },
+			{ name: "webSearch" },
+		]);
+	});
+
+	it("returns undefined when no manifest (UNKNOWN) and [] for an explicit empty one", () => {
+		assert.equal(normalizeManifestTools(undefined), undefined);
+		assert.equal(normalizeManifestTools("not-array"), undefined);
+		assert.deepEqual(normalizeManifestTools([]), []);
+	});
+
+	it("drops malformed entries gracefully", () => {
+		assert.deepEqual(normalizeManifestTools([{ name: "bash" }, { definitionChars: 10 }, null, "x", {}]), [{ name: "bash" }]);
+	});
+
+	it("exposes the manifest off the parsed session header", () => {
+		const line = JSON.stringify({
+			type: "session",
+			version: 3,
+			id: "abc",
+			timestamp: "2026-01-15T10:00:00Z",
+			cwd: "/x",
+			tools: [{ name: "bash", definitionChars: 900 }, { name: "edit" }],
+		});
+		const r = parseLine(line);
+		assert.ok(r && r.kind === "session");
+		if (r && r.kind === "session") assert.deepEqual(r.header.tools, [{ name: "bash", definitionChars: 900 }, { name: "edit" }]);
+	});
+
+	it("treats an absent header manifest as UNKNOWN, not empty", () => {
+		const line = JSON.stringify({ type: "session", version: 3, id: "abc", timestamp: "2026-01-15T10:00:00Z", cwd: "/x" });
+		const r = parseLine(line);
+		assert.ok(r && r.kind === "session");
+		if (r && r.kind === "session") assert.ok(r.header.tools === undefined);
+	});
+});
+

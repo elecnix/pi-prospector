@@ -11,6 +11,8 @@ import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js"
 import { migrate } from "../../src/db/schema.js";
 import { getAllSessions, getStats, listProposals, acceptProposal, rejectProposal } from "../../src/db/queries.js";
 import { runSync } from "../../src/sync/index.js";
+import { PiFileSource } from "../../src/sync/sources/pi-file.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { registerDefaults } from "../../src/analyze/defaults.js";
 import { createMockLLM, type MockLLMReply } from "../../src/analyze/mock-llm.js";
@@ -78,7 +80,7 @@ console.log("══════════════════════�
 console.log("Setup: syncing fixtures…");
 const db = await openAsyncDatabase(dbPath);
 await migrate(db);
-const sync = await runSync(db, fixtureDir, path.join(tmpDir, "no-claude-sessions"));
+const sync = await runSync(db, [new PiFileSource(fixtureDir), new ClaudeFileSource(path.join(tmpDir, "no-claude-sessions"))]);
 console.log(`  Synced: ${sync.sessionsProcessed} sessions, ${sync.messagesInserted} messages`);
 
 console.log("\nStats (pre-analysis):");

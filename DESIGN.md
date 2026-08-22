@@ -103,6 +103,28 @@ roughly the order concepts build on one another.
   a `TOOL CALLS:` block into the classifier prompt, and `session-overview`
   appends a `tool=<name> args="…" err="…"` fragment to the per-pair digest line
   for high-signal or failing turns.
+- **Tool inventory** — the set of tools a session *had available* but may never
+  have invoked, recorded at the session level, as distinct from the **tool
+  calls** (below, per-message) that were actually made. It carries **sizing
+  metadata** (the character length of each tool's serialized definition) so the
+  fixed prefix cost a never-called tool imposes on every turn of a session — re-
+  billed as input or cache-write on the first request and as cacheRead
+  thereafter — can be priced. The inventory is **not backfillable**: it is only
+  ever captured from what the host persists at session start, so every session
+  recorded without a manifest has no inventory and never will. That absence is
+  therefore load-bearing and lived in the storage, not a convention:
+  `sessions.tool_inventory` is `NULL` (never captured — **UNKNOWN**) either
+  `"{\"tools\":[]}"` (captured and empty), or a populated inventory. A consumer
+  must **skip** the UNKNOWN case — it must never read it as "no tools available".
+  A tax computed against an assumed-empty inventory would be confidently wrong
+  across all history and would look like a real number.
+- **Per-bucket cost** — the billed dollar cost of a turn split by usage bucket
+  (`input`, `output`, `cacheRead`, `cacheWrite`, and `total`), captured from the
+  host's per-turn `cost` figure and retained in the message index alongside the
+  token buckets. This is what lets cache-economy be priced in dollars — e.g. the
+  cacheRead dollars of context re-read on later turns — rather than only in
+  token-turns. Unlike the tool inventory, per-bucket cost **is** backfillable:
+  it lives in the transcripts, so re-syncing a session recovers it.
 - **Compaction boundary** — a point where the conversation history was
   summarised and truncated to fit the model's context. The system is aware of
   these so it does not mistake a summary for an ordinary message.
