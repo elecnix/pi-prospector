@@ -57,10 +57,14 @@ TypeBox for all data shapes. No bare `interface` or `type` declarations. Every s
 
 ## CI
 
-GitHub Actions on every push and pull request to `main`. Two jobs:
+GitHub Actions on every push and pull request to `main`.
 
 1. `test` — matrix on Node 22 (Pi's minimum) and 24 (current); runs `npm test` (unit + component, mock LLM).
-2. `integration-test` — Node 22; runs `node --import tsx test/integration/test-commands.ts` (full pipeline, mock LLM).
+2. `check` — Node 22; runs `npm run check` (`tsc --noEmit`). Green tests do not imply this passes: a code path no test exercises is invisible to the suite and visible to the typechecker.
+3. `integration-test` — Node 22; runs `node --import tsx test/integration/test-commands.ts` (full pipeline, mock LLM). Runs only after `test`.
+4. `dupdelta` and `pr-body-format` — pull requests only; report duplication introduced by the diff and flag a PR description that renders badly. Neither fails the build.
+
+Every job carries a `timeout-minutes`, and pull requests run under a `concurrency` group that supersedes the previous run. Both exist because runners are a fixed pool: a test file that leaks a handle never exits, and three such jobs are this repo's whole allocation.
 
 ## Code organization
 

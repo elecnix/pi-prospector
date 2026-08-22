@@ -34,6 +34,21 @@ jobs:
       - run: npm install --legacy-peer-deps
       - run: npm test
 
+  check:
+    # `tsc --noEmit`. The suite is not a substitute for it: the async-driver
+    # migration left `readLeaks` and `readSearch` unawaited on the tool surface,
+    # which no test exercises, and only the typechecker caught them. Runs on the
+    # minimum supported Node, since that is the version the types must satisfy.
+    runs-on: arc-runners
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install --legacy-peer-deps
+      - run: npm run check
+
   integration-test:
     needs: test
     runs-on: arc-runners
