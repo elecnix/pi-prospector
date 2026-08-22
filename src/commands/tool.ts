@@ -172,7 +172,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						if (params.analyzer) parts.push(`--analyzer ${params.analyzer}`);
 						if (params.model) parts.push(`--model ${params.model}`);
 						await prospectAnalyze(parts.join(" "), ctx);
-						const runs = getLatestAnalyzeRuns(db, 1);
+						const runs = await getLatestAnalyzeRuns(db, 1);
 						const run = runs[0];
 						return run
 							? text(`Analyze complete. Run record:\n${JSON.stringify(run, null, 2)}`, run)
