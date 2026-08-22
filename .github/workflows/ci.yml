@@ -6,9 +6,23 @@ on:
   pull_request:
     branches: [main]
 
+# One CI run per pull request. Pushing again supersedes the previous run
+# instead of queueing beside it: the self-hosted pool is a fixed number of
+# runner slots, and a superseded run holds one for as long as a live one does.
+# Pushes to main are never cancelled -- main's history has to stay verified.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: arc-runners
+    # The suite takes 1-3 minutes. A test file that leaks a handle never exits
+    # -- node's --test-timeout does not cover it, because the subtests all
+    # finish and it is the process that will not drain -- so without a job
+    # timeout the runner is held for the GitHub default of six hours. Three
+    # such jobs is the repo's entire runner allocation.
+    timeout-minutes: 15
     strategy:
       matrix:
         node-version: [22, 24]
@@ -23,6 +37,7 @@ jobs:
   integration-test:
     needs: test
     runs-on: arc-runners
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -36,6 +51,7 @@ jobs:
     # warnings on the diff. Never fails the build.
     if: github.event_name == 'pull_request'
     runs-on: arc-runners
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
         with:
@@ -47,6 +63,7 @@ jobs:
     # paragraphs, broken list items, collapsed tables, unparsable mermaid.
     if: github.event_name == 'pull_request'
     runs-on: arc-runners
+    timeout-minutes: 10
     permissions:
       pull-requests: read
     steps:
