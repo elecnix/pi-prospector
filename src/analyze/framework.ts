@@ -669,14 +669,18 @@ export class AnalyzerFramework {
 			getNode: (id) => getNode(db, id),
 			// Derived from the cached per-session node set, so a dependency is read once
 			// per session and stays fresh after this analyzer's writes invalidate it.
-			getDependencyNodes: async (depId) => {
+			// The declared-dependency guard throws synchronously (not via a rejected
+			// promise) so a misuse is attributed to the caller that made it.
+			getDependencyNodes: (depId) => {
 				if (!analyzer.def.dependencies.includes(depId)) {
 					throw new Error(
 						`Analyzer '${analyzer.def.id}' read dependency '${depId}' without declaring it. ` +
 						`Add '${depId}' to def.dependencies.`,
 					);
 				}
-				return (await this.loadSessionNodesCached(cache, sessionId)).filter((n) => n.analyzer_id === depId);
+				return this.loadSessionNodesCached(cache, sessionId).then((rows) =>
+					rows.filter((n) => n.analyzer_id === depId),
+				);
 			},
 			getGlobalDependencyNodes: (depId) => this.globalDependencyNodes(analyzer, depId),
 			getSessionMessages: (sid) => this.loadMessagesCached(cache, sid),
