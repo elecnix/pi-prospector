@@ -24,7 +24,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import Database from "better-sqlite3";
+import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { migrate } from "../db/schema.js";
@@ -188,9 +188,9 @@ export function findingsFromNode(row: AnalysisNodeRow): { entries: LeakReportEnt
  * action. Reads the detector family's live metric nodes, applies the severity
  * floor and source filter, groups by session, tallies per rule.
  */
-export function readLeaks(db: Database.Database, q: LeaksQuery): { text: string; report: LeakReport } {
+export async function readLeaks(db: AsyncDatabase, q: LeaksQuery): Promise<{ text: string; report: LeakReport }> {
 	const minRank = q.minSeverity ? SEVERITY_RANK[q.minSeverity as keyof typeof SEVERITY_RANK] : undefined;
-	const rows = listAnalysisNodes(db, {
+	const rows = await listAnalysisNodes(db, {
 		analyzerIds: [...DETECTOR_ANALYZER_IDS],
 		nodeKind: "metric",
 		source: q.source,
@@ -225,7 +225,7 @@ export function readLeaks(db: Database.Database, q: LeaksQuery): { text: string;
 	}
 
 	const sources = new Map<string, string>();
-	for (const s of db.prepare("SELECT id, source FROM sessions").all() as Array<{ id: string; source: string }>) {
+	for (const s of (await db.prepare("SELECT id, source FROM sessions").all()) as Array<{ id: string; source: string }>) {
 		sources.set(s.id, s.source);
 	}
 
@@ -304,18 +304,18 @@ function out(ctx: ExtensionCommandContext, text: string, level: "info" | "warnin
 
 /** `/prospect-leaks` — the leak report. */
 export async function prospectLeaks(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
-	const db = new Database(getDbPath());
-	migrate(db);
+	const db = openAsyncDatabase(getDbPath());
+	await migrate(db);
 	try {
 		try {
 			const q = parseLeaksArgs(rawArgs ?? "");
-			const { text } = readLeaks(db, q);
+			const { text } = await readLeaks(db, q);
 			out(ctx, text);
 		} catch (err) {
 			out(ctx, `prospect leaks: ${err instanceof Error ? err.message : String(err)}`, "warning");
 		}
 	} finally {
-		db.close();
+		await db.close();
 	}
 }
 

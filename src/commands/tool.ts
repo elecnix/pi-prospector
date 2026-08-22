@@ -293,7 +293,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						source: params.source as string | undefined,
 					};
 					try {
-						const { text: body, report } = readLeaks(db, q);
+						const { text: body, report } = await readLeaks(db, q);
 						return text(body, report);
 					} catch (err) {
 						return text(`prospect leaks: ${err instanceof Error ? err.message : String(err)}`, {});

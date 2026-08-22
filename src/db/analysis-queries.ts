@@ -732,11 +732,11 @@ export async function getAnalysisStats(db: AsyncDatabase, asOf?: string): Promis
 	for (const r of kindRows) nodesByKind[r.node_kind] = r.c;
 	// Same aggregation over analyzer_id — served by idx_nodes_analyzer.
 	const analyzerRows = asOf
-		? (prep(db, "SELECT analyzer_id, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) GROUP BY analyzer_id").all(asOf, asOf) as Array<{
+		? ((await prep(db, "SELECT analyzer_id, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) GROUP BY analyzer_id").all(asOf, asOf)) as Array<{
 				analyzer_id: string;
 				c: number;
 			}>)
-		: (prep(db, "SELECT analyzer_id, COUNT(*) AS c FROM live_nodes GROUP BY analyzer_id").all() as Array<{
+		: ((await prep(db, "SELECT analyzer_id, COUNT(*) AS c FROM live_nodes GROUP BY analyzer_id").all()) as Array<{
 				analyzer_id: string;
 				c: number;
 			}>);
