@@ -54,6 +54,41 @@ describe("end-to-end sync", () => {
 			await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 			const stats = await getStats(db);
 			assert.ok(stats.totalSessions >= 2, "should index at least 2 sessions (simple + compacted)");
+
+			// The canonical compactionSummary-typed fixture keeps its role and summary text.
+			const canonical = ((await db
+				.prepare("SELECT role, content_text FROM messages WHERE session_id = 'compacted-001' AND id = 'c1'")
+				.all()) as Array<{ role: string; content_text: string | null }>)[0];
+			assert.ok(canonical, "compactionSummary row is indexed");
+			assert.equal(canonical.role, "compactionSummary");
+			assert.ok(canonical.content_text && canonical.content_text.length > 0);
+		} finally {
+			await close();
+		}
+	});
+
+	it("normalizes a bare compaction entry type to the compactionSummary role (issue #150)", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
+
+			// compaction-alias.jsonl carries a `type: "compaction"` entry; it must land
+			// in-union as compactionSummary with its summary prose as content_text.
+			const withSummary = ((await db
+				.prepare("SELECT role, content_text FROM messages WHERE session_id = 'compaction-alias-001' AND id = 'c9'")
+				.all()) as Array<{ role: string; content_text: string | null }>)[0];
+			assert.ok(withSummary, "compaction row is indexed");
+			assert.equal(withSummary.role, "compactionSummary");
+			assert.equal(withSummary.content_text, "User asked for a repo summary; agent answered briefly.");
+
+			// A compaction entry with no summary and no message.content keeps
+			// content_text NULL but still lands on the canonical role.
+			const bare = ((await db
+				.prepare("SELECT role, content_text FROM messages WHERE session_id = 'compaction-alias-001' AND id = 'c10'")
+				.all()) as Array<{ role: string; content_text: string | null }>)[0];
+			assert.ok(bare, "summary-less compaction row is indexed");
+			assert.equal(bare.role, "compactionSummary");
+			assert.equal(bare.content_text, null);
 		} finally {
 			await close();
 		}

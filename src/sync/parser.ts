@@ -165,6 +165,16 @@ export function extractSessionName(lines: string[]): string | null {
 	return name;
 }
 
+/**
+ * Entry-type aliases that must land on a canonical MessageRole before any
+ * cast. Some hosts emit `type: "compaction"` for what this system calls a
+ * compaction boundary summary; without normalization the raw type would be
+ * cast straight into the union and silently mislabel every row (#150).
+ */
+const TYPE_ROLE_MAP: Record<string, MessageRole> = {
+	compaction: "compactionSummary",
+};
+
 export function parseLine(line: string, source?: SessionSource, toolNamesById?: Map<string, string>): ParsedLine | null {
 	if (source === "claude") return parseClaudeLine(line, toolNamesById);
 	return parsePiLine(line);
@@ -291,9 +301,10 @@ function parsePiLine(line: string): ParsedLine | null {
 		const parentId = (obj.parentId as string) ?? null;
 		const timestamp = (obj.timestamp as string) ?? null;
 
-		// Try to get message.role or use the type itself as the role
+		// Try to get message.role; otherwise normalize known entry-type aliases
+		// onto their canonical role before falling back to the raw type (#150).
 		const msg = obj.message as Record<string, unknown> | undefined;
-		const role = (msg?.role as string) ?? type;
+		const role = ((msg?.role as string) ?? (type ? TYPE_ROLE_MAP[type] : undefined) ?? type) as MessageRole;
 
 		let text: string | null = null;
 		if (msg) {
