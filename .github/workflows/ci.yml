@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 # One CI run per pull request. Pushing again supersedes the previous run
 # instead of queueing beside it: the self-hosted pool is a fixed number of
