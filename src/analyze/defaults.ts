@@ -31,6 +31,7 @@ import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
 import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
+import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -48,6 +49,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"uncompleted-leads",
 	"compression-checklist",
 	"language-mismatch",
+	"session-ending",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -109,6 +111,14 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// beside the other compaction-adjacent grader so its findings sit in the
 	// same region of the registry.
 	languageMismatchAnalyzer,
+	// How each session ended — resolved / abandoned / handed-off / errored /
+	// the conservative unclear — read deterministically from the transcript tail
+	// and the shared action stream (#102). Emits a metric node only: the label
+	// is ranking input for downstream synthesis, never a detection gate, so no
+	// proposal flows from it. Standalone, deterministic; placed with the other
+	// session-level deterministic graders, before the synthesizer, so a future
+	// consumer can declare it as a dependency without reordering.
+	sessionEndingAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,

@@ -53,21 +53,25 @@ export interface TestMessage {
 	role: string;
 	text?: string;
 	thinking?: string;
-	toolCalls?: Array<{ name: string; arguments?: Record<string, unknown> }>;
-	toolResults?: Array<{ toolName: string; isError: boolean; textLength: number }>;
+	toolCalls?: Array<{ id?: string; name: string; arguments?: Record<string, unknown> }>;
+	toolResults?: Array<{ toolCallId?: string; toolName: string; isError: boolean; textLength: number }>;
 	id?: string;
 	/** The serving model for an assistant message. */
 	model?: string | null;
 	/** The billed dollar cost of an assistant message. */
 	costUsd?: number | null;
+	/** How the assistant generation ended, verbatim from the host, or null. */
+	stopReason?: string | null;
+	/** Why the generation failed, verbatim from the host, or null when it did not. */
+	errorMessage?: string | null;
 }
 
 /** Insert messages for a session in order, returning the inserted ids. */
 /** Insert messages for a session in order, returning the inserted ids. */
 export async function insertMessages(db: AsyncDatabase, sessionId: string, messages: TestMessage[]): Promise<string[]> {
 	const stmt = db.prepare(
-		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd) " +
-			"VALUES (?, ?, 'pi', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message) " +
+			"VALUES (?, ?, 'pi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 	);
 	const ids: string[] = [];
 	let parent: string | null = null;
@@ -85,6 +89,8 @@ export async function insertMessages(db: AsyncDatabase, sessionId: string, messa
 			m.toolResults ? JSON.stringify(m.toolResults) : null,
 			m.model ?? null,
 			m.costUsd ?? null,
+			m.stopReason ?? null,
+			m.errorMessage ?? null,
 		);
 		ids.push(id);
 		parent = id;
