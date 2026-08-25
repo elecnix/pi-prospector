@@ -9,21 +9,27 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
-import { AnalyzerFramework } from "../../src/analyze/framework.js";
-import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import {
+	tempDb,
+	insertSession,
+	insertMessages,
+	mockFramework,
+	mockFrameworkWithOverrides,
+	readAnalyzerNodes,
+
+	sessionProposals,
+	bashCall,
+	readCall,
+	assertPlainRerunIsNoOpFill,
+	reviseBesidePredecessor,
+	assertProposalEvidenceTrail,
+	type TestMessage,
+} from "./helpers.js";
 import { uncompletedLeadsAnalyzer } from "../../src/analyze/analyzers/uncompleted-leads/index.js";
-import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+
+const ANALYZER_ID = "uncompleted-leads";
 
 // ─────────────────────────── fixtures ───────────────────────────
-
-function bashCall(command: string): TestMessage["toolCalls"] {
-	return [{ name: "bash", arguments: { command } }];
-}
-
-function readCall(path: string): TestMessage["toolCalls"] {
-	return [{ name: "read", arguments: { file_path: path } }];
-}
 
 /**
  * A session that surfaces five file paths in one grep result, plus a URL and a
@@ -77,37 +83,6 @@ function cleanSessionMessages(): TestMessage[] {
 	];
 }
 
-function newFramework(db: import("better-sqlite3").Database) {
-	return new AnalyzerFramework({
-		db,
-		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
-		modelTiers: DEFAULT_MODEL_TIERS,
-	});
-}
-
-/** Same, but with per-analyzer config overrides (everything the user sets is config). */
-function newFrameworkWithOverrides(db: import("better-sqlite3").Database, overrides: Record<string, unknown>) {
-	return new AnalyzerFramework({
-		db,
-		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
-		modelTiers: DEFAULT_MODEL_TIERS,
-		configOverrides: { "uncompleted-leads": overrides },
-	});
-}
-
-interface NodeRow extends Record<string, unknown> {
-	id: string;
-	node_kind: string;
-	input_key: string;
-	output_key: string;
-	content_json: string;
-}
-
-async function readLeadNodes(db: import("better-sqlite3").Database): Promise<NodeRow[]> {
-	return (await db
-		.prepare("SELECT id, node_kind, input_key, output_key, content_json FROM analysis_nodes WHERE analyzer_id = ?")
-		.all("uncompleted-leads")) as unknown as NodeRow[];
-}
 
 // ─────────────────────────── tests ───────────────────────────
 
@@ -118,12 +93,12 @@ describe("uncompleted-leads component test", () => {
 			await insertSession(db, "leads-e2e");
 			await insertMessages(db, "leads-e2e", leadSessionMessages());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(uncompletedLeadsAnalyzer);
 			const summary = await fw.run("leads-e2e", {});
 			assert.equal(summary.errors.length, 0, `run should have no errors: ${summary.errors.join("; ")}`);
 
-			const nodes = await readLeadNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 1, "one node per session");
 
 			const node = nodes[0]!;
@@ -149,19 +124,12 @@ describe("uncompleted-leads component test", () => {
 
 			// Evidence trail: session anchor + an anchor on each unpursued lead's
 			// source message, plus the produces edge into the fast store.
-			const edges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
-				.all(node.id)) as unknown as Array<Record<string, unknown>>;
-			const sessionAnchors = edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "session");
-			const messageAnchors = edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "message");
-			assert.equal(sessionAnchors.length, 1, "anchored to the session");
-			assert.equal(messageAnchors.length, 1, "the single grep-result message carries every uncompleted lead");
-			const produced = edges.find((e) => e["edge_kind"] === "produces");
-			assert.ok(produced, "proposal node must produce its proposal");
+			await assertProposalEvidenceTrail(db, node.id, {
+				exactly: 1,
+				note: "the single grep-result message carries every uncompleted lead",
+			});
 
-			const proposals = (await db
-				.prepare("SELECT * FROM proposals WHERE session_id = ? AND analyzer_id = ?")
-				.all("leads-e2e", "uncompleted-leads")) as unknown as Array<Record<string, unknown>>;
+			const proposals = await sessionProposals(db, "leads-e2e", ANALYZER_ID);
 			assert.equal(proposals.length, 1, "exactly one materialised proposal");
 			assert.match(String(proposals[0]!.title), /never opened/i);
 			assert.equal(proposals[0]!.status, "open");
@@ -176,21 +144,9 @@ describe("uncompleted-leads component test", () => {
 			await insertSession(db, "leads-idem");
 			await insertMessages(db, "leads-idem", leadSessionMessages());
 
-			const fw = newFramework(db);
-			await fw.register(uncompletedLeadsAnalyzer);
-
-			const first = await fw.run("leads-idem", {});
-			assert.equal(first.errors.length, 0);
-			const before = await readLeadNodes(db);
-			assert.equal(before.length, 1);
-
-			const second = await fw.run("leads-idem", {});
-			assert.equal(second.errors.length, 0);
-			assert.equal(second.nodesProduced, 0, "second plain fill must produce nothing");
-			assert.equal(second.nodesSkipped, 1, "the existing unit is current");
-
-			const after = await readLeadNodes(db);
-			assert.deepEqual(after.map((n) => [n.input_key, n.output_key]), before.map((n) => [n.input_key, n.output_key]));
+			await assertPlainRerunIsNoOpFill(mockFramework(db), uncompletedLeadsAnalyzer, "leads-idem", () =>
+				readAnalyzerNodes(db, ANALYZER_ID),
+			);
 		} finally {
 			await close();
 		}
@@ -202,12 +158,12 @@ describe("uncompleted-leads component test", () => {
 			await insertSession(db, "leads-clean");
 			await insertMessages(db, "leads-clean", cleanSessionMessages());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(uncompletedLeadsAnalyzer);
 			const summary = await fw.run("leads-clean", {});
 			assert.equal(summary.errors.length, 0);
 
-			const nodes = await readLeadNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 1, "a clean session is still analysed");
 			assert.equal(nodes[0]!.node_kind, "metric", "no proposals below threshold");
 
@@ -225,31 +181,19 @@ describe("uncompleted-leads component test", () => {
 			await insertSession(db, "leads-config");
 			await insertMessages(db, "leads-config", leadSessionMessages());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(uncompletedLeadsAnalyzer);
 
 			await fw.run("leads-config", {});
-			const before = await readLeadNodes(db);
+			const before = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(before.length, 1);
 
 			// Narrowing to URLs-only changes the resolved config fingerprint → the
 			// unit goes stale for the `config` reason; the revise run recomputes it,
 			// preserving the old version as lineage.
-			const narrowed = newFrameworkWithOverrides(db, { enabledTypes: ["url"] });
+			const narrowed = mockFrameworkWithOverrides(db, ANALYZER_ID, { enabledTypes: ["url"] });
 			await narrowed.register(uncompletedLeadsAnalyzer);
-			const summary = await narrowed.run("leads-config", { revise: ["config"] });
-			assert.equal(summary.errors.length, 0);
-			assert.equal(summary.nodesRevised, 1, "the unit was revised under new config");
-
-			const after = await readLeadNodes(db);
-			assert.equal(after.length, 2, "old version preserved as lineage beside the revision");
-			const revised = after.find((n) => n.input_key !== before[0]!.input_key);
-			assert.ok(revised, "revised node carries a new recipe identity");
-
-			const edges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'revises'")
-				.all(revised!.id)) as unknown as Array<Record<string, unknown>>;
-			assert.equal(edges.length, 1, "a revises edge links the revision to its predecessor");
+			await reviseBesidePredecessor(db, narrowed, ANALYZER_ID, "leads-config", before);
 		} finally {
 			await close();
 		}

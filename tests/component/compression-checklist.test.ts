@@ -8,21 +8,27 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
-import { AnalyzerFramework } from "../../src/analyze/framework.js";
-import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import {
+	tempDb,
+	insertSession,
+	insertMessages,
+	mockFramework,
+	mockFrameworkWithOverrides,
+	readAnalyzerNodes,
+
+	sessionProposals,
+	bashCall,
+	readCall,
+	assertPlainRerunIsNoOpFill,
+	reviseBesidePredecessor,
+	assertProposalEvidenceTrail,
+	type TestMessage,
+} from "./helpers.js";
 import { compressionChecklistAnalyzer } from "../../src/analyze/analyzers/compression-checklist/index.js";
-import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+
+const ANALYZER_ID = "compression-checklist";
 
 // ─────────────────────────── fixtures ───────────────────────────
-
-function bashCall(command: string): TestMessage["toolCalls"] {
-	return [{ name: "bash", arguments: { command } }];
-}
-
-function readCall(path: string): TestMessage["toolCalls"] {
-	return [{ name: "read", arguments: { file_path: path } }];
-}
 
 /**
  * A session with one compaction cycle:
@@ -87,36 +93,6 @@ function uncompactedSession(): TestMessage[] {
 	];
 }
 
-function newFramework(db: import("better-sqlite3").Database) {
-	return new AnalyzerFramework({
-		db,
-		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
-		modelTiers: DEFAULT_MODEL_TIERS,
-	});
-}
-
-function newFrameworkWithOverrides(db: import("better-sqlite3").Database, overrides: Record<string, unknown>) {
-	return new AnalyzerFramework({
-		db,
-		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
-		modelTiers: DEFAULT_MODEL_TIERS,
-		configOverrides: { "compression-checklist": overrides },
-	});
-}
-
-interface NodeRow extends Record<string, unknown> {
-	id: string;
-	node_kind: string;
-	input_key: string;
-	output_key: string;
-	content_json: string;
-}
-
-async function readNodes(db: import("better-sqlite3").Database): Promise<NodeRow[]> {
-	return (await db
-		.prepare("SELECT id, node_kind, input_key, output_key, content_json FROM analysis_nodes WHERE analyzer_id = ?")
-		.all("compression-checklist")) as unknown as NodeRow[];
-}
 
 // ─────────────────────────── tests ───────────────────────────
 
@@ -127,12 +103,12 @@ describe("compression-checklist component test", () => {
 			await insertSession(db, "retrac-e2e");
 			await insertMessages(db, "retrac-e2e", lossySession());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(compressionChecklistAnalyzer);
 			const summary = await fw.run("retrac-e2e", {});
 			assert.equal(summary.errors.length, 0, `run should have no errors: ${summary.errors.join("; ")}`);
 
-			const nodes = await readNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 1, "one node per compacted session");
 
 			const node = nodes[0]!;
@@ -176,18 +152,12 @@ describe("compression-checklist component test", () => {
 
 			// Evidence trail: session anchor + summary message + each lost lead's
 			// source message, plus the produces edge into the fast store.
-			const edges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
-				.all(node.id)) as unknown as Array<Record<string, unknown>>;
-			const sessionAnchors = edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "session");
-			const messageAnchors = edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "message");
-			assert.equal(sessionAnchors.length, 1, "anchored to the session");
-			assert.equal(messageAnchors.length, 2, "summary row + grep-result row carry the findings");
-			assert.ok(edges.find((e) => e["edge_kind"] === "produces"), "proposal node must produce its proposal");
+			await assertProposalEvidenceTrail(db, node.id, {
+				exactly: 2,
+				note: "summary row + grep-result row carry the findings",
+			});
 
-			const proposals = (await db
-				.prepare("SELECT * FROM proposals WHERE session_id = ? AND analyzer_id = ?")
-				.all("retrac-e2e", "compression-checklist")) as unknown as Array<Record<string, unknown>>;
+			const proposals = await sessionProposals(db, "retrac-e2e", ANALYZER_ID);
 			assert.equal(proposals.length, 1, "exactly one materialised proposal");
 			assert.match(String(proposals[0]!.title), /dropped 2 leads/);
 			assert.match(String(proposals[0]!.title), /needed again/);
@@ -203,12 +173,12 @@ describe("compression-checklist component test", () => {
 			await insertSession(db, "retrac-clean");
 			await insertMessages(db, "retrac-clean", faithfulSession());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(compressionChecklistAnalyzer);
 			const summary = await fw.run("retrac-clean", {});
 			assert.equal(summary.errors.length, 0);
 
-			const nodes = await readNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 1, "a compacted session is always analysed");
 			assert.equal(nodes[0]!.node_kind, "metric");
 
@@ -235,12 +205,12 @@ describe("compression-checklist component test", () => {
 			await insertSession(db, "retrac-none");
 			await insertMessages(db, "retrac-none", uncompactedSession());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(compressionChecklistAnalyzer);
 			const summary = await fw.run("retrac-none", {});
 			assert.equal(summary.errors.length, 0);
 
-			const nodes = await readNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 0, "nothing to grade");
 		} finally {
 			await close();
@@ -253,21 +223,9 @@ describe("compression-checklist component test", () => {
 			await insertSession(db, "retrac-idem");
 			await insertMessages(db, "retrac-idem", lossySession());
 
-			const fw = newFramework(db);
-			await fw.register(compressionChecklistAnalyzer);
-
-			const first = await fw.run("retrac-idem", {});
-			assert.equal(first.errors.length, 0);
-			const before = await readNodes(db);
-			assert.equal(before.length, 1);
-
-			const second = await fw.run("retrac-idem", {});
-			assert.equal(second.errors.length, 0);
-			assert.equal(second.nodesProduced, 0, "second plain fill must produce nothing");
-			assert.equal(second.nodesSkipped, 1, "the existing unit is current");
-
-			const after = await readNodes(db);
-			assert.deepEqual(after.map((n) => [n.input_key, n.output_key]), before.map((n) => [n.input_key, n.output_key]));
+			await assertPlainRerunIsNoOpFill(mockFramework(db), compressionChecklistAnalyzer, "retrac-idem", () =>
+				readAnalyzerNodes(db, ANALYZER_ID),
+			);
 		} finally {
 			await close();
 		}
@@ -279,32 +237,21 @@ describe("compression-checklist component test", () => {
 			await insertSession(db, "retrac-config");
 			await insertMessages(db, "retrac-config", lossySession());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(compressionChecklistAnalyzer);
 
 			await fw.run("retrac-config", {});
-			const before = await readNodes(db);
+			const before = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(before.length, 1);
 
 			// Raising the proposal threshold changes the resolved config fingerprint →
 			// the unit goes stale for the `config` reason; the revise run recomputes
 			// it, preserving the old version as lineage.
-			const raised = newFrameworkWithOverrides(db, { minLostLeadsForProposal: 5 });
+			const raised = mockFrameworkWithOverrides(db, ANALYZER_ID, { minLostLeadsForProposal: 5 });
 			await raised.register(compressionChecklistAnalyzer);
-			const revised = await raised.run("retrac-config", { revise: ["config"] });
-			assert.equal(revised.errors.length, 0);
-			assert.equal(revised.nodesRevised, 1, "the unit was revised under new config");
-
-			const after = await readNodes(db);
-			assert.equal(after.length, 2, "old version preserved as lineage beside the revision");
-			const newNode = after.find((n) => n.input_key !== before[0]!.input_key);
-			assert.ok(newNode, "revised node carries a new recipe identity");
-			assert.equal(newNode!.node_kind, "metric", "with the threshold raised, the same evidence no longer earns a proposal");
-
-			const reviseEdges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'revises'")
-				.all(newNode!.id)) as unknown as Array<Record<string, unknown>>;
-			assert.equal(reviseEdges.length, 1, "a revises edge links the revision to its predecessor");
+			const after = await reviseBesidePredecessor(db, raised, ANALYZER_ID, "retrac-config", before);
+			const newNode = after.find((n) => n.input_key !== before[0]!.input_key)!;
+			assert.equal(newNode.node_kind, "metric", "with the threshold raised, the same evidence no longer earns a proposal");
 		} finally {
 			await close();
 		}
