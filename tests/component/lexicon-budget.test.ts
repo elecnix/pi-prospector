@@ -48,9 +48,12 @@ function words(prefix: string, count: number): string[] {
 	return Array.from({ length: count }, (_, i) => `${prefix}${letter(Math.floor(i / 26))}${letter(i)}`);
 }
 
-/** Adjudications performed. Every entry is a single word. */
+/** Adjudications of single words. Since #40 phrases are adjudicated too; they have their own entries and must not pollute this count. */
 function wordCalls(llm: ReturnType<typeof build>["llm"]): number {
-	return llm.calls.length;
+	return llm.calls.filter((c) => {
+		const term = String((c.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
+		return c.tool?.name === "classify_term" && !term.includes(" ");
+	}).length;
 }
 
 describe("lexicon cost", () => {

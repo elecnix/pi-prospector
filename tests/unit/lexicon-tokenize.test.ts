@@ -4,6 +4,9 @@ import {
 	tokenize,
 	tokenSet,
 	rankTerms,
+	rankPhrases,
+	tokenizeSegments,
+	findPhraseHits,
 	detectParalinguistic,
 	PARALINGUISTIC_MARKERS,
 } from "../../src/analyze/analyzers/lexicon-candidates/tokenize.js";
@@ -171,5 +174,79 @@ describe("hyphenated compounds", () => {
 		const set = tokenSet("run the re-check now");
 		assert.equal(set.has("re-check"), true);
 		assert.equal(set.has("re"), false, "the bare prefix must not be matchable");
+	});
+});
+
+describe("multi-word phrases (#40)", () => {
+	describe("tokenizeSegments", () => {
+		it("splits on strong boundaries but keeps commas inside a segment", () => {
+			// `it laisse` is the seam between two sentences, not something anyone said;
+			// `putain, c'est` is one breath and stays one segment.
+			assert.deepEqual(tokenizeSegments("fix it. laisse tomber"), [["fix", "it"], ["laisse", "tomber"]]);
+			assert.deepEqual(tokenizeSegments("putain, c'est faux"), [["putain", "c'est", "faux"]]);
+		});
+
+		it("keeps tokenize() equal to the concatenation of its segments", () => {
+			// The invariant phrase nomination and phrase matching both rely on.
+			const text = "wrong again. fix it, still wrong! laisse tomber\nencore";
+			assert.deepEqual(tokenize(text), tokenizeSegments(text).flat());
+		});
+
+		it("strips machine envelopes before splitting, so punctuated envelopes do not leak", () => {
+			// The envelope contains sentence punctuation; splitting first would break
+			// its balanced tags and leak its contents as prose.
+			assert.deepEqual(tokenizeSegments("<bash-stdout>line one.\nline two</bash-stdout> broken"), [["broken"]]);
+		});
+	});
+
+	describe("rankPhrases", () => {
+		it("counts adjacent pairs within segments, ranked by frequency then alphabetically", () => {
+			const ranked = rankPhrases(["wrong again wrong again", "wrong again. plain wrong again"], 10);
+			assert.deepEqual(ranked, [
+				{ term: "wrong again", count: 4 },
+				{ term: "again wrong", count: 1 },
+				{ term: "plain wrong", count: 1 },
+			]);
+		});
+
+		it("never builds a phrase across a sentence boundary", () => {
+			const ranked = rankPhrases(["fix it. laisse tomber"], 10);
+			assert.deepEqual(ranked, [
+				{ term: "fix it", count: 1 },
+				{ term: "laisse tomber", count: 1 },
+			]);
+		});
+
+		it("caps under its own limit, deterministically for ties", () => {
+			// "beta alpha" and "alpha gamma" tie at count 1; the alphabetical
+			// tie-break keeps `alpha gamma` when the cap binds.
+			const ranked = rankPhrases(["beta alpha gamma"], 1);
+			assert.deepEqual(ranked, [
+				{ term: "alpha gamma", count: 1 },
+			]);
+		});
+	});
+
+	describe("findPhraseHits", () => {
+		it("returns token-index spans for each occurrence", () => {
+			// Tokens: laisse(0) tomber(1) je(2) laisse(3) tomber(4) — the full stop
+			// splits segments but the second idiom is still a legitimate match.
+			assert.deepEqual(findPhraseHits("laisse tomber. je laisse tomber", new Set(["laisse tomber"])), [
+				{ phrase: "laisse tomber", start: 0, end: 2 },
+				{ phrase: "laisse tomber", start: 3, end: 5 },
+			]);
+		});
+
+		it("never matches across a segment boundary", () => {
+			assert.deepEqual(findPhraseHits("fix it. laisse tomber", new Set(["it laisse"])), []);
+		});
+
+		it("ignores single-token entries — those are matched by the term path", () => {
+			assert.deepEqual(findPhraseHits("putain c'est faux", new Set(["putain"])), []);
+		});
+
+		it("matches whole tokens only, never inside a word", () => {
+			assert.deepEqual(findPhraseHits("laissez tombe", new Set(["laisse tomber"])), []);
+		});
 	});
 });
