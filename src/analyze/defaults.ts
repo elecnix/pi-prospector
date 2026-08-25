@@ -9,6 +9,7 @@ import type { Analyzer } from "./types.js";
 import { loadCustomAnalyzers, type LoadError } from "./loader.js";
 import { turnPairCoreAnalyzer } from "./analyzers/turn-pair-core/index.js";
 import { turnPairLLMAnalyzer } from "./analyzers/turn-pair-llm/index.js";
+import { assistantCognitionAnalyzer } from "./analyzers/assistant-cognition/index.js";
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
@@ -37,6 +38,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"frustration-lexicon",
 	"turn-frustration",
 	"turn-pair-llm",
+	"assistant-cognition",
 	"tool-trajectory",
 	"failure-modes",
 	"revive-chains",
@@ -67,6 +69,11 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	frustrationLexiconAnalyzer,
 	turnFrustrationAnalyzer,
 	turnPairLLMAnalyzer,
+	// The assistant's own cognitive state, per turn: confusion, indecision, and
+	// surprise read from the thinking trace and response text. Depends only on
+	// turn-pair-core (it needs the turn construction, not the friction score), so
+	// it sits beside the other per-turn LLM analyzer.
+	assistantCognitionAnalyzer,
 	toolTrajectoryAnalyzer,
 	// What failed, of every kind. Deterministic and standalone; ordered next to
 	// tool-trajectory because the two read the same action stream — one for the
