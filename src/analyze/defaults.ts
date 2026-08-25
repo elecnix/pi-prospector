@@ -32,6 +32,7 @@ import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js
 import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
+import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -50,6 +51,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"compression-checklist",
 	"language-mismatch",
 	"session-ending",
+	"files-in-play",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -119,6 +121,15 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// session-level deterministic graders, before the synthesizer, so a future
 	// consumer can declare it as a dependency without reordering.
 	sessionEndingAnalyzer,
+	// Which files each session had in play, and how much it churned over that
+	// set — repeated read→edit→read cycling where the agent keeps reopening
+	// files it already holds. The waste twin of the file-touch consumers:
+	// uncompleted-leads sees files nobody opened, this sees files opened too
+	// many times. Session-level, standalone, deterministic (no LLM); reads the
+	// same action stream as the trajectory and failure analyzers. Placed with
+	// the other session-level deterministic graders, before the synthesizer, so
+	// a future consumer can declare it as a dependency without reordering.
+	filesInPlayAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,
