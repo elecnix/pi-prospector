@@ -120,15 +120,48 @@ describe("extractClaims", () => {
 // ─────────────────────────── ungrounded-claim check ───────────────────────────
 
 describe("ungrounded-claim check", () => {
-	it("stays quiet when the claimed number and path appear in the turn's tool results", () => {
-		const rows = [
-			user("Fix the failing tests."),
-			assistant("", [bashCall("c1", "npm test")]),
-			toolResult("c1", "128 tests passing, wrote results to src/reports/junit.xml"),
-			assistant("All 128 tests pass. Full report written to src/reports/junit.xml."),
+	describe("stays quiet when the claim is grounded or not the agent's", () => {
+		// Three ways an ungrounded-claim check must hold its fire: every stated
+		// fact appears verbatim in the turn's tool results, only the path of a
+		// file:line reference appears there, or the fact was introduced by the
+		// user rather than fabricated by the assistant.
+		const quietCases: Array<{ name: string; rows: MessageRow[]; why: string }> = [
+			{
+				name: "stays quiet when the claimed number and path appear in the turn's tool results",
+				rows: [
+					user("Fix the failing tests."),
+					assistant("", [bashCall("c1", "npm test")]),
+					toolResult("c1", "128 tests passing, wrote results to src/reports/junit.xml"),
+					assistant("All 128 tests pass. Full report written to src/reports/junit.xml."),
+				],
+				why: "grounded claims stay quiet",
+			},
+			{
+				name: "grounds a file:line location on the path alone appearing in results",
+				rows: [
+					user("Find the bug."),
+					assistant("", [bashCall("c1", "grep -rn TODO src/")]),
+					toolResult("c1", "src/index.ts:10: TODO fix later"),
+					assistant("The marker sits at src/index.ts:42."),
+				],
+				why: "location grounded by its path",
+			},
+			{
+				name: "excludes claims the user introduced themselves",
+				rows: [
+					user("Look at src/auth/session.ts and tell me what's wrong with it."),
+					assistant("", [bashCall("c1", "cat README.md")]),
+					toolResult("c1", "# readme"),
+					assistant("I reviewed src/auth/session.ts as you asked."),
+				],
+				why: "user-provided facts are context, not fabrication",
+			},
 		];
-		const signals = scanConsistencySignals(rows, CONFIG);
-		assert.deepEqual(signalsOfKind(signals, UNGROUNDED_CLAIM), [], "grounded claims stay quiet");
+		for (const c of quietCases) {
+			it(c.name, () => {
+				assert.deepEqual(signalsOfKind(scanConsistencySignals(c.rows, CONFIG), UNGROUNDED_CLAIM), [], c.why);
+			});
+		}
 	});
 
 	it("fires when a claimed number appears nowhere in the tool results", () => {
@@ -156,28 +189,6 @@ describe("ungrounded-claim check", () => {
 		const ungrounded = signalsOfKind(signals, UNGROUNDED_CLAIM);
 		assert.equal(ungrounded.length, 1);
 		assert.equal(ungrounded[0]!.claimKind, "path");
-	});
-
-	it("grounds a file:line location on the path alone appearing in results", () => {
-		const rows = [
-			user("Find the bug."),
-			assistant("", [bashCall("c1", "grep -rn TODO src/")]),
-			toolResult("c1", "src/index.ts:10: TODO fix later"),
-			assistant("The marker sits at src/index.ts:42."),
-		];
-		const signals = scanConsistencySignals(rows, CONFIG);
-		assert.deepEqual(signalsOfKind(signals, UNGROUNDED_CLAIM), [], "location grounded by its path");
-	});
-
-	it("excludes claims the user introduced themselves", () => {
-		const rows = [
-			user("Look at src/auth/session.ts and tell me what's wrong with it."),
-			assistant("", [bashCall("c1", "cat README.md")]),
-			toolResult("c1", "# readme"),
-			assistant("I reviewed src/auth/session.ts as you asked."),
-		];
-		const signals = scanConsistencySignals(rows, CONFIG);
-		assert.deepEqual(signalsOfKind(signals, UNGROUNDED_CLAIM), [], "user-provided facts are context, not fabrication");
 	});
 
 	it("stays quiet when the turn had no tool results at all", () => {

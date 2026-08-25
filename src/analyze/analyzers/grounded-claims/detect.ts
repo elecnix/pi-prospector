@@ -34,6 +34,7 @@
  * Everything here is pure and deterministic over the message rows.
  */
 
+import { looksLikePath } from "../../path-utils.js";
 import type { MessageRow } from "../../types.js";
 import { buildToolStream, type ToolInvocation } from "../../tool-stream.js";
 import { buildTurnPairs } from "../turn-pair-core/build.js";
@@ -100,18 +101,6 @@ interface Candidate {
 /** Nouns whose adjacent number is a count worth grounding ("12 tests failed"). */
 const COUNT_WORDS =
 	/(?:tests?|cases?|files?|errors?|warnings?|lines?|matches|commits?|packages?|failures?|modules?|functions?|checks?|scenarios?|assertions?)\b/i;
-
-/**
- * Whether a bare token looks like a file path rather than a flag, URL, or word.
- * A slash anywhere (absolute or relative), or a dotted final segment with a
- * non-empty extension — the same conservative shape files-in-play uses.
- */
-function looksLikePath(token: string): boolean {
-	if (token.includes("://")) return false;
-	if (/^[|&;<>()]+$/.test(token)) return false;
-	if (token.includes("/")) return true;
-	return /^[^.].*\.[^.]+$/.test(token);
-}
 
 /** Extract every groundable claim candidate from an assistant reply. */
 export function extractClaims(text: string): Candidate[] {
