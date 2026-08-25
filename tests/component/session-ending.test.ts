@@ -13,11 +13,11 @@ import {
 	insertSession,
 	insertMessages,
 	mockFramework,
-	mockFrameworkWithOverrides,
 	readAnalyzerNodes,
 	nodeEdges,
-	assertPlainRerunIsNoOpFill,
-	reviseBesidePredecessor,
+	runAnalyzerOverSession,
+	expectPlainRerunIsNoOpFill,
+	expectConfigChangeRevises,
 	type TestMessage,
 } from "./helpers.js";
 import { sessionEndingAnalyzer } from "../../src/analyze/analyzers/session-ending/index.js";
@@ -156,13 +156,8 @@ describe("session-ending component test", () => {
 	it("an empty transcript plans no unit at all", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "end-empty");
-			await insertMessages(db, "end-empty", []);
-			const fw = mockFramework(db);
-			await fw.register(sessionEndingAnalyzer);
-			const summary = await fw.run("end-empty", {});
-			assert.equal(summary.errors.length, 0);
-			assert.equal((await readAnalyzerNodes(db, ANALYZER_ID)).length, 0, "nothing ends, so nothing is labelled");
+			const nodes = await runAnalyzerOverSession(db, sessionEndingAnalyzer, "end-empty", []);
+			assert.equal(nodes.length, 0, "nothing ends, so nothing is labelled");
 		} finally {
 			await close();
 		}
@@ -171,11 +166,7 @@ describe("session-ending component test", () => {
 	it("re-running the same recipe is idempotent: no new nodes, keys unchanged", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "end-idem");
-			await insertMessages(db, "end-idem", resolvedSession());
-			await assertPlainRerunIsNoOpFill(mockFramework(db), sessionEndingAnalyzer, "end-idem", () =>
-				readAnalyzerNodes(db, ANALYZER_ID),
-			);
+			await expectPlainRerunIsNoOpFill(db, sessionEndingAnalyzer, "end-idem", resolvedSession());
 		} finally {
 			await close();
 		}
@@ -184,7 +175,6 @@ describe("session-ending component test", () => {
 	it("changing a config knob marks the node stale for `config` and revises beside it", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "end-config");
 			// Ends on a two-word assistant reply: below the default minimum summary
 			// length it cannot be trusted as a delivered summary, so unclear.
 			const messages: TestMessage[] = [
@@ -197,20 +187,14 @@ describe("session-ending component test", () => {
 				{ role: "toolResult", toolResults: [{ toolCallId: "k1", toolName: "bash", isError: false, textLength: 8 }] },
 				{ role: "assistant", text: "All good." },
 			];
-			await insertMessages(db, "end-config", messages);
-
-			const fw = mockFramework(db);
-			await fw.register(sessionEndingAnalyzer);
-			await fw.run("end-config", {});
-			const before = await readAnalyzerNodes(db, ANALYZER_ID);
-			assert.equal(before.length, 1);
-			assert.equal(JSON.parse(before[0]!.content_json).label, "unclear", "short final text defaults to unclear");
 
 			// Lowering the minimum summary length is a config change: the unit goes
 			// stale for `config` and recomputes beside its predecessor.
-			const lowered = mockFrameworkWithOverrides(db, ANALYZER_ID, { minFinalSummaryLength: 5 });
-			await lowered.register(sessionEndingAnalyzer);
-			const after = await reviseBesidePredecessor(db, lowered, ANALYZER_ID, "end-config", before);
+			const { before, after } = await expectConfigChangeRevises(db, sessionEndingAnalyzer, "end-config", messages, {
+				minFinalSummaryLength: 5,
+			});
+			assert.equal(JSON.parse(before[0]!.content_json).label, "unclear", "short final text defaults to unclear");
+
 			const newNode = after.find((n) => n.input_key !== before[0]!.input_key)!;
 			assert.equal(JSON.parse(newNode.content_json).label, "resolved", "with the knob lowered, the wrap-up plus green make resolves");
 		} finally {

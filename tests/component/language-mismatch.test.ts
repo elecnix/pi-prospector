@@ -17,8 +17,9 @@ import {
 	readAnalyzerNodes,
 	nodeEdges,
 	sessionProposals,
-	assertPlainRerunIsNoOpFill,
-	reviseBesidePredecessor,
+	runAnalyzerOverSession,
+	expectPlainRerunIsNoOpFill,
+	expectConfigChangeRevises,
 	type TestMessage,
 } from "./helpers.js";
 import { languageMismatchAnalyzer } from "../../src/analyze/analyzers/language-mismatch/index.js";
@@ -160,15 +161,7 @@ describe("language-mismatch component test", () => {
 	it("a session where nothing is judgable plans no unit at all", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "lang-tiny");
-			await insertMessages(db, "lang-tiny", tinySession());
-
-			const fw = mockFramework(db);
-			await fw.register(languageMismatchAnalyzer);
-			const summary = await fw.run("lang-tiny", {});
-			assert.equal(summary.errors.length, 0);
-
-			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
+			const nodes = await runAnalyzerOverSession(db, languageMismatchAnalyzer, "lang-tiny", tinySession());
 			assert.equal(nodes.length, 0, "nothing to judge");
 		} finally {
 			await close();
@@ -235,12 +228,7 @@ describe("language-mismatch component test", () => {
 	it("re-running the same recipe is idempotent: no new nodes, keys unchanged", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "lang-idem");
-			await insertMessages(db, "lang-idem", mismatchedSession());
-
-			await assertPlainRerunIsNoOpFill(mockFramework(db), languageMismatchAnalyzer, "lang-idem", () =>
-				readAnalyzerNodes(db, ANALYZER_ID),
-			);
+			await expectPlainRerunIsNoOpFill(db, languageMismatchAnalyzer, "lang-idem", mismatchedSession());
 		} finally {
 			await close();
 		}
@@ -249,19 +237,11 @@ describe("language-mismatch component test", () => {
 	it("raising minMismatchesForProposal marks the node stale for `config` and revises beside it", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "lang-config");
-			await insertMessages(db, "lang-config", mismatchedSession());
-
-			const fw = mockFramework(db);
-			await fw.register(languageMismatchAnalyzer);
-			await fw.run("lang-config", {});
-			const before = await readAnalyzerNodes(db, ANALYZER_ID);
-			assert.equal(before.length, 1);
+			const { before, after } = await expectConfigChangeRevises(db, languageMismatchAnalyzer, "lang-config", mismatchedSession(), {
+				minMismatchesForProposal: 5,
+			});
 			assert.equal(before[0]!.node_kind, "proposal");
 
-			const raised = mockFrameworkWithOverrides(db, ANALYZER_ID, { minMismatchesForProposal: 5 });
-			await raised.register(languageMismatchAnalyzer);
-			const after = await reviseBesidePredecessor(db, raised, ANALYZER_ID, "lang-config", before);
 			const newNode = after.find((n) => n.input_key !== before[0]!.input_key);
 			assert.ok(newNode);
 			assert.equal(newNode!.node_kind, "metric", "with the threshold raised, two mismatches no longer earn a proposal");

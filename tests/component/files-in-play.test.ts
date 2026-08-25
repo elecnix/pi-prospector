@@ -13,11 +13,11 @@ import {
 	insertSession,
 	insertMessages,
 	mockFramework,
-	mockFrameworkWithOverrides,
 	readAnalyzerNodes,
+	runAnalyzerOverSession,
+	expectPlainRerunIsNoOpFill,
+	expectConfigChangeRevises,
 	sessionProposals,
-	assertPlainRerunIsNoOpFill,
-	reviseBesidePredecessor,
 	assertProposalEvidenceTrail,
 	type TestMessage,
 } from "./helpers.js";
@@ -150,12 +150,7 @@ describe("files-in-play component tests", () => {
 	it("re-running the same recipe is idempotent: no new nodes, keys unchanged", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "churn-idem");
-			await insertMessages(db, "churn-idem", churningSessionMessages());
-
-			await assertPlainRerunIsNoOpFill(mockFramework(db), filesInPlayAnalyzer, "churn-idem", () =>
-				readAnalyzerNodes(db, ANALYZER_ID),
-			);
+			await expectPlainRerunIsNoOpFill(db, filesInPlayAnalyzer, "churn-idem", churningSessionMessages());
 		} finally {
 			await close();
 		}
@@ -164,15 +159,7 @@ describe("files-in-play component tests", () => {
 	it("linear work over fresh files stays a clean metric node with no proposals", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "churn-linear");
-			await insertMessages(db, "churn-linear", linearSessionMessages());
-
-			const fw = mockFramework(db);
-			await fw.register(filesInPlayAnalyzer);
-			const summary = await fw.run("churn-linear", {});
-			assert.equal(summary.errors.length, 0);
-
-			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
+			const nodes = await runAnalyzerOverSession(db, filesInPlayAnalyzer, "churn-linear", linearSessionMessages());
 			assert.equal(nodes.length, 1, "a clean session is still analysed");
 			assert.equal(nodes[0]!.node_kind, "metric", "no proposals below threshold");
 
@@ -194,25 +181,15 @@ describe("files-in-play component tests", () => {
 	it("changing config marks nodes stale for the `config` reason and revises beside them", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "churn-config");
-			await insertMessages(db, "churn-config", churningSessionMessages());
-
-			const fw = mockFramework(db);
-			await fw.register(filesInPlayAnalyzer);
-
-			await fw.run("churn-config", {});
-			const before = await readAnalyzerNodes(db, ANALYZER_ID);
-			assert.equal(before.length, 1);
-
 			// A tighter window changes the resolved config fingerprint → the unit
 			// goes stale for the `config` reason; the revise run recomputes it,
 			// preserving the old version as lineage.
-			const narrowed = mockFrameworkWithOverrides(db, ANALYZER_ID, { windowSize: 4 });
-			await narrowed.register(filesInPlayAnalyzer);
-			await reviseBesidePredecessor(db, narrowed, ANALYZER_ID, "churn-config", before);
+			const { revised } = await expectConfigChangeRevises(db, filesInPlayAnalyzer, "churn-config", churningSessionMessages(), {
+				windowSize: 4,
+			});
 
 			// The revision itself is idempotent under its own recipe.
-			const rerun = await narrowed.run("churn-config", {});
+			const rerun = await revised.run("churn-config", {});
 			assert.equal(rerun.nodesProduced, 0, "revised unit is current afterwards");
 		} finally {
 			await close();

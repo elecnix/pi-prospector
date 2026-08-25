@@ -13,14 +13,13 @@ import {
 	insertSession,
 	insertMessages,
 	mockFramework,
-	mockFrameworkWithOverrides,
 	readAnalyzerNodes,
-
 	sessionProposals,
 	bashCall,
 	readCall,
-	assertPlainRerunIsNoOpFill,
-	reviseBesidePredecessor,
+	runAnalyzerOverSession,
+	expectPlainRerunIsNoOpFill,
+	expectConfigChangeRevises,
 	assertProposalEvidenceTrail,
 	type TestMessage,
 } from "./helpers.js";
@@ -202,15 +201,7 @@ describe("compression-checklist component test", () => {
 	it("a session without compactions plans no unit at all", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "retrac-none");
-			await insertMessages(db, "retrac-none", uncompactedSession());
-
-			const fw = mockFramework(db);
-			await fw.register(compressionChecklistAnalyzer);
-			const summary = await fw.run("retrac-none", {});
-			assert.equal(summary.errors.length, 0);
-
-			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
+			const nodes = await runAnalyzerOverSession(db, compressionChecklistAnalyzer, "retrac-none", uncompactedSession());
 			assert.equal(nodes.length, 0, "nothing to grade");
 		} finally {
 			await close();
@@ -220,12 +211,7 @@ describe("compression-checklist component test", () => {
 	it("re-running the same recipe is idempotent: no new nodes, keys unchanged", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "retrac-idem");
-			await insertMessages(db, "retrac-idem", lossySession());
-
-			await assertPlainRerunIsNoOpFill(mockFramework(db), compressionChecklistAnalyzer, "retrac-idem", () =>
-				readAnalyzerNodes(db, ANALYZER_ID),
-			);
+			await expectPlainRerunIsNoOpFill(db, compressionChecklistAnalyzer, "retrac-idem", lossySession());
 		} finally {
 			await close();
 		}
@@ -234,22 +220,12 @@ describe("compression-checklist component test", () => {
 	it("changing config marks nodes stale for the `config` reason and revises beside them", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "retrac-config");
-			await insertMessages(db, "retrac-config", lossySession());
-
-			const fw = mockFramework(db);
-			await fw.register(compressionChecklistAnalyzer);
-
-			await fw.run("retrac-config", {});
-			const before = await readAnalyzerNodes(db, ANALYZER_ID);
-			assert.equal(before.length, 1);
-
 			// Raising the proposal threshold changes the resolved config fingerprint →
 			// the unit goes stale for the `config` reason; the revise run recomputes
 			// it, preserving the old version as lineage.
-			const raised = mockFrameworkWithOverrides(db, ANALYZER_ID, { minLostLeadsForProposal: 5 });
-			await raised.register(compressionChecklistAnalyzer);
-			const after = await reviseBesidePredecessor(db, raised, ANALYZER_ID, "retrac-config", before);
+			const { before, after } = await expectConfigChangeRevises(db, compressionChecklistAnalyzer, "retrac-config", lossySession(), {
+				minLostLeadsForProposal: 5,
+			});
 			const newNode = after.find((n) => n.input_key !== before[0]!.input_key)!;
 			assert.equal(newNode.node_kind, "metric", "with the threshold raised, the same evidence no longer earns a proposal");
 		} finally {

@@ -181,6 +181,78 @@ export function readCall(p: string): TestMessage["toolCalls"] {
 }
 
 /**
+ * Seed a session row plus its messages in one step, returning the message ids.
+ */
+export async function seedSession(db: AsyncDatabase, sessionId: string, messages: TestMessage[]): Promise<string[]> {
+	await insertSession(db, sessionId);
+	return insertMessages(db, sessionId, messages);
+}
+
+/**
+ * The plain-fill scenario: seed the session, register the analyzer on a fresh
+ * default framework, run once, and return its nodes. Fails on run errors so
+ * call sites can go straight to asserting node shape.
+ */
+export async function runAnalyzerOverSession(
+	db: AsyncDatabase,
+	analyzer: Analyzer,
+	sessionId: string,
+	messages: TestMessage[],
+): Promise<AnalysisNodeRow[]> {
+	await seedSession(db, sessionId, messages);
+	const fw = mockFramework(db);
+	await fw.register(analyzer);
+	const summary = await fw.run(sessionId, {});
+	assert.equal(summary.errors.length, 0, `run should have no errors: ${summary.errors.join("; ")}`);
+	return readAnalyzerNodes(db, analyzer.def.id);
+}
+
+/**
+ * The shared idempotency check over an ad-hoc seeded session: seed, then
+ * {@link assertPlainRerunIsNoOpFill} — the second plain fill produced nothing
+ * while every recipe identity stayed untouched.
+ */
+export async function expectPlainRerunIsNoOpFill(
+	db: AsyncDatabase,
+	analyzer: Analyzer,
+	sessionId: string,
+	messages: TestMessage[],
+): Promise<void> {
+	await seedSession(db, sessionId, messages);
+	await assertPlainRerunIsNoOpFill(mockFramework(db), analyzer, sessionId, () => readAnalyzerNodes(db, analyzer.def.id));
+}
+
+/**
+ * The standard config-change scenario: run once under defaults (asserting
+ * exactly one unit), then under `overrides` via
+ * {@link reviseBesidePredecessor}. Returns the pre- and post-revision nodes and
+ * the override framework so call sites can keep asserting version-specific
+ * content or re-run against the revised recipe.
+ */
+export async function expectConfigChangeRevises(
+	db: AsyncDatabase,
+	analyzer: Analyzer,
+	sessionId: string,
+	messages: TestMessage[],
+	overrides: Record<string, unknown>,
+): Promise<{ before: AnalysisNodeRow[]; after: AnalysisNodeRow[]; revised: AnalyzerFramework }> {
+	await seedSession(db, sessionId, messages);
+
+	const fw = mockFramework(db);
+	await fw.register(analyzer);
+	await fw.run(sessionId, {});
+	const before = await readAnalyzerNodes(db, analyzer.def.id);
+	assert.equal(before.length, 1);
+
+	// A config change alters the resolved fingerprint → the unit goes stale for
+	// the `config` reason; the revise run recomputes it beside its predecessor.
+	const revised = mockFrameworkWithOverrides(db, analyzer.def.id, overrides);
+	await revised.register(analyzer);
+	const after = await reviseBesidePredecessor(db, revised, analyzer.def.id, sessionId, before);
+	return { before, after, revised };
+}
+
+/**
  * The shared idempotency check: register the analyzer, run twice, and assert
  * the second plain fill produced nothing while leaving every recipe identity
  * (input/output keys) untouched.
