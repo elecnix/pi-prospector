@@ -4,12 +4,25 @@ import {
 	tokenize,
 	tokenSet,
 	rankTerms,
-	rankPhrases,
-	tokenizeSegments,
-	findPhraseHits,
+	type TermCount,
 	detectParalinguistic,
 	PARALINGUISTIC_MARKERS,
 } from "../../src/analyze/analyzers/lexicon-candidates/tokenize.js";
+import { rankPhrases, tokenizeSegments, findPhraseHits } from "../../src/analyze/analyzers/lexicon-candidates/phrases.js";
+
+/**
+ * The shared shape behind both rankers' assertions: rank `texts` under `limit`
+ * and require exactly this frequency table. Keeping the rankers pinned through
+ * one helper makes their behavioural equivalence explicit instead of accidental.
+ */
+function expectRanking(
+	rank: (texts: readonly string[], limit: number) => TermCount[],
+	texts: readonly string[],
+	limit: number,
+	expected: TermCount[],
+): void {
+	assert.deepEqual(rank(texts, limit), expected);
+}
 
 describe("tokenize", () => {
 	it("lowercases and splits on non-word characters", () => {
@@ -91,8 +104,7 @@ describe("tokenSet", () => {
 
 describe("rankTerms", () => {
 	it("ranks by count descending, then alphabetically, and caps", () => {
-		const ranked = rankTerms(["wrong again wrong", "again wrong", "zzz bbb"], 3);
-		assert.deepEqual(ranked, [
+		expectRanking(rankTerms, ["wrong again wrong", "again wrong", "zzz bbb"], 3, [
 			{ term: "wrong", count: 3 },
 			{ term: "again", count: 2 },
 			{ term: "bbb", count: 1 },
@@ -201,8 +213,7 @@ describe("multi-word phrases (#40)", () => {
 
 	describe("rankPhrases", () => {
 		it("counts adjacent pairs within segments, ranked by frequency then alphabetically", () => {
-			const ranked = rankPhrases(["wrong again wrong again", "wrong again. plain wrong again"], 10);
-			assert.deepEqual(ranked, [
+			expectRanking(rankPhrases, ["wrong again wrong again", "wrong again. plain wrong again"], 10, [
 				{ term: "wrong again", count: 4 },
 				{ term: "again wrong", count: 1 },
 				{ term: "plain wrong", count: 1 },

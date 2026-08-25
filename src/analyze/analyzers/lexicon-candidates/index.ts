@@ -26,7 +26,8 @@ import type {
 } from "../../types.js";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { rankTerms, rankPhrases, tokenize, TermCount } from "./tokenize.js";
+import { rankTerms, tokenize, TermCount } from "./tokenize.js";
+import { rankPhrases } from "./phrases.js";
 import { DEFAULT_LEXICON_CANDIDATES_CONFIG, type LexiconCandidatesConfig } from "./config.js";
 import { Type, type Static } from "typebox";
 

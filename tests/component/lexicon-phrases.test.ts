@@ -17,9 +17,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { tempDb, insertSession, insertMessages } from "./helpers.js";
+import { tempDb, insertSession, insertMessages, lexiconMock, classifyCallsFor } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
-import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
 import {
@@ -39,38 +38,13 @@ import {
 } from "../../src/analyze/analyzers/turn-frustration/index.js";
 import { getNodesByAnalyzer } from "../../src/db/analysis-queries.js";
 import { computeSourceSetHash } from "../../src/analyze/input-hash.js";
-import type { LLMRequest } from "../../src/analyze/types.js";
 
 /** Entries our stub model calls frustration; everything else comes back neutral. */
 const FRUSTRATED_ENTRIES = new Set(["putain", "laisse tomber", "trop lent", "tomber"]);
 
-function phraseMock() {
-	return createMockLLM({
-		responder: (req: LLMRequest) => {
-			const entry = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
-			const frustrated = FRUSTRATED_ENTRIES.has(entry);
-			return {
-				text: "x",
-				structured: {
-					polarity: frustrated ? "frustration" : "neutral",
-					category: frustrated ? "dissatisfaction" : "none",
-					language: frustrated ? "fr" : "und",
-					confidence: 0.9,
-					rationale: frustrated ? "disengaged dissatisfaction" : "ordinary vocabulary",
-				},
-			};
-		},
-	});
-}
-
-/** Adjudications of exactly one entry, matched exactly so `laisse` never counts for `laisse tomber`. */
-function callsFor(llm: ReturnType<typeof phraseMock>, entry: string): number {
-	return llm.calls.filter((c) => c.tool?.name === "classify_term" && c.user === `TERM: ${entry}`).length;
-}
-
 async function frameworkFor(
 	db: Parameters<typeof getNodesByAnalyzer>[0],
-	llm: ReturnType<typeof phraseMock>,
+	llm: ReturnType<typeof lexiconMock>,
 	configOverrides?: Record<string, Record<string, unknown>>,
 ) {
 	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS, configOverrides });
@@ -91,7 +65,7 @@ describe("phrase nomination (#40)", () => {
 				{ role: "assistant", text: "ok" },
 			]);
 
-			const llm = phraseMock();
+			const llm = lexiconMock(FRUSTRATED_ENTRIES);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1", { analyzerIds: [LEXICON_CANDIDATES_DEF.id] });
 
@@ -114,7 +88,7 @@ describe("phrase nomination (#40)", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "aa bb cc dd ee ff gg hh" }]);
 
-			const llm = phraseMock();
+			const llm = lexiconMock(FRUSTRATED_ENTRIES);
 			const framework = await frameworkFor(db, llm, { [LEXICON_CANDIDATES_DEF.id]: { maxPhrasesPerSession: 2 } });
 			await framework.run("s1", { analyzerIds: [LEXICON_CANDIDATES_DEF.id] });
 
@@ -136,7 +110,7 @@ describe("phrase adjudication (#40)", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "bon je laisse tomber alors" }, { role: "assistant", text: "ok" }]);
 
-			const llm = phraseMock();
+			const llm = lexiconMock(FRUSTRATED_ENTRIES);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 
@@ -163,13 +137,13 @@ describe("phrase adjudication (#40)", () => {
 			await insertSession(db, "s2");
 			await insertMessages(db, "s2", [{ role: "user", text: "laisse tomber, franchement" }, { role: "assistant", text: "ok" }]);
 
-			const llm = phraseMock();
+			const llm = lexiconMock(FRUSTRATED_ENTRIES);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 			await framework.run("s2");
 
-			assert.equal(callsFor(llm, "laisse tomber"), 1, "adjudicated once for the whole corpus");
-			assert.equal(callsFor(llm, "laisse"), 1, "the word was judged separately, as itself");
+			assert.equal(classifyCallsFor(llm, "laisse tomber"), 1, "adjudicated once for the whole corpus");
+			assert.equal(classifyCallsFor(llm, "laisse"), 1, "the word was judged separately, as itself");
 		} finally {
 			await close();
 		}
@@ -186,7 +160,7 @@ describe("phrase matching (#40)", () => {
 				{ role: "assistant", text: "ok" },
 			]);
 
-			const llm = phraseMock();
+			const llm = lexiconMock(FRUSTRATED_ENTRIES);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 
@@ -216,7 +190,7 @@ describe("overlap policy (#40)", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "bon je laisse tomber" }, { role: "assistant", text: "ok" }]);
 
-			const llm = phraseMock();
+			const llm = lexiconMock(FRUSTRATED_ENTRIES);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 
@@ -245,7 +219,7 @@ describe("overlap policy (#40)", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "laisse tomber ou tomber" }, { role: "assistant", text: "ok" }]);
 
-			const llm = phraseMock();
+			const llm = lexiconMock(FRUSTRATED_ENTRIES);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 
@@ -270,7 +244,7 @@ describe("phrase idempotency (#40)", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "je laisse tomber, c'est trop lent" }, { role: "assistant", text: "ok" }]);
 
-			const llm = phraseMock();
+			const llm = lexiconMock(FRUSTRATED_ENTRIES);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 			const spent = llm.calls.length;

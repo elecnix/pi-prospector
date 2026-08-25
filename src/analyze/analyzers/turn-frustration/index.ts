@@ -47,7 +47,8 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
-import { detectParalinguistic, findPhraseHits, isPhrase, tokenize } from "../lexicon-candidates/tokenize.js";
+import { detectParalinguistic, tokenize } from "../lexicon-candidates/tokenize.js";
+import { findPhraseHits, isPhrase } from "../lexicon-candidates/phrases.js";
 import {
 	FRUSTRATION_LEXICON_DEF,
 	type FrustrationLexiconProperties,
