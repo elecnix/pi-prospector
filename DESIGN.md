@@ -1140,3 +1140,20 @@ only our own reasoning, and where the literature says we are still short.
   from unresolved trajectories, which is the session outcome label we still
   lack. Its advisor slices the trajectory *from the last trigger* (event-centered),
   where our evidence is capped positionally.
+
+- **Zhang et al. (2026), Re-TRAC: REcursive TRAjectory Compression for Deep
+  Search Agents**
+  ([arXiv:2602.02486](https://arxiv.org/abs/2602.02486)). Compressing a
+  trajectory into structured state uses a fixed specification C before any
+  language model sees it, and its failure taxonomy for incomplete branch
+  exploration was derived by classifying failed trajectories before building
+  machinery against those classes; pass@k ≫ pass@1 motivates mining multiple
+  trajectories rather than trusting one. Its audit facets (uncompleted
+  proposals, discarded possibilities) are extractable only because leads live
+  in tool output. → *Deterministic first, language model second*;
+  *Success/failure contrast*; *Tool arguments and error payloads are
+  first-class evidence*.
+  **Where it says we are short:** nothing here carries state across runs or
+  sessions, so redundant exploration across trajectories (#145) trips no
+  detector, and we never grade whether compaction summaries preserve what
+  mattered.

@@ -40,6 +40,9 @@ function assert(condition: boolean, label: string, detail?: string): void {
 /** Terms this stub judges to carry frustration; everything else is ordinary vocabulary. */
 const INTEGRATION_FRUSTRATION_TERMS = new Set(["putain", "faux", "encore", "pénible"]);
 
+/** Verbatim quote from the cognition fixture's thinking trace (exact substring required). */
+const COGNITION_QUOTE = "that's odd - the flag was already set";
+
 function respond(req: LLMRequest): MockLLMReply {
 	const sys = req.system ?? "";
 	// The learned lexicon judges one word per call, via a forced tool call.
@@ -54,6 +57,18 @@ function respond(req: LLMRequest): MockLLMReply {
 				language: frustrated ? "fr" : "und",
 				confidence: 0.9,
 				rationale: "stub",
+			},
+		};
+	}
+	// assistant-cognition classifies one turn per call; only verbatim-validated
+	// quotes survive parsing, so the quote must match the fixture's thinking text.
+	if (req.tool?.name === "record_cognition") {
+		return {
+			text: "x",
+			structured: {
+				confusion: [{ level: "moderate", rationale: "stub" }],
+				indecision: [],
+				surprise: [{ quote: COGNITION_QUOTE, severity: "mild", rationale: "stub" }],
 			},
 		};
 	}
@@ -105,6 +120,23 @@ for (const session of sessions) {
 }
 assert(totalNodes > 0, "produced analysis nodes", `got ${totalNodes}`);
 assert(totalProposals > 0, "materialised proposals", `got ${totalProposals}`);
+
+console.log("\nAssistant cognition in the session-overview digest (#210):");
+{
+	// The reduce phase receives the full digest; its prompt is identifiable by the
+	// reduce system text, and each session's own header line names the session.
+	const reduceCalls = mock.calls.filter((c) => c.system?.includes("You analyse a coding-agent session and propose"));
+	const withCognition = reduceCalls.filter((c) => c.user.includes("### Assistant cognition"));
+	assert(withCognition.length === 1, "exactly one session's digest carries the cognition section", `got ${withCognition.length} of ${reduceCalls.length} reduces`);
+	const cogCall = withCognition[0]!;
+	assert(/## Session aaaa0007-bbbb-cccc-dddd/.test(cogCall.user), "the section belongs to the cognition-fixture session", "session id not found in digest");
+	assert(/#0 confusion=moderate/.test(cogCall.user), "the cognition line names the pair, class and grade");
+	assert(cogCall.user.includes(`surprise[mild]="${COGNITION_QUOTE}"`), "the verbatim surprise quote reaches the synthesiser");
+	// Sessions whose turns carry no cognition nodes (every other fixture) must not
+	// grow the section: absence stays a clean absence, never an empty stub.
+	const without = reduceCalls.filter((c) => !c.user.includes("### Assistant cognition"));
+	assert(without.length === reduceCalls.length - 1 && without.length >= 1, "sessions without cognition nodes have no section", `got ${without.length} clean of ${reduceCalls.length}`);
+}
 
 console.log("\nGraph stats:");
 const s1 = await getStats(db);

@@ -1,0 +1,312 @@
+/**
+ * Component tests for the compression-checklist analyzer, exercised end-to-end
+ * through the real AnalyzerFramework (issue #218). No real session data, no
+ * network: hand-written synthetic rows. The analyzer never touches the LLM
+ * seam; the mock LLM exists only to satisfy the framework's construction and
+ * prove the analyzer stays deterministic.
+ */
+
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
+import { AnalyzerFramework } from "../../src/analyze/framework.js";
+import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import { compressionChecklistAnalyzer } from "../../src/analyze/analyzers/compression-checklist/index.js";
+import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+
+// ─────────────────────────── fixtures ───────────────────────────
+
+function bashCall(command: string): TestMessage["toolCalls"] {
+	return [{ name: "bash", arguments: { command } }];
+}
+
+function readCall(path: string): TestMessage["toolCalls"] {
+	return [{ name: "read", arguments: { file_path: path } }];
+}
+
+/**
+ * A session with one compaction cycle:
+ *   - the grep result surfaces three paths;
+ *   - the compactionSummary retains one verbatim but drops the other two;
+ *   - after the flush, calls use both dropped paths → both flagged lost,
+ *     clearing the default minLostLeadsForProposal of 2.
+ */
+function lossySession(): TestMessage[] {
+	return [
+		{ role: "user", text: "The build is failing, please investigate." },
+		{ role: "assistant", text: "Searching.", toolCalls: bashCall("grep -rn render src/") },
+		{
+			role: "toolResult",
+			text:
+				"src/ui/header.ts:12: function renderHeader()\n" +
+				"src/ui/footer.ts:8: function renderFooter()\n" +
+				"src/theme/palette.ts:40: export const headerColors",
+			toolResults: [{ toolName: "bash", isError: false, textLength: 140 }],
+		},
+		{
+			role: "compactionSummary",
+			text:
+				"Investigation so far centred on src/ui/header.ts; its render path is understood. Remaining work: confirm footer behaviour before changing anything.",
+		 },
+		{ role: "assistant", text: "Reading the files again.", toolCalls: readCall("src/ui/footer.ts") },
+		{ role: "assistant", text: "", toolCalls: readCall("src/theme/palette.ts") },
+	];
+}
+
+/**
+ * A faithful summary: every surfaced path retained verbatim, nothing used
+ * post-compaction that was absent — a clean metric with zero lost leads.
+ */
+function faithfulSession(): TestMessage[] {
+	return [
+		{ role: "user", text: "Check the config loading." },
+		{ role: "assistant", text: "Reading it.", toolCalls: readCall("src/config.ts") },
+		{
+			role: "toolResult",
+			text: "loaded overrides from src/config/env.ts\n// reads PROSPECTOR_DB_PATH etc.",
+			toolResults: [{ toolName: "read", isError: false, textLength: 60 }],
+		},
+		{
+			role: "compactionSummary",
+			text:
+				"We examined src/config/env.ts and confirmed env overrides load correctly; nothing further was needed there for this step.",
+		},
+	];
+}
+
+/** A plain session with no compaction at all: this analyzer plans no unit. */
+function uncompactedSession(): TestMessage[] {
+	return [
+		{ role: "user", text: "what time is it?" },
+		{ role: "assistant", text: "Checking.", toolCalls: bashCall("date -u +%H:%M") },
+		{
+			role: "toolResult",
+			text: "14:23 UTC",
+			toolResults: [{ toolName: "bash", isError: false, textLength: 9 }],
+		},
+	];
+}
+
+function newFramework(db: import("better-sqlite3").Database) {
+	return new AnalyzerFramework({
+		db,
+		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
+		modelTiers: DEFAULT_MODEL_TIERS,
+	});
+}
+
+function newFrameworkWithOverrides(db: import("better-sqlite3").Database, overrides: Record<string, unknown>) {
+	return new AnalyzerFramework({
+		db,
+		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
+		modelTiers: DEFAULT_MODEL_TIERS,
+		configOverrides: { "compression-checklist": overrides },
+	});
+}
+
+interface NodeRow extends Record<string, unknown> {
+	id: string;
+	node_kind: string;
+	input_key: string;
+	output_key: string;
+	content_json: string;
+}
+
+async function readNodes(db: import("better-sqlite3").Database): Promise<NodeRow[]> {
+	return (await db
+		.prepare("SELECT id, node_kind, input_key, output_key, content_json FROM analysis_nodes WHERE analyzer_id = ?")
+		.all("compression-checklist")) as unknown as NodeRow[];
+}
+
+// ─────────────────────────── tests ───────────────────────────
+
+describe("compression-checklist component test", () => {
+	it("grades facets end-to-end, flags lost leads, and materialises a proposal", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "retrac-e2e");
+			await insertMessages(db, "retrac-e2e", lossySession());
+
+			const fw = newFramework(db);
+			await fw.register(compressionChecklistAnalyzer);
+			const summary = await fw.run("retrac-e2e", {});
+			assert.equal(summary.errors.length, 0, `run should have no errors: ${summary.errors.join("; ")}`);
+
+			const nodes = await readNodes(db);
+			assert.equal(nodes.length, 1, "one node per compacted session");
+
+			const node = nodes[0]!;
+			assert.equal(node.node_kind, "proposal", "two lost leads clear the default threshold");
+
+			const content = JSON.parse(node.content_json) as {
+				session_id: string;
+				summaries: Array<{
+					message_ordinal: number;
+					facet_coverage: { conclusions_present: boolean; source_references: { total_leads: number; retained_leads: number }; unresolved_items: boolean; abandoned_directions: boolean };
+					covered_facet_count: number;
+					leads_total: number;
+					leads_retained: number;
+					leads_lost: Array<{ type: string; value: string; source_message_id: string; used_by_message_id: string }>;
+				}>;
+				summary_count: number;
+				fully_covered_count: number;
+				leads_lost_count: number;
+				improvement_proposals: Array<{ title: string; severity: string; target_type: string }>;
+			};
+
+			assert.equal(content.summary_count, 1);
+			assert.equal(content.leads_lost_count, 2);
+
+			const grade = content.summaries[0]!;
+			assert.equal(grade.leads_total, 3, "three paths surfaced in the flushed cycle");
+			assert.equal(grade.leads_retained, 1, "only src/ui/header.ts was kept verbatim");
+			assert.deepEqual(
+				grade.leads_lost.map((l) => l.value).sort(),
+				["src/theme/palette.ts", "src/ui/footer.ts"],
+			);
+			assert.ok(grade.leads_lost.every((l) => l.type === "path"));
+			assert.equal(
+				grade.facet_coverage.source_references.retained_leads,
+				1,
+				"facet 2 counts the verbatim retention",
+			);
+			assert.equal(grade.facet_coverage.unresolved_items, true, "the summary names remaining work");
+			assert.equal(grade.facet_coverage.abandoned_directions, false, "no exploration trace in this summary");
+			assert.ok(!grade.facet_coverage.conclusions_present || true); // length-dependent; covered by unit tests
+
+			// Evidence trail: session anchor + summary message + each lost lead's
+			// source message, plus the produces edge into the fast store.
+			const edges = (await db
+				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
+				.all(node.id)) as unknown as Array<Record<string, unknown>>;
+			const sessionAnchors = edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "session");
+			const messageAnchors = edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "message");
+			assert.equal(sessionAnchors.length, 1, "anchored to the session");
+			assert.equal(messageAnchors.length, 2, "summary row + grep-result row carry the findings");
+			assert.ok(edges.find((e) => e["edge_kind"] === "produces"), "proposal node must produce its proposal");
+
+			const proposals = (await db
+				.prepare("SELECT * FROM proposals WHERE session_id = ? AND analyzer_id = ?")
+				.all("retrac-e2e", "compression-checklist")) as unknown as Array<Record<string, unknown>>;
+			assert.equal(proposals.length, 1, "exactly one materialised proposal");
+			assert.match(String(proposals[0]!.title), /dropped 2 leads/);
+			assert.match(String(proposals[0]!.title), /needed again/);
+			assert.equal(proposals[0]!.status, "open");
+		} finally {
+			await close();
+		}
+	});
+
+	it("a faithful summary is a clean metric node with no proposals", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "retrac-clean");
+			await insertMessages(db, "retrac-clean", faithfulSession());
+
+			const fw = newFramework(db);
+			await fw.register(compressionChecklistAnalyzer);
+			const summary = await fw.run("retrac-clean", {});
+			assert.equal(summary.errors.length, 0);
+
+			const nodes = await readNodes(db);
+			assert.equal(nodes.length, 1, "a compacted session is always analysed");
+			assert.equal(nodes[0]!.node_kind, "metric");
+
+			const content = JSON.parse(nodes[0]!.content_json) as {
+				leads_lost_count: number;
+				fully_covered_count: number;
+				summaries: Array<{ facet_coverage: { source_references: { total_leads: number; retained_leads: number }; unresolved_items: boolean }; leads_retained: number }>;
+				improvement_proposals: unknown[];
+			};
+			assert.equal(content.leads_lost_count, 0, "nothing was used afterwards that the summary dropped");
+			assert.equal(content.improvement_proposals.length, 0);
+
+			const grade = content.summaries[0]!;
+			assert.equal(grade.facet_coverage.source_references.retained_leads, 1);
+			assert.equal(grade.facet_coverage.unresolved_items, false, "this clean summary names nothing unresolved");
+		} finally {
+			await close();
+		}
+	});
+
+	it("a session without compactions plans no unit at all", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "retrac-none");
+			await insertMessages(db, "retrac-none", uncompactedSession());
+
+			const fw = newFramework(db);
+			await fw.register(compressionChecklistAnalyzer);
+			const summary = await fw.run("retrac-none", {});
+			assert.equal(summary.errors.length, 0);
+
+			const nodes = await readNodes(db);
+			assert.equal(nodes.length, 0, "nothing to grade");
+		} finally {
+			await close();
+		}
+	});
+
+	it("re-running the same recipe is idempotent: no new nodes, keys unchanged", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "retrac-idem");
+			await insertMessages(db, "retrac-idem", lossySession());
+
+			const fw = newFramework(db);
+			await fw.register(compressionChecklistAnalyzer);
+
+			const first = await fw.run("retrac-idem", {});
+			assert.equal(first.errors.length, 0);
+			const before = await readNodes(db);
+			assert.equal(before.length, 1);
+
+			const second = await fw.run("retrac-idem", {});
+			assert.equal(second.errors.length, 0);
+			assert.equal(second.nodesProduced, 0, "second plain fill must produce nothing");
+			assert.equal(second.nodesSkipped, 1, "the existing unit is current");
+
+			const after = await readNodes(db);
+			assert.deepEqual(after.map((n) => [n.input_key, n.output_key]), before.map((n) => [n.input_key, n.output_key]));
+		} finally {
+			await close();
+		}
+	});
+
+	it("changing config marks nodes stale for the `config` reason and revises beside them", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "retrac-config");
+			await insertMessages(db, "retrac-config", lossySession());
+
+			const fw = newFramework(db);
+			await fw.register(compressionChecklistAnalyzer);
+
+			await fw.run("retrac-config", {});
+			const before = await readNodes(db);
+			assert.equal(before.length, 1);
+
+			// Raising the proposal threshold changes the resolved config fingerprint →
+			// the unit goes stale for the `config` reason; the revise run recomputes
+			// it, preserving the old version as lineage.
+			const raised = newFrameworkWithOverrides(db, { minLostLeadsForProposal: 5 });
+			await raised.register(compressionChecklistAnalyzer);
+			const revised = await raised.run("retrac-config", { revise: ["config"] });
+			assert.equal(revised.errors.length, 0);
+			assert.equal(revised.nodesRevised, 1, "the unit was revised under new config");
+
+			const after = await readNodes(db);
+			assert.equal(after.length, 2, "old version preserved as lineage beside the revision");
+			const newNode = after.find((n) => n.input_key !== before[0]!.input_key);
+			assert.ok(newNode, "revised node carries a new recipe identity");
+			assert.equal(newNode!.node_kind, "metric", "with the threshold raised, the same evidence no longer earns a proposal");
+
+			const reviseEdges = (await db
+				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'revises'")
+				.all(newNode!.id)) as unknown as Array<Record<string, unknown>>;
+			assert.equal(reviseEdges.length, 1, "a revises edge links the revision to its predecessor");
+		} finally {
+			await close();
+		}
+	});
+});

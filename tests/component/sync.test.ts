@@ -16,6 +16,30 @@ function adps(piDir: string, claudeDir: string) {
 	return [new PiFileSource(piDir), new ClaudeFileSource(claudeDir)];
 }
 
+/** Sync all fixtures once into a fresh temp db and return it (caller closes). */
+async function syncedDb() {
+	const { db, close } = await tempDb();
+	await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
+	return { db, close };
+}
+
+/** Fetch one message row and assert its role/content_text. */
+async function assertMessageRow(
+	db: AsyncDatabase,
+	sessionId: string,
+	id: string,
+	expectedRole: string,
+	expectedContent: string | null,
+) {
+	const rows = (await db
+		.prepare("SELECT role, content_text FROM messages WHERE session_id = ? AND id = ?")
+		.all(sessionId, id)) as Array<{ role: string; content_text: string | null }>;
+	const row = rows[0];
+	assert.ok(row, `${sessionId}/${id} row is indexed`);
+	assert.equal(row.role, expectedRole);
+	assert.equal(row.content_text, expectedContent);
+}
+
 describe("end-to-end sync", () => {
 	it("syncs simple.jsonl into database", async () => {
 		const { db, close } = await tempDb();
@@ -49,11 +73,33 @@ describe("end-to-end sync", () => {
 	});
 
 	it("handles compacted session (compactionSummary entries)", async () => {
-		const { db, close } = await tempDb();
+		const { db, close } = await syncedDb();
 		try {
-			await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 			const stats = await getStats(db);
 			assert.ok(stats.totalSessions >= 2, "should index at least 2 sessions (simple + compacted)");
+
+			// The canonical compactionSummary-typed fixture keeps its role and summary text.
+			const canonical = ((await db
+				.prepare("SELECT role, content_text FROM messages WHERE session_id = 'compacted-001' AND id = 'c1'")
+				.all()) as Array<{ role: string; content_text: string | null }>)[0];
+			assert.ok(canonical, "compactionSummary row is indexed");
+			assert.equal(canonical.role, "compactionSummary");
+			assert.ok(canonical.content_text && canonical.content_text.length > 0);
+		} finally {
+			await close();
+		}
+	});
+
+	it("normalizes a bare compaction entry type to the compactionSummary role (issue #150)", async () => {
+		const { db, close } = await syncedDb();
+		try {
+			// compaction-alias.jsonl carries `type: "compaction"` entries; they must land
+			// in-union as compactionSummary — with summary prose as content_text when present.
+			await assertMessageRow(db, "compaction-alias-001", "c9", "compactionSummary", "User asked for a repo summary; agent answered briefly.");
+
+			// A compaction entry with no summary and no message.content keeps
+			// content_text NULL but still lands on the canonical role.
+			await assertMessageRow(db, "compaction-alias-001", "c10", "compactionSummary", null);
 		} finally {
 			await close();
 		}

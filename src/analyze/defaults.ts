@@ -9,6 +9,7 @@ import type { Analyzer } from "./types.js";
 import { loadCustomAnalyzers, type LoadError } from "./loader.js";
 import { turnPairCoreAnalyzer } from "./analyzers/turn-pair-core/index.js";
 import { turnPairLLMAnalyzer } from "./analyzers/turn-pair-llm/index.js";
+import { assistantCognitionAnalyzer } from "./analyzers/assistant-cognition/index.js";
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
@@ -27,6 +28,11 @@ import { presidioAnalyzer } from "./analyzers/presidio/index.js";
 import { piicatcherAnalyzer } from "./analyzers/piicatcher/index.js";
 import { dataprofilerAnalyzer } from "./analyzers/dataprofiler/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
+import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
+import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
+import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
+import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
+import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -37,9 +43,15 @@ export const DEFAULT_ANALYZER_IDS = [
 	"frustration-lexicon",
 	"turn-frustration",
 	"turn-pair-llm",
+	"assistant-cognition",
 	"tool-trajectory",
 	"failure-modes",
 	"revive-chains",
+	"uncompleted-leads",
+	"compression-checklist",
+	"language-mismatch",
+	"session-ending",
+	"files-in-play",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -67,6 +79,11 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	frustrationLexiconAnalyzer,
 	turnFrustrationAnalyzer,
 	turnPairLLMAnalyzer,
+	// The assistant's own cognitive state, per turn: confusion, indecision, and
+	// surprise read from the thinking trace and response text. Depends only on
+	// turn-pair-core (it needs the turn construction, not the friction score), so
+	// it sits beside the other per-turn LLM analyzer.
+	assistantCognitionAnalyzer,
 	toolTrajectoryAnalyzer,
 	// What failed, of every kind. Deterministic and standalone; ordered next to
 	// tool-trajectory because the two read the same action stream — one for the
@@ -77,6 +94,42 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// waste that no single call records — a chain of individually successful
 	// revives. Ordered next to it for the same reason.
 	reviveChainsAnalyzer,
+	// The inverse waste of the trajectory analyzers: valuable work that never
+	// happened. Deterministic and standalone (it reads the same action stream as
+	// tool-trajectory and failure-modes, for what tool output surfaced vs. what
+	// later calls pursued); placed before the synthesizer so a future
+	// session-overview consumer can declare it as a dependency without reordering.
+	uncompletedLeadsAnalyzer,
+	// The compaction-quality twin of context-economy's compaction *timing*
+	// analysis (#218): where context-economy prices when a flush fired, this
+	// grades what the flush kept. Deterministic, standalone — the compaction
+	// boundary is a conversation role, not derived analysis — so it declares no
+	// dependency; it reuses uncompleted-leads' pure extractor and matcher over
+	// the same action stream (shared functions, no analysis edge).
+	compressionChecklistAnalyzer,
+	// Language agreement between the user, the agent, and the harness's
+	// compaction summaries. Session-level, standalone, deterministic (a
+	// Unicode-block script heuristic — no LLM, no new dependencies); placed
+	// beside the other compaction-adjacent grader so its findings sit in the
+	// same region of the registry.
+	languageMismatchAnalyzer,
+	// How each session ended — resolved / abandoned / handed-off / errored /
+	// the conservative unclear — read deterministically from the transcript tail
+	// and the shared action stream (#102). Emits a metric node only: the label
+	// is ranking input for downstream synthesis, never a detection gate, so no
+	// proposal flows from it. Standalone, deterministic; placed with the other
+	// session-level deterministic graders, before the synthesizer, so a future
+	// consumer can declare it as a dependency without reordering.
+	sessionEndingAnalyzer,
+	// Which files each session had in play, and how much it churned over that
+	// set — repeated read→edit→read cycling where the agent keeps reopening
+	// files it already holds. The waste twin of the file-touch consumers:
+	// uncompleted-leads sees files nobody opened, this sees files opened too
+	// many times. Session-level, standalone, deterministic (no LLM); reads the
+	// same action stream as the trajectory and failure analyzers. Placed with
+	// the other session-level deterministic graders, before the synthesizer, so
+	// a future consumer can declare it as a dependency without reordering.
+	filesInPlayAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,

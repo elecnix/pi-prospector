@@ -28,6 +28,7 @@ import { TURN_PAIR_LLM_DEF } from "../turn-pair-llm/index.js";
 import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
 import { FAILURE_MODES_DEF } from "../failure-modes/index.js";
 import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
+import { ASSISTANT_COGNITION_DEF } from "../assistant-cognition/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
 import { MAP_PROMPT, MAP_PROMPT_HASH, MAP_TOOL, buildMapPrompt, parseMapResponse, parseMapObject, type MapSummary } from "./prompt-map.js";
 import {
@@ -50,9 +51,9 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	id: "session-overview",
 	label: "Session Analysis & Proposals",
 	description:
-		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, tool-trajectory, failure-modes, turn-frustration, and user-reply-acts nodes; always emits a node, even for clean sessions.",
+		"Map-reduces a session into a summary, positive signals, and ranked improvement proposals (enumerate-then-propose). Consumes turn-pair-core, turn-pair-llm, tool-trajectory, failure-modes, turn-frustration, assistant-cognition, and user-reply-acts nodes; always emits a node, even for clean sessions.",
 	anchorSpan: "full_session",
-	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id, FAILURE_MODES_DEF.id, TURN_FRUSTRATION_DEF.id, "user-reply-acts"],
+	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id, FAILURE_MODES_DEF.id, TURN_FRUSTRATION_DEF.id, ASSISTANT_COGNITION_DEF.id, "user-reply-acts"],
 	outputSchema: SessionOverviewProperties,
 };
 
@@ -96,7 +97,18 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// the trajectory recorded it and the turn read as a short reply. Minor: the
 	// digest and prompt gain a channel; the synthesis contract is otherwise
 	// unchanged.
-	minor: 7,
+	// 1.8: assistant cognition in the digest (issue #210) — the digest now carries
+	// an `### Assistant cognition` section built from assistant-cognition nodes:
+	// one capped line per signalling turn with confusion/indecision grades and
+	// verbatim-validated surprise quotes. Each class points the synthesiser at an
+	// artifact to fix (confusion → missing/unclear standing instruction or doc;
+	// indecision → ambiguous instructions or competing conventions; surprise →
+	// wrong assumption baked into standing instructions or a misleading tool
+	// description). The dependency is declared and its output keys fold into the
+	// source set, so changed cognition outputs correctly mark overviews stale.
+	// The section is bounded by `maxCognitionEntries`, mirroring turn-pair-llm's
+	// enrichment ceiling. Minor: additive channel; synthesis otherwise unchanged.
+	minor: 8,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -131,6 +143,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const failures = (ctx.dependencyNodes[FAILURE_MODES_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		const frustration = (ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		const replyActs = (ctx.dependencyNodes["user-reply-acts"] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
+		const cognition = (ctx.dependencyNodes[ASSISTANT_COGNITION_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 
 		const sources: SourceRef[] = [
 			...core.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
@@ -139,6 +152,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			...failures.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...frustration.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...replyActs.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+			...cognition.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 		];
 
 		// Cross-session contrast (issue #10): deterministically fold up to N smooth
@@ -169,6 +183,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const failureNodes = await ctx.getDependencyNodes(FAILURE_MODES_DEF.id);
 		const frustrationNodes = await ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id);
 		const replyActsNodes = await ctx.getDependencyNodes("user-reply-acts");
+		const cognitionNodes = await ctx.getDependencyNodes(ASSISTANT_COGNITION_DEF.id);
 		const messages = await ctx.getSessionMessages(ctx.sessionId);
 
 		const digest = buildDigest({
@@ -181,6 +196,8 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			failureNodes,
 			frustrationNodes,
 			replyActsNodes,
+			cognitionNodes,
+			maxCognitionEntries: config.maxCognitionEntries,
 		});
 		const statsText = JSON.stringify(
 			{
@@ -294,7 +311,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 		];
 		let ordinal = 1;
-		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes, ...failureNodes, ...frustrationNodes, ...replyActsNodes]) {
+		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes, ...failureNodes, ...frustrationNodes, ...replyActsNodes, ...cognitionNodes]) {
 			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.output_key, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
 		}
 		for (const h of usedPromptHashes) {

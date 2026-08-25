@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"compaction-alias-001","timestamp":"2026-06-02T10:00:00.000Z","cwd":"/home/user/project"}
+{"type":"message","id":"k1","parentId":null,"timestamp":"2026-06-02T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"summarise this repo for me"}],"timestamp":1780400001000}}
+{"type":"message","id":"k2","parentId":"k1","timestamp":"2026-06-02T10:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"It is a small utility library with a handful of scripts."}],"api":"anthropic","provider":"anthropic","model":"claude-sonnet-4-5","usage":{"input":80,"output":20,"cacheRead":0,"cacheWrite":0,"totalTokens":100,"cost":{"input":0.0008,"output":0.0004,"cacheRead":0,"cacheWrite":0,"total":0.0012}},"stopReason":"stop"}}
+{"type":"compaction","id":"c9","parentId":"k2","timestamp":"2026-06-02T10:01:00.000Z","summary":"User asked for a repo summary; agent answered briefly.","tokensBefore":400}
+{"type":"compaction","id":"c10","parentId":"c9","timestamp":"2026-06-02T10:01:01.000Z"}
+{"type":"message","id":"k3","parentId":"c9","timestamp":"2026-06-02T10:01:05.000Z","message":{"role":"user","content":[{"type":"text","text":"and what does the test suite cover?"}],"timestamp":1780400065000}}

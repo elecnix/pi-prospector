@@ -14,6 +14,7 @@ import type { ToolTrajectoryProperties } from "../tool-trajectory/index.js";
 import type { FailureModesProperties } from "../failure-modes/index.js";
 import { failureClass } from "../failure-modes/classes.js";
 import type { TurnFrustrationProperties } from "../turn-frustration/index.js";
+import type { AssistantCognitionProperties } from "../assistant-cognition/prompt.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
 
 /** Properties stored in a user-reply-acts classification node. */
@@ -70,6 +71,10 @@ export interface SessionDigest {
 	replyActsCount: number;
 	/** Per-reply act summary lines for the digest. */
 	replyActsLines: string[];
+	/** Turns carrying at least one non-empty assistant-cognition signal array (before capping). */
+	cognitionTurnCount: number;
+	/** Capped per-turn assistant-cognition digest lines (one per signalling turn). */
+	cognitionLines: string[];
 }
 
 export interface BuildDigestInput {
@@ -89,6 +94,14 @@ export interface BuildDigestInput {
 	frustrationNodes?: AnalysisNodeRow[];
 	/** user-reply-acts classification nodes (custom analyzer). */
 	replyActsNodes?: AnalysisNodeRow[];
+	/** assistant-cognition classification nodes for this session. */
+	cognitionNodes?: AnalysisNodeRow[];
+	/**
+	 * Hard ceiling on cognition digest lines per session — mirrors turn-pair-llm's
+	 * high-signal enrichment ceiling: full coverage on short sessions, bounded
+	 * digest on long ones.
+	 */
+	maxCognitionEntries?: number;
 }
 
 function safeParse<T>(json: string): T | null {
@@ -107,6 +120,11 @@ const MAX_DIGEST_TOOL_CALLS = 8;
 const MAX_DIGEST_TOOL_ERRORS = 4;
 const TOOL_ARGS_SNIPPET_MAX = 120;
 const TOOL_ERR_SNIPPET_MAX = 160;
+
+/** Default hard ceiling on assistant-cognition lines per session (issue #210). */
+const DEFAULT_MAX_COGNITION_ENTRIES = 50;
+/** Max characters of a surprise quote rendered into a cognition digest line. */
+const COGNITION_QUOTE_MAX = 120;
 
 /**
  * Build the compact tool-evidence fragment for a per-pair digest line: the tool
@@ -213,6 +231,38 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		if (acts.continuation) bits.push("continuation");
 		if (acts.other) bits.push("other");
 		replyActsLines.push(bits.join(" "));
+	}
+
+	// Parse assistant-cognition classification nodes; map user_message_id → props
+	// so a turn's cognitive state lands on its pair line, exactly as enrichment does.
+	const cognitionByUser = new Map<string, AssistantCognitionProperties>();
+	for (const node of input.cognitionNodes ?? []) {
+		const props = safeParse<AssistantCognitionProperties>(node.content_json);
+		if (props && props.user_message_id) cognitionByUser.set(props.user_message_id, props);
+	}
+
+	// Build per-turn assistant-cognition lines. Only turns carrying at least one
+	// non-empty signal array get a line — an abstention (all arrays empty) is stored
+	// analysis but nothing to show. Each line names the class(es), their grade(s),
+	// and — for surprise only — the truncated verbatim quote that grounds it. The
+	// section is capped per session like the high-signal enrichment ceiling: pairs
+	// are ordered by index, so the earliest signalling turns win deterministically.
+	let cognitionTurnCount = 0;
+	const cognitionLines: string[] = [];
+	const cognitionCap = Math.max(1, input.maxCognitionEntries ?? DEFAULT_MAX_COGNITION_ENTRIES);
+	for (const p of core) {
+		const cog = cognitionByUser.get(p.user_message_id);
+		if (!cog) continue;
+		if (cog.confusion.length === 0 && cog.indecision.length === 0 && cog.surprise.length === 0) continue;
+		cognitionTurnCount++;
+		if (cognitionLines.length >= cognitionCap) continue;
+		const bits: string[] = [`#${p.pair_index}`];
+		if (cog.confusion.length > 0) bits.push(`confusion=${cog.confusion.map((e) => e.level).join(",")}`);
+		if (cog.indecision.length > 0) bits.push(`indecision=${cog.indecision.map((e) => e.level).join(",")}`);
+		for (const s of cog.surprise) {
+			bits.push(`surprise[${s.severity}]="${truncateLine(s.quote, COGNITION_QUOTE_MAX)}"`);
+		}
+		cognitionLines.push(bits.join(" "));
 	}
 
 	const compactions = input.messages
@@ -386,6 +436,9 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	if (replyActsLines.length > 0) {
 		sections.push("", "### Reply acts", ...replyActsLines);
 	}
+	if (cognitionLines.length > 0) {
+		sections.push("", "### Assistant cognition", ...cognitionLines);
+	}
 	const text = sections.join("\n");
 
 	return {
@@ -410,6 +463,8 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		lowToolFailureDensity,
 		replyActsCount,
 		replyActsLines,
+		cognitionTurnCount,
+		cognitionLines,
 	};
 }
 
@@ -446,6 +501,9 @@ export function splitDigest(digest: SessionDigest, segmentChars: number): Digest
 			: []),
 		...(digest.replyActsLines.length > 0
 			? ["", "### Reply acts", ...digest.replyActsLines]
+			: []),
+		...(digest.cognitionLines.length > 0
+			? ["", "### Assistant cognition", ...digest.cognitionLines]
 			: []),
 	];
 

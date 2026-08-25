@@ -26,6 +26,12 @@ export const SessionOverviewConfig = Type.Object({
 	maxContrastSiblings: Type.Number(),
 	/** Minimum turn pairs a sibling must have to count as a substantial smooth example. */
 	minSiblingPairs: Type.Number(),
+	/**
+	 * Hard ceiling on assistant-cognition digest lines per session (issue #210).
+	 * Mirrors turn-pair-llm's enrichment ceiling: every signalling turn is shown
+	 * up to the cap, and long sessions stay bounded.
+	 */
+	maxCognitionEntries: Type.Number(),
 });
 export type SessionOverviewConfig = Static<typeof SessionOverviewConfig>;
 
@@ -46,4 +52,7 @@ export const DEFAULT_SESSION_OVERVIEW_CONFIG: SessionOverviewConfig = {
 	crossSessionContrast: true,
 	maxContrastSiblings: 3,
 	minSiblingPairs: 2,
+	// Same shape as turn-pair-llm's maxPairsHardCeiling: full coverage below it,
+	// hard bound above it.
+	maxCognitionEntries: 50,
 };
