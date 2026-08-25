@@ -44,8 +44,13 @@ function stringArgValues(inv: ToolInvocation): string[] {
 /**
  * Whether `invocation` pursues the lead — i.e. whether a matching call appears
  * among the invocations strictly after the surfacing call, within the window.
+ *
+ * Exported as a pure function so the compression-checklist analyzer can ask the
+ * identical question of post-compaction calls (issue #218) without a second
+ * walker that could drift — the same precedent as presidio reusing piicatcher's
+ * recognizer stack: shared pure functions, no analysis dependency declared.
  */
-function matchesLead(leadType: string, value: string, invocation: ToolInvocation): boolean {
+export function matchesLead(leadType: string, value: string, invocation: ToolInvocation): boolean {
 	if (invocation.name === "bash") {
 		const command = stringArgValues(invocation).join(" ");
 		if (leadType === "command") {

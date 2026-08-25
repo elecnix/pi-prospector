@@ -29,6 +29,7 @@ import { piicatcherAnalyzer } from "./analyzers/piicatcher/index.js";
 import { dataprofilerAnalyzer } from "./analyzers/dataprofiler/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
+import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -44,6 +45,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"failure-modes",
 	"revive-chains",
 	"uncompleted-leads",
+	"compression-checklist",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -92,6 +94,13 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// later calls pursued); placed before the synthesizer so a future
 	// session-overview consumer can declare it as a dependency without reordering.
 	uncompletedLeadsAnalyzer,
+	// The compaction-quality twin of context-economy's compaction *timing*
+	// analysis (#218): where context-economy prices when a flush fired, this
+	// grades what the flush kept. Deterministic, standalone — the compaction
+	// boundary is a conversation role, not derived analysis — so it declares no
+	// dependency; it reuses uncompleted-leads' pure extractor and matcher over
+	// the same action stream (shared functions, no analysis edge).
+	compressionChecklistAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,
