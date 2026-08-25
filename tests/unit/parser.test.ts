@@ -79,35 +79,37 @@ describe("parseLine", () => {
 		}
 	});
 
-	it("normalizes a compaction-typed entry to the compactionSummary role (issue #150)", () => {
-		const line = JSON.stringify({ type: "compaction", id: "c2", parentId: "m4", timestamp: "2026-01-15T10:42:00Z", summary: "Conversation was compacted; user asked about tests." });
-		const result = parseLine(line);
-		assert.ok(result);
-		if (result.kind === "message") {
-			assert.equal(result.entry.role, "compactionSummary");
-			assert.equal(result.entry.text, "Conversation was compacted; user asked about tests.");
-		}
-	});
+	// Table-driven normalization cases for issue #150: every raw `type: "compaction"`
+	// shape must land on the canonical compactionSummary role.
+	const compactionAliasCases: Array<{ name: string; entry: Record<string, unknown>; expectedText: string | null }> = [
+		{
+			name: "top-level summary",
+			entry: { type: "compaction", id: "c2", parentId: "m4", timestamp: "2026-01-15T10:42:00Z", summary: "Conversation was compacted; user asked about tests." },
+			expectedText: "Conversation was compacted; user asked about tests.",
+		},
+		{
+			name: "summary carried under message",
+			entry: { type: "compaction", id: "c3", parentId: "m4", timestamp: "2026-01-15T10:43:00Z", message: { summary: "Summary carried under message." } },
+			expectedText: "Summary carried under message.",
+		},
+		{
+			name: "no summary and no message.content keeps text null but stays in the role union",
+			entry: { type: "compaction", id: "c4", parentId: "m5", timestamp: "2026-01-15T10:44:00Z" },
+			expectedText: null,
+		},
+	];
 
-	it("normalizes a compaction entry with message.summary to the compactionSummary role", () => {
-		const line = JSON.stringify({ type: "compaction", id: "c3", parentId: "m4", timestamp: "2026-01-15T10:43:00Z", message: { summary: "Summary carried under message." } });
-		const result = parseLine(line);
-		assert.ok(result);
-		if (result.kind === "message") {
-			assert.equal(result.entry.role, "compactionSummary");
-			assert.equal(result.entry.text, "Summary carried under message.");
-		}
-	});
-
-	it("a compaction entry with no summary and no message.content keeps text null but stays in the role union", () => {
-		const line = JSON.stringify({ type: "compaction", id: "c4", parentId: "m5", timestamp: "2026-01-15T10:44:00Z" });
-		const result = parseLine(line);
-		assert.ok(result);
-		if (result.kind === "message") {
-			assert.equal(result.entry.role, "compactionSummary");
-			assert.equal(result.entry.text, null);
-		}
-	});
+	for (const { name, entry, expectedText } of compactionAliasCases) {
+		it(`normalizes a compaction entry (${name}) to the compactionSummary role`, () => {
+			const line = JSON.stringify(entry);
+			const result = parseLine(line);
+			assert.ok(result);
+			if (result.kind === "message") {
+				assert.equal(result.entry.role, "compactionSummary");
+				assert.equal(result.entry.text, expectedText);
+			}
+		});
+	}
 
 	it("parses a branch_summary entry (Pi's snake_case entry type)", () => {
 		const line = JSON.stringify({ type: "branch_summary", id: "b1", parentId: "c1", timestamp: "2026-01-15T10:41:00Z", summary: "Branch context..." });
