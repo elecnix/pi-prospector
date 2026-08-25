@@ -30,6 +30,7 @@ import { dataprofilerAnalyzer } from "./analyzers/dataprofiler/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
 import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
+import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -46,6 +47,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"revive-chains",
 	"uncompleted-leads",
 	"compression-checklist",
+	"language-mismatch",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -101,6 +103,12 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// dependency; it reuses uncompleted-leads' pure extractor and matcher over
 	// the same action stream (shared functions, no analysis edge).
 	compressionChecklistAnalyzer,
+	// Language agreement between the user, the agent, and the harness's
+	// compaction summaries. Session-level, standalone, deterministic (a
+	// Unicode-block script heuristic — no LLM, no new dependencies); placed
+	// beside the other compaction-adjacent grader so its findings sit in the
+	// same region of the registry.
+	languageMismatchAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,
