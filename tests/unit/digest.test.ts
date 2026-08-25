@@ -5,6 +5,7 @@ import type { AnalysisNodeRow, MessageRow } from "../../src/analyze/types.js";
 import type { TurnPairCoreProperties } from "../../src/analyze/analyzers/turn-pair-core/index.js";
 import type { TurnPairLLMProperties } from "../../src/analyze/analyzers/turn-pair-llm/prompt.js";
 import type { ToolTrajectoryProperties } from "../../src/analyze/analyzers/tool-trajectory/index.js";
+import type { AssistantCognitionProperties } from "../../src/analyze/analyzers/assistant-cognition/prompt.js";
 
 function coreNode(id: string, props: Partial<TurnPairCoreProperties>): AnalysisNodeRow {
 	const full: TurnPairCoreProperties = {
@@ -541,6 +542,119 @@ describe("buildDigest — reply acts", () => {
 		const line = digest.replyActsLines[0]!;
 		assert.ok(line.includes("continuation"), "line should show continuation flag");
 		assert.ok(!line.includes("other"), "line should not show other when false");
+	});
+});
+
+describe("buildDigest — assistant cognition", () => {
+	function cognitionNode(id: string, props: Partial<AssistantCognitionProperties> & { user_message_id: string }): AnalysisNodeRow {
+		const full: AssistantCognitionProperties = {
+			user_message_id: props.user_message_id,
+			confusion: props.confusion ?? [],
+			indecision: props.indecision ?? [],
+			surprise: props.surprise ?? [],
+		};
+		return {
+			...coreNode(id, {}),
+			analyzer_id: "assistant-cognition",
+			node_kind: "classification",
+			content_json: JSON.stringify(full),
+		};
+	}
+
+	function buildWith(cognitionNodes: AnalysisNodeRow[], coreOverrides?: Partial<TurnPairCoreProperties>[]) {
+		return buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: [
+				coreNode("n0", { pair_index: 0, user_message_id: "u0", friction_score: 0.1 }),
+				coreNode("n1", { pair_index: 1, user_message_id: "u1", friction_score: 0.8, high_signal: true, correction_detected: true, correction_type: "explicit" }),
+			],
+			llmNodes: [],
+			trajectoryNodes: [],
+			cognitionNodes,
+		});
+	}
+
+	it("includes an Assistant cognition line only for turns with non-empty signal arrays", () => {
+		const digest = buildWith([
+			cognitionNode("c0", {
+				user_message_id: "u0",
+				confusion: [{ level: "moderate", rationale: "re-reading" }],
+				indecision: [],
+				surprise: [{ quote: "that's odd", severity: "mild", rationale: "verbatim" }],
+			}),
+			// Abstention: stored analysis, but nothing to show.
+			cognitionNode("c1", { user_message_id: "u1" }),
+		]);
+
+		assert.ok(digest.text.includes("### Assistant cognition"), "section present when signals exist");
+		assert.equal(digest.cognitionTurnCount, 1, "only the signalling turn counts");
+		assert.equal(digest.cognitionLines.length, 1);
+		const line = digest.cognitionLines[0]!;
+		assert.ok(line.startsWith("#0"), "line references its pair index");
+		assert.ok(line.includes("confusion=moderate"));
+		assert.ok(!line.includes("indecision="), "empty indecision array renders nothing");
+		assert.ok(line.includes("surprise[mild]=\"that's odd\""), "surprise carries severity and verbatim quote");
+		assert.ok(!line.includes("#1 "), "abstaining turn gets no line");
+	});
+
+	it("omits the section entirely when no cognition nodes exist", () => {
+		const digest = buildWith([]);
+		assert.ok(!digest.text.includes("### Assistant cognition"), "no nodes → no section");
+		assert.equal(digest.cognitionTurnCount, 0);
+		assert.equal(digest.cognitionLines.length, 0);
+	});
+
+	it("truncates long surprise quotes to the digest budget", () => {
+		const digest = buildWith([
+			cognitionNode("c0", {
+				user_message_id: "u0",
+				surprise: [{ quote: "x".repeat(400), severity: "high", rationale: "long verbatim quote" }],
+			}),
+		]);
+		const match = digest.cognitionLines[0]!.match(/surprise\[high\]="([^"]*)"/);
+		assert.ok(match, "surprise field is extractable");
+		assert.ok(match[1]!.length <= 121, `truncated quote within budget (got ${match[1]!.length})`);
+	});
+
+	it("caps cognition lines per session, earliest pairs first", () => {
+		const core = Array.from({ length: 10 }, (_, i) =>
+			coreNode(`cn${i}`, { pair_index: i, user_message_id: `cu${i}`, friction_score: 0.2 }));
+		const cog = Array.from({ length: 10 }, (_, i) =>
+			cognitionNode(`cc${i}`, { user_message_id: `cu${i}`, confusion: [{ level: "mild", rationale: "r" }] }));
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: core,
+			llmNodes: [],
+			trajectoryNodes: [],
+			cognitionNodes: cog,
+			maxCognitionEntries: 3,
+		});
+		assert.equal(digest.cognitionTurnCount, 10, "all signalling turns counted before capping");
+		assert.equal(digest.cognitionLines.length, 3, "lines capped at the configured ceiling");
+		assert.deepEqual(
+			digest.cognitionLines.map((l) => l.split(" ")[0]),
+			["#0", "#1", "#2"],
+			"earliest pair indexes win deterministically",
+		);
+	});
+
+	it("keeps the Assistant cognition section when splitting a long digest", () => {
+		const core = Array.from({ length: 20 }, (_, i) =>
+			coreNode(`sn${i}`, { pair_index: i, user_message_id: `su${i}`, correction_text: "x".repeat(80), friction_score: 0.4 }));
+		const cog = Array.from({ length: 20 }, (_, i) =>
+			cognitionNode(`sc${i}`, { user_message_id: `su${i}`, indecision: [{ level: "high", rationale: "flip-flop" }] }));
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: NO_MESSAGES,
+			coreNodes: core,
+			llmNodes: [],
+			trajectoryNodes: [],
+			cognitionNodes: cog,
+		});
+		const joined = splitDigest(digest, 500).map((s) => s.text).join("\n");
+		assert.ok(joined.includes("### Assistant cognition"), "section survives map-reduce splitting");
 	});
 });
 

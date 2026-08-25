@@ -34,6 +34,16 @@ which proposals address repeated refusals or clarify questions — a refusal mea
 the assistant's approach was rejected, a clarify question means the response
 under-explained.
 
+If an ASSISTANT COGNITION section is present, it shows what the assistant's own
+thinking revealed per turn. Confusion and indecision carry a graded intensity;
+each surprise carries its severity plus a verbatim quote from the thinking trace
+or response. Each class points at a different artifact to fix — confusion
+suggests a missing or unclear standing instruction or doc the agent needed;
+indecision suggests ambiguous instructions or competing conventions; surprise
+suggests a wrong assumption baked into standing instructions or a misleading
+tool description. Propose fixing the artifact the signal points at, citing the
+quoted evidence.
+
 STEP 1 — ENUMERATE FRICTION: List EVERY distinct friction point in the session.
 For each one, write a textual gradient: what went wrong, what should change, the
 evidence that supports it, and how severe it is. Do NOT merge or drop distinct
