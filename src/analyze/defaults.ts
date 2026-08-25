@@ -28,6 +28,7 @@ import { presidioAnalyzer } from "./analyzers/presidio/index.js";
 import { piicatcherAnalyzer } from "./analyzers/piicatcher/index.js";
 import { dataprofilerAnalyzer } from "./analyzers/dataprofiler/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
+import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -42,6 +43,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"tool-trajectory",
 	"failure-modes",
 	"revive-chains",
+	"uncompleted-leads",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -84,6 +86,12 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// waste that no single call records — a chain of individually successful
 	// revives. Ordered next to it for the same reason.
 	reviveChainsAnalyzer,
+	// The inverse waste of the trajectory analyzers: valuable work that never
+	// happened. Deterministic and standalone (it reads the same action stream as
+	// tool-trajectory and failure-modes, for what tool output surfaced vs. what
+	// later calls pursued); placed before the synthesizer so a future
+	// session-overview consumer can declare it as a dependency without reordering.
+	uncompletedLeadsAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,
