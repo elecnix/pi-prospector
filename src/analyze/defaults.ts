@@ -12,6 +12,7 @@ import { turnPairLLMAnalyzer } from "./analyzers/turn-pair-llm/index.js";
 import { assistantCognitionAnalyzer } from "./analyzers/assistant-cognition/index.js";
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
+import { phaseTrajectoryAnalyzer } from "./analyzers/phase-trajectory/index.js";
 import { taskToolMismatchAnalyzer } from "./analyzers/task-tool-mismatch/index.js";
 import { toolInventoryTaxAnalyzer } from "./analyzers/tool-inventory-tax/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
@@ -49,6 +50,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
+	"phase-trajectory",
 	"task-tool-mismatch",
 	"failure-modes",
 	"grounded-claims",
@@ -93,6 +95,17 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// it sits beside the other per-turn LLM analyzer.
 	assistantCognitionAnalyzer,
 	toolTrajectoryAnalyzer,
+	// The plan-compliance twin of the trajectory analyzer (#115): where
+	// tool-trajectory reads patterns in the ordered call stream, this maps each
+	// turn to a problem-solving phase (navigate/reproduce/patch/validate/other)
+	// and detects plan violations — premature patching, skipped validation,
+	// never patching, phases out of canonical order — plus prolonged stagnation.
+	// Depends on turn-pair-core (the conversation view), reuses tool-trajectory's
+	// read-only/mutating arg-parser; deterministic, session-anchored metric node
+	// only. Kept beside the other session-level deterministic graders, before the
+	// synthesizer, so a future consumer (#121's plan-compliance scores) can
+	// declare it as a dependency without reordering.
+	phaseTrajectoryAnalyzer,
 	// What the task asked for versus what the agent did (#158): the first user
 	// message instructs a specific tool/command, that tool was in the session's
 	// recorded inventory, yet the agent made zero calls of it and rebuilt the
