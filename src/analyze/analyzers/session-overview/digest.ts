@@ -16,6 +16,13 @@ import { failureClass } from "../failure-modes/classes.js";
 import type { TurnFrustrationProperties } from "../turn-frustration/index.js";
 import type { AssistantCognitionProperties } from "../assistant-cognition/prompt.js";
 import type { PlanComplianceProperties } from "../plan-compliance/index.js";
+import type { PhaseTrajectoryProperties } from "../phase-trajectory/index.js";
+import {
+	EVIDENCE_SLICE_CEILING,
+	buildMessageIdToPairIndex,
+	collectTriggerPairIndexes,
+	sliceStartIndex,
+} from "../../evidence-slices.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
 
 /** Properties stored in a user-reply-acts classification node. */
@@ -78,6 +85,14 @@ export interface SessionDigest {
 	cognitionLines: string[];
 	/** The plan-compliance digest line, when a phase-trajectory node existed for this session. */
 	complianceLine: string | null;
+	/**
+	 * One block per trajectory signal: the signal line followed by the
+	 * event-centered evidence slice — the turns since the previous trigger of any
+	 * kind (issue #118). Bounded per signal by EVIDENCE_SLICE_CEILING.
+	 */
+	trajectoryEvidenceBlocks: string[];
+	/** Total per-turn evidence lines rendered across all trajectory slice blocks. */
+	evidenceSliceTurnCount: number;
 }
 
 export interface BuildDigestInput {
@@ -101,6 +116,8 @@ export interface BuildDigestInput {
 	cognitionNodes?: AnalysisNodeRow[];
 	/** plan-compliance metric node for this session (issue #121). */
 	complianceNodes?: AnalysisNodeRow[];
+	/** phase-trajectory metric node for this session; its phase transitions become slice boundaries (issue #118). */
+	phaseNodes?: AnalysisNodeRow[];
 	/**
 	 * Hard ceiling on cognition digest lines per session — mirrors turn-pair-llm's
 	 * high-signal enrichment ceiling: full coverage on short sessions, bounded
@@ -125,6 +142,9 @@ const MAX_DIGEST_TOOL_CALLS = 8;
 const MAX_DIGEST_TOOL_ERRORS = 4;
 const TOOL_ARGS_SNIPPET_MAX = 120;
 const TOOL_ERR_SNIPPET_MAX = 160;
+
+/** Max length of a user-text snippet inside a trajectory evidence-slice line. */
+const SLICE_TEXT_SNIPPET_MAX = 120;
 
 /** Default hard ceiling on assistant-cognition lines per session (issue #210). */
 const DEFAULT_MAX_COGNITION_ENTRIES = 50;
@@ -195,6 +215,15 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	const trajectory = input.trajectoryNodes
 		.map((n) => safeParse<ToolTrajectoryProperties>(n.content_json))
 		.filter((p): p is ToolTrajectoryProperties => p !== null);
+
+	// Parse the phase-trajectory node (issue #118): when it exists, its phase
+	// transitions join the trigger set — the cleanest slice boundaries, since a
+	// turn that changed phase marks where a new unit of work began.
+	const latestPhaseNode = (input.phaseNodes ?? [])
+		.filter((n) => n.node_kind !== "error")
+		.sort((a, b) => a.created_at.localeCompare(b.created_at))
+		.at(-1);
+	const phaseProps = latestPhaseNode ? safeParse<PhaseTrajectoryProperties>(latestPhaseNode.content_json) : null;
 
 	const failures = (input.failureNodes ?? [])
 		.map((n) => safeParse<FailureModesProperties>(n.content_json))
@@ -372,12 +401,72 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	// Build trajectory signal lines. When a signal is priced, the dollar amount
 	// is embedded in the digest line so the synthesizer can cite it verbatim in
 	// proposal evidence (issue #71) — a loop reads as "$0.34" not "9×".
+	// ── Event-centered trajectory evidence slices (issue #118) ──────────
+	// Trigger points: every deterministic detection event maps onto a pair
+	// index via the messages it participated in — trajectory signals carry
+	// messageIds; frustration hits and high-signal flags anchor their turn;
+	// and when the phase-trajectory analyzer has run, phase transitions join
+	// the set (the cleanest boundaries, per LivePlan's advisor slicing). The
+	// slice for one signal is [previous trigger .. that signal], clamped by
+	// EVIDENCE_SLICE_CEILING for sparse-trigger sessions.
+	const pairs = input.turnPairs ?? buildTurnPairs(input.messages);
+	const messageIdToPairIndex = buildMessageIdToPairIndex(pairs);
+	const phaseTransitionIds = (phaseProps?.phases ?? [])
+		.slice(1)
+		.filter((entry, i) => entry.phase !== (phaseProps!.phases[i]?.phase ?? entry.phase))
+		.map((entry) => entry.user_message_id);
+	const triggers = collectTriggerPairIndexes(messageIdToPairIndex, [
+		...trajectory.flatMap((t) => (t.signals ?? []).map((s) => s.messageIds ?? [])),
+		[...frustrationByUser.keys()],
+		core.filter((p) => p.high_signal).map((p) => p.user_message_id),
+		phaseTransitionIds,
+	]);
+	const coreByPairIndex = new Map(core.map((p) => [p.pair_index, p]));
+
+	let evidenceSliceTurnCount = 0;
 	const trajectoryLines = trajectory.flatMap((t) =>
 		(t.signals ?? []).map((s) => {
 			const cost = typeof s.cost_usd === "number"
 				? ` cost=$${roundUsd(s.cost_usd)}`
 				: "";
 			return `trajectory:${s.pattern} tool=${s.tool} count=${s.count}${cost} ${s.description}`;
+		}),
+	);
+	const trajectoryEvidenceBlocks: string[] = trajectory.flatMap((t) =>
+		(t.signals ?? []).map((s) => {
+			const cost = typeof s.cost_usd === "number"
+				? ` cost=$${roundUsd(s.cost_usd)}`
+				: "";
+			const signalLine = `trajectory:${s.pattern} tool=${s.tool} count=${s.count}${cost} ${s.description}`;
+
+			// Where this signal lives: its last participating pair. Unknown ids
+			// (message outside any turn) leave the signal without a location, and
+			// a slice cannot be drawn from nothing — render the bare signal line.
+			let currentIndex = -1;
+			for (const id of s.messageIds ?? []) {
+				const idx = messageIdToPairIndex.get(id);
+				if (idx !== undefined && idx > currentIndex) currentIndex = idx;
+			}
+			if (currentIndex < 0 || pairs.length === 0) return signalLine;
+
+			const start = sliceStartIndex(triggers, currentIndex);
+			const sliceLines: string[] = [];
+			for (let i = start; i <= Math.min(currentIndex, pairs.length - 1); i++) {
+				const pair = pairs[i];
+				if (!pair) continue;
+				const props = coreByPairIndex.get(pair.index);
+				const userText = userTextById.get(pair.userMessageId);
+				const bits = [
+					`#${pair.index}`,
+					`friction=${(props?.friction_score ?? 0).toFixed(2)}`,
+					props?.correction_detected ? `correction=${props.correction_type}` : "correction=none",
+					`tool_fail=${props?.tool_failure_count ?? 0}`,
+				];
+				if (userText) bits.push(`text="${truncateLine(userText, SLICE_TEXT_SNIPPET_MAX)}"`);
+				sliceLines.push(`  ${bits.join(" ")}`);
+			}
+			evidenceSliceTurnCount += sliceLines.length;
+			return [signalLine, `  evidence slice #${start}..#${currentIndex} (since previous trigger):`, ...sliceLines].join("\n");
 		}),
 	);
 
@@ -448,8 +537,8 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	if (positiveSignals.length > 0) {
 		sections.push("", "### Positive signals", ...positiveSignals.map((s) => `- ${s}`));
 	}
-	if (trajectoryLines.length > 0) {
-		sections.push("", "### Trajectory signals", ...trajectoryLines);
+	if (trajectoryEvidenceBlocks.length > 0) {
+		sections.push("", "### Trajectory signals", ...trajectoryEvidenceBlocks);
 	}
 	if (failureLines.length > 0) {
 		sections.push("", "### Failures", ...failureLines);
@@ -487,6 +576,8 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		cognitionTurnCount,
 		cognitionLines,
 		complianceLine,
+		trajectoryEvidenceBlocks,
+		evidenceSliceTurnCount,
 	};
 }
 
@@ -518,8 +609,8 @@ export function splitDigest(digest: SessionDigest, segmentChars: number): Digest
 		...(digest.positiveSignals.length > 0
 			? ["", "### Positive signals", ...digest.positiveSignals.map((s) => `- ${s}`)]
 			: []),
-		...(digest.trajectoryLines.length > 0
-			? ["", "### Trajectory signals", ...digest.trajectoryLines]
+		...(digest.trajectoryEvidenceBlocks.length > 0
+			? ["", "### Trajectory signals", ...digest.trajectoryEvidenceBlocks]
 			: []),
 		...(digest.replyActsLines.length > 0
 			? ["", "### Reply acts", ...digest.replyActsLines]
