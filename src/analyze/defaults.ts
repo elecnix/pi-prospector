@@ -12,6 +12,7 @@ import { turnPairLLMAnalyzer } from "./analyzers/turn-pair-llm/index.js";
 import { assistantCognitionAnalyzer } from "./analyzers/assistant-cognition/index.js";
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
+import { toolInventoryTaxAnalyzer } from "./analyzers/tool-inventory-tax/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
 import { cacheEconomyAnalyzer } from "./analyzers/cache-economy/index.js";
 import { routingOpportunityAnalyzer } from "./analyzers/routing-opportunity/index.js";
@@ -56,6 +57,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"session-ending",
 	"files-in-play",
 	"friction-accumulation",
+	"tool-inventory-tax",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -151,6 +153,15 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// (no LLM); placed with the other session-level deterministic graders, before
 	// the synthesizer, so a future consumer can declare it without reordering.
 	frictionAccumulationAnalyzer,
+	// The price of what a session merely *carried* (#70): the set difference
+	// between the synced tool inventory and the tools actually invoked, with the
+	// unused definitions' static prefix cost estimated from per-bucket implied
+	// rates across billed turns. The cost-economy sibling of context-economy —
+	// that one prices what a session *read*, this prices what it *had available*
+	// and never called. Session-level, standalone, deterministic (no LLM); the
+	// UNKNOWN-inventory case is skipped, never read as empty. Placed with the
+	// other session-level deterministic graders, before the synthesizer.
+	toolInventoryTaxAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,
