@@ -915,6 +915,32 @@ the model silently drop signals. The enrichment cap for high-signal turns must
 also scale with session length so that long sessions are not under-enriched;
 a hard ceiling still bounds cost.
 
+That downstream step is **display-time grouping** (issue #107): the listing
+surfaces walk the finished graph backwards — a proposal's source node's
+`consumes` edges to the upstream nodes it was built from, and those nodes'
+`produces` edges to the proposals they yielded — and nest each lower-level
+proposal beneath the higher-level proposal that generalises it. No new analysis,
+nothing dropped or suppressed; the list just stops being flat, so a general
+proposal reads as "the pattern, with its instances" instead of arriving as an
+unrelated duplicate of what it summarises. The grouping is a view over the
+current result set, which keeps it cheap and reversible:
+
+- **Partial support** nests whatever resolves within the listing. A
+  generaliser usually covers more evidence than its nested instances (only
+  some consumed nodes produced listed proposals); nesting records provenance,
+  not full coverage, and `prospect show <id>` still carries the rest.
+- **Multi-parent support shows the child under every parent.** One upstream
+  node can feed several generalisers; existence stays additive, because hiding
+  a child under only its first parent would leave another reader without its
+  instance evidence. The cost is that such a child appears twice.
+- A proposal whose parent falls outside the current filters renders ungrouped:
+  it belongs to this view even when its parent belongs to another one.
+- Machine-readable output gains the same structure (`supports`, present only
+  when non-empty), so ungrouped rows keep their exact prior shape.
+- Grouping is one hop (direct consumption) — today's shipped analyzers relate
+  at two altitudes (session-level synthesis over per-turn signals), so deeper
+  traversal buys nothing yet.
+
 ### Model access through the host platform, with a test seam
 
 All model calls go through one seam that, in production, defers to the host agent
