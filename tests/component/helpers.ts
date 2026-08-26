@@ -86,14 +86,15 @@ export interface TestMessage {
 	stopReason?: string | null;
 	/** Why the generation failed, verbatim from the host, or null when it did not. */
 	errorMessage?: string | null;
+	/** The raw usage JSON stored in messages.usage (token buckets + per-bucket cost). */
+	usage?: Record<string, unknown>;
 }
 
 /** Insert messages for a session in order, returning the inserted ids. */
-/** Insert messages for a session in order, returning the inserted ids. */
 export async function insertMessages(db: AsyncDatabase, sessionId: string, messages: TestMessage[]): Promise<string[]> {
 	const stmt = db.prepare(
-		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message) " +
-			"VALUES (?, ?, 'pi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message, usage) " +
+			"VALUES (?, ?, 'pi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 	);
 	const ids: string[] = [];
 	let parent: string | null = null;
@@ -113,6 +114,7 @@ export async function insertMessages(db: AsyncDatabase, sessionId: string, messa
 			m.costUsd ?? null,
 			m.stopReason ?? null,
 			m.errorMessage ?? null,
+			m.usage ? JSON.stringify(m.usage) : null,
 		);
 		ids.push(id);
 		parent = id;
