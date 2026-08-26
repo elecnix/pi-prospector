@@ -261,18 +261,24 @@ export interface CwdSmoothnessCache {
  * The projection omits `content_thinking` (the largest column) and every column
  * `scorePair` never reads, so assessing a thousand siblings costs a fraction of
  * the full-message path. Only smooth siblings are retained in the cache.
+ *
+ * The scan includes ALL sessions in the `cwd` (no `excludeId`) so the cache is
+ * fully reusable across every target session in the same repo — a later call
+ * from a different session must not find *itself* among the smooth siblings
+ * just because the first caller excluded a different id. The target session is
+ * filtered out at selection time in `selectCrossSessionContrast`.
  */
-export async function scanCwdSmoothness(db: AsyncDatabase, cwd: string, excludeId: string, minSiblingPairs: number): Promise<CwdSmoothnessCache> {
+export async function scanCwdSmoothness(db: AsyncDatabase, cwd: string, _excludeId: string, minSiblingPairs: number): Promise<CwdSmoothnessCache> {
 	const cache: CwdSmoothnessCache = { cwd, bySibling: new Map() };
 	if (!cwd) return cache;
 
 	const stmt = db.prepare(
 		"SELECT s.id AS session_id, m.id, m.role, m.content_text, m.tool_calls, m.tool_results " +
 			"FROM sessions s JOIN messages m ON m.session_id = s.id " +
-			"WHERE s.cwd = ? AND s.id <> ? " +
+			"WHERE s.cwd = ? " +
 			"ORDER BY s.id ASC, m.rowid ASC",
 	);
-	const rows = (await stmt.all(cwd, excludeId)) as Array<{
+	const rows = (await stmt.all(cwd)) as Array<{
 		session_id: string;
 		id: string;
 		role: string;
@@ -341,6 +347,10 @@ export async function selectCrossSessionContrast(
 
 	const candidates: SiblingContrast[] = [];
 	for (const [siblingId, assessment] of smoothness.bySibling) {
+		// The target session is in the cache too (the scan excludes nothing so the
+		// cache is reusable across every session in the repo). A session must never
+		// be its own contrast sibling.
+		if (siblingId === sessionId) continue;
 		const digestText = formatSiblingDigest(siblingId, assessment.pairCount, assessment.requests);
 		candidates.push({
 			sessionId: siblingId,

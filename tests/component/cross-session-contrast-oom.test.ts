@@ -236,4 +236,24 @@ describe("cross-session contrast OOM (#232) — narrow sibling assessment", () =
 			await close();
 		}
 	});
+
+	it("a session never selects itself as a contrast sibling (shared cache self-exclusion)", async () => {
+		const { db, close } = await tempDb();
+		try {
+			// A smooth session in REPO: if the cache is not filtered, this session
+			// would appear as its own smooth sibling.
+			await seedSmoothHeavy(db, "smooth-self");
+
+			// Analysing the smooth session itself must NOT list it as a contrast sibling.
+			const result = await selectCrossSessionContrast(
+				db,
+				"smooth-self",
+				DEFAULT_SESSION_OVERVIEW_CONFIG,
+				() => Promise.resolve(buildTurnPairs([])),
+			);
+			assert.equal(result.siblings.length, 0, "a session must not be its own contrast sibling");
+		} finally {
+			await close();
+		}
+	});
 });
