@@ -13,6 +13,7 @@ import { assistantCognitionAnalyzer } from "./analyzers/assistant-cognition/inde
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
 import { phaseTrajectoryAnalyzer } from "./analyzers/phase-trajectory/index.js";
+import { planComplianceAnalyzer } from "./analyzers/plan-compliance/index.js";
 import { taskToolMismatchAnalyzer } from "./analyzers/task-tool-mismatch/index.js";
 import { toolInventoryTaxAnalyzer } from "./analyzers/tool-inventory-tax/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
@@ -51,6 +52,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"assistant-cognition",
 	"tool-trajectory",
 	"phase-trajectory",
+	"plan-compliance",
 	"task-tool-mismatch",
 	"failure-modes",
 	"grounded-claims",
@@ -106,6 +108,16 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// synthesizer, so a future consumer (#121's plan-compliance scores) can
 	// declare it as a dependency without reordering.
 	phaseTrajectoryAnalyzer,
+	// The LivePlan plan-compliance twin of the trajectory analyzers (#121): where
+	// phase-trajectory reads drift signals from the phase sequence, this CONSUMES
+	// that analyzer's stable phase node and scores it — PPC (phases present),
+	// POC (order of transitions), PPF (fidelity to plan phases), and PC (their
+	// geometric mean). Pure functions of the sequence; no model, no new inputs.
+	// Declared as a dependency on phase-trajectory, so a recomputed phase node
+	// re-identifies these units and forces honest recomputation. PC is a ranking
+	// and contrast feature — never an outcome label. Placed directly after its
+	// dependency and before the synthesizer.
+	planComplianceAnalyzer,
 	// What the task asked for versus what the agent did (#158): the first user
 	// message instructs a specific tool/command, that tool was in the session's
 	// recorded inventory, yet the agent made zero calls of it and rebuilt the
