@@ -7,7 +7,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeToolCall, isNearIdentical, isExactlyIdentical, type NormalizedToolCall } from "../../src/analyze/analyzers/tool-trajectory/arg-parser.js";
-import { detectStuckLoops, detectPollingLoops, detectOscillation, detectPreFlightGaps, detectAllSignals, detectThoughtOscillation, type ReasoningBlock, type ToolCallWithResult } from "../../src/analyze/analyzers/tool-trajectory/detectors.js";
+import { detectStuckLoops, detectPollingLoops, detectOscillation, detectPreFlightGaps, detectAllSignals, detectThoughtOscillation, SIGNAL_RISK_CLASSES, type ReasoningBlock, type ToolCallWithResult } from "../../src/analyze/analyzers/tool-trajectory/detectors.js";
+import { computeTrajectoryFriction } from "../../src/analyze/analyzers/tool-trajectory/index.js";
+import { DEFAULT_TOOL_TRAJECTORY_CONFIG, type ToolTrajectoryConfig } from "../../src/analyze/analyzers/tool-trajectory/config.js";
 
 // ──────────────────── helpers ────────────────────
 
@@ -375,6 +377,107 @@ describe("detectAllSignals", () => {
 		assert.equal(signals.length, 0);
 	});
 });
+// ──────────────────── risk grading (issue #119) ────────────────────
+
+describe("signal risk classes", () => {
+	it("grades every pattern per the issue's table", () => {
+		assert.deepEqual(SIGNAL_RISK_CLASSES, {
+			"stuck-loop": "non-blocking",
+			"polling-loop": "non-blocking",
+			"oscillation": "blocking",
+			"thought-oscillation": "blocking",
+			"pre-flight-gap": "non-blocking",
+		});
+	});
+
+	it("carries its expected risk class on each detected signal", () => {
+		const stuck = detectStuckLoops([
+			makeBashCall("npm install", "m1", true),
+			makeBashCall("npm install", "m2", true),
+			makeBashCall("npm install", "m3", true),
+		], 3);
+		const polling = detectPollingLoops([
+			makeBashCall("gh pr view 29", "m1", false),
+			makeBashCall("gh pr view 29", "m2", false),
+			makeBashCall("gh pr view 29", "m3", false),
+		], 3);
+		const oscillation = detectOscillation([
+			makeBashCall("git checkout main", "m1", false),
+			makeBashCall("git checkout feature", "m2", false),
+			makeBashCall("git checkout main", "m3", false),
+		], 10);
+		const preFlight = detectPreFlightGaps([
+			makeBashCall("mv file.txt /nonexistent/dest.txt", "m1", true),
+		]);
+
+		assert.equal(stuck.length, 1);
+		assert.equal(stuck[0]!.riskClass, "non-blocking");
+		assert.equal(polling.length, 1);
+		assert.equal(polling[0]!.riskClass, "non-blocking");
+		assert.ok(oscillation.length >= 1);
+		assert.equal(oscillation[0]!.riskClass, "blocking");
+		assert.equal(preFlight.length, 1);
+		assert.equal(preFlight[0]!.riskClass, "non-blocking");
+	});
+
+	it("carries the blocking class on a detected thought-oscillation", () => {
+		const blocks = [
+			makeBlock("m1", 0, BASE_THOUGHT),
+			makeBlock("m2", 1, NEAR_DUPLICATE_THOUGHT),
+			makeBlock("m3", 2, BASE_THOUGHT),
+		];
+		const signals = detectThoughtOscillation(blocks, OSC_CONFIG);
+		assert.equal(signals.length, 1);
+		assert.equal(signals[0]!.riskClass, "blocking");
+	});
+});
+
+describe("risk-graded friction weighting", () => {
+	// One action oscillation: the canonical blocking-class signal.
+	function oscillationSignal() {
+		const signals = detectOscillation([
+			makeBashCall("git checkout main", "m1", false),
+			makeBashCall("git checkout feature", "m2", false),
+			makeBashCall("git checkout main", "m3", false),
+		], 10);
+		assert.ok(signals.length >= 1);
+		return signals[0]!;
+	}
+
+	it("a blocking signal contributes weight × 2 (default blocking multiplier)", () => {
+		const score = computeTrajectoryFriction([oscillationSignal()], DEFAULT_TOOL_TRAJECTORY_CONFIG);
+		const expected = DEFAULT_TOOL_TRAJECTORY_CONFIG.oscillationWeight * DEFAULT_TOOL_TRAJECTORY_CONFIG.blockingRiskMultiplier;
+		assert.ok(Math.abs(score - expected) < 1e-9, `expected ${expected}, got ${score}`);
+	});
+
+	it("the same signal graded non-blocking contributes weight × 1", () => {
+		const asBlocking = computeTrajectoryFriction([oscillationSignal()], DEFAULT_TOOL_TRAJECTORY_CONFIG);
+		const sameSignalNonBlocking = { ...oscillationSignal(), riskClass: "non-blocking" as const };
+		const asNonBlocking = computeTrajectoryFriction([sameSignalNonBlocking], DEFAULT_TOOL_TRAJECTORY_CONFIG);
+		assert.ok(Math.abs(asNonBlocking - DEFAULT_TOOL_TRAJECTORY_CONFIG.oscillationWeight) < 1e-9);
+		assert.ok(
+			Math.abs(asBlocking - 2 * asNonBlocking) < 1e-9,
+			`blocking (${asBlocking}) should weigh twice non-blocking (${asNonBlocking})`,
+		);
+	});
+
+	it("a non-blocking signal contributes weight × 1 under defaults", () => {
+		const signals = detectStuckLoops([
+			makeBashCall("npm install", "m1", true),
+			makeBashCall("npm install", "m2", true),
+			makeBashCall("npm install", "m3", true),
+		], 3);
+		const score = computeTrajectoryFriction(signals, DEFAULT_TOOL_TRAJECTORY_CONFIG);
+		assert.ok(Math.abs(score - DEFAULT_TOOL_TRAJECTORY_CONFIG.stuckLoopWeight * DEFAULT_TOOL_TRAJECTORY_CONFIG.nonBlockingRiskMultiplier) < 1e-9);
+	});
+
+	it("respects configured multipliers instead of the defaults", () => {
+		const config: ToolTrajectoryConfig = { ...DEFAULT_TOOL_TRAJECTORY_CONFIG, oscillationWeight: 0.2, blockingRiskMultiplier: 3.5, nonBlockingRiskMultiplier: 0.5 };
+		const blockingScore = computeTrajectoryFriction([oscillationSignal()], config);
+		assert.ok(Math.abs(blockingScore - 0.2 * 3.5) < 1e-9, `expected 0.7, got ${blockingScore}`);
+	});
+});
+
 // ──────────────────── thought-oscillation (issue #117) ────────────────────
 
 import {

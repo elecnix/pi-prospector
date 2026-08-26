@@ -279,3 +279,46 @@ describe("prolonged-stagnation", () => {
 		assert.equal(signals[0]?.phase, "other");
 	});
 });
+
+// ─────────────────────────── risk grading (issue #119) ───────────────────────────
+
+describe("phase-signal risk classes", () => {
+	it("grades every plan violation blocking", () => {
+		// premature-patching: first work is already a patch (and the same
+		// single-patch session also ends without validating → skip-validation).
+		const premature = detectPhaseSignals(classify([turn([bash("git add -A")])]), CFG);
+		assert.deepEqual(kindsOf(premature), ["premature-patching", "skip-validation"]);
+		for (const s of premature) assert.equal(s.riskClass, "blocking");
+
+		// skip-validation: patched but nothing validates after the final patch.
+		const skipped = detectPhaseSignals(
+			classify([turn([bash("git status")]), turn([bash("npm test")]), turn([bash("git add -A")])]),
+			CFG,
+		);
+		assert.deepEqual(kindsOf(skipped), ["skip-validation"]);
+		assert.equal(skipped[0]?.riskClass, "blocking");
+
+		// no-patch-termination: real work, never a patch.
+		const noPatch = detectPhaseSignals(classify([turn([bash("git status")]), turn([bash("npm test")])]), CFG);
+		assert.deepEqual(kindsOf(noPatch), ["no-patch-termination"]);
+		assert.equal(noPatch[0]?.riskClass, "blocking");
+
+		// phase-order-violation: validation lands before any patch under overrides.
+		const orderCfg: PhaseTrajectoryConfig = { ...CFG, phaseToolOverrides: { validate: ["make verify"] } };
+		const order = detectPhaseSignals(
+			classify([turn([bash("make verify")]), turn([bash("git add -A")])], orderCfg),
+			orderCfg,
+		);
+		// The override sequence also ends on an unvalidated patch → both signals fire.
+		assert.deepEqual(kindsOf(order), ["skip-validation", "phase-order-violation"]);
+		assert.equal(order[0]?.riskClass, "blocking");
+	});
+
+	it("grades prolonged-stagnation non-blocking — inefficiency, not a plan violation", () => {
+		const entries = classify(Array.from({ length: 7 }, () => turn([])));
+		const signals = detectPhaseSignals(entries, CFG);
+		assert.deepEqual(kindsOf(signals), ["prolonged-stagnation"]);
+		assert.equal(signals[0]?.plan_violation, false);
+		assert.equal(signals[0]?.riskClass, "non-blocking");
+	});
+});

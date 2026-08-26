@@ -102,12 +102,21 @@ describe("thought-oscillation component tests", () => {
 			assert.equal(signals[0]!.messageIds.length, 3);
 			assert.ok((signals[0]!.similarity ?? 0) >= 0.85);
 
-			// It contributes its configured weight to the friction score.
+			// It contributes its configured weight × the blocking risk multiplier
+			// (issue #119: thought-oscillation is a blocking-class signal) to the
+			// friction score.
 			assert.equal(props.pattern_counts["thought-oscillation"], 1);
+			const blockingMultiplier = toolTrajectoryAnalyzer.defaultConfig.configJson["blockingRiskMultiplier"] as number;
 			assert.ok(
-				Math.abs(props.trajectory_friction_score - toolTrajectoryAnalyzer.defaultConfig.configJson["thoughtOscillationWeight"]) < 1e-9,
-				`friction score should equal the single signal's weight, got ${props.trajectory_friction_score}`,
+				Math.abs(
+					props.trajectory_friction_score -
+					(toolTrajectoryAnalyzer.defaultConfig.configJson["thoughtOscillationWeight"] as number) * blockingMultiplier,
+				) < 1e-9,
+				`friction score should equal weight × blocking multiplier, got ${props.trajectory_friction_score}`,
 			);
+
+			// And it is graded blocking (issue #119).
+			assert.equal(signals[0]!.riskClass, "blocking");
 
 			// And it reaches the digest line shape the synthesiser reads.
 			assert.match(signals[0]!.description, /Thought oscillation/);

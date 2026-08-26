@@ -77,8 +77,13 @@ export const PHASE_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// conversation view, reusing tool-trajectory's read-only/mutating argument
 	// parser; five deterministic signals over the phase sequence. Node content
 	// kept minimal and stable for the #121 plan-compliance-score consumers.
+	//
+	// 1.1 (issue #119): every signal now carries a `riskClass`
+	// ("blocking" | "non-blocking"), mirroring tool-trajectory's TrajectorySignal.
+	// Output gains a field; detection semantics are unchanged. Minor: additive
+	// shape change, no new weighting path — phase signals feed no friction score.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/phase-trajectory/index.ts",
 };
