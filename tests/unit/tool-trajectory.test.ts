@@ -7,7 +7,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeToolCall, isNearIdentical, isExactlyIdentical, type NormalizedToolCall } from "../../src/analyze/analyzers/tool-trajectory/arg-parser.js";
-import { detectStuckLoops, detectPollingLoops, detectOscillation, detectPreFlightGaps, detectAllSignals, type ToolCallWithResult } from "../../src/analyze/analyzers/tool-trajectory/detectors.js";
+import { detectStuckLoops, detectPollingLoops, detectOscillation, detectPreFlightGaps, detectAllSignals, detectThoughtOscillation, type ReasoningBlock, type ToolCallWithResult } from "../../src/analyze/analyzers/tool-trajectory/detectors.js";
 
 // ──────────────────── helpers ────────────────────
 
@@ -340,10 +340,12 @@ describe("detectAllSignals", () => {
 			makeBashCall("gh pr view 29", "m2", true),
 			makeBashCall("gh pr view 29", "m3", true),
 		];
-		const signals = detectAllSignals(calls, {
+		const signals = detectAllSignals(calls, [], {
 			stuckLoopMin: 3,
 			pollingLoopMin: 3,
 			oscillationWindow: 10,
+			thoughtOscillationSimilarity: 0.85,
+			thoughtOscillationMinRepeat: 2,
 		});
 		// Should have a polling-loop (read-only) and NOT a stuck-loop that
 		// duplicates the same messages
@@ -363,11 +365,205 @@ describe("detectAllSignals", () => {
 			makeBashCall("git add .", "m3", false),
 			makeBashCall("git commit -m 'fix'", "m4", false),
 		];
-		const signals = detectAllSignals(calls, {
+		const signals = detectAllSignals(calls, [], {
 			stuckLoopMin: 3,
 			pollingLoopMin: 3,
 			oscillationWindow: 10,
+			thoughtOscillationSimilarity: 0.85,
+			thoughtOscillationMinRepeat: 2,
 		});
 		assert.equal(signals.length, 0);
+	});
+});
+// ──────────────────── thought-oscillation (issue #117) ────────────────────
+
+import {
+	normalizeReasoningText,
+	reasoningShingles,
+	fingerprintReasoning,
+	fingerprintSimilarity,
+	fingerprintHex,
+} from "../../src/analyze/analyzers/tool-trajectory/reasoning-fingerprint.js";
+
+/**
+ * An ~80-word synthetic reasoning block. Long enough that a single word swap
+ * leaves Jaccard similarity above the default 0.85 threshold — which is exactly
+ * what "near-duplicate" means here: the same dead end re-stated, not rewritten.
+ */
+const BASE_THOUGHT =
+	"The integration test keeps failing because the framework never receives the reasoning payload " +
+	"that the parser is supposed to carry alongside tool calls. I keep arriving at the same conclusion: " +
+	"extract the private thinking before serialising each assistant message, then compare fingerprints " +
+	"across successive turns instead of comparing raw text. The sliding window should bound how far apart " +
+	"two blocks may sit while still counting as members of one oscillation run. Once that lands, the " +
+	"detector will finally see the loop.";
+
+/** The same dead end re-stated with one word changed — a near-duplicate of BASE_THOUGHT. */
+const NEAR_DUPLICATE_THOUGHT = BASE_THOUGHT.replace("finally", "eventually");
+
+/** A genuine rewrite: same topic, different wording, different shingles throughout. */
+const PARAPHRASED_THOUGHT =
+	"Our suite fails again since no private reasoning ever reaches the host layer when calls ride along " +
+	"in the same generation. The fix I keep circling back to is capturing those hidden fragments early " +
+	"and hashing them so later attempts can be measured against earlier ones inside a bounded span. With " +
+	"that in place the recurring pattern would become visible to analysis.";
+
+describe("reasoning fingerprints", () => {
+	it("normalises case and whitespace", () => {
+		assert.equal(normalizeReasoningText("  Same   TEXT\nhere "), "same text here");
+	});
+
+	it("strips code blocks, paths and URLs before shingling", () => {
+		const withNoise = normalizeReasoningText(
+			"Check src/analyze/index.ts and https://example.com/doc now\n```ts\nconst x: number = 1;\n```\nplease",
+		);
+		assert.equal(withNoise, "check and now please");
+		assert.deepEqual(reasoningShingles(withNoise), []);
+	});
+
+	it("matches near-duplicate reasoning above the default threshold", () => {
+		const a = fingerprintReasoning(BASE_THOUGHT);
+		const b = fingerprintReasoning(NEAR_DUPLICATE_THOUGHT);
+		assert.ok(a && b);
+		const sim = fingerprintSimilarity(a!, b!);
+		assert.ok(sim >= 0.85, `expected >= 0.85, got ${sim}`);
+	});
+
+	it("does not match paraphrased reasoning", () => {
+		const a = fingerprintReasoning(BASE_THOUGHT);
+		const b = fingerprintReasoning(PARAPHRASED_THOUGHT);
+		assert.ok(a && b);
+		assert.ok(fingerprintSimilarity(a!, b!) < 0.5, `paraphrase scored ${fingerprintSimilarity(a!, b!)}`);
+	});
+
+	it("strips code so code-heavy blocks with identical prose match fully", () => {
+		const a = fingerprintReasoning(
+			'Restate the plan.\n```ts\nfunction helperA(x: number): number { return x * 2; }\n```\nRerun the failing suite after extracting reasoning first.',
+		);
+		const b = fingerprintReasoning(
+			'Restate the plan.\n```ts\nimport { readFile } from "node:fs/promises";\nexport async function load(p: string) { return readFile(p, "utf8"); }\n```\nRerun the failing suite after extracting reasoning first.',
+		);
+		assert.ok(a && b);
+		assert.equal(fingerprintSimilarity(a!, b!), 1);
+	});
+
+	it("refuses to fingerprint prose too short for even one shingle", () => {
+		assert.equal(fingerprintReasoning("still failing"), null);
+		assert.equal(fingerprintReasoning(""), null);
+	});
+
+	it("renders a stable hex digest", () => {
+		const a = fingerprintReasoning(BASE_THOUGHT);
+		const b = fingerprintReasoning(BASE_THOUGHT);
+		assert.ok(a && b);
+		assert.equal(fingerprintHex(a!), fingerprintHex(b!));
+	});
+});
+
+// ──────────────────── detectThoughtOscillation ────────────────────
+
+import type { ReasoningBlock } from "../../src/analyze/analyzers/tool-trajectory/detectors.js";
+
+function makeBlock(
+	messageId: string,
+	turnIndex: number,
+	text: string,
+	opts: { stateChanging?: boolean; costUsd?: number | null } = {},
+): ReasoningBlock {
+	const fp = fingerprintReasoning(text);
+	assert.ok(fp, "test fixture must be long enough to fingerprint");
+	return {
+		messageId,
+		turnIndex,
+		stateChanging: opts.stateChanging ?? false,
+		fingerprint: fp,
+		costUsd: opts.costUsd ?? null,
+	};
+}
+
+const OSC_CONFIG = { oscillationWindow: 10, thoughtOscillationSimilarity: 0.85, thoughtOscillationMinRepeat: 2 };
+
+describe("detectThoughtOscillation", () => {
+	it("fires on a run of repeated no-action thinking turns within the window", () => {
+		const blocks = [
+			makeBlock("m1", 0, BASE_THOUGHT),
+			makeBlock("m2", 1, NEAR_DUPLICATE_THOUGHT),
+			makeBlock("m3", 2, BASE_THOUGHT),
+		];
+		const signals = detectThoughtOscillation(blocks, OSC_CONFIG);
+		assert.equal(signals.length, 1);
+		assert.equal(signals[0]!.pattern, "thought-oscillation");
+		assert.equal(signals[0]!.count, 3);
+		assert.deepEqual(signals[0]!.messageIds, ["m1", "m2", "m3"]);
+		assert.ok((signals[0]!.similarity ?? 0) >= 0.85, `similarity was ${signals[0]!.similarity}`);
+		assert.ok(signals[0]!.description.includes("Thought oscillation"));
+	});
+
+	it("prices itself from the participating turns' billed cost", () => {
+		const blocks = [
+			makeBlock("m1", 0, BASE_THOUGHT, { costUsd: 0.1 }),
+			makeBlock("m2", 1, NEAR_DUPLICATE_THOUGHT, { costUsd: 0.25 }),
+			makeBlock("m3", 2, BASE_THOUGHT),
+		];
+		const signals = detectThoughtOscillation(blocks, OSC_CONFIG);
+		assert.equal(signals.length, 1);
+		assert.equal(signals[0]!.cost_usd, 0.35);
+	});
+
+	it("stays quiet on reconsider-then-act: a state-changing turn breaks the run", () => {
+		const blocks = [
+			makeBlock("m1", 0, BASE_THOUGHT),
+			makeBlock("m2", 1, NEAR_DUPLICATE_THOUGHT, { stateChanging: true }),
+			makeBlock("m3", 2, BASE_THOUGHT),
+		];
+		assert.equal(detectThoughtOscillation(blocks, OSC_CONFIG).length, 0);
+	});
+
+	it("stays quiet on a single repetition (one repetition is reconsideration)", () => {
+		const blocks = [
+			makeBlock("m1", 0, BASE_THOUGHT),
+			makeBlock("m2", 1, NEAR_DUPLICATE_THOUGHT),
+		];
+		assert.equal(detectThoughtOscillation(blocks, OSC_CONFIG).length, 0);
+	});
+
+	it("respects the window boundary between consecutive run members", () => {
+		// Gap of 11 turns between the second and third block exceeds window 10:
+		// the run splits into [t0,t1] (one repetition, quiet) and [t12].
+		const apart = [
+			makeBlock("m1", 0, BASE_THOUGHT),
+			makeBlock("m2", 1, NEAR_DUPLICATE_THOUGHT),
+			makeBlock("m3", 12, BASE_THOUGHT),
+		];
+		assert.equal(detectThoughtOscillation(apart, OSC_CONFIG).length, 0);
+
+		// Gap of exactly 10 turns is still within the window.
+		const atLimit = [
+			makeBlock("m1", 0, BASE_THOUGHT),
+			makeBlock("m2", 1, NEAR_DUPLICATE_THOUGHT),
+			makeBlock("m3", 11, BASE_THOUGHT),
+		];
+		const signals = detectThoughtOscillation(atLimit, OSC_CONFIG);
+		assert.equal(signals.length, 1);
+		assert.equal(signals[0]!.count, 3);
+	});
+
+	it("does not merge two honest runs separated by an action", () => {
+		const blocks = [
+			makeBlock("m1", 0, BASE_THOUGHT),
+			makeBlock("m2", 1, BASE_THOUGHT, { stateChanging: true }),
+			makeBlock("m3", 2, BASE_THOUGHT),
+		];
+		assert.equal(detectThoughtOscillation(blocks, OSC_CONFIG).length, 0);
+	});
+
+	it("a paraphrased block ends the run instead of extending it", () => {
+		const blocks = [
+			makeBlock("m1", 0, BASE_THOUGHT),
+			makeBlock("m2", 1, NEAR_DUPLICATE_THOUGHT),
+			makeBlock("m3", 2, PARAPHRASED_THOUGHT),
+			makeBlock("m4", 3, BASE_THOUGHT),
+		];
+		assert.equal(detectThoughtOscillation(blocks, OSC_CONFIG).length, 0);
 	});
 });
