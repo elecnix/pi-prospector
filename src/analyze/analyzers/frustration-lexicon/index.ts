@@ -60,7 +60,7 @@ export const FRUSTRATION_LEXICON_DEF: AnalyzerDef = {
 	id: "frustration-lexicon",
 	label: "Frustration Lexicon (LLM, corpus-wide)",
 	description:
-		"Judges each previously unseen term nominated by a session — in any language — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the term alone, so a word is adjudicated once for the entire corpus and reused by every later session for free.",
+		"Judges each previously unseen term nominated by a session — in any language, single word or two-word phrase — as a frustration signal, praise, or ordinary vocabulary, with a category and language. Keyed on the entry alone, so an entry is adjudicated once for the entire corpus and reused by every later session for free.",
 	anchorSpan: "full_session",
 	dependencies: [LEXICON_CANDIDATES_DEF.id],
 	outputSchema: FrustrationLexiconProperties,
@@ -134,7 +134,17 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			} catch {
 				continue;
 			}
+			// Phrases ride the exact same path as words: a phrase is just a longer
+			// corpus-wide entry, its source ref is still `term`-kind with the
+			// space-joined normalised form as the id, and it inherits this analyzer's
+			// cache, lineage, and prompt envelope unchanged. That is why nomination's
+			// change carries the whole version burden (#40): nothing in *this*
+			// analyzer's identity inputs — prompt, config, source-ref shape — moved,
+			// so it needs no bump of its own.
 			for (const t of props.terms ?? []) {
+				if (!seen.has(t.term)) { seen.add(t.term); nominatedTerms.push(t.term); }
+			}
+			for (const t of props.phrases ?? []) {
 				if (!seen.has(t.term)) { seen.add(t.term); nominatedTerms.push(t.term); }
 			}
 		}

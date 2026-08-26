@@ -8,6 +8,7 @@ import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import type { AnalysisNodeRow, Analyzer } from "../../src/analyze/types.js";
+import type { LLMRequest } from "../../src/analyze/types.js";
 
 export const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 
@@ -104,7 +105,47 @@ export async function insertMessages(db: AsyncDatabase, sessionId: string, messa
 }
 
 /** Insert a v2 proposal directly (bypassing materialisation), for query tests. */
-// ─────────────────────── analyzer-framework scaffolding ───────────────────────
+// ─────────────────────── lexicon mock scaffolding ───────────────────────────
+
+/**
+ * A mock LLM for the learned-lexicon suites: every `classify_term` call comes
+ * back "frustration" exactly for entries in `frustratedEntries` (words or
+ * multi-word phrases alike) and neutral otherwise, with French as the only
+ * language the stub ever names.
+ */
+export function lexiconMock(
+	frustratedEntries: ReadonlySet<string>,
+	frustratedRationale = "expresses dissatisfaction",
+) {
+	return createMockLLM({
+		responder: (req: LLMRequest) => {
+			const entry = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
+			const frustrated = frustratedEntries.has(entry);
+			return {
+				text: "x",
+				structured: {
+					polarity: frustrated ? "frustration" : "neutral",
+					category: frustrated ? "dissatisfaction" : "none",
+					language: frustrated ? "fr" : "und",
+					confidence: 0.9,
+					rationale: frustrated ? frustratedRationale : "ordinary vocabulary",
+				},
+			};
+		},
+	});
+}
+
+/**
+ * How many times the model was asked to adjudicate exactly this entry.
+ *
+ * Matched exactly, not by substring: now that phrases are judged too, a
+ * `TERM: putain c'est` call would otherwise also count as a call for `putain`.
+ */
+export function classifyCallsFor(llm: ReturnType<typeof lexiconMock>, entry: string): number {
+	return llm.calls.filter((c) => c.tool?.name === "classify_term" && c.user === `TERM: ${entry}`).length;
+}
+
+// ─────────────────── analyzer-framework scaffolding ──────────────────────────
 
 /** Per-analyzer config overrides keyed by analyzer id (see FrameworkDeps). */
 export interface MockFrameworkOptions {

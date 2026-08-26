@@ -475,13 +475,26 @@ list — the system **learns the vocabulary from the corpus**.
   rather than to one session, and which therefore reads a declared dependency's
   nodes across all sessions. Dependency-scoped visibility still holds: only the
   *session* scope is lifted, never the dependency scope.
-- **Phrase** — *withdrawn.* Multi-word entries were tried and removed: over a real
-  corpus they were 84% of all adjudications and 75% of all hits while being
-  overwhelmingly noise, because adjacent words in running prose are not idioms.
-  The genuine cases (`laisse tomber`, `trop lent`) are real but too rare to find
-  by adjudicating every adjacent pair. A future attempt needs a different
-  mechanism — a curated seed list, or statistical n-gram selection — not per-pair
-  judgement.
+- **Phrase** — one normalised two-word entry (`laisse tomber`, `trop lent`),
+  nominated from adjacent tokens within a single sentence segment, judged once
+  for the whole corpus exactly like any other term, and matched at turn level by
+  a windowed n-gram compare over the same segmentation nomination used. A
+  phrase's source ref stays `{kind: "term", id: "laisse tomber"}` — a phrase is
+  just a longer corpus-keyed subject, so it inherits the lexicon's cache,
+  lineage, and prompt envelope unchanged; nomination changing (not adjudication)
+  is what alters what gets judged.
+  A first attempt (#40) judged *every* adjacent pair uncapped and was removed:
+  over a real corpus such pairs were 84% of all adjudications and 75% of all hits
+  while being overwhelmingly noise, because adjacent words in running prose are
+  not idioms. Phrases return under a conservative mechanism: frequency-ranked
+  bigrams under a deliberately tight per-session nomination cap, which spends the
+  permanent verdict cache on repeated candidates instead of flooding it with
+  every pair that ever occurred. Trigrams remain unbuilt until bigram
+  adjudications prove clean enough to widen the window.
+  When a term and an extending phrase both match one turn, both hits are emitted
+  (existence stays additive) but weight follows **longest-match-preferred**: a
+  shorter hit fully covered by longer matches carries weight 0, so overlapping
+  spans are never counted twice toward ranking.
 - **Nomination** — the deterministic first stage: tokenise a session's user
   messages and put forward the distinct terms worth judging, ranked by frequency
   and capped per session. Nomination is language-blind by design — no stopword

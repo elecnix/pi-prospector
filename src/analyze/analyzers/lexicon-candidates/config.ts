@@ -24,9 +24,27 @@ export const LexiconCandidatesConfig = Type.Object({
 	 * vocabulary no earlier session used.
 	 */
 	maxTermsPerSession: Type.Number(),
+	/**
+	 * Ceiling on how many distinct two-word phrases a nomination node records.
+	 *
+	 * Unlike {@link maxTermsPerSession} this one is meant to bind. A verdict is
+	 * cached corpus-wide and permanently, so a junk phrase judged once is junk
+	 * stored forever — and adjacent words in running prose are overwhelmingly not
+	 * idioms. The previous uncapped attempt (#40, later reverted) adjudicated
+	 * ~190k distinct phrases over a real corpus and they were almost all noise.
+	 *
+	 * The cap therefore stays deliberately tight (50): bigrams are ranked by
+	 * frequency within the session, so only the session's most-repeated adjacent
+	 * pairs reach adjudication. That costs some recall — an idiom occurring once
+	 * competes against every other once-occurring pair and may miss the cut —
+	 * but it spends the permanent cache conservatively instead of flooding it.
+	 * Raising it is ordinary config, picked up by a run with the `config` reason.
+	 */
+	maxPhrasesPerSession: Type.Number(),
 });
 export type LexiconCandidatesConfig = Static<typeof LexiconCandidatesConfig>;
 
 export const DEFAULT_LEXICON_CANDIDATES_CONFIG: LexiconCandidatesConfig = {
 	maxTermsPerSession: 2000,
+	maxPhrasesPerSession: 50,
 };
