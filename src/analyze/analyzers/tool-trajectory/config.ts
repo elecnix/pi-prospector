@@ -35,6 +35,16 @@ export const ToolTrajectoryConfig = Type.Object({
 	thoughtOscillationMinRepeat: Type.Integer({ minimum: 1 }),
 	/** Weight contributed by each thought-oscillation signal (defaults equal to oscillationWeight). */
 	thoughtOscillationWeight: Type.Number({ minimum: 0, maximum: 1 }),
+	/**
+	 * Friction-weight multiplier applied to blocking-class signals (issue #119):
+	 * plan violations and oscillation are the drifts whose reduction correlates
+	 * with resolution gains, so they weigh more. Part of config identity — a
+	 * change marks affected nodes stale/config, recomputed only by a run that
+	 * includes the `config` reason.
+	 */
+	blockingRiskMultiplier: Type.Number({ minimum: 0 }),
+	/** Friction-weight multiplier applied to non-blocking-class signals (issue #119). */
+	nonBlockingRiskMultiplier: Type.Number({ minimum: 0 }),
 });
 export type ToolTrajectoryConfig = Static<typeof ToolTrajectoryConfig>;
 
@@ -51,4 +61,10 @@ export const DEFAULT_TOOL_TRAJECTORY_CONFIG: ToolTrajectoryConfig = {
 	// Equal to oscillationWeight: repeated thinking without progress costs as
 	// much attention as repeated acting without progress.
 	thoughtOscillationWeight: 0.35,
+	// Risk grading (issue #119, after LivePlan §III-C1): blocking-class drifts
+	// are twice as predictive of an unresolved trajectory as non-blocking ones.
+	// Borrowed from their taxonomy until an outcome label lets us calibrate on
+	// our own corpus (see issue #102).
+	blockingRiskMultiplier: 2.0,
+	nonBlockingRiskMultiplier: 1.0,
 };

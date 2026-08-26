@@ -27,7 +27,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { buildToolStream } from "../../tool-stream.js";
 import { normalizeToolCall } from "./arg-parser.js";
-import { detectAllSignals, TrajectorySignal, type ReasoningBlock, type ToolCallWithResult } from "./detectors.js";
+import { detectAllSignals, TrajectorySignal, SIGNAL_RISK_CLASSES, type ReasoningBlock, type ToolCallWithResult, type RiskClass } from "./detectors.js";
 import { fingerprintReasoning } from "./reasoning-fingerprint.js";
 import { DEFAULT_TOOL_TRAJECTORY_CONFIG, type ToolTrajectoryConfig } from "./config.js";
 import { Type, type Static } from "typebox";
@@ -104,7 +104,15 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// widen: sessions whose agent looped in thought now produce a signal they
 	// previously lacked. Major: old nodes are revised cleanly under --revise major,
 	// preserving their conclusions as lineage beside the revision.
-	major: 3,
+	//
+	// 4.0 (issue #119): every signal now carries a `riskClass`
+	// ("blocking" | "non-blocking"), and the friction contribution becomes
+	// `weight * riskMultiplier`, with the multipliers in config (blocking 2.0,
+	// non-blocking 1.0 by default). Both the output shape and the score's
+	// semantics change: blocking-class oscillation weighs double by default.
+	// Major: old nodes are revised cleanly under --revise major; the new config
+	// keys also re-identify every node as stale/config on their own.
+	major: 4,
 	minor: 0,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
@@ -188,31 +196,42 @@ function extractReasoningBlocks(messages: MessageRow[]): ReasoningBlock[] {
 }
 
 /**
- * Compute the trajectory friction score from detected signals.
- * Each signal pattern has a weight; the score is the sum of weights,
- * clamped to [0, 1].
+ * The friction multiplier for one risk class (issue #119).
  */
-function computeTrajectoryFriction(
+function riskMultiplier(riskClass: RiskClass, config: ToolTrajectoryConfig): number {
+	return riskClass === "blocking"
+		? config.blockingRiskMultiplier
+		: config.nonBlockingRiskMultiplier;
+}
+
+/**
+ * Compute the trajectory friction score from detected signals.
+ * Each pattern has a weight; the contribution is `weight * riskMultiplier`,
+ * where the multiplier grades blocking-class drifts above non-blocking ones
+ * (issue #119). Clamped to [0, 1]. Exported for the risk-grading unit tests.
+ */
+export function computeTrajectoryFriction(
 	signals: TrajectorySignal[],
 	config: ToolTrajectoryConfig,
 ): number {
 	let score = 0;
 	for (const signal of signals) {
+		const multiplier = riskMultiplier(signal.riskClass, config);
 		switch (signal.pattern) {
 			case "stuck-loop":
-				score += config.stuckLoopWeight;
+				score += config.stuckLoopWeight * multiplier;
 				break;
 			case "polling-loop":
-				score += config.pollingLoopWeight;
+				score += config.pollingLoopWeight * multiplier;
 				break;
 			case "oscillation":
-				score += config.oscillationWeight;
+				score += config.oscillationWeight * multiplier;
 				break;
 			case "pre-flight-gap":
-				score += config.preFlightGapWeight;
+				score += config.preFlightGapWeight * multiplier;
 				break;
 			case "thought-oscillation":
-				score += config.thoughtOscillationWeight;
+				score += config.thoughtOscillationWeight * multiplier;
 				break;
 		}
 	}

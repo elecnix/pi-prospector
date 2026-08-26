@@ -52,6 +52,27 @@ export const PhaseSignalKind = Type.Union([
 ]);
 export type PhaseSignalKind = Static<typeof PhaseSignalKind>;
 
+/**
+ * Risk grade of a phase signal (issue #119, after LivePlan §III-C1): plan
+ * violations block; prolonged stagnation does not — it is often legitimate on
+ * hard problems. "Blocking" is a RISK GRADE, never this system's behaviour:
+ * prospector does not intervene (DESIGN.md §5). The field mirrors the same
+ * `riskClass` carried by tool-trajectory's TrajectorySignal; unlike those
+ * signals, phase signals feed no friction weighting today — they surface in the
+ * digest and in plan-compliance scores (#121) — so no multiplier applies here.
+ */
+export const PHASE_SIGNAL_RISK_CLASSES: Record<PhaseSignalKind, "blocking" | "non-blocking"> = {
+	"premature-patching": "blocking",
+	"skip-validation": "blocking",
+	"no-patch-termination": "blocking",
+	"phase-order-violation": "blocking",
+	"prolonged-stagnation": "non-blocking",
+};
+export const PhaseRiskClass = Type.Union([
+	Type.Literal("blocking"),
+	Type.Literal("non-blocking"),
+]);
+
 export const PhaseSignalSchema = Type.Object({
 	signal: PhaseSignalKind,
 	/**
@@ -60,6 +81,8 @@ export const PhaseSignalSchema = Type.Object({
 	 * false for prolonged-stagnation, which is inefficiency, not violation.
 	 */
 	plan_violation: Type.Boolean(),
+	/** Risk grade of this signal (issue #119): blocking for every plan violation, non-blocking for stagnation. */
+	riskClass: PhaseRiskClass,
 	description: Type.String(),
 	turn_indices: Type.Array(Type.Number()),
 	user_message_ids: Type.Array(Type.String()),
@@ -324,6 +347,7 @@ export function detectPhaseSignals(
 		signals.push({
 			signal: "premature-patching",
 			plan_violation: true,
+			riskClass: PHASE_SIGNAL_RISK_CLASSES["premature-patching"],
 			description: `First work of the session was a patch (turn ${offender.turnIndex}) with no prior navigate or reproduce phase`,
 			...evidenceOf([offender]),
 			phase: "patch",
@@ -338,6 +362,7 @@ export function detectPhaseSignals(
 		signals.push({
 			signal: "skip-validation",
 			plan_violation: true,
+			riskClass: PHASE_SIGNAL_RISK_CLASSES["skip-validation"],
 			description: `Session patched (last at turn ${workEntries[lastPatch]!.turnIndex}) but never validated afterwards`,
 			...evidenceOf([workEntries[lastPatch]!]),
 			phase: "patch",
@@ -352,6 +377,7 @@ export function detectPhaseSignals(
 		signals.push({
 			signal: "no-patch-termination",
 			plan_violation: true,
+			riskClass: PHASE_SIGNAL_RISK_CLASSES["no-patch-termination"],
 			description: `Session did ${workEntries.length} turn(s) of work but never entered the patch phase`,
 			...evidenceOf(workEntries),
 		});
@@ -375,6 +401,7 @@ export function detectPhaseSignals(
 			signals.push({
 				signal: "phase-order-violation",
 				plan_violation: true,
+				riskClass: PHASE_SIGNAL_RISK_CLASSES["phase-order-violation"],
 				description: `Phase "${observed}" appeared out of canonical order (expected "${canonical}" first) — canonical order is ${config.canonicalOrder.join(" → ")}`,
 				...(offender ? evidenceOf([offender]) : { turn_indices: [], user_message_ids: [] }),
 				...(observed ? { phase: observed } : {}),
@@ -398,6 +425,7 @@ export function detectPhaseSignals(
 			signals.push({
 				signal: "prolonged-stagnation",
 				plan_violation: false,
+				riskClass: PHASE_SIGNAL_RISK_CLASSES["prolonged-stagnation"],
 				description: `${length} consecutive turns in the "${phase}" phase (threshold ${config.stagnationMin})`,
 				...evidenceOf(run),
 				phase,
