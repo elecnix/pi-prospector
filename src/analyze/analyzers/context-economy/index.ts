@@ -26,6 +26,13 @@
  * All computation happens in plan() via ctx.db because MessageRow does not
  * carry the `usage` column. Results are stashed in unit.meta for analyze().
  *
+ * Dollar pricing (#78): alongside token-turns, each result's carry is also
+ * priced from the per-bucket billed dollars captured at sync time (#65) —
+ * carryUsd re-prices the result's own tokens at every turn in its carry
+ * window's implied cacheRead $/token, so a single billed total never mixes
+ * input/output/cacheRead/cacheWrite into one number. Turns without a per-
+ * bucket breakdown are excluded and counted, never zero-priced.
+ *
  * All numbers are deterministic (no LLM). Token counts are estimated from stored
  * character lengths via `charsPerToken` (config-tunable); carry cost and turn
  * counts are exact.
@@ -44,6 +51,7 @@ import type {
 import { computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
+import type { CostInfo } from "../../../types.js";
 
 // ── emitted-node schema ──
 
@@ -88,6 +96,8 @@ const ContextEconomyFlag = Type.Union([
 		tokens: Type.Number(),
 		turnsAfter: Type.Number(),
 		carryTokenTurns: Type.Number(),
+		/** Carry re-priced at each carry turn's implied cacheRead dollars/token; null when no turn could be priced (#78). */
+		carryUsd: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
 		ordinal: Type.Number(),
 	}),
 	Type.Object({
@@ -134,6 +144,12 @@ export const ContextEconomyProperties = Type.Object({
 	}),
 	carry: Type.Object({
 		totalTokenTurns: Type.Number(),
+		/** Sum of per-result carryUsd, or null when no carry turn could be priced from per-bucket cost (#78). */
+		totalCarryUsd: Type.Union([Type.Number(), Type.Null()]),
+		/** Billed turns inside some result's carry window that contributed to a dollar figure. */
+		pricedTurns: Type.Number(),
+		/** Billed turns inside some carry window lacking a per-bucket breakdown — excluded, never zero-priced. */
+		unpricedTurns: Type.Number(),
 		byTool: Type.Record(Type.String(), Type.Number()),
 	}),
 	readAmplification: Type.Number(),
@@ -145,6 +161,7 @@ export const ContextEconomyProperties = Type.Object({
 			tokens: Type.Number(),
 			turnsAfter: Type.Number(),
 			carryTokenTurns: Type.Number(),
+			carryUsd: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
 			ordinal: Type.Number(),
 		}),
 	),
@@ -181,8 +198,13 @@ export const CONTEXT_ECONOMY_VERSION: AnalyzerVersion = {
 	// count as duplicates only when their byte ranges overlap, so paginated
 	// reads of one large file no longer false-positive. Same node shape, fewer
 	// redundant-read flags; existing 2.0 nodes go stale/minor and are revisable.
+	// 2.2 (issue #78): minor. High-carry results are also priced in dollars —
+	// carryUsd re-prices each result's own tokens at every carry turn's implied
+	// cacheRead $/token from the per-bucket cost breakdown (#65), with turns
+	// lacking a breakdown excluded and counted, never zero-priced. Additive
+	// fields on carry/flags/topResults; existing 2.1 nodes go stale/minor.
 	major: 2,
-	minor: 1,
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/context-economy/index.ts",
 };
@@ -197,7 +219,7 @@ type DbRow = {
 };
 
 type Flag =
-	| { kind: "high-carry-result"; tool: string; tokens: number; turnsAfter: number; carryTokenTurns: number; ordinal: number }
+	| { kind: "high-carry-result"; tool: string; tokens: number; turnsAfter: number; carryTokenTurns: number; carryUsd?: number | null; ordinal: number }
 	| { kind: "oversized-tool-result"; tool: string; tokens: number; ordinal: number }
 	| { kind: "redundant-read"; path: string; count: number };
 
@@ -307,6 +329,111 @@ function parseUsage(row: DbRow): Record<string, number> | null {
 	} catch {
 		return null;
 	}
+}
+
+// ── carry pricing in dollars (issue #78) ──
+
+/** Per-turn billing inputs a carry window is priced from. */
+export interface CarryTurnBilling {
+	inputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+	/** Per-bucket billed dollars, or null when the host reported none. */
+	cost: Pick<CostInfo, "input" | "output" | "cacheRead" | "cacheWrite"> | null;
+}
+
+export interface CarryPricing {
+	/** Dollars billed for re-reading this result across its priced turns, or null when no turn could be priced. */
+	carryUsd: number | null;
+	pricedTurns: number;
+	unpricedTurns: number;
+}
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/**
+ * Parse one assistant turn's stored usage JSON into the billing inputs the
+ * carry pricing reads. The per-bucket cost breakdown lives inside the usage
+ * blob next to the token buckets (#65); its absence means the host reported
+ * none for this turn — UNKNOWN cost, never zero cost.
+ */
+export function parseCarryBilling(row: DbRow): CarryTurnBilling | null {
+	if (row.role !== "assistant" || !row.usage) return null;
+	const u = parseUsage(row);
+	if (!u) return null;
+	const costObj = u["cost"] as Record<string, unknown> | null | undefined;
+	return {
+		inputTokens: num(u["input"]),
+		cacheReadTokens: num(u["cacheRead"]),
+		cacheWriteTokens: num(u["cacheWrite"]),
+		cost:
+			costObj && typeof costObj === "object"
+				? {
+						input: num(costObj["input"]),
+						output: num(costObj["output"]),
+						cacheRead: num(costObj["cacheRead"]),
+						cacheWrite: num(costObj["cacheWrite"]),
+					}
+				: null,
+	};
+}
+
+/** Round dollars to six decimals, matching the tool-inventory-tax precedent. */
+function roundUsd(usd: number): number {
+	return Math.round(usd * 1e6) / 1e6;
+}
+
+/**
+ * Whether one turn carries enough information to price dollars at all: it must
+ * report a per-bucket breakdown AND a token denominator the prefix was paid
+ * under (cacheRead on a carry turn; input + cacheWrite on a rebuild turn).
+ */
+export function isPricedTurn(t: CarryTurnBilling): boolean {
+	if (!t.cost) return false;
+	return t.cacheReadTokens > 0 || t.inputTokens + t.cacheWriteTokens > 0;
+}
+
+/**
+ * One turn's implied prefix price per token: cacheRead $/token when the cache
+ * was read, blended (input + cacheWrite) $/token when it was rebuilt mid-window.
+ * Null when the turn is unpriced (no breakdown or no denominator).
+ */
+export function turnImpliedRate(t: CarryTurnBilling): number | null {
+	if (t.cacheReadTokens > 0 && t.cost) return t.cost.cacheRead / t.cacheReadTokens;
+	const denom = t.inputTokens + t.cacheWriteTokens;
+	if (denom > 0 && t.cost) return (t.cost.input + t.cost.cacheWrite) / denom;
+	return null;
+}
+
+/**
+ * Price one result's carry in dollars across its carry window (issue #78).
+ *
+ * A carried result rides in the request prefix of every subsequent billed
+ * turn, so each turn prices the result's own tokens at that turn's implied
+ * rate from its per-bucket dollars — cacheRead $/token on a carry turn, or
+ * blended (input + cacheWrite) $/token when a rebuild turn lost the cache
+ * mid-window and the prefix was paid there instead. This mirrors the
+ * tool-inventory-tax pricing method; it attributes to each result only its
+ * own share of a turn's dollars rather than the whole bill.
+ *
+ * A turn without a per-bucket cost breakdown contributes nothing and is
+ * counted as unpriced — never zero-priced. When nothing can be priced,
+ * carryUsd is null.
+ */
+export function priceCarry(resultTokens: number, turns: ReadonlyArray<CarryTurnBilling>): CarryPricing {
+	let total = 0;
+	let pricedTurns = 0;
+	let unpricedTurns = 0;
+	for (const t of turns) {
+		const rate = turnImpliedRate(t);
+		if (rate === null) {
+			unpricedTurns++;
+		} else {
+			total += resultTokens * rate;
+			pricedTurns++;
+		}
+	}
+	return { carryUsd: pricedTurns > 0 ? roundUsd(total) : null, pricedTurns, unpricedTurns };
 }
 
 /**
@@ -463,10 +590,24 @@ export const contextEconomyAnalyzer: Analyzer = {
 		let compactionCount = 0;
 		for (let i = 0; i < n; i++) if (rows[i]!.role === "compaction") compactionCount++;
 
+		// Per-turn billing inputs keyed by row ordinal, so each result's carry can
+		// be re-priced in dollars at its window turns' own implied rates (#78).
+		const billingByOrdinal = new Map<number, CarryTurnBilling>();
+		for (let i = 0; i < n; i++) {
+			const b = parseCarryBilling(rows[i]!);
+			if (b) billingByOrdinal.set(i, b);
+		}
+		// Distinct billed turns inside some result's carry window, classified once
+		// per turn (a turn can sit in several windows) for honest coverage counts.
+		const pricedOrdinals = new Set<number>();
+		const unpricedOrdinals = new Set<number>();
+
 		const billed = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 		let turns = 0;
 		const carryByTool: Record<string, number> = {};
 		const results: Array<{ tool: string; tokens: number; turnsAfter: number; carry: number; ordinal: number }> = [];
+		/** Dollar carry (#78) per result ordinal: null when no window turn could be priced. */
+		const carryUsdByOrdinal = new Map<number, number | null>();
 		// Slice-aware read tracking (issue #156): reads are recorded as byte ranges
 	// per path, so paginated reads of one large file (disjoint slices) are not
 	// flagged as redundant — only genuinely overlapping content reads are.
@@ -522,6 +663,16 @@ export const contextEconomyAnalyzer: Analyzer = {
 					const turnsAfter = billedPrefix[nextCompaction[i + 1]!]! - billedPrefix[i + 1]!;
 					const carry = tokens * turnsAfter;
 					carryByTool[tool] = (carryByTool[tool] ?? 0) + carry;
+				// Dollar carry (#78): this result's own tokens × each carry turn's implied rate.
+				const windowEnd = nextCompaction[i + 1]!;
+				const windowTurns: CarryTurnBilling[] = [];
+				for (let j = i + 1; j < windowEnd; j++) {
+					const b = billingByOrdinal.get(j);
+					if (!b) continue;
+					windowTurns.push(b);
+					(isPricedTurn(b) ? pricedOrdinals : unpricedOrdinals).add(j);
+				}
+				carryUsdByOrdinal.set(i, priceCarry(tokens, windowTurns).carryUsd);
 					results.push({ tool, tokens, turnsAfter, carry, ordinal: i });
 				} catch {
 					/* ignore */
@@ -540,6 +691,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 					tokens: Math.round(res.tokens),
 					turnsAfter: res.turnsAfter,
 					carryTokenTurns: Math.round(res.carry),
+					carryUsd: carryUsdByOrdinal.get(res.ordinal) ?? null,
 					ordinal: res.ordinal,
 				});
 			}
@@ -553,6 +705,11 @@ export const contextEconomyAnalyzer: Analyzer = {
 		}
 
 		const totalCarry = results.reduce((a, r) => a + r.carry, 0);
+		const perResultCarryUsd = results
+			.map((r) => carryUsdByOrdinal.get(r.ordinal))
+			.filter((v): v is number => typeof v === "number");
+		// null when no result's window had a priced turn — never a silent zero.
+		const totalCarryUsd = perResultCarryUsd.length > 0 ? roundUsd(perResultCarryUsd.reduce((a, v) => a + v, 0)) : null;
 		const readBashCarry = (carryByTool["read"] ?? 0) + (carryByTool["bash"] ?? 0);
 		const readAmplification = billed.output > 0 ? readBashCarry / billed.output : 0;
 
@@ -577,6 +734,9 @@ export const contextEconomyAnalyzer: Analyzer = {
 				billed,
 				carry: {
 					totalTokenTurns: Math.round(totalCarry),
+					totalCarryUsd,
+					pricedTurns: pricedOrdinals.size,
+					unpricedTurns: unpricedOrdinals.size,
 					byTool: Object.fromEntries(Object.entries(carryByTool).map(([k, v]) => [k, Math.round(v)])),
 				},
 				readAmplification: Math.round(readAmplification),
@@ -592,6 +752,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 					tokens: Math.round(r.tokens),
 					turnsAfter: r.turnsAfter,
 					carryTokenTurns: Math.round(r.carry),
+					carryUsd: carryUsdByOrdinal.get(r.ordinal) ?? null,
 					ordinal: r.ordinal,
 				})),
 				skills: Object.entries(skillStats)
@@ -630,7 +791,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 		const proposals: RawProposal[] = [];
 
 		// ── deterministic proposals from flags ──
-		const mergedCarry: Record<string, { tool: string; tokens: number; turnsAfter?: number; carryTokenTurns?: number }> = {};
+		const mergedCarry: Record<string, { tool: string; tokens: number; turnsAfter?: number; carryTokenTurns?: number; carryUsd?: number | null }> = {};
 		const mergedRedundant: Set<string> = new Set();
 
 		for (const f of flags) {
@@ -644,6 +805,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 				const e = (mergedCarry[key] ??= { tool: f.tool, tokens: f.tokens });
 				e.turnsAfter = f.turnsAfter;
 				e.carryTokenTurns = f.carryTokenTurns;
+				e.carryUsd = f.carryUsd;
 			}
 			if (f.kind === "redundant-read") {
 				mergedRedundant.add(f.path);
@@ -652,17 +814,21 @@ export const contextEconomyAnalyzer: Analyzer = {
 
 		for (const [key, info] of Object.entries(mergedCarry)) {
 			const ordinal = parseInt(key.split(":")[1]!);
+			// Dollar figure (#78) rides beside the token-turn number wherever it
+			// appears — token-turns explain why a small read is expensive; dollars
+			// say what that cost. Null/unpriced carries no figure at all.
+			const usd = info.carryUsd != null ? ` ($${info.carryUsd.toFixed(4)})` : "";
 			const cc = info.carryTokenTurns
-				? `${info.carryTokenTurns.toLocaleString()} token-turns (${info.tokens} tok × ${info.turnsAfter} turns)`
+				? `${info.carryTokenTurns.toLocaleString()} token-turns (${info.tokens} tok × ${info.turnsAfter} turns)${usd}`
 				: `${info.tokens} tokens`;
 			proposals.push({
 				target_type: "prompt",
 				title: `${info.tool} result at ordinal ${ordinal}: ${cc}`,
 				summary: `A ${info.tool} result at message ordinal ${ordinal} carried ${cc}${info.carryTokenTurns ? " total" : ""}. This result is re-billed as cacheRead on every subsequent assistant turn.`,
 				detail: info.carryTokenTurns
-					? "Move this read later in the session (closer to where it's actually used), or split long sessions so large reads don't trail through hundreds of irrelevant turns."
+					? `Move this read later in the session (closer to where it's actually used), or split long sessions so large reads don't trail through hundreds of irrelevant turns.${info.carryUsd != null ? ` The carry was billed about $${info.carryUsd.toFixed(4)} as cacheRead.` : ""}`
 					: "Oversized tool results are re-billed as cacheRead on every subsequent turn. Consider reading only the specific sections needed, or using grep/search instead of full-file reads for large files.",
-				evidence: `${info.tool} at ordinal ${ordinal}: ${info.tokens} tok${info.turnsAfter ? ` × ${info.turnsAfter} turns = ${info.carryTokenTurns?.toLocaleString()} token-turns` : ""}`,
+				evidence: `${info.tool} at ordinal ${ordinal}: ${info.tokens} tok${info.turnsAfter ? ` × ${info.turnsAfter} turns = ${info.carryTokenTurns?.toLocaleString()} token-turns${usd}` : ""}${info.carryUsd == null && info.carryTokenTurns ? "; no per-bucket cost recorded to price dollars" : ""}`,
 				confidence: 0.85,
 				severity: "waste",
 			});
@@ -729,12 +895,15 @@ export const contextEconomyAnalyzer: Analyzer = {
 				});
 			}
 			if (compactionPolicy.compactionCount === 0 && compactionPolicy.neverCompacted) {
+				const totalTT = ((carry["totalTokenTurns"] as number) ?? 0).toLocaleString();
+				const totalUsd = carry["totalCarryUsd"];
+				const usdNote = totalUsd != null ? ` ($${(totalUsd as number).toFixed(4)} billed as cacheRead)` : "";
 				proposals.push({
 					target_type: "config",
-					title: `Session never compacted despite ${((carry["totalTokenTurns"] as number) ?? 0).toLocaleString()} token-turns of carry`,
-					summary: "This session carried substantial context to its end without ever compacting, so every result stayed billed as cacheRead until the last turn.",
+					title: `Session never compacted despite ${totalTT} token-turns of carry${usdNote}`,
+					summary: `This session carried substantial context to its end without ever compacting, so every result stayed billed as cacheRead until the last turn.${usdNote}`,
 					detail: "Consider compacting long sessions so early large reads do not trail through the whole conversation, or split the work into shorter sessions.",
-					evidence: `${((carry["totalTokenTurns"] as number) ?? 0).toLocaleString()} token-turns carried; 0 compactions.`,
+					evidence: `${totalTT} token-turns carried${usdNote}; 0 compactions.`,
 					confidence: 0.6,
 					severity: "suggestion",
 				});
@@ -743,12 +912,14 @@ export const contextEconomyAnalyzer: Analyzer = {
 
 		const totalCarry = (carry["totalTokenTurns"] as number) ?? 0;
 		if (totalCarry > SESSION_CARRY_THRESHOLD && billed["output"] && billed["output"] > 0) {
+			const totalUsd = carry["totalCarryUsd"];
+			const usd = totalUsd != null ? ` ($${(totalUsd as number).toFixed(4)})` : "";
 			proposals.push({
 				target_type: "general",
-				title: `High carry-cost session: ${totalCarry.toLocaleString()} token-turns, read amplification ${readAmpl}×`,
-				summary: `This session spent ${totalCarry.toLocaleString()} token-turns on carried context (read amplification ${readAmpl}× output).`,
+				title: `High carry-cost session: ${totalCarry.toLocaleString()} token-turns${usd}, read amplification ${readAmpl}×`,
+				summary: `This session spent ${totalCarry.toLocaleString()} token-turns on carried context (read amplification ${readAmpl}× output)${usd}.`,
 				detail: "Session is dominated by carried context rather than output. Consider breaking long coding sessions into shorter focused ones, using search/grep instead of full reads, and avoiding redundant reads.",
-				evidence: `${totalCarry.toLocaleString()} total carry token-turns; ${(billed["cacheRead"] ?? 0).toLocaleString()} cacheRead tokens; read amplification ${readAmpl}×`,
+				evidence: `${totalCarry.toLocaleString()} total carry token-turns${usd}; ${(billed["cacheRead"] ?? 0).toLocaleString()} cacheRead tokens; read amplification ${readAmpl}×`,
 				confidence: 0.6,
 				severity: "suggestion",
 			});
