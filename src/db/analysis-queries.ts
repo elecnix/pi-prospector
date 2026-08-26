@@ -596,6 +596,46 @@ export async function getEdgesTo(db: AsyncDatabase, toRefId: string, edgeKind?: 
 	return (await prep(db, "SELECT * FROM analysis_edges WHERE to_ref_id = ?").all(toRefId)) as AnalysisEdgeRow[];
 }
 
+/**
+ * Every edge whose source node belongs to the session, in stream order.
+ *
+ * This is the viz read: the edge table is the single source of truth for
+ * relationships, so a rendering walks it rather than any embedded reference.
+ * Includes edges out of retracted nodes — a retracted node stays inspectable,
+ * and its relationships are part of what happened.
+ */
+export async function getSessionEdges(db: AsyncDatabase, sessionId: string): Promise<AnalysisEdgeRow[]> {
+	return (await prep(db,
+			"SELECT e.* FROM analysis_edges e JOIN analysis_nodes n ON n.id = e.from_node_id " +
+				"WHERE n.session_id = ? ORDER BY n.created_at ASC, n.id ASC, e.ordinal ASC",
+		)
+		.all(sessionId)) as AnalysisEdgeRow[];
+}
+
+/**
+ * A session's nodes including retracted ones. The viz shows a retracted node as
+ * filterable, never falsely absent; callers that want only live nodes use
+ * `getSessionNodes`, which reads the `live_nodes` view.
+ */
+export async function getSessionNodesIncludingRetracted(db: AsyncDatabase, sessionId: string): Promise<AnalysisNodeRow[]> {
+	return (await prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? ORDER BY created_at ASC, id ASC")
+		.all(sessionId)) as AnalysisNodeRow[];
+}
+
+/** Content-addressed prompt rows by hash (viz provenance targets for `uses_prompt` edges). */
+export async function getPromptRegistryRows(db: AsyncDatabase, hashes: readonly string[]): Promise<PromptVersion[]> {
+	if (hashes.length === 0) return [];
+	const marks = hashes.map(() => "?").join(", ");
+	return (await prep(db, `SELECT hash, content, role FROM prompt_registry WHERE hash IN (${marks})`).all(...hashes)) as PromptVersion[];
+}
+
+/** Config rows by id (viz provenance targets for `uses_config` edges). */
+export async function getAnalyzerConfigRows(db: AsyncDatabase, ids: readonly string[]): Promise<Array<{ id: string; analyzer_id: string; config_json: string }>> {
+	if (ids.length === 0) return [];
+	const marks = ids.map(() => "?").join(", ");
+	return (await prep(db, `SELECT id, analyzer_id, config_json FROM analyzer_configs WHERE id IN (${marks})`).all(...ids)) as Array<{ id: string; analyzer_id: string; config_json: string }>;
+}
+
 /** Message ids that a node anchors to (via `anchors` edges with message targets). */
 export async function getAnchoredMessageIds(db: AsyncDatabase, nodeId: string): Promise<string[]> {
 	const rows = (await prep(db, "SELECT to_ref_id FROM analysis_edges WHERE from_node_id = ? AND edge_kind = ? AND to_ref_kind = ?")
