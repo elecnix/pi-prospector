@@ -8,8 +8,11 @@ permissions:
 concurrency:
   group: cite-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
+# The Cite review is advisory: it must never block stacked PRs when the
+# LLM service degrades. Failures stay visible but do not red-X the PR.
 jobs:
   review:
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Review this pull request with Cite
