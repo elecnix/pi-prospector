@@ -27,7 +27,8 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { buildToolStream } from "../../tool-stream.js";
 import { normalizeToolCall } from "./arg-parser.js";
-import { detectAllSignals, TrajectorySignal, type ToolCallWithResult } from "./detectors.js";
+import { detectAllSignals, TrajectorySignal, type ReasoningBlock, type ToolCallWithResult } from "./detectors.js";
+import { fingerprintReasoning } from "./reasoning-fingerprint.js";
 import { DEFAULT_TOOL_TRAJECTORY_CONFIG, type ToolTrajectoryConfig } from "./config.js";
 import { Type, type Static } from "typebox";
 
@@ -66,7 +67,7 @@ export const TOOL_TRAJECTORY_DEF: AnalyzerDef = {
 	id: "tool-trajectory",
 	label: "Tool-Call Trajectory (deterministic)",
 	description:
-		"Detects stuck-loops, polling-loops, oscillation, and pre-flight gaps in the ordered tool-call stream. No LLM.",
+		"Detects stuck-loops, polling-loops, action oscillation, pre-flight gaps, and thought-oscillation (repeated near-duplicate reasoning without progress) in the ordered session stream. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [TURN_PAIR_CORE_DEF.id],
 	outputSchema: ToolTrajectoryProperties,
@@ -95,7 +96,15 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// decides whether a run of repeats counts as a stuck-loop. Major: previously
 	// reported signals can disappear and new ones appear, because the inputs to
 	// the detectors were wrong.
-	major: 2,
+	//
+	// 3.0 (issue #117): new thought-oscillation detector — repeated near-duplicate
+	// private reasoning without progress, fingerprinted over normalised prose
+	// shingles. The node output changes shape (a new pattern can appear in
+	// `signals`, and signals may carry `similarity`), and detection semantics
+	// widen: sessions whose agent looped in thought now produce a signal they
+	// previously lacked. Major: old nodes are revised cleanly under --revise major,
+	// preserving their conclusions as lineage beside the revision.
+	major: 3,
 	minor: 0,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
@@ -129,6 +138,56 @@ function extractToolCalls(messages: MessageRow[]): ToolCallWithResult[] {
 }
 
 /**
+ * Extract the reasoning blocks the thought-oscillation detector consumes:
+ * every assistant message carrying private reasoning, tagged with its turn
+ * ordinal and whether its own turn also made a state-changing tool call.
+ *
+ * A turn spans everything between two user messages (DESIGN.md §2), so a block
+ * is disqualified when ANY state-changing call lands anywhere in that span —
+ * re-think-then-act made progress and is not oscillation. Blocks whose prose
+ * is too short to fingerprint are skipped entirely.
+ */
+function extractReasoningBlocks(messages: MessageRow[]): ReasoningBlock[] {
+	const blocks: ReasoningBlock[] = [];
+	let turnIndex = -1;
+	let currentTurnStateChanging = false;
+	for (const m of messages) {
+		if (m.role === "user") {
+			turnIndex++;
+			currentTurnStateChanging = false;
+			continue;
+		}
+		if (m.tool_calls) {
+			let parsed: Array<{ name?: unknown; arguments?: Record<string, unknown> }>;
+			try {
+				parsed = JSON.parse(m.tool_calls) as Array<{ name?: unknown; arguments?: Record<string, unknown> }>;
+			} catch (e) {
+				throw new Error(`tool-trajectory: unparseable tool_calls JSON on message ${m.id}: ${String(e)}`);
+			}
+			for (const c of parsed) {
+				if (typeof c.name !== "string") continue;
+				if (!normalizeToolCall({ name: c.name, args: c.arguments ?? {}, messageId: m.id }).readOnly) {
+					currentTurnStateChanging = true;
+				}
+			}
+		}
+		if (m.role !== "assistant") continue;
+		const thinking = m.content_thinking;
+		if (!thinking) continue;
+		const fingerprinted = fingerprintReasoning(thinking);
+		if (!fingerprinted) continue;
+		blocks.push({
+			messageId: m.id,
+			turnIndex: Math.max(turnIndex, 0),
+			stateChanging: currentTurnStateChanging,
+			fingerprint: fingerprinted,
+			costUsd: m.cost_usd,
+		});
+	}
+	return blocks;
+}
+
+/**
  * Compute the trajectory friction score from detected signals.
  * Each signal pattern has a weight; the score is the sum of weights,
  * clamped to [0, 1].
@@ -151,6 +210,9 @@ function computeTrajectoryFriction(
 				break;
 			case "pre-flight-gap":
 				score += config.preFlightGapWeight;
+				break;
+			case "thought-oscillation":
+				score += config.thoughtOscillationWeight;
 				break;
 		}
 	}
@@ -195,10 +257,12 @@ export const toolTrajectoryAnalyzer: Analyzer = {
 		const messages = await ctx.getSessionMessages(ctx.sessionId);
 		const toolCalls = extractToolCalls(messages);
 
-		const signals = detectAllSignals(toolCalls, {
+		const signals = detectAllSignals(toolCalls, extractReasoningBlocks(messages), {
 			stuckLoopMin: config.stuckLoopMin,
 			pollingLoopMin: config.pollingLoopMin,
 			oscillationWindow: config.oscillationWindow,
+			thoughtOscillationSimilarity: config.thoughtOscillationSimilarity,
+			thoughtOscillationMinRepeat: config.thoughtOscillationMinRepeat,
 		});
 
 		const trajectoryFriction = computeTrajectoryFriction(signals, config);
