@@ -86,12 +86,16 @@ describe("PiSubagentSource", () => {
 	it("a --source claude scope selects no subagent sessions; mixed adapters stay segmented", async () => {
 		const { db, close } = await tempDb();
 		const fx = makeRoot();
+		// The Claude root is deliberately empty and separate: since #157 discovery
+		// recurses into nested run trees whatever root it walks, so a claude root
+		// sharing this fixture would legitimately claim the nested session.jsonl.
+		const claudeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-empty-claude-"));
 		try {
 			writeSubagentSession(fx.root, PARENT, "run-0", "sub-0001");
 
 			const scoped = await runSync(
 				db,
-				[new PiFileSource(fx.root), new ClaudeFileSource(fx.root), new PiSubagentSource(fx.root)],
+				[new PiFileSource(fx.root), new ClaudeFileSource(claudeRoot), new PiSubagentSource(fx.root)],
 				{ source: "claude" },
 			);
 			assert.equal(scoped.sessionsProcessed, 0);
@@ -101,6 +105,7 @@ describe("PiSubagentSource", () => {
 			]);
 			assert.equal(unscoped.sessionsProcessed, 1);
 		} finally {
+			fs.rmSync(claudeRoot, { recursive: true, force: true });
 			fx.cleanup();
 			await close();
 		}

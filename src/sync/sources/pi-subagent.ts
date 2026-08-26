@@ -10,7 +10,7 @@ import type { DiscoveredSession } from "../../types.js";
 import type { SessionInsert, MessageInsert } from "../../db/queries.js";
 import { parseLine, extractSessionName } from "../parser.js";
 import { buildToolInventory } from "./pi-file.js";
-import { projectNameFromDir } from "../scanner.js";
+import { projectNameFromDir, MAX_DISCOVERY_DEPTH } from "../scanner.js";
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RUN_DIR_RE = /^run-\d+$/;
@@ -38,12 +38,20 @@ export class PiSubagentSource implements SessionSourceAdapter {
 				continue;
 			}
 			if (!stat.isDirectory()) continue;
-			await this.walkSubdirs(projectPath, projectNameFromDir(entry), results);
+			await this.walkSubdirs(projectPath, projectNameFromDir(entry), results, 1);
 		}
 		return results;
 	}
 
-	private async walkSubdirs(dir: string, project: string, results: DiscoveredSession[]): Promise<void> {
+	private async walkSubdirs(
+		dir: string,
+		project: string,
+		results: DiscoveredSession[],
+		depth: number,
+	): Promise<void> {
+		// Same bound as the shared walker (#157): a pathological tree stops the
+		// descent instead of recursing without end; anything deeper stays undiscovered.
+		if (depth > MAX_DISCOVERY_DEPTH) return;
 		let entries: string[];
 		try {
 			entries = await fs.readdir(dir);
@@ -69,7 +77,7 @@ export class PiSubagentSource implements SessionSourceAdapter {
 				}
 				results.push({ filePath: sf, project, mtime: fsStat.mtimeMs, size: fsStat.size, source: this.source });
 			} else {
-				await this.walkSubdirs(fullPath, project, results);
+				await this.walkSubdirs(fullPath, project, results, depth + 1);
 			}
 		}
 	}

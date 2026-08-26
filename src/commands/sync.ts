@@ -12,10 +12,16 @@ import { loadConfig, getDbPath, getSessionsDir, getClaudeSessionsDir } from "../
 /**
  * Composition root for session sources: the two built-in file sources, plus
  * any extra source named in config `sources` (e.g. "pi-subagent").
+ *
+ * The pi-subagent adapter is deliberately registered *before* PiFileSource:
+ * since #157 the shared walker recurses into nested run directories, so both
+ * adapters discover <project>/<ts>_<uuid>/<runhash>/run-N/session.jsonl files.
+ * runSync claims each file once, first adapter wins — and the subagent adapter
+ * parses strictly more than the plain one (it additionally recovers the parent
+ * session id from the enclosing UUID directory), so it must claim them first.
  */
 export function buildAdapters(): SessionSourceAdapter[] {
 	const adapters: SessionSourceAdapter[] = [
-		new PiFileSource(getSessionsDir()),
 		new ClaudeFileSource(getClaudeSessionsDir()),
 	];
 
@@ -24,6 +30,7 @@ export function buildAdapters(): SessionSourceAdapter[] {
 	if (sources.includes("pi-subagent")) {
 		adapters.push(new PiSubagentSource(getSessionsDir()));
 	}
+	adapters.push(new PiFileSource(getSessionsDir()));
 
 	return adapters;
 }

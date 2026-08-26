@@ -3,6 +3,16 @@ import * as path from "node:path";
 import type { DiscoveredSession, SessionSource } from "../types.js";
 
 /**
+ * How deep below a project directory discovery may descend looking for .jsonl
+ * session files. The nested async-subagent layout (#157) needs three levels
+ * (<timestamp>_<uuid>/<runhash>/run-N/session.jsonl); Claude layouts are flat.
+ * The bound keeps a pathological tree (or a symlink loop surfaced as dirs)
+ * from walking unbounded — recursion simply stops and anything deeper stays
+ * undiscovered rather than hanging the sync.
+ */
+export const MAX_DISCOVERY_DEPTH = 8;
+
+/**
  * Optional filters that narrow which sessions discovery returns. Scoping lets a
  * caller sync one project (or one harness) instead of walking every session on
  * disk — the fresh-install case where a full sync ingests hundreds of files.
@@ -59,6 +69,13 @@ async function discoverClaudeSessions(sessionsDir: string): Promise<DiscoveredSe
  * Walk one session root for its .jsonl files, tagged with the given source.
  * Exported for SessionSourceAdapter implementations, which own discovery for
  * their source and reuse this walker for the shared directory layout.
+ *
+ * Discovery recurses below each project directory up to {@link MAX_DISCOVERY_DEPTH}
+ * levels, so nested async-subagent session files (<project-dir>/<timestamp>_<uuid>
+ * /<runhash>/run-N/session.jsonl) are discovered alongside top-level ones (#157).
+ * Each .jsonl found — wherever it sits in that bounded tree — is discovered as
+ * its own session; which session each file *is* remains the parser's job (the
+ * header's own id), never a function of the path.
  */
 export async function walkSessionDir(
 	sessionsDir: string,
@@ -89,34 +106,58 @@ export async function walkSessionDir(
 
 		const project = projectNameFromDir(entry);
 
-		let files: string[];
+		await collectJsonlFiles(fullPath, project, 1, source, results);
+	}
+
+	return results;
+}
+
+/**
+ * Recursively gather every .jsonl file under `dir`, descending at most to
+ * `depth === MAX_DISCOVERY_DEPTH`. Files at any visited level count; unreadable
+ * subdirectories are skipped quietly (they may vanish mid-walk), while deeper
+ * levels beyond the bound are simply not visited.
+ */
+async function collectJsonlFiles(
+	dir: string,
+	project: string,
+	depth: number,
+	source: SessionSource,
+	results: DiscoveredSession[],
+): Promise<void> {
+	let entries: string[];
+	try {
+		entries = await fs.readdir(dir);
+	} catch {
+		return;
+	}
+
+	// Directories first, then files, so the depth bound governs descent before
+	// any file at this level is recorded — but both come from the single readdir.
+	for (const entry of entries) {
+		const fullPath = path.join(dir, entry);
+		let stat: Awaited<ReturnType<typeof fs.stat>>;
 		try {
-			files = await fs.readdir(fullPath);
+			stat = await fs.stat(fullPath);
 		} catch {
 			continue;
 		}
 
-		for (const file of files) {
-			if (!file.endsWith(".jsonl")) continue;
-			const filePath = path.join(fullPath, file);
-			let fileStat: Awaited<ReturnType<typeof fs.stat>>;
-			try {
-				fileStat = await fs.stat(filePath);
-			} catch {
-				continue;
-			}
-
-			results.push({
-				filePath,
-				project,
-				mtime: fileStat.mtimeMs,
-				size: fileStat.size,
-				source,
-			});
+		if (stat.isDirectory()) {
+			if (depth >= MAX_DISCOVERY_DEPTH) continue;
+			await collectJsonlFiles(fullPath, project, depth + 1, source, results);
+			continue;
 		}
-	}
 
-	return results;
+		if (!entry.endsWith(".jsonl")) continue;
+		results.push({
+			filePath: fullPath,
+			project,
+			mtime: stat.mtimeMs,
+			size: stat.size,
+			source,
+		});
+	}
 }
 
 /**
