@@ -498,6 +498,15 @@ list — the system **learns the vocabulary from the corpus**.
   vocabulary: shouting, repeated punctuation, a held-down letter. These need
   neither a lexicon nor a language, and they exist so that a user whose words the
   lexicon has never seen is still legible.
+- **Modulator** — a turn-level form feature that fires no hit of its own but
+  *scales the weight* of the signals already present on that same turn. It is
+  distinct from a signal: a signal exists on its own and produces a hit node; a
+  modulator produces nothing when there is nothing to modulate, and only ever
+  changes `weight` — feeding ranking, never existence. Node identity stays one
+  node per (turn, signal). The first modulator is a lone exclamation mark: a
+  single `!` carries no polarity (`great!` and `hi!` are not frustration), so it
+  can never be a signal of its own, yet it amplifies whatever frustration the
+  turn's words already express.
 
 **The lexicon widens recall; it must never gate it.** Every path that detected
 friction before it existed — tool failures, re-asking, empty replies, wasted

@@ -251,6 +251,29 @@ function isShouting(text: string): boolean {
 }
 
 /**
+ * A run of two or more `?`/`!` — already detected as a paralinguistic signal,
+ * and therefore never a modulator.
+ */
+const PUNCTUATION_RUN_RE = /[?!]{2,}/g;
+
+/**
+ * Whether the prose carries a lone exclamation mark — a single `!` that is not
+ * part of a `!!`, `?!`, or longer punctuation run.
+ *
+ * This is a *modulator*, not a signal: on its own `!` carries no polarity
+ * (`great!` and `hi!` are not frustration), so it never fires as a hit of its
+ * own. It only scales the weight of the signals a turn already has, which is
+ * why this returns a boolean for the turn rather than emitting anything.
+ */
+export function hasLoneExclamation(text: string): boolean {
+	if (!text) return false;
+	const prose = stripNonProse(text.normalize("NFKC"));
+	// Runs of two or more are already measured by the repeated_punctuation
+	// detector; remove them so their exclamation marks are not read as lone ones.
+	return /!/.test(prose.replace(PUNCTUATION_RUN_RE, " "));
+}
+
+/**
  * Lexicon-free frustration markers present in a piece of user text, in a stable
  * order so the resulting node identities are reproducible.
  */

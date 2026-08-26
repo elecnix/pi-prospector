@@ -9,6 +9,11 @@
  *   - **paralinguistic** — the turn shouts, piles on punctuation, or holds a
  *     letter down. These need neither a lexicon nor a language.
  *
+ * A third form feature is a **modulator**, not a signal: a lone exclamation
+ * mark (`hi!`, `wait, no!`) fires no hit of its own — `great!` and `angry!`
+ * are indistinguishable — but scales the weight of the signals the turn already
+ * carries. A modulator with nothing to modulate produces nothing.
+ *
  * The second kind exists because *the lexicon must never become a gate*. A user
  * whose vocabulary we have never seen, writing in a script we have never
  * adjudicated, can still be visibly frustrated; and the deterministic layer
@@ -43,6 +48,7 @@ import {
 	FRUSTRATION_LEXICON_DEF,
 	type FrustrationLexiconProperties,
 } from "../frustration-lexicon/index.js";
+import { hasLoneExclamation } from "../lexicon-candidates/tokenize.js";
 import { DEFAULT_TURN_FRUSTRATION_CONFIG, type TurnFrustrationConfig } from "./config.js";
 import { getMutedTerms } from "../../../db/assertions.js";
 import { Type, type Static } from "typebox";
@@ -71,7 +77,7 @@ export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 	id: "turn-frustration",
 	label: "Per-Turn Frustration Signals (deterministic)",
 	description:
-		"Matches each turn's user text against the corpus-wide learned lexicon and against lexicon-free markers (shouting, repeated punctuation, elongation), emitting one node per (turn, signal). No LLM. Detects verbal frustration in any language, including from users whose vocabulary the lexicon has never seen.",
+		"Matches each turn's user text against the corpus-wide learned lexicon and against lexicon-free markers (shouting, repeated punctuation, elongation), emitting one node per (turn, signal). A lone `!` acts as a weight modulator rather than a signal. No LLM. Detects verbal frustration in any language, including from users whose vocabulary the lexicon has never seen.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id, FRUSTRATION_LEXICON_DEF.id],
 	outputSchema: TurnFrustrationProperties,
@@ -84,7 +90,9 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// 1.2: phrase matching removed — see #40. Word and paralinguistic signals stay.
 	// 1.3: matching inherits the tokeniser's hyphen fix, so `re-check` no longer
 	// yields a `re` token for a stale lexicon entry to match on.
-	minor: 3,
+	// 1.4: a lone `!` became a weight *modulator* rather than an undetected form
+	// (issue #75): it still fires no hit, but multiplies each existing hit's weight.
+	minor: 4,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
@@ -155,6 +163,14 @@ export const turnFrustrationAnalyzer: Analyzer = {
 		for (const pair of await ctx.getTurnPairs(ctx.sessionId)) {
 			if (!pair.userText.trim()) continue;
 
+			// The turn's modulator multiplier, computed once and applied to every hit
+			// below. A lone `!` never creates a hit (it is polarity-agnostic), but it
+			// scales the signals the turn already carries; runs like `!!` / `?!` are
+			// already signals themselves and are deliberately not scaled by this.
+			const exclamationMultiplier = hasLoneExclamation(pair.userText)
+				? config.exclamationMultiplier
+				: 1;
+
 			// Lexicon hits. Matching runs over the tokenised text rather than a regex,
 			// so it is Unicode-correct and cannot match inside a longer word — `no`
 			// never fires on `north`.
@@ -175,7 +191,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						category: entry.props.category,
 						language: entry.props.language,
 						count: counts.get(term) ?? 1,
-						weight: config.lexiconHitWeight,
+						weight: config.lexiconHitWeight * exclamationMultiplier,
 						termOutputKey: entry.outputKey,
 					}),
 				);
@@ -193,7 +209,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						category: marker,
 						language: "und",
 						count: 1,
-						weight: config.paralinguisticWeight,
+						weight: config.paralinguisticWeight * exclamationMultiplier,
 						termOutputKey: null,
 					}),
 				);
