@@ -10,6 +10,7 @@
 import { Type, type Static } from "typebox";
 import type { AsyncDatabase } from "../db/async-db.js";
 import type { TurnPair } from "./analyzers/turn-pair-core/build.js";
+import type { CwdSmoothnessCache } from "./analyzers/session-overview/cross-session.js";
 
 // ─────────────────────────── enumerations ───────────────────────────
 
@@ -449,6 +450,15 @@ export interface AnalyzerPlanContext {
 	 * content-addressed identities silently corrupt.
 	 */
 	getTurnPairs: (sessionId: string) => Promise<TurnPair[]>;
+	/**
+	 * A per-`cwd` smoothness scan, shared across target sessions in the same repo
+	 * so concurrent sessions assess the sibling set once, not once each (#232).
+	 * The scan runs from a narrow SQL projection (no `content_thinking`), so a
+	 * thousand-sibling repo costs a fraction of the full-message path. Returns
+	 * `undefined` when the framework does not provide it (the caller falls back to
+	 * an inline scan).
+	 */
+	getCwdSmoothnessCache?: (cwd: string, excludeId: string, minSiblingPairs: number) => Promise<CwdSmoothnessCache>;
 	/** The resolved config JSON for this analyzer, so plan() can honour cost guards. */
 	config: Record<string, unknown>;
 	db: AsyncDatabase;
