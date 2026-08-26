@@ -15,12 +15,7 @@ import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
-import { tempDb } from "./helpers.js";
-
-function makeRoot(): { root: string; cleanup: () => void } {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-pi-subagent-"));
-	return { root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
-}
+import { makeTempRoot, messageLine, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
 
 /** <root>/--Users-test--proj/<parent-uuid>/<run-N>/session.jsonl */
 function writeSubagentSession(
@@ -30,14 +25,11 @@ function writeSubagentSession(
 	sessionId: string,
 ): string {
 	const dir = path.join(root, "--Users-test--proj", parentUuid, runDir);
-	fs.mkdirSync(dir, { recursive: true });
-	const lines = [
-		JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: "2026-03-01T10:00:00Z", cwd: "/home/user/proj" }),
-		JSON.stringify({ type: "message", id: `${sessionId}-m1`, timestamp: "2026-03-01T10:00:05Z", message: { role: "user", content: "child turn" } }),
-	];
-	const file = path.join(dir, "session.jsonl");
-	fs.writeFileSync(file, lines.join("\n") + "\n");
-	return file;
+	writeJsonl(dir, "session.jsonl", [
+		sessionHeaderLine(sessionId, { timestamp: "2026-03-01T10:00:00Z" }),
+		messageLine(sessionId, 1, "user", "child turn", "2026-03-01T10:00:05Z"),
+	]);
+	return path.join(dir, "session.jsonl");
 }
 
 const PARENT = "aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -45,7 +37,7 @@ const PARENT = "aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee";
 describe("PiSubagentSource", () => {
 	it("discovers nested run sessions and records the enclosing session as parent", async () => {
 		const { db, close } = await tempDb();
-		const fx = makeRoot();
+		const fx = makeTempRoot("prospect-pi-subagent-");
 		try {
 			writeSubagentSession(fx.root, PARENT, "run-0", "sub-0001");
 			writeSubagentSession(fx.root, PARENT, "run-1", "sub-0002");
@@ -69,7 +61,7 @@ describe("PiSubagentSource", () => {
 
 	it("re-sync skips unchanged subagent files (cursor contract holds for adapters)", async () => {
 		const { db, close } = await tempDb();
-		const fx = makeRoot();
+		const fx = makeTempRoot("prospect-pi-subagent-");
 		try {
 			writeSubagentSession(fx.root, PARENT, "run-0", "sub-0001");
 			await runSync(db, [new PiSubagentSource(fx.root)]);
@@ -85,7 +77,7 @@ describe("PiSubagentSource", () => {
 
 	it("a --source claude scope selects no subagent sessions; mixed adapters stay segmented", async () => {
 		const { db, close } = await tempDb();
-		const fx = makeRoot();
+		const fx = makeTempRoot("prospect-pi-subagent-");
 		// The Claude root is deliberately empty and separate: since #157 discovery
 		// recurses into nested run trees whatever root it walks, so a claude root
 		// sharing this fixture would legitimately claim the nested session.jsonl.

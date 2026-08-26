@@ -66,20 +66,46 @@ async function discoverClaudeSessions(sessionsDir: string): Promise<DiscoveredSe
 }
 
 /**
- * Walk one session root for its .jsonl files, tagged with the given source.
+ * Optional narrowing of what {@link walkSessionDir} discovers. The shared walker
+ * owns everything about the traversal itself (error handling, depth bound,
+ * project naming); an adapter whose source only occupies part of that tree —
+ * e.g. PiSubagentSource's <parent-uuid>/run-N/session.jsonl leaves (#140) —
+ * narrows the match instead of re-implementing the walk.
+ */
+export interface WalkOptions {
+	/**
+	 * Accept only files for which this returns true; when omitted every `.jsonl`
+	 * file is discovered. Receives the file's basename and its immediate parent
+	 * directory's name.
+	 */
+	matchFile?: (fileName: string, parentDirName: string) => boolean;
+	/**
+	 * Directories matching this hold discoverable files directly, but are never
+	 * descended beyond — e.g. PiSubagentSource's run-N leaves, where a deeper
+	 * session.jsonl is not this source's shape.
+	 */
+	leafDirPattern?: RegExp;
+}
+
+const DEFAULT_MATCH_FILE = (fileName: string) => fileName.endsWith(".jsonl");
+
+/**
+ * Walk one session root for session files, tagged with the given source.
  * Exported for SessionSourceAdapter implementations, which own discovery for
- * their source and reuse this walker for the shared directory layout.
+ * their source and reuse this walker for the shared directory layout — passing
+ * {@link WalkOptions} where their tree shape is narrower than the full walk.
  *
  * Discovery recurses below each project directory up to {@link MAX_DISCOVERY_DEPTH}
  * levels, so nested async-subagent session files (<project-dir>/<timestamp>_<uuid>
  * /<runhash>/run-N/session.jsonl) are discovered alongside top-level ones (#157).
- * Each .jsonl found — wherever it sits in that bounded tree — is discovered as
+ * Each file found — wherever it sits in that bounded tree — is discovered as
  * its own session; which session each file *is* remains the parser's job (the
  * header's own id), never a function of the path.
  */
 export async function walkSessionDir(
 	sessionsDir: string,
 	source: SessionSource,
+	opts?: WalkOptions,
 ): Promise<DiscoveredSession[]> {
 	const results: DiscoveredSession[] = [];
 
@@ -106,7 +132,7 @@ export async function walkSessionDir(
 
 		const project = projectNameFromDir(entry);
 
-		await collectJsonlFiles(fullPath, project, 1, source, results);
+		await collectJsonlFiles(fullPath, project, 1, source, results, opts);
 	}
 
 	return results;
@@ -124,6 +150,7 @@ async function collectJsonlFiles(
 	depth: number,
 	source: SessionSource,
 	results: DiscoveredSession[],
+	opts?: WalkOptions,
 ): Promise<void> {
 	let entries: string[];
 	try {
@@ -145,11 +172,15 @@ async function collectJsonlFiles(
 
 		if (stat.isDirectory()) {
 			if (depth >= MAX_DISCOVERY_DEPTH) continue;
-			await collectJsonlFiles(fullPath, project, depth + 1, source, results);
+			// Entering a leaf directory at the bound blocks any descent past it
+			// while its own direct entries stay visible to the match above.
+			const childDepth = opts?.leafDirPattern?.test(entry) ? MAX_DISCOVERY_DEPTH : depth + 1;
+			await collectJsonlFiles(fullPath, project, childDepth, source, results, opts);
 			continue;
 		}
 
-		if (!entry.endsWith(".jsonl")) continue;
+		const matchFile = opts?.matchFile ?? DEFAULT_MATCH_FILE;
+		if (!matchFile(entry, path.basename(dir))) continue;
 		results.push({
 			filePath: fullPath,
 			project,

@@ -18,30 +18,21 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi-file.js";
 import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
-import { tempDb } from "./helpers.js";
+import { makeTempRoot, messageLine, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
 
 const PARENT_ID = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
-function makeRoot(): { root: string; cleanup: () => void } {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-nested-ingest-"));
-	return { root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
-}
-
 /** Synthetic JSONL for one session: header + two messages unique to it. */
 function writeSession(dir: string, sessionId: string): void {
-	fs.mkdirSync(dir, { recursive: true });
-	const lines = [
-		JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: "2026-08-19T01:02:17Z", cwd: "/home/user/proj" }),
-		JSON.stringify({ type: "message", id: `${sessionId}-m1`, timestamp: "2026-08-19T01:02:20Z", message: { role: "user", content: `hello from ${sessionId}` } }),
-		JSON.stringify({ type: "message", id: `${sessionId}-m2`, timestamp: "2026-08-19T01:02:25Z", message: { role: "assistant", content: `done (${sessionId})` } }),
-	];
-	fs.writeFileSync(path.join(dir, sessionId === PARENT_ID ? "parent.jsonl" : "session.jsonl"), lines.join("\n") + "\n");
+	writeJsonl(dir, sessionId === PARENT_ID ? "parent.jsonl" : "session.jsonl", [
+		sessionHeaderLine(sessionId),
+		messageLine(sessionId, 1, "user", `hello from ${sessionId}`, "2026-08-19T01:02:20Z"),
+		messageLine(sessionId, 2, "assistant", `done (${sessionId})`, "2026-08-19T01:02:25Z"),
+	]);
 }
 
 /** <root>/--Users-test--proj/<parent>/parent.jsonl and <runhash>/run-N/session.jsonl */
@@ -55,7 +46,7 @@ function writeNestedTree(root: string, runHashes: string[]): void {
 describe("nested subagent session recursion (#157)", () => {
 	it("syncs nested runs with their own header ids and distinct messages via the plain pi source", async () => {
 		const { db, close } = await tempDb();
-		const fx = makeRoot();
+		const fx = makeTempRoot("prospect-nested-ingest-");
 		try {
 			writeNestedTree(fx.root, ["2b83bd26", "4b5387b8"]);
 
@@ -85,7 +76,7 @@ describe("nested subagent session recursion (#157)", () => {
 
 	it("re-sync inserts nothing new for these sessions (idempotent)", async () => {
 		const { db, close } = await tempDb();
-		const fx = makeRoot();
+		const fx = makeTempRoot("prospect-nested-ingest-");
 		try {
 			writeNestedTree(fx.root, ["2b83bd26"]);
 
@@ -105,7 +96,7 @@ describe("nested subagent session recursion (#157)", () => {
 
 	it("with the opt-in pi-subagent adapter also present, each file syncs once and the richer adapter wins the claim", async () => {
 		const { db, close } = await tempDb();
-		const fx = makeRoot();
+		const fx = makeTempRoot("prospect-nested-ingest-");
 		try {
 			writeNestedTree(fx.root, ["2b83bd26", "4b5387b8"]);
 
@@ -142,7 +133,7 @@ describe("nested subagent session recursion (#157)", () => {
 
 	it("the depth bound holds through sync: a too-deep tree yields nothing and terminates", async () => {
 		const { db, close } = await tempDb();
-		const fx = makeRoot();
+		const fx = makeTempRoot("prospect-nested-ingest-");
 		try {
 			let deep = path.join(fx.root, "--Users-test--proj");
 			for (let i = 0; i < 20; i++) deep = path.join(deep, `level-${i}`);

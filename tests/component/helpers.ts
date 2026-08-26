@@ -13,6 +13,22 @@ import type { LLMRequest } from "../../src/analyze/types.js";
 export const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 
 /**
+ * A throwaway sessions root with cleanup, for suites that build their own
+ * synthetic fixture trees on disk. The prefix keeps parallel-suite temp dirs
+ * identifiable when one leaks.
+ */
+export function makeTempRoot(prefix: string): { root: string; cleanup: () => void } {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	return { root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+
+/** Write one JSONL fixture file under `dir` (created as needed), newline-terminated like real session files. */
+export function writeJsonl(dir: string, fileName: string, lines: string[]): void {
+	fs.mkdirSync(dir, { recursive: true });
+	fs.writeFileSync(path.join(dir, fileName), lines.join("\n") + "\n");
+}
+
+/**
  * The Claude sessions root to pass when a test has no Claude fixtures of its own.
  *
  * `discoverSessions`/`runSync` require both roots precisely so a test cannot fall
@@ -104,7 +120,19 @@ export async function insertMessages(db: AsyncDatabase, sessionId: string, messa
 	return ids;
 }
 
-/** Insert a v2 proposal directly (bypassing materialisation), for query tests. */
+/** Synthetic v3 session-header line for one session id. */
+export function sessionHeaderLine(
+	sessionId: string,
+	opts?: { timestamp?: string; cwd?: string },
+): string {
+	return JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: opts?.timestamp ?? "2026-08-19T01:02:17Z", cwd: opts?.cwd ?? "/home/user/proj" });
+}
+
+/** Synthetic turn line belonging to one session, with a unique per-turn message id. */
+export function messageLine(sessionId: string, turn: number, role: string, content: string, timestamp: string): string {
+	return JSON.stringify({ type: "message", id: `${sessionId}-m${turn}`, timestamp, message: { role, content } });
+}
+
 // ─────────────────────── lexicon mock scaffolding ───────────────────────────
 
 /**
