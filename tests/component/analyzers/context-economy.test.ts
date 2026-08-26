@@ -58,7 +58,7 @@ describe("context-economy analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["context-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = await t.await db
+			const row = await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'context-economy'")
 				.get() as { content_json: string; node_kind: string } | undefined;
 			assert.ok(row, "produced a node");
@@ -148,7 +148,7 @@ describe("context-economy analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["context-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = await t.await db
+			const row = await t.db
 				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'context-economy'")
 				.get() as { content_json: string } | undefined;
 			assert.ok(row, "produced a node");
@@ -197,7 +197,7 @@ describe("context-economy analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["context-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = await t.await db
+			const row = await t.db
 				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'context-economy'")
 				.get() as { content_json: string } | undefined;
 			assert.ok(row, "produced a node");

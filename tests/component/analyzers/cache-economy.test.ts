@@ -54,7 +54,7 @@ describe("cache-economy analyzer", () => {
 			const summary = await fw.run(sid, { analyzerIds: ["cache-economy"] });
 			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
 
-			const row = await t.await db
+			const row = await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'cache-economy'")
 				.get() as { content_json: string; node_kind: string } | undefined;
 			assert.ok(row, "produced a node");
@@ -118,7 +118,7 @@ describe("cache-economy analyzer", () => {
 
 			await fw.run(sid, { analyzerIds: ["cache-economy"] });
 
-			const row = await t.await db
+			const row = await t.db
 				.prepare("SELECT content_json, node_kind FROM analysis_nodes WHERE analyzer_id = 'cache-economy'")
 				.get() as { content_json: string; node_kind: string } | undefined;
 			assert.ok(row);
@@ -149,7 +149,7 @@ describe("cache-economy analyzer", () => {
 			await registerAll(fw, { builtins: [cacheEconomyAnalyzer] });
 			await fw.run(sid, { analyzerIds: ["cache-economy"] });
 
-			const row = await t.await db
+			const row = await t.db
 				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'cache-economy'")
 				.get() as { content_json: string } | undefined;
 			const c = JSON.parse(row!.content_json);
