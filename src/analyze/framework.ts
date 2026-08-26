@@ -89,6 +89,7 @@ import { getSubagentRunsForSession } from "../db/queries.js";
 import { materializeProposalsFromNode, applyValidationFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { buildTurnPairs, type TurnPair } from "./analyzers/turn-pair-core/build.js";
+import { scanCwdSmoothness, type CwdSmoothnessCache } from "./analyzers/session-overview/cross-session.js";
 
 export interface FrameworkDeps {
 	db: AsyncDatabase;
@@ -154,6 +155,15 @@ export class AnalyzerFramework {
 	 * run is still visible to sessions analysed later in the same run.
 	 */
 	private readonly globalNodeCache = new Map<string, AnalysisNodeRow[]>();
+
+	/**
+	 * Per-`cwd` smoothness scans, cached for this framework's lifetime so that
+	 * concurrent sessions in the same repo share one sibling assessment instead
+	 * of each re-scanning the whole repo (#232). Keyed by `cwd`; the scan runs
+	 * from a narrow SQL projection (no `content_thinking`) so a thousand-sibling
+	 * repo costs a fraction of the full-message path.
+	 */
+	private readonly cwdSmoothnessCache = new Map<string, Promise<CwdSmoothnessCache>>();
 
 	constructor(private readonly deps: FrameworkDeps) {}
 
@@ -629,6 +639,7 @@ export class AnalyzerFramework {
 			dependencyNodes,
 			getGlobalDependencyNodes: (depId) => this.globalDependencyNodes(analyzer, depId),
 			getTurnPairs: (sid) => this.turnPairsCached(cache, sid),
+			getCwdSmoothnessCache: (cwd, excludeId, minSiblingPairs) => this.cwdSmoothnessCached(cwd, excludeId, minSiblingPairs),
 			config: config.configJson,
 			db: this.deps.db,
 		};
@@ -651,6 +662,22 @@ export class AnalyzerFramework {
 		const rows = await getLatestNodesByAnalyzerAcrossSessions(this.deps.db, depId);
 		this.globalNodeCache.set(depId, rows);
 		return rows;
+	}
+
+	/**
+	 * Per-`cwd` smoothness scan, cached for the framework's lifetime so concurrent
+	 * sessions in the same repo share one sibling assessment (#232). The scan runs
+	 * from a narrow SQL projection (no `content_thinking`), so assessing a
+	 * thousand-sibling repo costs a fraction of the full-message path. The promise
+	 * is cached (not the resolved value) so concurrent calls for the same `cwd`
+	 * share a single in-flight scan rather than racing.
+	 */
+	private cwdSmoothnessCached(cwd: string, excludeId: string, minSiblingPairs: number): Promise<CwdSmoothnessCache> {
+		const existing = this.cwdSmoothnessCache.get(cwd);
+		if (existing) return existing;
+		const scan = scanCwdSmoothness(this.deps.db, cwd, excludeId, minSiblingPairs);
+		this.cwdSmoothnessCache.set(cwd, scan);
+		return scan;
 	}
 
 	private buildRunContext(
