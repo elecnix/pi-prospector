@@ -12,6 +12,7 @@ import { turnPairLLMAnalyzer } from "./analyzers/turn-pair-llm/index.js";
 import { assistantCognitionAnalyzer } from "./analyzers/assistant-cognition/index.js";
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
+import { taskToolMismatchAnalyzer } from "./analyzers/task-tool-mismatch/index.js";
 import { toolInventoryTaxAnalyzer } from "./analyzers/tool-inventory-tax/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
 import { cacheEconomyAnalyzer } from "./analyzers/cache-economy/index.js";
@@ -48,6 +49,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
+	"task-tool-mismatch",
 	"failure-modes",
 	"grounded-claims",
 	"revive-chains",
@@ -91,6 +93,15 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// it sits beside the other per-turn LLM analyzer.
 	assistantCognitionAnalyzer,
 	toolTrajectoryAnalyzer,
+	// What the task asked for versus what the agent did (#158): the first user
+	// message instructs a specific tool/command, that tool was in the session's
+	// recorded inventory, yet the agent made zero calls of it and rebuilt the
+	// result by hand with many substitute calls. The proposal points at the
+	// instructed-but-avoided tool — never at the substitute symptom (redundant
+	// reads/greps are context-economy's territory and are not the disease).
+	// Deterministic, standalone, session-level; reads the same action stream as
+	// the other trajectory-adjacent graders, before the synthesizer.
+	taskToolMismatchAnalyzer,
 	// What failed, of every kind. Deterministic and standalone; ordered next to
 	// tool-trajectory because the two read the same action stream — one for the
 	// shape of the sequence, the other for what went wrong in it.
