@@ -16,6 +16,7 @@ import { registerRunsCommand } from "./commands/runs.js";
 import { registerGcCommand } from "./commands/gc.js";
 import { registerRetractCommand } from "./commands/retract.js";
 import { registerProspectTool } from "./commands/tool.js";
+import { registerVizCommand } from "./commands/viz.js";
 import { registerHeadlessFlag } from "./commands/headless.js";
 import { registerMutesCommand } from "./commands/mutes.js";
 import { registerModelsCommand } from "./commands/models.js";
@@ -38,6 +39,7 @@ export default function (pi: ExtensionAPI) {
 	registerGcCommand(pi);
 	registerRetractCommand(pi);
 	registerProspectTool(pi);
+	registerVizCommand(pi);
 	registerHeadlessFlag(pi);
 	registerMutesCommand(pi);
 	registerModelsCommand(pi);
