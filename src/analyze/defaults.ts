@@ -33,6 +33,7 @@ import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
+import { frictionAccumulationAnalyzer } from "./analyzers/friction-accumulation/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
@@ -52,6 +53,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"language-mismatch",
 	"session-ending",
 	"files-in-play",
+	"friction-accumulation",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -130,6 +132,14 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// the other session-level deterministic graders, before the synthesizer, so
 	// a future consumer can declare it as a dependency without reordering.
 	filesInPlayAnalyzer,
+	// The session-level accumulator over the per-turn friction signals (#101):
+	// consumes turn-pair-core scores, turn-frustration hit weights, and culminating
+	// tool-trajectory patterns (all three declared as dependencies — their node
+	// outputs ARE this unit's source set), and flags a gradual decline by comparing
+	// the first and last window's mean per-turn rate. Session-level, deterministic
+	// (no LLM); placed with the other session-level deterministic graders, before
+	// the synthesizer, so a future consumer can declare it without reordering.
+	frictionAccumulationAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,
