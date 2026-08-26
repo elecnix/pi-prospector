@@ -10,7 +10,7 @@ import type { DiscoveredSession } from "../../types.js";
 import type { SessionInsert, MessageInsert } from "../../db/queries.js";
 import { parseLine, extractSessionName } from "../parser.js";
 import { buildToolInventory } from "./pi-file.js";
-import { projectNameFromDir } from "../scanner.js";
+import { walkSessionDir } from "../scanner.js";
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RUN_DIR_RE = /^run-\d+$/;
@@ -21,57 +21,14 @@ export class PiSubagentSource implements SessionSourceAdapter {
 	constructor(private sessionsDir: string) {}
 
 	async discover(): Promise<DiscoveredSession[]> {
-		const results: DiscoveredSession[] = [];
-		let entries: string[];
-		try {
-			entries = await fs.readdir(this.sessionsDir);
-		} catch {
-			return results;
-		}
-		for (const entry of entries) {
-			if (entry.includes("var-folders")) continue;
-			const projectPath = path.join(this.sessionsDir, entry);
-			let stat: Awaited<ReturnType<typeof fs.stat>>;
-			try {
-				stat = await fs.stat(projectPath);
-			} catch {
-				continue;
-			}
-			if (!stat.isDirectory()) continue;
-			await this.walkSubdirs(projectPath, projectNameFromDir(entry), results);
-		}
-		return results;
-	}
-
-	private async walkSubdirs(dir: string, project: string, results: DiscoveredSession[]): Promise<void> {
-		let entries: string[];
-		try {
-			entries = await fs.readdir(dir);
-		} catch {
-			return;
-		}
-		for (const entry of entries) {
-			const fullPath = path.join(dir, entry);
-			let stat: Awaited<ReturnType<typeof fs.stat>>;
-			try {
-				stat = await fs.stat(fullPath);
-			} catch {
-				continue;
-			}
-			if (!stat.isDirectory()) continue;
-			if (RUN_DIR_RE.test(entry)) {
-				const sf = path.join(fullPath, "session.jsonl");
-				let fsStat: Awaited<ReturnType<typeof fs.stat>>;
-				try {
-					fsStat = await fs.stat(sf);
-				} catch {
-					continue;
-				}
-				results.push({ filePath: sf, project, mtime: fsStat.mtimeMs, size: fsStat.size, source: this.source });
-			} else {
-				await this.walkSubdirs(fullPath, project, results);
-			}
-		}
+		// The shared walker owns the traversal itself — directory error handling,
+		// the depth bound (#157), project naming. This source only narrows what
+		// counts as a session file: a `session.jsonl` sitting directly inside a
+		// run-N directory, which the plain Pi source would claim differently.
+		return walkSessionDir(this.sessionsDir, this.source, {
+			matchFile: (fileName, parentDirName) => fileName === "session.jsonl" && RUN_DIR_RE.test(parentDirName),
+			leafDirPattern: RUN_DIR_RE,
+		});
 	}
 
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {

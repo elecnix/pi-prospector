@@ -38,10 +38,21 @@ export async function runSync(
 
 	const active = opts?.source ? adapters.filter((a) => a.source === opts.source) : adapters;
 
+	// The same file may be claimed by more than one adapter — e.g. the shared
+	// walker now recurses into nested run directories (#157) while an opt-in
+	// "pi-subagent" adapter also discovers them for their richer parent linkage.
+	// Within one sync invocation the first claim wins and later duplicates are
+	// skipped: syncing one file twice would double-insert its messages under two
+	// source tags. Cheap identity guard; cross-run duplication stays impossible
+	// because cursors are keyed by file path.
+	const claimed = new Set<string>();
+
 	for (const adapter of active) {
 		for (const disc of await adapter.discover()) {
 			try {
+				if (claimed.has(disc.filePath)) continue;
 				if (opts?.project && disc.project !== opts.project) continue;
+				claimed.add(disc.filePath);
 
 				const cursor = await getCursor(db, disc.filePath);
 
