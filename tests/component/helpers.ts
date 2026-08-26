@@ -259,6 +259,12 @@ export async function seedSession(db: AsyncDatabase, sessionId: string, messages
 	return insertMessages(db, sessionId, messages);
 }
 
+/** Optional seeding steps for suites whose sessions carry more than messages. */
+export interface SeedOptions {
+	/** Run after the session row exists but before its messages are inserted — e.g. filling a session-level column like `tool_inventory`. */
+	prepareSession?: (db: AsyncDatabase, sessionId: string) => Promise<void>;
+}
+
 /**
  * The plain-fill scenario: seed the session, register the analyzer on a fresh
  * default framework, run once, and return its nodes. Fails on run errors so
@@ -288,8 +294,11 @@ export async function expectPlainRerunIsNoOpFill(
 	analyzer: Analyzer,
 	sessionId: string,
 	messages: TestMessage[],
+	options: SeedOptions = {},
 ): Promise<void> {
-	await seedSession(db, sessionId, messages);
+	await insertSession(db, sessionId);
+	if (options.prepareSession) await options.prepareSession(db, sessionId);
+	await insertMessages(db, sessionId, messages);
 	await assertPlainRerunIsNoOpFill(mockFramework(db), analyzer, sessionId, () => readAnalyzerNodes(db, analyzer.def.id));
 }
 
@@ -306,8 +315,11 @@ export async function expectConfigChangeRevises(
 	sessionId: string,
 	messages: TestMessage[],
 	overrides: Record<string, unknown>,
+	options: SeedOptions = {},
 ): Promise<{ before: AnalysisNodeRow[]; after: AnalysisNodeRow[]; revised: AnalyzerFramework }> {
-	await seedSession(db, sessionId, messages);
+	await insertSession(db, sessionId);
+	if (options.prepareSession) await options.prepareSession(db, sessionId);
+	await insertMessages(db, sessionId, messages);
 
 	const fw = mockFramework(db);
 	await fw.register(analyzer);
