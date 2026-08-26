@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AsyncDatabase } from "../../src/db/async-db.js";
-import { tempDb, insertSession } from "./helpers.js";
+import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
@@ -25,48 +25,6 @@ import {
 	type FailureModesProperties,
 } from "../../src/analyze/analyzers/failure-modes/index.js";
 import { curatedPackages } from "../../src/analyze/analyzers/failure-modes/classes.js";
-
-let seq = 0;
-
-interface Row {
-	role: string;
-	text?: string | null;
-	toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
-	toolResults?: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number }>;
-	stopReason?: string | null;
-	errorMessage?: string | null;
-	costUsd?: number | null;
-	id?: string;
-}
-
-/** Insert messages carrying the failure columns the shared helper predates. */
-async function insertRows(db: AsyncDatabase, sessionId: string, rows: Row[]): Promise<string[]> {
-	const stmt = await db.prepare(
-		"INSERT INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message) " +
-			"VALUES (?, ?, 'pi', ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?)",
-	);
-	const ids: string[] = [];
-	let parent: string | null = null;
-	for (const r of rows) {
-		const id = r.id ?? `fm-${sessionId}-${seq++}`;
-		await stmt.run(
-			id,
-			sessionId,
-			parent,
-			new Date(1_700_000_000_000 + seq * 1000).toISOString(),
-			r.role,
-			r.text ?? null,
-			r.toolCalls ? JSON.stringify(r.toolCalls) : null,
-			r.toolResults ? JSON.stringify(r.toolResults) : null,
-			r.costUsd ?? null,
-			r.stopReason ?? null,
-			r.errorMessage ?? null,
-		);
-		ids.push(id);
-		parent = id;
-	}
-	return ids;
-}
 
 async function newFramework(db: AsyncDatabase, configOverrides?: Record<string, Record<string, unknown>>) {
 	const fw = new AnalyzerFramework({
@@ -114,7 +72,7 @@ async function withSettings<T>(file: string, fn: () => Promise<T>): Promise<T> {
 	}
 }
 
-const THREE_RATE_LIMITS: Row[] = [
+const THREE_RATE_LIMITS: TestMessage[] = [
 	{ role: "user", text: "do the thing" },
 	{ role: "assistant", stopReason: "error", errorMessage: "429: rate limit exceeded", costUsd: 0.01 },
 	{ role: "assistant", stopReason: "error", errorMessage: "429: rate limit exceeded", costUsd: 0.02 },
@@ -127,7 +85,7 @@ describe("failure-modes component test", () => {
 		const settings = settingsWith([]);
 		try {
 			await insertSession(db, "s1");
-			const ids = await insertRows(db, "s1", THREE_RATE_LIMITS);
+			const ids = await insertMessages(db, "s1", THREE_RATE_LIMITS);
 
 			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 
@@ -164,7 +122,7 @@ describe("failure-modes component test", () => {
 		const settings = settingsWith([]);
 		try {
 			await insertSession(db, "s1");
-			await insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertMessages(db, "s1", THREE_RATE_LIMITS);
 			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 
 			const proposals = (await db
@@ -184,7 +142,7 @@ describe("failure-modes component test", () => {
 		const { db, close } = await tempDb();
 		try {
 			await insertSession(db, "s1");
-			await insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertMessages(db, "s1", THREE_RATE_LIMITS);
 
 			// Every package the catalogue knows is installed, so the only honest
 			// answer left is the remedy that is not a package.
@@ -209,7 +167,7 @@ describe("failure-modes component test", () => {
 		const settings = settingsWith([]);
 		try {
 			await insertSession(db, "s1");
-			await insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertMessages(db, "s1", THREE_RATE_LIMITS);
 			await withSettings(settings, async () =>
 				(await newFramework(db, { "failure-modes": { recommendExtensions: false } })).run("s1", { analyzerIds: ["failure-modes"] }),
 			);
@@ -231,7 +189,7 @@ describe("failure-modes component test", () => {
 		try {
 			await insertSession(db, "s1");
 			// Rows as an older sync wrote them: no stop reason at all.
-			await insertRows(db, "s1", [
+			await insertMessages(db, "s1", [
 				{ role: "user", text: "hi" },
 				{ role: "assistant", text: "ok" },
 			]);
@@ -251,7 +209,7 @@ describe("failure-modes component test", () => {
 		const settings = settingsWith([]);
 		try {
 			await insertSession(db, "s1");
-			await insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertMessages(db, "s1", THREE_RATE_LIMITS);
 			await withSettings(settings, async () => {
 				await (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] });
 				await (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] });
@@ -271,7 +229,7 @@ describe("failure-modes component test", () => {
 		const settings = settingsWith([]);
 		try {
 			await insertSession(db, "s1");
-			const ids = await insertRows(db, "s1", [
+			const ids = await insertMessages(db, "s1", [
 				{ role: "user", text: "go" },
 				{ role: "assistant", text: "" },
 				{ role: "assistant", text: "" },
@@ -297,7 +255,7 @@ describe("failure-modes component test", () => {
 		const { db, close } = await tempDb();
 		try {
 			await insertSession(db, "s1");
-			await insertRows(db, "s1", THREE_RATE_LIMITS);
+			await insertMessages(db, "s1", THREE_RATE_LIMITS);
 
 			const before = settingsWith([]);
 			let recommended: string;
@@ -328,7 +286,7 @@ describe("failure-modes component test", () => {
 		const settings = settingsWith([]);
 		try {
 			await insertSession(db, "s1");
-			const rows: Row[] = [{ role: "user", text: "go" }];
+			const rows: TestMessage[] = [{ role: "user", text: "go" }];
 			for (let i = 0; i < 3; i++) {
 				rows.push({
 					role: "assistant",
@@ -341,7 +299,7 @@ describe("failure-modes component test", () => {
 					toolResults: [{ toolCallId: `c${i}`, toolName: "bash", isError: true, textLength: 60 }],
 				});
 			}
-			await insertRows(db, "s1", rows);
+			await insertMessages(db, "s1", rows);
 			await withSettings(settings, async () => (await newFramework(db)).run("s1", { analyzerIds: ["failure-modes"] }));
 
 			const { props } = await readNode(db);
@@ -362,7 +320,7 @@ describe("failure-modes component test", () => {
 		const settings = settingsWith([]);
 		try {
 			await insertSession(db, "s1");
-			await insertRows(db, "s1", [
+			await insertMessages(db, "s1", [
 				{ role: "user", text: "go" },
 				{ role: "assistant", stopReason: "aborted", errorMessage: "This operation was aborted" },
 				{ role: "assistant", stopReason: "aborted", errorMessage: "This operation was aborted" },

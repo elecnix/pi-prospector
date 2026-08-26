@@ -69,51 +69,54 @@ describe("context-economy slice-aware redundant reads", () => {
 		}
 	});
 
-	it("flags two overlapping slices of one file", async () => {
-		const t = await tempDb();
-		try {
-			const { flags } = await runAnalyzer(t, "s-overlap", [
+	interface OverlapCase {
+		name: string;
+		sessionId: string;
+		reads: ReadCall[];
+		/** Assertion message for the flag count (undefined = default). */
+		note?: string;
+		/** Whether to also assert the flagged path. */
+		expectPath?: boolean;
+	}
+
+	const overlapCases: OverlapCase[] = [
+		{
+			name: "flags two overlapping slices of one file",
+			sessionId: "s-overlap",
+			reads: [
 				read("/big.ts", { offset: 0, limit: 200 }),
 				read("/big.ts", { offset: 100, limit: 200 }),
-			]);
-			const redundant = flags.filter((f) => f.kind === "redundant-read");
-			assert.equal(redundant.length, 1);
-			assert.equal(redundant[0]!.path, "/big.ts");
-			assert.equal(redundant[0]!.count, 2);
-		} finally {
-			t.close();
-		}
-	});
+			],
+			expectPath: true,
+		},
+		{
+			name: "flags a whole-file read after a slice (overlap detected)",
+			sessionId: "s-whole-after",
+			reads: [read("/big.ts", { offset: 500, limit: 200 }), read("/big.ts")],
+			note: "whole-file read overlaps the earlier slice",
+		},
+		{
+			name: "flags a slice after a whole-file read (overlap detected)",
+			sessionId: "s-whole-before",
+			reads: [read("/big.ts"), read("/big.ts", { offset: 500, limit: 200 })],
+			note: "slice overlaps the earlier whole-file read",
+		},
+	];
 
-	it("flags a whole-file read after a slice (overlap detected)", async () => {
-		const t = await tempDb();
-		try {
-			const { flags } = await runAnalyzer(t, "s-whole-after", [
-				read("/big.ts", { offset: 500, limit: 200 }),
-				read("/big.ts"),
-			]);
-			const redundant = flags.filter((f) => f.kind === "redundant-read");
-			assert.equal(redundant.length, 1, "whole-file read overlaps the earlier slice");
-			assert.equal(redundant[0]!.count, 2);
-		} finally {
-			t.close();
-		}
-	});
-
-	it("flags a slice after a whole-file read (overlap detected)", async () => {
-		const t = await tempDb();
-		try {
-			const { flags } = await runAnalyzer(t, "s-whole-before", [
-				read("/big.ts"),
-				read("/big.ts", { offset: 500, limit: 200 }),
-			]);
-			const redundant = flags.filter((f) => f.kind === "redundant-read");
-			assert.equal(redundant.length, 1, "slice overlaps the earlier whole-file read");
-			assert.equal(redundant[0]!.count, 2);
-		} finally {
-			t.close();
-		}
-	});
+	for (const c of overlapCases) {
+		it(c.name, async () => {
+			const t = await tempDb();
+			try {
+				const { flags } = await runAnalyzer(t, c.sessionId, c.reads);
+				const redundant = flags.filter((f) => f.kind === "redundant-read");
+				assert.equal(redundant.length, 1, c.note);
+				if (c.expectPath) assert.equal(redundant[0]!.path, "/big.ts");
+				assert.equal(redundant[0]!.count, 2);
+			} finally {
+				t.close();
+			}
+		});
+	}
 
 	it("idempotent re-run: disjoint-slice session produces no new node on re-analysis", async () => {
 		const t = await tempDb();
