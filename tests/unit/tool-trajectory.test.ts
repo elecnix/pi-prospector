@@ -65,6 +65,49 @@ describe("normalizeToolCall", () => {
 		assert.equal(result.readOnly, true);
 	});
 
+	// Pi names the argument `path`; Claude Code names it `file_path`. Reading only
+	// `file_path` collapsed every Pi read/edit to an empty target, so any two of
+	// them compared as near-identical and the polling-loop detector fired on them.
+	it("normalises a Pi read tool call that uses `path`", () => {
+		const result = normalizeToolCall({ name: "read", args: { path: "/src/index.ts" }, messageId: "m1" });
+		assert.equal(result.target, "/src/index.ts");
+		assert.equal(result.normalizedArgs, "read /src/index.ts");
+	});
+
+	it("normalises a Pi edit tool call that uses `path`", () => {
+		const result = normalizeToolCall({ name: "edit", args: { path: "/src/index.ts" }, messageId: "m1" });
+		assert.equal(result.target, "/src/index.ts");
+		assert.equal(result.readOnly, false);
+	});
+
+	it("normalises a Pi write tool call that uses `path`", () => {
+		const result = normalizeToolCall({ name: "write", args: { path: "/src/out.ts" }, messageId: "m1" });
+		assert.equal(result.target, "/src/out.ts");
+	});
+
+	it("does not treat two Pi reads of different files as near-identical", () => {
+		const a = normalizeToolCall({ name: "read", args: { path: "/a.ts" }, messageId: "m1" });
+		const b = normalizeToolCall({ name: "read", args: { path: "/b.ts" }, messageId: "m2" });
+		assert.equal(isNearIdentical(a, b), false);
+	});
+
+	it("still treats two Pi reads of the same file as near-identical", () => {
+		const a = normalizeToolCall({ name: "read", args: { path: "/a.ts" }, messageId: "m1" });
+		const b = normalizeToolCall({ name: "read", args: { path: "/a.ts" }, messageId: "m2" });
+		assert.equal(isNearIdentical(a, b), true);
+	});
+
+	it("normalises a Pi grep tool call from both pattern and scope", () => {
+		const result = normalizeToolCall({ name: "grep", args: { pattern: "foo", path: "/src" }, messageId: "m1" });
+		assert.equal(result.target, "foo /src");
+	});
+
+	it("does not treat the same grep pattern in two directories as near-identical", () => {
+		const a = normalizeToolCall({ name: "grep", args: { pattern: "foo", path: "/src" }, messageId: "m1" });
+		const b = normalizeToolCall({ name: "grep", args: { pattern: "foo", path: "/test" }, messageId: "m2" });
+		assert.equal(isNearIdentical(a, b), false);
+	});
+
 	it("sorts flags in a bash command", () => {
 		const result = normalizeToolCall({ name: "bash", args: { command: "ls -la --sort=size /tmp" }, messageId: "m1" });
 		assert.ok(result.normalizedArgs.includes("--sort=size") || result.normalizedArgs.includes("ls"));

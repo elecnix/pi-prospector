@@ -183,6 +183,22 @@ function parseGhSubcommand(command: string): { subcommand: string; target: strin
 }
 
 /**
+ * The file path a structured tool call targets.
+ *
+ * Pi names the argument `path`, Claude Code names it `file_path`. Reading only
+ * one collapsed every call from the other harness to an empty target, and
+ * `isNearIdentical` compares targets — so any two such calls matched and the
+ * polling-loop detector fired on unrelated files.
+ */
+function extractPath(args: Record<string, unknown> | undefined): string {
+	for (const key of ["file_path", "path"]) {
+		const v = args?.[key];
+		if (typeof v === "string" && v) return v;
+	}
+	return "";
+}
+
+/**
  * Normalise a tool call's arguments into a structured NormalizedToolCall.
  */
 export function normalizeToolCall(call: {
@@ -233,21 +249,24 @@ export function normalizeToolCall(call: {
 
 	// Structured tool calls
 	if (READ_ONLY_TOOLS.has(name)) {
-		const filePath = typeof args?.["file_path"] === "string" ? args["file_path"] as string : "";
+		const filePath = extractPath(args);
 		const pattern = typeof args?.["pattern"] === "string" ? args["pattern"] as string : "";
+		// A search is identified by pattern AND scope: same pattern in two
+		// directories is not the same call, and neither is two patterns in one.
+		const target = [pattern, filePath].filter(Boolean).join(" ");
 		return {
 			tool: name,
-			normalizedArgs: filePath || pattern ? `${name} ${filePath || pattern}` : name,
+			normalizedArgs: target ? `${name} ${target}` : name,
 			readOnly: true,
 			subcommand: "",
-			target: filePath || pattern,
+			target,
 			messageId,
 		};
 	}
 
 	// edit, write, mkdir — mutating tools
 	if (name === "edit" || name === "write") {
-		const filePath = typeof args?.["file_path"] === "string" ? args["file_path"] as string : "";
+		const filePath = extractPath(args);
 		return {
 			tool: name,
 			normalizedArgs: filePath ? `${name} ${filePath}` : name,

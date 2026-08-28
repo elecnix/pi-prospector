@@ -95,7 +95,14 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// decides whether a run of repeats counts as a stuck-loop. Major: previously
 	// reported signals can disappear and new ones appear, because the inputs to
 	// the detectors were wrong.
-	major: 2,
+	//
+	// 3.0: a structured tool call's target now comes from `file_path` or `path`,
+	// and a search's target is its pattern *and* its scope. Pi names the argument
+	// `path`, so every Pi read/edit/write normalised to an empty target — and
+	// `isNearIdentical` compares targets, so any two of them matched. Major:
+	// polling-loop signals over unrelated files disappear, and repeated-edit
+	// signals appear where the empty target had hidden them.
+	major: 3,
 	minor: 0,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
