@@ -58,7 +58,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 		label: "Prospect",
 		description:
 			"Index sessions, run analysis, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, analyze, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, help. " +
-			"list_proposals accepts source (pi|claude) to filter by coding harness. " +
+			"list_proposals accepts source (pi|claude|pi-rpc) to filter by coding harness. " +
 			"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 			"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
 			"Use proposal_ids (string array) on accept/reject for bulk operations with a shared rationale. " +
@@ -106,7 +106,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 				]),
 			),
 			severity: Type.Optional(Type.String({ description: "list_proposals: filter by severity (friction, correction, waste, suggestion, reinforcement). leaks: minimum severity floor — report this severity (medium|high|critical) and above." })),
-			source: Type.Optional(Type.String({ description: "Filter by coding harness: pi or claude." })),
+			source: Type.Optional(Type.String({ description: "Filter by coding harness: pi, claude, or pi-rpc." })),
 			session_id: Type.Optional(Type.String({ description: "Scope list_proposals to a single session (only that session's proposals); analyze runs just that one session." })),
 			project: Type.Optional(Type.String({ description: "Scope sync to one project (derived from the session directory name) so a fresh install skips every other project on disk." })),
 			proposal_id: Type.Optional(Type.String()),
@@ -392,8 +392,8 @@ Analysis-graph & point-in-time commands (slash commands):
   - /prospect-node <output-key> — one node + resolved outgoing edges (consumes/anchors/produces/revises)
   - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
   - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
-  - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
-  - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
+  - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude|pi-rpc] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
+  - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude|pi-rpc] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)

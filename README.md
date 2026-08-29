@@ -265,7 +265,7 @@ Loader and discovery: [`src/analyze/loader.ts`](./src/analyze/loader.ts) · opti
 
 ## Commands
 
-### `/prospect-sync [--project NAME] [--source pi|claude]`
+### `/prospect-sync [--project NAME] [--source pi|claude|pi-rpc]`
 
 Index session files into the database. No LLM is called. Fast and cheap.
 
@@ -277,7 +277,7 @@ Index session files into the database. No LLM is called. Fast and cheap.
 Run it as often as you like. It's idempotent and incremental.
 
 - `--project NAME` — scope the sync to one **project** (derived from the session directory name). On a fresh install with hundreds of sessions across many repos, this is the escape hatch that syncs only the project you care about instead of paying for every session on disk.
-- `--source pi|claude` — restrict the sync to one coding harness.
+- `--source pi|claude|pi-rpc` — restrict the sync to one coding harness.
 
 The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.
 
@@ -314,12 +314,13 @@ Built-in sources you can enable without authoring anything:
 | `pi` | always on | Pi agent session `.jsonl` files under `~/.pi/agent/sessions/` |
 | `claude` | always on | Claude Code session `.jsonl` files under `~/.claude/projects/` |
 | `pi-subagent` | `"pi-subagent"` | Nested subagent sessions at `<sessions>/<project>/<parent-uuid>/run-*/session.jsonl` |
+| `pi-rpc` | `"pi-rpc"` | RPC event-stream transcripts of headless Pi agents at `<sessions>/pi-rpc/<name>/out.jsonl` — not session logs, so the ordinary Pi scanner rejects them (#263) |
 
 The built-in `PiFileSource` and `ClaudeFileSource` are always active and don't appear in the `sources` array. Every source type gets its own `source` tag on every session and message row, so you can segment stats by source.
 
-Reference implementations: [`src/sync/sources/pi-file.ts`](./src/sync/sources/pi-file.ts) (file-based) and [`src/sync/sources/pi-subagent.ts`](./src/sync/sources/pi-subagent.ts) (nested discovery). The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
+Reference implementations: [`src/sync/sources/pi-file.ts`](./src/sync/sources/pi-file.ts) (file-based), [`src/sync/sources/pi-subagent.ts`](./src/sync/sources/pi-subagent.ts) (nested discovery), and [`src/sync/sources/pi-rpc.ts`](./src/sync/sources/pi-rpc.ts) (RPC event stream). The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
 
-### `/prospect-analyze [--revise <reasons>] [--source pi|claude] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
+### `/prospect-analyze [--revise <reasons>] [--source pi|claude|pi-rpc] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
 
 Build the analysis graph over synced sessions and materialise proposals. By default it does the cheapest useful thing: it **fills only missing work**. Nodes that are already current are skipped; nodes that are out of date are left alone unless you ask for them with `--revise`.
 
@@ -349,7 +350,7 @@ This reads the graph and never writes to it: it renders what analysis has alread
 
 Print a summary of the database: sessions indexed, messages and tool results, sessions analysed, proposals by status (`open`/`applied`/`rejected`/`duplicate`), and analysis-graph totals (nodes, edges, runs, and a breakdown of nodes by kind).
 
-### `/prospect-proposals [status] [--source pi|claude] [--session <id>]`
+### `/prospect-proposals [status] [--source pi|claude|pi-rpc] [--session <id>]`
 
 List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`), by the coding harness that produced the session (`--source pi` or `--source claude`), and/or scoped to a single session (`--session <id>`). Each group header shows the harness as `[Pi]`/`[Claude]`. Each row shows its status, a score label, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous). If you have decided a proposal, the row also shows your latest **decision** (verdict, disposition, and rationale).
 

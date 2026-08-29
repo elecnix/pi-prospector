@@ -6,12 +6,13 @@ import type { SessionSourceAdapter } from "../sync/adapter.js";
 import { PiFileSource } from "../sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../sync/sources/claude-file.js";
 import { PiSubagentSource } from "../sync/sources/pi-subagent.js";
+import { PiRpcSource } from "../sync/sources/pi-rpc.js";
 import { parseHarnessSource } from "../harness.js";
 import { loadConfig, getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
 
 /**
  * Composition root for session sources: the two built-in file sources, plus
- * any extra source named in config `sources` (e.g. "pi-subagent").
+ * any extra source named in config `sources` (e.g. "pi-subagent", "pi-rpc").
  */
 export function buildAdapters(): SessionSourceAdapter[] {
 	const adapters: SessionSourceAdapter[] = [
@@ -23,6 +24,10 @@ export function buildAdapters(): SessionSourceAdapter[] {
 
 	if (sources.includes("pi-subagent")) {
 		adapters.push(new PiSubagentSource(getSessionsDir()));
+	}
+
+	if (sources.includes("pi-rpc")) {
+		adapters.push(new PiRpcSource(getSessionsDir()));
 	}
 
 	return adapters;
@@ -65,7 +70,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 
 interface SyncArgs {
 	project?: string;
-	source?: "pi" | "claude";
+	source?: "pi" | "claude" | "pi-rpc";
 }
 
 function parseSyncArgs(raw: string): SyncArgs {
@@ -85,7 +90,7 @@ function parseSyncArgs(raw: string): SyncArgs {
 export function registerSyncCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-sync", {
 		description:
-			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude (restrict to one coding harness)",
+			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude|pi-rpc (restrict to one coding harness)",
 		handler: prospectSync,
 	});
 }

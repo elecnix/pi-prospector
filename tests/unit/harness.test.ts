@@ -8,6 +8,10 @@ describe("harnessLabel", () => {
 		assert.equal(harnessLabel("claude"), "Claude");
 	});
 
+	it("labels the pi-rpc RPC stream source", () => {
+		assert.equal(harnessLabel("pi-rpc"), "Pi RPC");
+	});
+
 	it("renders a missing or unknown source as 'unknown', never Pi", () => {
 		assert.equal(harnessLabel(null), "unknown");
 		assert.equal(harnessLabel(undefined), "unknown");
@@ -17,10 +21,11 @@ describe("harnessLabel", () => {
 });
 
 describe("isHarnessSource / HARNESS_SOURCES", () => {
-	it("accepts only the two real sources", () => {
-		assert.deepEqual(HARNESS_SOURCES, ["pi", "claude"]);
+	it("accepts the two real harnesses and the pi-rpc RPC stream source", () => {
+		assert.deepEqual(HARNESS_SOURCES, ["pi", "claude", "pi-rpc"]);
 		assert.equal(isHarnessSource("pi"), true);
 		assert.equal(isHarnessSource("claude"), true);
+		assert.equal(isHarnessSource("pi-rpc"), true);
 		assert.equal(isHarnessSource(""), false);
 		assert.equal(isHarnessSource(null), false);
 		assert.equal(isHarnessSource("bogus"), false);
@@ -36,6 +41,7 @@ describe("parseHarnessSource", () => {
 	it("normalises case and whitespace", () => {
 		assert.equal(parseHarnessSource(" pi "), "pi");
 		assert.equal(parseHarnessSource("CLAUDE"), "claude");
+		assert.equal(parseHarnessSource("Pi-RPC"), "pi-rpc");
 	});
 
 	it("throws on an unknown source so a typo fails loudly", () => {
