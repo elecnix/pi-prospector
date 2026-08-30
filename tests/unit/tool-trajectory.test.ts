@@ -97,6 +97,34 @@ describe("normalizeToolCall", () => {
 		assert.equal(isNearIdentical(a, b), true);
 	});
 
+	// Issue #261: a read's window (offset/limit) is part of what makes it the
+	// "same call". Without it, an agent paging sequentially through one large
+	// file reads as a polling loop — every window compares as near-identical
+	// because only the path was compared.
+	it("does not treat two reads of one file at different offsets as near-identical", () => {
+		const a = normalizeToolCall({ name: "read", args: { path: "/a.ts", offset: 1, limit: 100 }, messageId: "m1" });
+		const b = normalizeToolCall({ name: "read", args: { path: "/a.ts", offset: 101, limit: 100 }, messageId: "m2" });
+		assert.equal(isNearIdentical(a, b), false);
+	});
+
+	it("carries the window in a read's normalised args", () => {
+		const a = normalizeToolCall({ name: "read", args: { path: "/a.ts", offset: 1, limit: 100 }, messageId: "m1" });
+		const b = normalizeToolCall({ name: "read", args: { path: "/a.ts", offset: 101, limit: 100 }, messageId: "m2" });
+		assert.notEqual(a.normalizedArgs, b.normalizedArgs);
+	});
+
+	it("still treats two reads of the same file at the same window as near-identical", () => {
+		const a = normalizeToolCall({ name: "read", args: { path: "/a.ts", offset: 1, limit: 100 }, messageId: "m1" });
+		const b = normalizeToolCall({ name: "read", args: { path: "/a.ts", offset: 1, limit: 100 }, messageId: "m2" });
+		assert.equal(isNearIdentical(a, b), true);
+	});
+
+	it("treats a whole-file read and a windowed read of one file as distinct", () => {
+		const a = normalizeToolCall({ name: "read", args: { path: "/a.ts" }, messageId: "m1" });
+		const b = normalizeToolCall({ name: "read", args: { path: "/a.ts", offset: 1, limit: 100 }, messageId: "m2" });
+		assert.equal(isNearIdentical(a, b), false);
+	});
+
 	it("normalises a Pi grep tool call from both pattern and scope", () => {
 		const result = normalizeToolCall({ name: "grep", args: { pattern: "foo", path: "/src" }, messageId: "m1" });
 		assert.equal(result.target, "foo /src");
@@ -278,6 +306,30 @@ describe("detectPollingLoops", () => {
 			makeBashCall("git status", "m1", false),
 			makeBashCall("git status", "m2", false),
 			makeBashCall("git status", "m3", false),
+		];
+		const signals = detectPollingLoops(calls, 3);
+		assert.equal(signals.length, 1);
+		assert.equal(signals[0]!.pattern, "polling-loop");
+	});
+
+	it("does not flag sequential pagination through one file as polling", () => {
+		// The same file read in successive windows: distinct offsets are distinct
+		// reads, not a poll waiting for state to change (issue #261).
+		const calls: ToolCallWithResult[] = [
+			makeToolCall("read", { path: "/big.ts", offset: 1, limit: 100 }, "m1", false),
+			makeToolCall("read", { path: "/big.ts", offset: 101, limit: 100 }, "m2", false),
+			makeToolCall("read", { path: "/big.ts", offset: 201, limit: 100 }, "m3", false),
+			makeToolCall("read", { path: "/big.ts", offset: 301, limit: 100 }, "m4", false),
+		];
+		const signals = detectPollingLoops(calls, 3);
+		assert.equal(signals.length, 0);
+	});
+
+	it("still flags repeated reads of the same window as polling", () => {
+		const calls: ToolCallWithResult[] = [
+			makeToolCall("read", { path: "/a.ts", offset: 1, limit: 100 }, "m1", false),
+			makeToolCall("read", { path: "/a.ts", offset: 1, limit: 100 }, "m2", false),
+			makeToolCall("read", { path: "/a.ts", offset: 1, limit: 100 }, "m3", false),
 		];
 		const signals = detectPollingLoops(calls, 3);
 		assert.equal(signals.length, 1);

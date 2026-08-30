@@ -253,7 +253,18 @@ export function normalizeToolCall(call: {
 		const pattern = typeof args?.["pattern"] === "string" ? args["pattern"] as string : "";
 		// A search is identified by pattern AND scope: same pattern in two
 		// directories is not the same call, and neither is two patterns in one.
-		const target = [pattern, filePath].filter(Boolean).join(" ");
+		// A read is identified by its file AND its window (issue #261): offset and
+		// limit are part of what makes it the same call, so an agent paging
+		// sequentially through one large file no longer reads as a polling loop.
+		// Without the window, every region of one file compared as near-identical
+		// and 293 of 424 read polling-loop signals were pagination misread as
+		// polling. Windowless calls (glob, grep, whole-file reads) are unchanged.
+		const offset = typeof args?.["offset"] === "number" ? args["offset"] : undefined;
+		const limit = typeof args?.["limit"] === "number" ? args["limit"] : undefined;
+		const windowPart = offset !== undefined || limit !== undefined
+			? `@${offset ?? ""}+${limit ?? ""}`
+			: "";
+		const target = [pattern, filePath, windowPart].filter(Boolean).join(" ");
 		return {
 			tool: name,
 			normalizedArgs: target ? `${name} ${target}` : name,
