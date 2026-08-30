@@ -8,6 +8,12 @@
  *   - negation: a leading negative that flips intent ("no …", "not …")
  *
  * Repetition (the user re-asking) is detected separately via token overlap.
+ *
+ * Deliberation measurement (issue #104, after SWE-Replay, arXiv:2601.22129):
+ * the number of paragraphs in the assistant's reasoning is a cheap proxy for
+ * how many separate considerations a step worked through — it tracks structure
+ * rather than verbosity (raw length varies by model and by mood; paragraph
+ * breaks do not).
  */
 
 export type CorrectionType = "explicit" | "implicit" | "repetition";
@@ -90,6 +96,29 @@ export function extractCorrectionText(text: string, patternSource: string): stri
  * Cheap repetition heuristic: a short message that shares >= 2 meaningful tokens
  * with the previous user message is likely a re-ask of the same intent.
  */
+/**
+ * Count the paragraphs in a block of text under one simple, documented split rule:
+ * consecutive non-blank lines form one paragraph; one or more blank lines end it.
+ * Leading and trailing blank lines are ignored, so trimmed whitespace never creates
+ * empty paragraphs.
+ */
+export function countDeliberationParagraphs(text: string): number {
+	const lines = text.split(/\r\n|\r|\n/);
+	let count = 0;
+	let inParagraph = false;
+	for (const line of lines) {
+		if (line.trim().length === 0) {
+			inParagraph = false;
+			continue;
+		}
+		if (!inParagraph) {
+			count++;
+			inParagraph = true;
+		}
+	}
+	return count;
+}
+
 export function detectRepetition(text: string | null, priorUserText: string | null): boolean {
 	if (!text || !priorUserText) return false;
 	if (text.length > 80) return false;

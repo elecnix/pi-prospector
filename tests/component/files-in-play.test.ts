@@ -8,12 +8,23 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
-import { AnalyzerFramework } from "../../src/analyze/framework.js";
-import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import {
+	tempDb,
+	insertSession,
+	insertMessages,
+	mockFramework,
+	readAnalyzerNodes,
+	runAnalyzerOverSession,
+	expectPlainRerunIsNoOpFill,
+	expectConfigChangeRevises,
+	sessionProposals,
+	assertProposalEvidenceTrail,
+	type TestMessage,
+} from "./helpers.js";
 import { filesInPlayAnalyzer } from "../../src/analyze/analyzers/files-in-play/index.js";
 import { FILES_IN_PLAY_PROPERTIES } from "../../src/analyze/analyzers/files-in-play/index.js";
-import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+
+const ANALYZER_ID = "files-in-play";
 
 // ─────────────────────────── fixtures ───────────────────────────
 
@@ -65,37 +76,6 @@ function linearSessionMessages(): TestMessage[] {
 	return msgs;
 }
 
-function newFramework(db: import("better-sqlite3").Database) {
-	return new AnalyzerFramework({
-		db,
-		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
-		modelTiers: DEFAULT_MODEL_TIERS,
-	});
-}
-
-/** Same, but with per-analyzer config overrides (everything the user sets is config). */
-function newFrameworkWithOverrides(db: import("better-sqlite3").Database, overrides: Record<string, unknown>) {
-	return new AnalyzerFramework({
-		db,
-		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
-		modelTiers: DEFAULT_MODEL_TIERS,
-		configOverrides: { "files-in-play": overrides },
-	});
-}
-
-interface NodeRow extends Record<string, unknown> {
-	id: string;
-	node_kind: string;
-	input_key: string;
-	output_key: string;
-	content_json: string;
-}
-
-async function readNodes(db: import("better-sqlite3").Database): Promise<NodeRow[]> {
-	return (await db
-		.prepare("SELECT id, node_kind, input_key, output_key, content_json FROM analysis_nodes WHERE analyzer_id = ?")
-		.all("files-in-play")) as unknown as NodeRow[];
-}
 
 interface ChurnContent {
 	session_id: string;
@@ -122,12 +102,12 @@ describe("files-in-play component tests", () => {
 			await insertSession(db, "churn-e2e");
 			await insertMessages(db, "churn-e2e", churningSessionMessages());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(filesInPlayAnalyzer);
 			const summary = await fw.run("churn-e2e", {});
 			assert.equal(summary.errors.length, 0, `run should have no errors: ${summary.errors.join("; ")}`);
 
-			const nodes = await readNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 1, "one node per session");
 
 			const node = nodes[0]!;
@@ -153,19 +133,12 @@ describe("files-in-play component tests", () => {
 
 			// Evidence trail: session anchor + anchors on the turns that re-touched
 			// files already in play, plus the produces edge into the fast store.
-			const edges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
-				.all(node.id)) as unknown as Array<Record<string, unknown>>;
-			const sessionAnchors = edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "session");
-			const messageAnchors = edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "message");
-			assert.equal(sessionAnchors.length, 1, "anchored to the session");
-			assert.ok(messageAnchors.length >= 3, "the churning turns anchor the finding");
-			const produced = edges.find((e) => e["edge_kind"] === "produces");
-			assert.ok(produced, "proposal node must produce its proposal");
+			await assertProposalEvidenceTrail(db, node.id, {
+				atLeast: 3,
+				note: "the churning turns anchor the finding",
+			});
 
-			const proposals = (await db
-				.prepare("SELECT * FROM proposals WHERE session_id = ? AND analyzer_id = ?")
-				.all("churn-e2e", "files-in-play")) as unknown as Array<Record<string, unknown>>;
+			const proposals = await sessionProposals(db, "churn-e2e", ANALYZER_ID);
 			assert.equal(proposals.length, 1, "exactly one materialised proposal");
 			assert.equal(proposals[0]!.status, "open");
 			assert.equal(proposals[0]!.severity, "waste");
@@ -177,24 +150,7 @@ describe("files-in-play component tests", () => {
 	it("re-running the same recipe is idempotent: no new nodes, keys unchanged", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "churn-idem");
-			await insertMessages(db, "churn-idem", churningSessionMessages());
-
-			const fw = newFramework(db);
-			await fw.register(filesInPlayAnalyzer);
-
-			const first = await fw.run("churn-idem", {});
-			assert.equal(first.errors.length, 0);
-			const before = await readNodes(db);
-			assert.equal(before.length, 1);
-
-			const second = await fw.run("churn-idem", {});
-			assert.equal(second.errors.length, 0);
-			assert.equal(second.nodesProduced, 0, "second plain fill must produce nothing");
-			assert.equal(second.nodesSkipped, 1, "the existing unit is current");
-
-			const after = await readNodes(db);
-			assert.deepEqual(after.map((n) => [n.input_key, n.output_key]), before.map((n) => [n.input_key, n.output_key]));
+			await expectPlainRerunIsNoOpFill(db, filesInPlayAnalyzer, "churn-idem", churningSessionMessages());
 		} finally {
 			await close();
 		}
@@ -203,15 +159,7 @@ describe("files-in-play component tests", () => {
 	it("linear work over fresh files stays a clean metric node with no proposals", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "churn-linear");
-			await insertMessages(db, "churn-linear", linearSessionMessages());
-
-			const fw = newFramework(db);
-			await fw.register(filesInPlayAnalyzer);
-			const summary = await fw.run("churn-linear", {});
-			assert.equal(summary.errors.length, 0);
-
-			const nodes = await readNodes(db);
+			const nodes = await runAnalyzerOverSession(db, filesInPlayAnalyzer, "churn-linear", linearSessionMessages());
 			assert.equal(nodes.length, 1, "a clean session is still analysed");
 			assert.equal(nodes[0]!.node_kind, "metric", "no proposals below threshold");
 
@@ -233,37 +181,15 @@ describe("files-in-play component tests", () => {
 	it("changing config marks nodes stale for the `config` reason and revises beside them", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "churn-config");
-			await insertMessages(db, "churn-config", churningSessionMessages());
-
-			const fw = newFramework(db);
-			await fw.register(filesInPlayAnalyzer);
-
-			await fw.run("churn-config", {});
-			const before = await readNodes(db);
-			assert.equal(before.length, 1);
-
 			// A tighter window changes the resolved config fingerprint → the unit
 			// goes stale for the `config` reason; the revise run recomputes it,
 			// preserving the old version as lineage.
-			const narrowed = newFrameworkWithOverrides(db, { windowSize: 4 });
-			await narrowed.register(filesInPlayAnalyzer);
-			const summary = await narrowed.run("churn-config", { revise: ["config"] });
-			assert.equal(summary.errors.length, 0);
-			assert.equal(summary.nodesRevised, 1, "the unit was revised under new config");
-
-			const after = await readNodes(db);
-			assert.equal(after.length, 2, "old version preserved as lineage beside the revision");
-			const revised = after.find((n) => n.input_key !== before[0]!.input_key);
-			assert.ok(revised, "revised node carries a new recipe identity");
-
-			const edges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'revises'")
-				.all(revised!.id)) as unknown as Array<Record<string, unknown>>;
-			assert.equal(edges.length, 1, "a revises edge links the revision to its predecessor");
+			const { revised } = await expectConfigChangeRevises(db, filesInPlayAnalyzer, "churn-config", churningSessionMessages(), {
+				windowSize: 4,
+			});
 
 			// The revision itself is idempotent under its own recipe.
-			const rerun = await narrowed.run("churn-config", {});
+			const rerun = await revised.run("churn-config", {});
 			assert.equal(rerun.nodesProduced, 0, "revised unit is current afterwards");
 		} finally {
 			await close();

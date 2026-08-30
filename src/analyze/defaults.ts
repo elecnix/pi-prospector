@@ -28,6 +28,7 @@ import { presidioAnalyzer } from "./analyzers/presidio/index.js";
 import { piicatcherAnalyzer } from "./analyzers/piicatcher/index.js";
 import { dataprofilerAnalyzer } from "./analyzers/dataprofiler/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
+import { groundedClaimsAnalyzer } from "./analyzers/grounded-claims/index.js";
 import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
 import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
@@ -47,6 +48,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"assistant-cognition",
 	"tool-trajectory",
 	"failure-modes",
+	"grounded-claims",
 	"revive-chains",
 	"uncompleted-leads",
 	"compression-checklist",
@@ -91,6 +93,15 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// tool-trajectory because the two read the same action stream — one for the
 	// shape of the sequence, the other for what went wrong in it.
 	failureModesAnalyzer,
+	// The claim-consistency twin of failure-modes (#100): both read the same
+	// action stream, but where failure-modes sees what the tools reported,
+	// grounded-claims checks what the agent *claimed* against it — ungrounded
+	// claims (a stated fact absent from that turn's tool results) and unacted
+	// requests (a concrete request no call in this or the next turn satisfied).
+	// Deterministic, turn-anchored metric nodes only (one per signal, anchored to
+	// the turn's user message); placed beside the other action-stream readers so
+	// a future session-overview consumer can declare it without reordering.
+	groundedClaimsAnalyzer,
 	// The orchestration-waste twin of failure-modes: both read the same action
 	// stream, but where failure-modes sees what broke, revive-chains sees the
 	// waste that no single call records — a chain of individually successful

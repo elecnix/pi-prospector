@@ -114,29 +114,41 @@ function isAcceptableWord(token: string): boolean {
 	return !/\p{N}/u.test(token);
 }
 
-/**
- * The ordered token stream for a piece of user text: normalised, lowercased
- * words plus emoji, in the order they appear. Emoji bypass the length filter —
- * a single 🤬 is a complete signal.
- */
-export function tokenize(text: string): string[] {
-	if (!text) return [];
-	const normalised = stripNonProse(text.normalize("NFKC"));
+/** Normalise and strip everything that is not the user's own prose. */
+export function toProse(text: string): string {
+	if (!text) return "";
+	return stripNonProse(text.normalize("NFKC"));
+}
 
+/** Extract the ordered token stream from already-normalised prose. */
+export function extractTokens(prose: string): string[] {
 	// Collect words and emoji with their offsets, then merge by position so the
 	// output preserves the order they appeared in rather than grouping by kind.
 	const found: Array<{ index: number; token: string }> = [];
 
-	for (const m of normalised.matchAll(WORD_RE)) {
+	for (const m of prose.matchAll(WORD_RE)) {
 		const token = m[0].toLowerCase();
 		if (isAcceptableWord(token)) found.push({ index: m.index, token });
 	}
-	for (const m of normalised.matchAll(EMOJI_RE)) {
+	for (const m of prose.matchAll(EMOJI_RE)) {
 		found.push({ index: m.index, token: m[0] });
 	}
 
 	found.sort((a, b) => a.index - b.index);
 	return found.map((f) => f.token);
+}
+
+/**
+ * The ordered token stream for a piece of user text: normalised, lowercased
+ * words plus emoji, in the order they appear. Emoji bypass the length filter —
+ * a single 🤬 is a complete signal.
+ *
+ * Equal to the concatenation of {@link tokenizeSegments}' segments — phrase
+ * nomination and phrase matching rely on that invariant so a phrase can never
+ * be nominated across a boundary it cannot then be matched within (or vice versa).
+ */
+export function tokenize(text: string): string[] {
+	return extractTokens(toProse(text));
 }
 
 /** The distinct tokens of a text. Matching against this set is substring-proof. */
@@ -150,6 +162,30 @@ export const TermCount = Type.Object({
 });
 export type TermCount = Static<typeof TermCount>;
 
+// ───────────────────────── frequency ranking ─────────────────────────
+
+/**
+ * Count distinct candidates, rank by frequency then code-unit order, capped at
+ * `limit`. Shared by both rankers ({@link rankTerms} here, `rankPhrases` in
+ * phrases.ts): frequency-first is deliberate — the commonest candidates get
+ * classified, and cached, first — and the alphabetical tie-break makes the
+ * selection reproducible regardless of message order.
+ */
+export function rankByFrequency(candidates: Iterable<string>, limit: number): TermCount[] {
+	const counts = new Map<string, number>();
+	for (const candidate of candidates) {
+		counts.set(candidate, (counts.get(candidate) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.map(([term, count]) => ({ term, count }))
+		// Code-unit order, deliberately *not* `localeCompare`: collation depends on
+		// the host's locale and ICU version, and this ordering decides which terms
+		// survive the cap — and therefore what lands in a content-addressed node.
+		// It has to be identical on every machine, not merely sensible on this one.
+		.sort((a, b) => b.count - a.count || compareCodeUnits(a.term, b.term))
+		.slice(0, Math.max(0, limit));
+}
+
 /**
  * Distinct terms across several texts, ranked by frequency then alphabetically,
  * capped at `limit`.
@@ -160,20 +196,9 @@ export type TermCount = Static<typeof TermCount>;
  * tie-break makes the selection reproducible regardless of message order.
  */
 export function rankTerms(texts: readonly string[], limit: number): TermCount[] {
-	const counts = new Map<string, number>();
-	for (const text of texts) {
-		for (const token of tokenize(text)) {
-			counts.set(token, (counts.get(token) ?? 0) + 1);
-		}
-	}
-	return [...counts.entries()]
-		.map(([term, count]) => ({ term, count }))
-		// Code-unit order, deliberately *not* `localeCompare`: collation depends on
-		// the host's locale and ICU version, and this ordering decides which terms
-		// survive the cap — and therefore what lands in a content-addressed node.
-		// It has to be identical on every machine, not merely sensible on this one.
-		.sort((a, b) => b.count - a.count || compareCodeUnits(a.term, b.term))
-		.slice(0, Math.max(0, limit));
+	const tokens: string[] = [];
+	for (const text of texts) tokens.push(...tokenize(text));
+	return rankByFrequency(tokens, limit);
 }
 
 /** Locale-independent string ordering, for reproducible node identities. */
@@ -248,6 +273,29 @@ function isShouting(text: string): boolean {
 	}
 
 	return PRESSED_CAPS_RE.test(text);
+}
+
+/**
+ * A run of two or more `?`/`!` — already detected as a paralinguistic signal,
+ * and therefore never a modulator.
+ */
+const PUNCTUATION_RUN_RE = /[?!]{2,}/g;
+
+/**
+ * Whether the prose carries a lone exclamation mark — a single `!` that is not
+ * part of a `!!`, `?!`, or longer punctuation run.
+ *
+ * This is a *modulator*, not a signal: on its own `!` carries no polarity
+ * (`great!` and `hi!` are not frustration), so it never fires as a hit of its
+ * own. It only scales the weight of the signals a turn already has, which is
+ * why this returns a boolean for the turn rather than emitting anything.
+ */
+export function hasLoneExclamation(text: string): boolean {
+	if (!text) return false;
+	const prose = stripNonProse(text.normalize("NFKC"));
+	// Runs of two or more are already measured by the repeated_punctuation
+	// detector; remove them so their exclamation marks are not read as lone ones.
+	return /!/.test(prose.replace(PUNCTUATION_RUN_RE, " "));
 }
 
 /**

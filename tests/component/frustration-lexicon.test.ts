@@ -9,9 +9,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { tempDb, insertSession, insertMessages } from "./helpers.js";
+import { tempDb, insertSession, insertMessages, lexiconMock, classifyCallsFor } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
-import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { lexiconCandidatesAnalyzer, LEXICON_CANDIDATES_DEF } from "../../src/analyze/analyzers/lexicon-candidates/index.js";
 import {
@@ -20,29 +19,9 @@ import {
 	type FrustrationLexiconProperties,
 } from "../../src/analyze/analyzers/frustration-lexicon/index.js";
 import { getNodesByAnalyzer } from "../../src/db/analysis-queries.js";
-import type { LLMRequest } from "../../src/analyze/types.js";
 
 /** Terms our stub model calls frustration; everything else comes back neutral. */
 const FRUSTRATED_TERMS = new Set(["putain", "faux", "wrong", "🤬"]);
-
-function lexiconMock() {
-	return createMockLLM({
-		responder: (req: LLMRequest) => {
-			const term = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
-			const frustrated = FRUSTRATED_TERMS.has(term);
-			return {
-				text: "x",
-				structured: {
-					polarity: frustrated ? "frustration" : "neutral",
-					category: frustrated ? "dissatisfaction" : "none",
-					language: frustrated ? "fr" : "und",
-					confidence: 0.9,
-					rationale: frustrated ? "expresses dissatisfaction" : "ordinary vocabulary",
-				},
-			};
-		},
-	});
-}
 
 async function frameworkFor(db: Parameters<typeof getNodesByAnalyzer>[0], llm: ReturnType<typeof lexiconMock>) {
 	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
@@ -51,15 +30,6 @@ async function frameworkFor(db: Parameters<typeof getNodesByAnalyzer>[0], llm: R
 	return framework;
 }
 
-/**
- * How many times the model was asked to adjudicate exactly this entry.
- *
- * Matched exactly, not by substring: now that phrases are judged too, a
- * `TERM: putain c'est` call would otherwise also count as a call for `putain`.
- */
-function classifyCallsFor(llm: ReturnType<typeof lexiconMock>, term: string): number {
-	return llm.calls.filter((c) => c.tool?.name === "classify_term" && c.user === `TERM: ${term}`).length;
-}
 
 describe("lexicon-candidates", () => {
 	it("nominates the user's vocabulary, ranked and capped, ignoring assistant text", async () => {
@@ -72,7 +42,7 @@ describe("lexicon-candidates", () => {
 				{ role: "user", text: "still wrong" },
 			]);
 
-			const llm = lexiconMock();
+			const llm = lexiconMock(FRUSTRATED_TERMS);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1", { analyzerIds: [LEXICON_CANDIDATES_DEF.id] });
 
@@ -96,7 +66,7 @@ describe("frustration-lexicon", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "putain c'est encore faux" }]);
 
-			const llm = lexiconMock();
+			const llm = lexiconMock(FRUSTRATED_TERMS);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 
@@ -123,7 +93,7 @@ describe("frustration-lexicon", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "putain c'est encore faux" }]);
 
-			const llm = lexiconMock();
+			const llm = lexiconMock(FRUSTRATED_TERMS);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 			const afterFirst = llm.calls.length;
@@ -144,7 +114,7 @@ describe("frustration-lexicon", () => {
 			await insertSession(db, "s2");
 			await insertMessages(db, "s2", [{ role: "user", text: "putain, toujours faux" }]);
 
-			const llm = lexiconMock();
+			const llm = lexiconMock(FRUSTRATED_TERMS);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 			await framework.run("s2");
@@ -172,7 +142,7 @@ describe("frustration-lexicon", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
 
-			const llm = lexiconMock();
+			const llm = lexiconMock(FRUSTRATED_TERMS);
 			const framework = await frameworkFor(db, llm);
 			await framework.run("s1");
 
@@ -197,7 +167,7 @@ describe("frustration-lexicon", () => {
 			await insertSession(db, "s2");
 			await insertMessages(db, "s2", [{ role: "user", text: "putain" }]);
 
-			const llm = lexiconMock();
+			const llm = lexiconMock(FRUSTRATED_TERMS);
 			const framework = await frameworkFor(db, llm);
 			// Concurrent runs mirror how `prospect analyze` fans sessions out. Both see
 			// the term as missing and both insert the same input_key; the loser must

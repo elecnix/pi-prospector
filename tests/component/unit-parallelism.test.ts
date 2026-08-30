@@ -28,6 +28,17 @@ function words(prefix: string, count: number): string[] {
 	return Array.from({ length: count }, (_, i) => `${prefix}${letter(Math.floor(i / 26))}${letter(i)}`);
 }
 
+/**
+ * Single-word verdict nodes only. Since #40 nomination also puts forward
+ * two-word phrases, which this suite's seeded prose duly produces; they ride
+ * the same pipeline and would otherwise inflate these exact-count pins.
+ */
+function wordNodes(db: Parameters<typeof getNodesByAnalyzer>[0], sessionId: string) {
+	return getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, sessionId).then((nodes) =>
+		nodes.map((n) => (JSON.parse(n.content_json) as { term: string }).term).filter((t) => !t.includes(" ")),
+	);
+}
+
 /** An LLM stub that records how many calls are in flight at once. */
 function trackingLLM(delayMs = 5) {
 	let inFlight = 0;
@@ -76,7 +87,7 @@ describe("intra-analyzer parallelism", () => {
 				`one session must reach past concurrency 1; peak in-flight was ${llm.peak()}`,
 			);
 			assert.ok(llm.peak() <= 8, `must respect the configured limit; peak was ${llm.peak()}`);
-			assert.equal((((await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).length)), 30);
+			assert.equal((await wordNodes(db, "s1")).length, 30);
 		} finally {
 			await close();
 		}
@@ -91,7 +102,7 @@ describe("intra-analyzer parallelism", () => {
 			await framework.register(lexiconCandidatesAnalyzer);
 			await framework.register(frustrationLexiconAnalyzer);
 			await framework.run("s1");
-			assert.equal((((await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).length)), 10);
+			assert.equal((await wordNodes(db, "s1")).length, 10);
 		} finally {
 			await close();
 		}
@@ -111,8 +122,7 @@ describe("intra-analyzer parallelism", () => {
 			const summary = await framework.run("s1");
 
 			assert.equal(summary.errors.length, 0);
-			const terms = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1"))
-				.map((n) => (JSON.parse(n.content_json) as { term: string }).term);
+			const terms = await wordNodes(db, "s1");
 			assert.equal(terms.length, vocab.length);
 			assert.equal(new Set(terms).size, terms.length, "no term judged twice");
 		} finally {

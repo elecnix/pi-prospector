@@ -8,11 +8,23 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { tempDb, insertSession, insertMessages, type TestMessage } from "./helpers.js";
-import { AnalyzerFramework } from "../../src/analyze/framework.js";
-import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import {
+	tempDb,
+	insertSession,
+	insertMessages,
+	mockFramework,
+	mockFrameworkWithOverrides,
+	readAnalyzerNodes,
+	nodeEdges,
+	sessionProposals,
+	runAnalyzerOverSession,
+	expectPlainRerunIsNoOpFill,
+	expectConfigChangeRevises,
+	type TestMessage,
+} from "./helpers.js";
 import { languageMismatchAnalyzer } from "../../src/analyze/analyzers/language-mismatch/index.js";
-import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+
+const ANALYZER_ID = "language-mismatch";
 
 // Long synthetic sentences, well past the 40-letter default minimum.
 const FR = "Pourquoi le serveur refuse-t-il les connexions depuis ce matin alors que rien n'a changé dans la configuration ?";
@@ -21,22 +33,6 @@ const RU = "Похоже проблема в конфигурации сети �
 const RU2 = "Сейчас посмотрю журналы и скажу что именно вызывает ошибку подключения к базе данных приложения.";
 const EN = "And here is a perfectly ordinary reply written in plain English words for an English question.";
 
-function newFramework(db: import("better-sqlite3").Database) {
-	return new AnalyzerFramework({
-		db,
-		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
-		modelTiers: DEFAULT_MODEL_TIERS,
-	});
-}
-
-function newFrameworkWithOverrides(db: import("better-sqlite3").Database, overrides: Record<string, unknown>) {
-	return new AnalyzerFramework({
-		db,
-		llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
-		modelTiers: DEFAULT_MODEL_TIERS,
-		configOverrides: { "language-mismatch": overrides },
-	});
-}
 
 /** Two turns: French questions answered in Russian — recurrence clears the default proposal threshold of 2. */
 function mismatchedSession(): TestMessage[] {
@@ -81,20 +77,6 @@ function compactedSession(): TestMessage[] {
 	];
 }
 
-interface NodeRow extends Record<string, unknown> {
-	id: string;
-	node_kind: string;
-	input_key: string;
-	output_key: string;
-	content_json: string;
-}
-
-async function readNodes(db: import("better-sqlite3").Database): Promise<NodeRow[]> {
-	return (await db
-		.prepare("SELECT id, node_kind, input_key, output_key, content_json FROM analysis_nodes WHERE analyzer_id = ?")
-		.all("language-mismatch")) as unknown as NodeRow[];
-}
-
 // ─────────────────────────── tests ───────────────────────────
 
 describe("language-mismatch component test", () => {
@@ -104,12 +86,12 @@ describe("language-mismatch component test", () => {
 			await insertSession(db, "lang-e2e");
 			const ids = await insertMessages(db, "lang-e2e", mismatchedSession());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(languageMismatchAnalyzer);
 			const summary = await fw.run("lang-e2e", {});
 			assert.equal(summary.errors.length, 0, `run should have no errors: ${summary.errors.join("; ")}`);
 
-			const nodes = await readNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 1, "one session-level node");
 			assert.equal(nodes[0]!.node_kind, "proposal", "two mismatches clear the default threshold");
 
@@ -135,16 +117,12 @@ describe("language-mismatch component test", () => {
 
 			// Evidence trail: session anchor + each judged turn's user message +
 			// the produces edge into the fast store.
-			const edges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ?")
-				.all(nodes[0]!.id)) as unknown as Array<Record<string, unknown>>;
+			const edges = await nodeEdges(db, nodes[0]!.id);
 			assert.equal(edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "session").length, 1);
 			assert.equal(edges.filter((e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "message").length, 2);
 			assert.ok(edges.find((e) => e["edge_kind"] === "produces"), "proposal node must produce its proposal");
 
-			const proposals = (await db
-				.prepare("SELECT * FROM proposals WHERE session_id = ? AND analyzer_id = ?")
-				.all("lang-e2e", "language-mismatch")) as unknown as Array<Record<string, unknown>>;
+			const proposals = await sessionProposals(db, "lang-e2e", ANALYZER_ID);
 			assert.equal(proposals.length, 1, "exactly one materialised proposal");
 			assert.match(String(proposals[0]!.title), /wrong language 2 times/);
 			assert.equal(proposals[0]!.status, "open");
@@ -159,12 +137,12 @@ describe("language-mismatch component test", () => {
 			await insertSession(db, "lang-clean");
 			await insertMessages(db, "lang-clean", cleanSession());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(languageMismatchAnalyzer);
 			const summary = await fw.run("lang-clean", {});
 			assert.equal(summary.errors.length, 0);
 
-			const nodes = await readNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 1);
 			assert.equal(nodes[0]!.node_kind, "metric");
 			const content = JSON.parse(nodes[0]!.content_json) as { mismatched_turn_count: number; improvement_proposals: unknown[] };
@@ -183,15 +161,7 @@ describe("language-mismatch component test", () => {
 	it("a session where nothing is judgable plans no unit at all", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "lang-tiny");
-			await insertMessages(db, "lang-tiny", tinySession());
-
-			const fw = newFramework(db);
-			await fw.register(languageMismatchAnalyzer);
-			const summary = await fw.run("lang-tiny", {});
-			assert.equal(summary.errors.length, 0);
-
-			const nodes = await readNodes(db);
+			const nodes = await runAnalyzerOverSession(db, languageMismatchAnalyzer, "lang-tiny", tinySession());
 			assert.equal(nodes.length, 0, "nothing to judge");
 		} finally {
 			await close();
@@ -204,12 +174,12 @@ describe("language-mismatch component test", () => {
 			await insertSession(db, "lang-compaction");
 			await insertMessages(db, "lang-compaction", compactedSession());
 
-			const fw = newFramework(db);
+			const fw = mockFramework(db);
 			await fw.register(languageMismatchAnalyzer);
 			const summary = await fw.run("lang-compaction", {});
 			assert.equal(summary.errors.length, 0);
 
-			const nodes = await readNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 1);
 			assert.equal(nodes[0]!.node_kind, "metric", "one mismatch below the default threshold of 2 earns no proposal");
 
@@ -228,9 +198,9 @@ describe("language-mismatch component test", () => {
 			assert.equal(c.summary_script, "cyrillic");
 			assert.equal(c.mismatched, true);
 
-			const edges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'anchors' AND to_ref_kind = 'message'")
-				.all(nodes[0]!.id)) as unknown as Array<Record<string, unknown>>;
+			const edges = (await nodeEdges(db, nodes[0]!.id)).filter(
+				(e) => e["edge_kind"] === "anchors" && e["to_ref_kind"] === "message",
+			);
 			assert.deepEqual(edges.map((e) => e["to_ref_id"]), [c.message_id], "the finding anchors to the compaction entry itself");
 		} finally {
 			await close();
@@ -243,12 +213,12 @@ describe("language-mismatch component test", () => {
 			await insertSession(db, "lang-no-compaction-check");
 			await insertMessages(db, "lang-no-compaction-check", compactedSession());
 
-			const fw = newFrameworkWithOverrides(db, { checkCompaction: false });
+			const fw = mockFrameworkWithOverrides(db, ANALYZER_ID, { checkCompaction: false });
 			await fw.register(languageMismatchAnalyzer);
 			const summary = await fw.run("lang-no-compaction-check", {});
 			assert.equal(summary.errors.length, 0);
 
-			const nodes = await readNodes(db);
+			const nodes = await readAnalyzerNodes(db, ANALYZER_ID);
 			assert.equal(nodes.length, 0, "with compaction checks off, nothing else in this session is judgable");
 		} finally {
 			await close();
@@ -258,24 +228,7 @@ describe("language-mismatch component test", () => {
 	it("re-running the same recipe is idempotent: no new nodes, keys unchanged", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "lang-idem");
-			await insertMessages(db, "lang-idem", mismatchedSession());
-
-			const fw = newFramework(db);
-			await fw.register(languageMismatchAnalyzer);
-
-			const first = await fw.run("lang-idem", {});
-			assert.equal(first.errors.length, 0);
-			const before = await readNodes(db);
-			assert.equal(before.length, 1);
-
-			const second = await fw.run("lang-idem", {});
-			assert.equal(second.errors.length, 0);
-			assert.equal(second.nodesProduced, 0, "second plain fill must produce nothing");
-			assert.equal(second.nodesSkipped, 1, "the existing unit is current");
-
-			const after = await readNodes(db);
-			assert.deepEqual(after.map((n) => [n.input_key, n.output_key]), before.map((n) => [n.input_key, n.output_key]));
+			await expectPlainRerunIsNoOpFill(db, languageMismatchAnalyzer, "lang-idem", mismatchedSession());
 		} finally {
 			await close();
 		}
@@ -284,32 +237,14 @@ describe("language-mismatch component test", () => {
 	it("raising minMismatchesForProposal marks the node stale for `config` and revises beside it", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "lang-config");
-			await insertMessages(db, "lang-config", mismatchedSession());
-
-			const fw = newFramework(db);
-			await fw.register(languageMismatchAnalyzer);
-			await fw.run("lang-config", {});
-			const before = await readNodes(db);
-			assert.equal(before.length, 1);
+			const { before, after } = await expectConfigChangeRevises(db, languageMismatchAnalyzer, "lang-config", mismatchedSession(), {
+				minMismatchesForProposal: 5,
+			});
 			assert.equal(before[0]!.node_kind, "proposal");
 
-			const raised = newFrameworkWithOverrides(db, { minMismatchesForProposal: 5 });
-			await raised.register(languageMismatchAnalyzer);
-			const revised = await raised.run("lang-config", { revise: ["config"] });
-			assert.equal(revised.errors.length, 0);
-			assert.equal(revised.nodesRevised, 1);
-
-			const after = await readNodes(db);
-			assert.equal(after.length, 2, "old version preserved as lineage beside the revision");
 			const newNode = after.find((n) => n.input_key !== before[0]!.input_key);
 			assert.ok(newNode);
 			assert.equal(newNode!.node_kind, "metric", "with the threshold raised, two mismatches no longer earn a proposal");
-
-			const reviseEdges = (await db
-				.prepare("SELECT * FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'revises'")
-				.all(newNode!.id)) as unknown as Array<Record<string, unknown>>;
-			assert.equal(reviseEdges.length, 1, "a revises edge links the revision to its predecessor");
 		} finally {
 			await close();
 		}

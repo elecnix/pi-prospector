@@ -4,10 +4,19 @@
  * Emits one `metric` node per *hit*: a (turn, signal) pair. Two kinds of signal
  * reach a turn here.
  *
- *   - **lexicon** — the turn's user text contains a term the corpus has judged
- *     to carry frustration (or praise), in any language.
+ *   - **lexicon** — the turn's user text contains an entry the corpus has judged
+ *     to carry frustration (or praise), in any language. Entries are single
+ *     words **or two-word phrases** (`laisse tomber`, `trop lent`, #40): a
+ *     phrase is just a longer corpus-keyed subject, matched over the same
+ *     token stream as a word by a windowed n-gram compare within sentence
+ *     segments.
  *   - **paralinguistic** — the turn shouts, piles on punctuation, or holds a
  *     letter down. These need neither a lexicon nor a language.
+ *
+ * A third form feature is a **modulator**, not a signal: a lone exclamation
+ * mark (`hi!`, `wait, no!`) fires no hit of its own — `great!` and `angry!`
+ * are indistinguishable — but scales the weight of the signals the turn already
+ * carries. A modulator with nothing to modulate produces nothing.
  *
  * The second kind exists because *the lexicon must never become a gate*. A user
  * whose vocabulary we have never seen, writing in a script we have never
@@ -39,10 +48,12 @@ import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { detectParalinguistic, tokenize } from "../lexicon-candidates/tokenize.js";
+import { findPhraseHits, isPhrase } from "../lexicon-candidates/phrases.js";
 import {
 	FRUSTRATION_LEXICON_DEF,
 	type FrustrationLexiconProperties,
 } from "../frustration-lexicon/index.js";
+import { hasLoneExclamation } from "../lexicon-candidates/tokenize.js";
 import { DEFAULT_TURN_FRUSTRATION_CONFIG, type TurnFrustrationConfig } from "./config.js";
 import { getMutedTerms } from "../../../db/assertions.js";
 import { Type, type Static } from "typebox";
@@ -71,7 +82,7 @@ export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 	id: "turn-frustration",
 	label: "Per-Turn Frustration Signals (deterministic)",
 	description:
-		"Matches each turn's user text against the corpus-wide learned lexicon and against lexicon-free markers (shouting, repeated punctuation, elongation), emitting one node per (turn, signal). No LLM. Detects verbal frustration in any language, including from users whose vocabulary the lexicon has never seen.",
+		"Matches each turn's user text against the corpus-wide learned lexicon — single terms and two-word phrases — and against lexicon-free markers (shouting, repeated punctuation, elongation), emitting one node per (turn, signal). A lone `!` acts as a weight modulator rather than a signal. No LLM. Detects verbal frustration in any language, including from users whose vocabulary the lexicon has never seen.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id, FRUSTRATION_LEXICON_DEF.id],
 	outputSchema: TurnFrustrationProperties,
@@ -84,7 +95,15 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// 1.2: phrase matching removed — see #40. Word and paralinguistic signals stay.
 	// 1.3: matching inherits the tokeniser's hyphen fix, so `re-check` no longer
 	// yields a `re` token for a stale lexicon entry to match on.
-	minor: 3,
+	// 1.4: a lone `!` became a weight *modulator* rather than an undetected form
+	// (issue #75): it still fires no hit, but multiplies each existing hit's weight.
+	// 1.5: also matched learned two-word phrases (issue #40), windowed over the
+	// same tokenisation nomination used. Purely additive — phrase hits are new
+	// (turn, signal) subjects sharing the existing `lexicon` signal source, so
+	// every existing hit node keeps its identity and nothing is recomputed. When
+	// a term and an extending phrase both match the same turn, both hits are
+	// emitted but the weight follows longest-match-preferred (see plan).
+	minor: 5,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
@@ -155,16 +174,49 @@ export const turnFrustrationAnalyzer: Analyzer = {
 		for (const pair of await ctx.getTurnPairs(ctx.sessionId)) {
 			if (!pair.userText.trim()) continue;
 
+			// The turn's modulator multiplier, computed once and applied to every hit
+			// below. A lone `!` never creates a hit (it is polarity-agnostic), but it
+			// scales the signals the turn already carries; runs like `!!` / `?!` are
+			// already signals themselves and are deliberately not scaled by this.
+			const exclamationMultiplier = hasLoneExclamation(pair.userText)
+				? config.exclamationMultiplier
+				: 1;
+
 			// Lexicon hits. Matching runs over the tokenised text rather than a regex,
 			// so it is Unicode-correct and cannot match inside a longer word — `no`
-			// never fires on `north`.
-			const counts = new Map<string, number>();
-			for (const token of tokenize(pair.userText)) {
-				if (lexicon.has(token) && !muted.has(token)) counts.set(token, (counts.get(token) ?? 0) + 1);
+			// never fires on `north`. Single-term matches record their token positions,
+			// which the overlap policy below needs alongside the counts.
+			const positions = new Map<string, number[]>();
+			for (const [index, token] of tokenize(pair.userText).entries()) {
+				if (!isPhrase(token) && lexicon.has(token) && !muted.has(token)) {
+					const at = positions.get(token) ?? [];
+					at.push(index);
+					positions.set(token, at);
+				}
 			}
 
-			for (const term of [...counts.keys()].sort()) {
+			// Phrase matches: a windowed n-gram compare over the same segmentation
+			// nomination used, so a phrase can never bridge a sentence boundary it was
+			// not built across.
+			const knownPhrases = new Set([...lexicon.keys()].filter((entry) => isPhrase(entry) && !muted.has(entry)));
+			const phraseHits = findPhraseHits(pair.userText, knownPhrases);
+
+			// Overlap policy (#40): existence stays additive — a term and an extending
+			// phrase that both match this turn each get their own (turn, signal) hit
+			// node — but the weight follows **longest-match-preferred**: when every
+			// occurrence of a single-term hit lies inside some longer phrase hit's span,
+			// that shorter hit carries weight 0 so the overlapping spans are not counted
+			// twice toward ranking. The all-or-nothing rule keeps the calculation
+			// deterministic and simple; a partially-covered term (some occurrences free)
+			// still contributes full weight. Subsumed nodes stay recorded: they remain
+			// evidence that the word fired, only priced at zero.
+			const subsumedByPhrase = (tokenIndex: number): boolean =>
+				phraseHits.some((h) => h.start <= tokenIndex && tokenIndex + 1 <= h.end);
+
+			for (const term of [...positions.keys()].sort()) {
 				const entry = lexicon.get(term)!;
+				const occurrences = positions.get(term)!;
+				const subsumed = occurrences.every(subsumedByPhrase);
 				units.push(
 					hitUnit(pair.index, pair.userMessageId, {
 						user_message_id: pair.userMessageId,
@@ -174,8 +226,34 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						polarity: entry.props.polarity,
 						category: entry.props.category,
 						language: entry.props.language,
-						count: counts.get(term) ?? 1,
-						weight: config.lexiconHitWeight,
+						count: occurrences.length,
+						weight: subsumed ? 0 : config.lexiconHitWeight * exclamationMultiplier,
+						termOutputKey: entry.outputKey,
+					}),
+				);
+			}
+
+			// Phrase hits share the `lexicon` signal source — a phrase IS a lexicon
+			// entry — and carry full weight unless a future longer entry subsumes them;
+			// today's bigrams can only be subsumed by nothing, since trigrams are not
+			// yet nominated.
+			const phraseCounts = new Map<string, number>();
+			for (const hit of phraseHits) {
+				phraseCounts.set(hit.phrase, (phraseCounts.get(hit.phrase) ?? 0) + 1);
+			}
+			for (const phrase of [...phraseCounts.keys()].sort()) {
+				const entry = lexicon.get(phrase)!;
+				units.push(
+					hitUnit(pair.index, pair.userMessageId, {
+						user_message_id: pair.userMessageId,
+						pair_index: pair.index,
+						signal_source: "lexicon",
+						signal: phrase,
+						polarity: entry.props.polarity,
+						category: entry.props.category,
+						language: entry.props.language,
+						count: phraseCounts.get(phrase) ?? 1,
+						weight: config.lexiconHitWeight * exclamationMultiplier,
 						termOutputKey: entry.outputKey,
 					}),
 				);
@@ -193,7 +271,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						category: marker,
 						language: "und",
 						count: 1,
-						weight: config.paralinguisticWeight,
+						weight: config.paralinguisticWeight * exclamationMultiplier,
 						termOutputKey: null,
 					}),
 				);
@@ -231,7 +309,9 @@ export const turnFrustrationAnalyzer: Analyzer = {
 /**
  * Build the unit for one hit. The source set is the turn's message plus the
  * signal itself — never the whole lexicon — which is what keeps a newly learned
- * word from disturbing any turn that does not contain it.
+ * word (or phrase) from disturbing any turn that does not contain it. A phrase's
+ * signal id is its space-joined normalised form, carried by the same `term`
+ * source kind as any word.
  */
 function hitUnit(pairIndex: number, userMessageId: string, meta: HitMeta): AnalysisUnit {
 	const sources: SourceRef[] = [

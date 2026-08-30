@@ -31,7 +31,10 @@ import type { LLMRequest } from "../../src/analyze/types.js";
 
 const FRUSTRATED_TERMS = new Set(["putain", "wrong", "pénible"]);
 
-async function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
+async function build(
+	db: Parameters<typeof getNodesByAnalyzer>[0],
+	configOverrides?: Record<string, Record<string, unknown>>,
+) {
 	const llm = createMockLLM({
 		responder: (req: LLMRequest) => {
 			const term = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
@@ -48,7 +51,7 @@ async function build(db: Parameters<typeof getNodesByAnalyzer>[0]) {
 			};
 		},
 	});
-	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
+	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS, configOverrides });
 	await framework.register(turnPairCoreAnalyzer);
 	await framework.register(lexiconCandidatesAnalyzer);
 	await framework.register(frustrationLexiconAnalyzer);
@@ -187,6 +190,166 @@ describe("turn-frustration", () => {
 			assert.ok(
 				edges.some((e) => e.edge_kind === "consumes" && e.to_ref_kind === "analysis_node"),
 				"the hit points at the lexicon verdict that justified it",
+			);
+		} finally {
+			await close();
+		}
+	});
+});
+
+describe("turn-frustration modulators (#75)", () => {
+	it("a single ! never fires as a signal of its own", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
+				{ role: "user", text: "hi!" },
+				{ role: "assistant", text: "hello" },
+			]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [
+				{ role: "user", text: "thanks!" },
+				{ role: "assistant", text: "any time" },
+			]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			await framework.run("s2");
+
+			// `hi!` and `thanks!` carry no polarity: a lone `!` is a modulator, and a
+			// modulator with nothing to modulate produces NOTHING.
+			assert.deepEqual(await hits(db, "s1"), [], "`hi!` produces no frustration signal");
+			assert.deepEqual(await hits(db, "s2"), [], "`thanks!` produces no frustration signal");
+		} finally {
+			await close();
+		}
+	});
+
+	it("a lone ! scales existing signals; without it the weight stays base", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain!" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			await framework.run("s2");
+
+			const modulated = (await hits(db, "s1")).find((h) => h.signal === "putain")!;
+			const plain = (await hits(db, "s2")).find((h) => h.signal === "putain")!;
+			// 0.5 × 1.5 — exact in binary.
+			assert.equal(modulated.weight, 0.75);
+			assert.equal(plain.weight, 0.5);
+			assert.ok(modulated.weight > plain.weight, "the same turn with a ! ranks strictly above it without");
+		} finally {
+			await close();
+		}
+	});
+
+	it("paralinguistic hits on a lone-! turn are scaled too", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
+				// The `???` run fires repeated_punctuation; the trailing `!` is lone.
+				{ role: "user", text: "hmmmm ???? !" },
+				{ role: "assistant", text: "ok" },
+			]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [
+				{ role: "user", text: "hmmmm ???" },
+				{ role: "assistant", text: "ok" },
+			]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			await framework.run("s2");
+
+			for (const marker of ["elongation", "repeated_punctuation"]) {
+				const modulated = (await hits(db, "s1")).find((h) => h.signal === marker)!;
+				const plain = (await hits(db, "s2")).find((h) => h.signal === marker)!;
+				assert.ok(
+					Math.abs(modulated.weight - 0.3 * 1.5) < 1e-9,
+					`${marker} weight is scaled by the lone !`,
+				);
+				assert.equal(plain.weight, 0.3);
+			}
+		} finally {
+			await close();
+		}
+	});
+
+	it("!! / ?! keep firing through their detectors and are not additionally multiplied", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain!!" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "wrong?!" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			await framework.run("s2");
+
+			for (const [sessionId, term] of [["s1", "putain"], ["s2", "wrong"]] as const) {
+				const found = await hits(db, sessionId);
+				assert.deepEqual(found.map((h) => h.signal).sort(), [term, "repeated_punctuation"].sort());
+				for (const hit of found) {
+					const base = hit.signal_source === "lexicon" ? 0.5 : 0.3;
+					assert.equal(hit.weight, base, `${sessionId}: ${hit.signal} keeps its base weight`);
+				}
+			}
+		} finally {
+			await close();
+		}
+	});
+
+	it("exclamationMultiplier=1 disables scaling", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain!" }, { role: "assistant", text: "ok" }]);
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "putain" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db, { "turn-frustration": { exclamationMultiplier: 1 } });
+			await framework.run("s1");
+			await framework.run("s2");
+
+			const modulated = (await hits(db, "s1")).find((h) => h.signal === "putain")!;
+			const plain = (await hits(db, "s2")).find((h) => h.signal === "putain")!;
+			assert.equal(modulated.weight, plain.weight);
+			assert.equal(modulated.weight, 0.5);
+		} finally {
+			await close();
+		}
+	});
+
+	it("modulated turns are idempotent on re-run", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain! encore pénible!" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+
+			const first = await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1");
+			assert.ok(first.length >= 2, "both signals exist, each scaled once");
+
+			// Re-running changes nothing: identity is still one node per (turn,
+			// signal); only `weight` differs from an unmodulated turn, and that is
+			// folded in through config, not through any new node.
+			const summary = await framework.run("s1");
+			assert.equal(summary.nodesProduced, 0, "re-run produces nothing new");
+			const scan = await framework.scan("s1");
+			assert.deepEqual(scan.filter((u) => u.status !== "current"), [], "everything classifies current");
+			assert.deepEqual(
+				(await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).map((n) => n.id),
+				first.map((n) => n.id),
+				"the same nodes remain",
 			);
 		} finally {
 			await close();
