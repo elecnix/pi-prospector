@@ -105,11 +105,28 @@ export interface ToolCallInfo {
 	arguments: Record<string, unknown>;
 }
 
+/**
+ * What a failed tool call failed *of*. The result text itself is never stored
+ * — only this class — so a cause survives ingestion without the text, which
+ * routinely carries file contents, credentials and customer data.
+ */
+export type ToolErrorClass =
+	| "anchor_not_found"
+	| "edits_overlap"
+	| "input_invalid"
+	| "shell_syntax"
+	| "script_error"
+	| "not_found"
+	| "timeout"
+	| "policy_blocked"
+	| "unclassified";
+
 export interface ToolResultInfo {
 	toolCallId: string;
 	toolName: string;
 	isError: boolean;
 	textLength: number;
+	errorClass?: ToolErrorClass;
 }
 
 export interface UsageInfo {
