@@ -1,7 +1,8 @@
 /**
  * JSONL line parser for Pi and Claude session files.
  */
-import type { SessionHeader, MessageRole, ClaudeSessionMeta, SessionSource, UsageInfo, CostInfo } from "../types.js";
+import type { SessionHeader, MessageRole, ClaudeSessionMeta, SessionSource, UsageInfo, CostInfo, ToolErrorClass } from "../types.js";
+import { classifyToolError } from "./tool-errors.js";
 
 export interface ParsedSession {
 	kind: "session";
@@ -40,7 +41,7 @@ export interface ParsedMessage {
 		text: string | null;
 		thinking: string | null;
 		tool_calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null;
-		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number; subagent?: SubagentOutcome }> | null;
+		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number; subagent?: SubagentOutcome; errorClass?: ToolErrorClass }> | null;
 		usage: UsageData | null;
 		model: string | null;
 		costUsd: number | null;
@@ -266,7 +267,9 @@ function parsePiLine(line: string): ParsedLine | null {
 			// and its markers are present. The field is omitted entirely otherwise,
 			// so ordinary tool rows stay byte-identical to before.
 			const subagent = classifySubagentResult(toolName, text);
-			tool_results = [subagent ? { ...result, subagent } : result];
+			const errorClass = classifyToolError(result.isError, resultText || null);
+			const withSub = subagent ? { ...result, subagent } : result;
+			tool_results = [errorClass ? { ...withSub, errorClass } : withSub];
 		}
 
 		const usage = role === "assistant" ? extractUsage(msg, "pi") : null;
@@ -456,7 +459,9 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 					// result (name resolved from the tool_use map) carrying Pi's markers
 					// is classified identically, so both hosts feed one vocabulary.
 					const subagent = classifySubagentResult(toolName, resultText || null);
-					results.push(subagent ? { ...result, subagent } : result);
+					const errorClass = classifyToolError(result.isError, resultText || null);
+					const withSub = subagent ? { ...result, subagent } : result;
+					results.push(errorClass ? { ...withSub, errorClass } : withSub);
 					if (resultText) textParts.push(resultText);
 				}
 			}
@@ -721,3 +726,7 @@ export function normalizeManifestTools(value: unknown): Array<{ name: string; de
 	}
 	return out;
 }
+
+// Re-exported so callers importing the parser keep one entry point for a line's
+// derived facts; the signature table itself lives in ./tool-errors.
+export { classifyToolError };
