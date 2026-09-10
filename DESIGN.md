@@ -1120,9 +1120,39 @@ only our own reasoning, and where the literature says we are still short.
   **Where it says we are short:** we assign no outcome label to a session, so
   we cannot filter or weight by it.
 
+- **Chen et al. (2026), Process-Centric Analysis of Agentic Software Systems
+  (Graphectory)**, OOPSLA
+  ([arXiv:2512.02393](https://arxiv.org/abs/2512.02393)). Trajectories should
+  be evaluated by process, not just outcome: Graphectory encodes actions as
+  nodes with temporal *and* structural (directory ↦ file ↦ block) edges, and
+  Langutory compresses the phase sequence into a run-length-encoded language
+  (L₅P₅LPV). Process-centric metrics (node/temporal-edge/loop counts,
+  structural breadth) separate resolved from unresolved trajectories; resolved
+  runs follow coherent localization→patching→validation flows and end in
+  validation, while unresolved ones show chaotic or backtracking phase
+  transitions; even successful runs carry inefficiency anti-patterns
+  (RepeatedView, ZoomOut, OverlyDeepZoom, UnresolvedRetry, and the editor
+  failure modes StrNotFound / NoEffectEdit / AmbiguousTarget). →
+  *Deterministic first, language model second* (all analyses are rule-based,
+  no per-trajectory LLM); *Tool arguments and error payloads are first-class
+  evidence* (the graph is built from normalised tool-call arguments);
+  trajectory analysis; success/failure contrast.
+  **Where it says we are short:** its structural-edge dimension (navigation
+  depth, ZoomOut/OverlyDeepZoom/Scroll, RepeatedView) has no analogue here —
+  `files-in-play` tracks the flat set of touched paths, not the shape of
+  navigation; its strategy-change analysis (shortcut/backtrack with
+  outcome attribution) and cross-trajectory shared-strategy mining (GSP over
+  phase sequences) are the explanation half of plan compliance that the
+  phase-trajectory and plan-compliance analyzers do not yet compute; and its
+  NoEffectEdit editor mode (old string == new string) is silent — no error
+  text for `failure-modes` to match.
+
 - **LivePlan (2026), Online Monitoring and Corrective Steering of
   Programming Agents**
-  ([arXiv:2608.06701](https://arxiv.org/abs/2608.06701)). A deterministic,
+  ([arXiv:2608.06701](https://arxiv.org/abs/2608.06701)). LivePlan is the
+  *online intervention* extension of the Graphectory representation (Chen
+  et al. 2026, entry above); it takes the same trajectory graph and adds a
+  live monitor. A deterministic,
   rule-based monitor detects *behavioral drift* over a trajectory (Graphectory
   back-edges for repetition/oscillation, Langutory phase sequences for plan
   violation and stagnation) and only then consults an advisor LLM for a single
