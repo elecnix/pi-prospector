@@ -188,6 +188,17 @@ export const MessageRow = Type.Object({
 });
 export type MessageRow = Static<typeof MessageRow>;
 
+/** The slice of an assistant message a corpus-wide text model reads: what was generated, and by which model. */
+export const AssistantGenerationRow = Type.Pick(MessageRow, [
+	"id",
+	"role",
+	"content_text",
+	"content_thinking",
+	"tool_calls",
+	"model",
+]);
+export type AssistantGenerationRow = Static<typeof AssistantGenerationRow>;
+
 /**
  * One row of `subagent_runs`: a child-agent run's artifact metadata, ingested
  * from `<project-dir>/subagent-artifacts/<runId>_<agent>_meta.json`. The JSON

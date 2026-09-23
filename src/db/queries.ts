@@ -20,7 +20,7 @@ import type {
 	Remediation,
 } from "../types.js";
 import { getAnalysisStats } from "./analysis-queries.js";
-import type { SubagentRunRow } from "../analyze/types.js";
+import type { AssistantGenerationRow, SubagentRunRow } from "../analyze/types.js";
 import { uuidv7 } from "../analyze/input-hash.js";
 import type { TokenStats, SourceTokenStats } from "../types.js";
 
@@ -209,6 +209,40 @@ export async function countMessages(db: AsyncDatabase, sessionId: string): Promi
 
 export async function getSessionMessages(db: AsyncDatabase, sessionId: string): Promise<Array<{ role: string; content_text: string | null; content_thinking: string | null; tool_calls: string | null; timestamp: string | null }>> {
 	return (await prep(db, "SELECT role, content_text, content_thinking, tool_calls, timestamp FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(sessionId)) as any[];
+}
+
+/**
+ * A cheap signature of the whole conversation index, for caching a corpus-wide
+ * derivation within one process. Messages are only ever inserted — never
+ * updated in place or deleted — so any new message moves the highest rowid, an
+ * O(1) read where counting the table would scan it on every call. It is a cache
+ * key, never an identity: identities fold in the content itself.
+ */
+export async function getCorpusSignature(db: AsyncDatabase): Promise<string> {
+	const row = (await prep(
+		db,
+		"SELECT (SELECT COALESCE(MAX(rowid), 0) FROM messages) AS m, (SELECT COALESCE(MAX(rowid), 0) FROM sessions) AS s, (SELECT COUNT(*) FROM sessions) AS sc",
+	).get()) as { m: number; s: number; sc: number };
+	return `${row.m}:${row.s}:${row.sc}`;
+}
+
+/** Every session id, earliest start first (unknown start last), ties broken by id. */
+export async function listSessionIdsByStart(db: AsyncDatabase): Promise<string[]> {
+	return ((await prep(
+		db,
+		"SELECT id FROM sessions ORDER BY started_at IS NULL, started_at ASC, id ASC",
+	).all()) as Array<{ id: string }>).map((r) => r.id);
+}
+
+/** A session's assistant messages in transcript order: the generated text and reasoning, and the serving model. */
+export async function getAssistantGenerations(
+	db: AsyncDatabase,
+	sessionId: string,
+): Promise<AssistantGenerationRow[]> {
+	return (await prep(
+		db,
+		"SELECT id, role, content_text, content_thinking, tool_calls, model FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY rowid ASC",
+	).all(sessionId)) as AssistantGenerationRow[];
 }
 
 // ── Proposals (v2) ──

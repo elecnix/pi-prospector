@@ -36,6 +36,7 @@ import { groundedClaimsAnalyzer } from "./analyzers/grounded-claims/index.js";
 import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
 import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
+import { decodeCollapseAnalyzer } from "./analyzers/decode-collapse/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
 import { similarityClusterAnalyzer } from "./analyzers/similarity-cluster/index.js";
@@ -61,6 +62,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"uncompleted-leads",
 	"compression-checklist",
 	"language-mismatch",
+	"decode-collapse",
 	"session-ending",
 	"files-in-play",
 	"similarity-cluster",
@@ -166,6 +168,15 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// beside the other compaction-adjacent grader so its findings sit in the
 	// same region of the registry.
 	languageMismatchAnalyzer,
+	// Generations that stopped being language (#277): corrupt from the first
+	// token, invisible to language-mismatch (it is mostly Latin by letter count)
+	// and to repetition detectors (it never repeats). Scored by perplexity under
+	// an in-process word n-gram model trained on this corpus's own earliest
+	// sessions, calibrated on held-out ones, with each session's own counts
+	// subtracted so nothing is scored by a model that memorised it.
+	// Session-level, standalone, deterministic; beside the other text-quality
+	// grader.
+	decodeCollapseAnalyzer,
 	// How each session ended — resolved / abandoned / handed-off / errored /
 	// the conservative unclear — read deterministically from the transcript tail
 	// and the shared action stream (#102). Emits a metric node only: the label
