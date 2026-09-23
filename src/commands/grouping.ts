@@ -107,7 +107,8 @@ export async function collectSupportMap(db: AsyncDatabase, proposals: readonly P
 /**
  * Build the nested listing from ranked proposals and a support map.
  * Pure over its arguments. Proposals that appear as a child of some other
- * listed proposal become nested entries; the rest are roots. Roots keep the
+ * listed proposal become nested entries; the rest are roots, and a proposal
+ * reachable only through a support cycle becomes a root too. Roots keep the
  * caller's order; a parent's supports follow the same ranking order, so the
  * tree re-uses the trust-tier ordering everywhere.
  */
@@ -140,6 +141,22 @@ export function nestProposals(ranked: readonly Proposal[], supportOf: SupportMap
 	}
 
 	const roots = ranked.filter((p) => !parentsOf.has(p.id)).map((p) => build(p.id, new Set()));
+	// Nothing is dropped: a proposal only reachable through a support cycle (it
+	// supports itself, or two proposals support each other) has a parent but no
+	// root above it. Promote the first unreached one in ranking order to a root
+	// and repeat, so every listed proposal renders at least once.
+	const reached = new Set<string>();
+	const mark = (entry: GroupedProposal): void => {
+		reached.add(entry.proposal.id);
+		entry.supports.forEach(mark);
+	};
+	roots.forEach(mark);
+	for (const p of ranked) {
+		if (reached.has(p.id)) continue;
+		const root = build(p.id, new Set());
+		mark(root);
+		roots.push(root);
+	}
 	return roots;
 }
 
