@@ -82,6 +82,31 @@ const nestingCases: NestingCase[] = [
 			assert.deepEqual(tree[0]!.supports, []);
 		},
 	},
+	{
+		// A hand-edited or future graph may cycle; the listing must still show every
+		// proposal instead of silently dropping the ones that all have a parent.
+		name: "proposals that support each other still render",
+		listing: [makeProposal({ id: "a", title: "a" }), makeProposal({ id: "b", title: "b" })],
+		supportOf: new Map([
+			["a", ["b"]],
+			["b", ["a"]],
+		]),
+		check: (tree) => {
+			assert.deepEqual(tree.map((e) => e.proposal.id), ["a"]);
+			assert.deepEqual(tree[0]!.supports.map((s) => s.proposal.id), ["b"]);
+			assert.deepEqual(tree[0]!.supports[0]!.supports, [], "the cycle back to a is cut");
+		},
+	},
+	{
+		name: "a proposal that supports itself still renders once",
+		listing: [makeProposal({ id: "self", title: "self" })],
+		supportOf: new Map([["self", ["self"]]]),
+		check: (tree) => {
+			assert.equal(tree.length, 1);
+			assert.equal(tree[0]!.proposal.id, "self");
+			assert.deepEqual(tree[0]!.supports, []);
+		},
+	},
 ];
 
 for (const { name, listing, supportOf, check } of nestingCases) {
