@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
-import { getProposal, listProposals, getSessionLabels, getLatestDecision } from "../db/queries.js";
+import { getProposal, listProposals, getSessionLabels, getLatestDecision, getSessionFilePath } from "../db/queries.js";
 import { getNode, getNodeByOutputKey, getEdgesFrom, getAnchoredMessageIds, getSessionNodes, getSessionMessageRows, getLatestSummaryNode } from "../db/analysis-queries.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 import { buildTurnPairs, type TurnPair } from "../analyze/analyzers/turn-pair-core/build.js";
@@ -334,9 +334,11 @@ export async function readSessionSummary(
 		content = {};
 	}
 
+	const filePath = await getSessionFilePath(db, trimmed);
 	const head = [
 		`Session summary ${short(node.output_key, 12)}  (${node.analyzer_id})`,
 		`  session:  ${node.session_id}`,
+		filePath ? `  file:     ${filePath}` : "",
 		`  created:  ${node.created_at}`,
 		node.model_used ? `  model:    ${node.model_used}` : "",
 	].filter(Boolean);
