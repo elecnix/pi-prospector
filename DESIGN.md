@@ -346,6 +346,51 @@ contribute to the session's friction score and surface in the digest.
   branch). Pre-flight gaps signal that the agent acted without checking or
   establishing prerequisites.
 
+### Navigation analysis (deterministic, session-level)
+
+A trajectory signal reads the *order* of calls. Navigation analysis adds the
+*structure* those calls move through: the repository as a tree of directory ↦
+file ↦ block. Graphectory (Chen et al., 2026) names the localization
+inefficiencies that appear as mismatches between temporal and structural order,
+and they are invisible elsewhere — every read succeeds, none errors, and none
+repeats consecutively enough to be a stuck-loop. The navigation analyzer is
+deterministic and session-anchored; it reconstructs the structure offline from
+the stored transcript (it does not build the full Graphectory graph, and it does
+not intervene live — see *Boundaries*).
+
+- **Navigation view** — one tool call's look at a structural region: a
+  directory (a listing or a search over it), a whole file, or a **block** (a
+  bounded line range of a file, e.g. a read with offset/limit). Edits are
+  tracked alongside views because they end a search; every other call is not
+  navigation.
+- **Structural level** — a view's depth in the tree: path segments below the
+  repository root, plus one for a block. Transcripts do not record the working
+  directory, so absolute paths are made relative to the root they share, aligned
+  with the relative paths the session also used; only depth *differences* matter.
+- **Structural region** — what two views must share to be "the same place": one
+  directory, or overlapping line ranges of one file (a whole file overlaps every
+  slice of itself).
+- **Scroll** — consecutive bounded slices of one file that overlap each other
+  (by at least `scrollOverlap` of the shorter slice) without repeating: paging
+  around a point instead of reading its enclosing unit. Disjoint pagination is
+  not scrolling.
+- **ZoomOut** — deep → shallow → deep with no edit between: a view climbs at
+  least `zoomOutDepthDelta` levels back up the branch just explored, then a later
+  view descends as far again.
+- **OverlyDeepZoom** — an uninterrupted run of at least `viewOnlyRunLen` views of
+  one path that is never edited afterwards (nor, for a directory, anything under
+  it). Only sessions that edit something are judged; a read-only session was not
+  trying to patch.
+- **RepeatedView** — returning to a structural region after leaving it, at least
+  `structuralRevisitMin` times. Re-reading a file right after a *successful* edit
+  to it is verification and does not count; after a *failed* edit it does.
+- **Structural-edge count (SEC)** — the number of viewed regions whose nearest
+  viewed ancestor was also viewed: how much of the navigation was descent along
+  the tree rather than jumps across it.
+- **Structural breadth (SB)** — the most viewed regions hanging directly under
+  one viewed region. SB > 1 means the agent explored more than one sibling before
+  converging.
+
 ### Failure analysis (deterministic, session-level)
 
 A trajectory signal is a pattern in what the agent *did*. This is the other
