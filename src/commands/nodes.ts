@@ -321,7 +321,7 @@ export function summarizeContent(contentJson: string, maxProps = 4): string {
 
 const NODE_KIND_VALUES: readonly string[] =
 	(NodeKind as { anyOf?: Array<{ const?: string }> }).anyOf?.map((o) => o.const ?? "").filter(Boolean) ??
-	["metric", "classification", "summary", "proposal", "validation", "error"];
+	["metric", "classification", "summary", "proposal", "validation", "restatement", "error"];
 
 function assertValidNodeKind(kind: string): void {
 	if (!NODE_KIND_VALUES.includes(kind)) {

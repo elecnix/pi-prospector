@@ -133,6 +133,14 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			validated_score REAL, -- [0,1] fraction of replay turns whose friction the rule averts; NULL until validated
 			validation_status TEXT NOT NULL DEFAULT 'unvalidated',
 			validation_node_id TEXT,
+			-- restatement check (issue #265): whether a rule-shaped proposal's rule is
+			-- already in the instruction corpus, written back from a 'restatement'
+			-- analysis node. rule_status is one of unchecked | gap | partial |
+			-- restated | ungrounded; rule_path/rule_quote locate the existing rule.
+			rule_status TEXT NOT NULL DEFAULT 'unchecked',
+			rule_path TEXT,
+			rule_quote TEXT,
+			restatement_node_id TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
@@ -545,6 +553,17 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 		await migrateProposalsToV2(db);
 	}
 
+	// proposals: restatement-check write-back (issue #265). Existing rows start
+	// 'unchecked' — the truth about a proposal nothing has compared yet.
+	if (!await hasColumn("proposals", "rule_status")) {
+		await db.exec("ALTER TABLE proposals ADD COLUMN rule_status TEXT NOT NULL DEFAULT 'unchecked'");
+	}
+	for (const col of ["rule_path", "rule_quote", "restatement_node_id"] as const) {
+		if (!await hasColumn("proposals", col)) {
+			await db.exec(`ALTER TABLE proposals ADD COLUMN ${col} TEXT`);
+		}
+	}
+
 	// analysis_nodes: rename input_hash to input_key, add output_key and config_fingerprint
 	if (!await hasColumn("analysis_nodes", "input_key")) {
 		if (await hasColumn("analysis_nodes", "input_hash")) {
@@ -679,6 +698,10 @@ async function migrateProposalsToV2(db: AsyncDatabase): Promise<void> {
 		validated_score REAL,
 		validation_status TEXT NOT NULL DEFAULT 'unvalidated',
 		validation_node_id TEXT,
+		rule_status TEXT NOT NULL DEFAULT 'unchecked',
+		rule_path TEXT,
+		rule_quote TEXT,
+		restatement_node_id TEXT,
 		FOREIGN KEY (session_id) REFERENCES sessions(id)
 	)`);
 	// Copy data with column mapping
@@ -686,7 +709,8 @@ async function migrateProposalsToV2(db: AsyncDatabase): Promise<void> {
 		id, created_at, created_at AS updated_at, session_id, source_node_id, NULL AS analyzer_id,
 		target AS target_type, NULL AS target_path, summary AS title, severity, summary, detail, evidence, confidence,
 		status, dedup_hash AS input_key, NULL AS source_message_ids, NULL AS validated_score,
-		'unvalidated' AS validation_status, NULL AS validation_node_id
+		'unvalidated' AS validation_status, NULL AS validation_node_id,
+		'unchecked' AS rule_status, NULL AS rule_path, NULL AS rule_quote, NULL AS restatement_node_id
 		FROM proposals_old`);
 	await db.exec("DROP TABLE proposals_old");
 }

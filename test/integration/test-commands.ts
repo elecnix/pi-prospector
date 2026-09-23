@@ -3,6 +3,8 @@
  * Pi runtime. Sync fixtures → run the framework with a MOCK LLM (never a real
  * or local model) → assert the analysis graph, proposals, and lifecycle.
  */
+// First, so no import below can read the developer's real harness home.
+import "../../tests/setup.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";

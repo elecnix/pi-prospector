@@ -135,7 +135,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			analyzer: Type.Optional(Type.String({ description: "Analyzer id to read (nodes action; required unless all=true) or to run (analyze action)." })),
 			all: Type.Optional(Type.Boolean({ description: "Read nodes of every analyzer (nodes action); analyze: plain-fill every session, not just unanalysed ones." })),
 			node_kind: Type.Optional(
-				Type.Union([Type.Literal("metric"), Type.Literal("classification"), Type.Literal("summary"), Type.Literal("proposal"), Type.Literal("validation"), Type.Literal("error")], {
+				Type.Union([Type.Literal("metric"), Type.Literal("classification"), Type.Literal("summary"), Type.Literal("proposal"), Type.Literal("validation"), Type.Literal("restatement"), Type.Literal("error")], {
 					description: "Restrict nodes to one kind (nodes action).",
 				}),
 			),

@@ -32,6 +32,7 @@ export const NodeKind = Type.Union([
 	Type.Literal("summary"),
 	Type.Literal("proposal"),
 	Type.Literal("validation"),
+	Type.Literal("restatement"),
 	Type.Literal("error"),
 ]);
 export type NodeKind = Static<typeof NodeKind>;
@@ -118,12 +119,17 @@ export const SourceRef = Type.Object({
 	 * makes the analysis graph itself the corpus-wide cache for per-word analysis —
 	 * the first session to nominate a word pays for it, every later session finds
 	 * the work already `current`.
+	 *
+	 * `instruction` is a standing-instruction file read from disk; its id is the
+	 * path plus a hash of the content, so editing the file changes the identity
+	 * of every unit that read it.
 	 */
 	kind: Type.Union([
 		Type.Literal("message"),
 		Type.Literal("analysis_node"),
 		Type.Literal("session"),
 		Type.Literal("term"),
+		Type.Literal("instruction"),
 	]),
 	id: Type.String(),
 });
