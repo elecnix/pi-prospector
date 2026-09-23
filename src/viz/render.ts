@@ -80,7 +80,12 @@ pre { background: #f4f3ef; padding: 8px; border-radius: 6px; overflow-x: auto; f
 }
 `;
 
-function esc(s: string): string {
+/**
+ * HTML-escape text before interpolation into markup (attribute or text
+ * position). Deliberately unrelated to `stripNonProse` in the language-mismatch
+ * analyzer despite a similar replace-chain shape: this escapes, that strips.
+ */
+function escapeHtml(s: string): string {
 	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
@@ -100,12 +105,12 @@ export function renderVizHtml(data: VizData): string {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>prospect viz — ${esc(data.session.name ?? data.session.id)}</title>
+<title>prospect viz — ${escapeHtml(data.session.name ?? data.session.id)}</title>
 <style>${CSS}</style>
 </head>
 <body>
 <header>
-<h1>prospect viz — ${esc(sessionLine)}</h1>
+<h1>prospect viz — ${escapeHtml(sessionLine)}</h1>
 <div id="controls">
   <div class="group"><span class="group-label">kind:</span><span id="filter-kinds" class="group"></span></div>
   <div class="group"><span class="group-label">analyzer:</span><span id="filter-analyzers" class="group"></span></div>
@@ -116,10 +121,10 @@ export function renderVizHtml(data: VizData): string {
 </header>
 <main>
   <div id="graph-wrap">
-    <svg id="graph" role="img" aria-label="analysis graph for ${esc(data.session.id)}"><g id="viewport"></g></svg>
+    <svg id="graph" role="img" aria-label="analysis graph for ${escapeHtml(data.session.id)}"><g id="viewport"></g></svg>
     <div id="statusbar">drag to pan · wheel to zoom · click a node or proposal · hover an edge for its kind</div>
   </div>
-  <aside id="detail"><div class="panel-title">session</div><div class="kv">${esc(data.session.id)}</div><div class="kv">${esc(data.session.cwd || data.session.project)}</div></aside>
+  <aside id="detail"><div class="panel-title">session</div><div class="kv">${escapeHtml(data.session.id)}</div><div class="kv">${escapeHtml(data.session.cwd || data.session.project)}</div></aside>
 </main>
 <script id="viz-data" type="application/json">${embedJson(data)}</script>
 <script>${VIZ_CLIENT_SCRIPT}</script>

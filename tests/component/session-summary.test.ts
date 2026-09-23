@@ -109,6 +109,16 @@ describe("session summary report (issue #105)", () => {
 		assert.match(text, /Document the auth module/);
 	});
 
+	it("carries the session's source file path in the header (issue #271)", async () => {
+		const db = openAsyncDatabase(dbPath);
+		try {
+			const text = (await readSessionSummary(db, "s1")).text;
+			assert.match(text, /^  file:     \/tmp\/s1\.jsonl$/m);
+		} finally {
+			await db.close();
+		}
+	});
+
 	it("is reachable as a session-level mode of prospect show", async () => {
 		const text = await show("--session s1");
 		assert.match(text, /Session summary/);
