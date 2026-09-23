@@ -44,7 +44,9 @@ import { DEFAULT_SESSION_OVERVIEW_CONFIG, type SessionOverviewConfig } from "./c
 import {
 	selectCrossSessionContrast,
 	formatContrastContext,
+	getSessionCwd,
 	type SiblingContrast,
+	type CwdSmoothnessCache,
 } from "./cross-session.js";
 
 export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
@@ -161,7 +163,15 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		// and reproducible. Derived from sibling RAW messages (present after ingest),
 		// never from their analysis nodes — so it is order-independent and acyclic.
 		const cfg = (ctx.config as unknown as SessionOverviewConfig) ?? DEFAULT_SESSION_OVERVIEW_CONFIG;
-		const contrast = await selectCrossSessionContrast(ctx.db, ctx.sessionId, cfg, (sid) => ctx.getTurnPairs(sid));
+		// Sibling smoothness is assessed from a narrow SQL projection (no
+		// `content_thinking`), never via `getTurnPairs`, and shared per-`cwd` so
+		// concurrent sessions in the same repo scan the sibling set once (#232).
+		let cwdCache: CwdSmoothnessCache | undefined;
+		if (ctx.getCwdSmoothnessCache) {
+			const cwd = await getSessionCwd(ctx.db, ctx.sessionId);
+			if (cwd) cwdCache = await ctx.getCwdSmoothnessCache(cwd, ctx.sessionId, cfg.minSiblingPairs);
+		}
+		const contrast = await selectCrossSessionContrast(ctx.db, ctx.sessionId, cfg, (sid) => ctx.getTurnPairs(sid), cwdCache);
 		sources.push(...contrast.sourceRefs);
 
 		return [

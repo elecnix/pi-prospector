@@ -1,7 +1,8 @@
 /**
  * JSONL line parser for Pi and Claude session files.
  */
-import type { SessionHeader, MessageRole, ClaudeSessionMeta, SessionSource, UsageInfo, CostInfo } from "../types.js";
+import type { SessionHeader, MessageRole, ClaudeSessionMeta, SessionSource, UsageInfo, CostInfo, ToolErrorClass } from "../types.js";
+import { classifyToolError } from "./tool-errors.js";
 
 export interface ParsedSession {
 	kind: "session";
@@ -40,7 +41,7 @@ export interface ParsedMessage {
 		text: string | null;
 		thinking: string | null;
 		tool_calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null;
-		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number; subagent?: SubagentOutcome }> | null;
+		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number; subagent?: SubagentOutcome; errorClass?: ToolErrorClass }> | null;
 		usage: UsageData | null;
 		model: string | null;
 		costUsd: number | null;
@@ -266,7 +267,9 @@ function parsePiLine(line: string): ParsedLine | null {
 			// and its markers are present. The field is omitted entirely otherwise,
 			// so ordinary tool rows stay byte-identical to before.
 			const subagent = classifySubagentResult(toolName, text);
-			tool_results = [subagent ? { ...result, subagent } : result];
+			const errorClass = classifyToolError(result.isError, resultText || null);
+			const withSub = subagent ? { ...result, subagent } : result;
+			tool_results = [errorClass ? { ...withSub, errorClass } : withSub];
 		}
 
 		const usage = role === "assistant" ? extractUsage(msg, "pi") : null;
@@ -295,7 +298,7 @@ function parsePiLine(line: string): ParsedLine | null {
 		return { kind: "session-info", name: typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null };
 	}
 
-	// Other message-like types (bashExecution, branch_summary, compactionSummary, custom_message)
+	// Other message-like types (bashExecution, branch_summary, compactionSummary, custom_message, custom)
 	if (type && obj.id) {
 		const id = String(obj.id);
 		const parentId = (obj.parentId as string) ?? null;
@@ -304,7 +307,19 @@ function parsePiLine(line: string): ParsedLine | null {
 		// Try to get message.role; otherwise normalize known entry-type aliases
 		// onto their canonical role before falling back to the raw type (#150).
 		const msg = obj.message as Record<string, unknown> | undefined;
-		const role = ((msg?.role as string) ?? (type ? TYPE_ROLE_MAP[type] : undefined) ?? type) as MessageRole;
+		let role = ((msg?.role as string) ?? (type ? TYPE_ROLE_MAP[type] : undefined) ?? type) as MessageRole;
+
+		// customType provenance (#272): a custom entry's role keeps the raw type
+		// but names its discriminator, so a private-note row stays distinguishable
+		// from any other custom entry without a schema addition. custom_message
+		// keeps its plain role: it is a documented turn-start role and analyzers
+		// match it by name.
+		if (!msg && type === "custom") {
+			const customType = obj.customType;
+			if (typeof customType === "string" && customType.length > 0) {
+				role = `custom/${customType}` as MessageRole;
+			}
+		}
 
 		let text: string | null = null;
 		if (msg) {
@@ -314,11 +329,57 @@ function parsePiLine(line: string): ParsedLine | null {
 		} else {
 			if (obj.summary) text = String(obj.summary);
 		}
+		// Role-agnostic fallback (#272): an entry produced outside the message
+		// envelope still counts as content when it carries a plain string text
+		// field at the top level. custom_message keeps its body (display:false
+		// notifications included) and custom entries contribute their dominant
+		// data text; nothing is redacted, and entries with no text field keep the
+		// null-text row they always had.
+		if (text === null) text = extractLooseEntryText(obj);
 
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, usage: null, model: null, costUsd: null, providerMessageId: null, stopReason: null, errorMessage: null },
+			entry: { id, parentId, timestamp, role, text, thinking: null, tool_calls: null, tool_results: null, usage: null, model: null, costUsd: null, providerMessageId: null, stopReason: null, errorMessage: null },
 		};
+	}
+
+	return null;
+}
+
+/**
+ * Loose, role-agnostic text extraction for entries outside the message
+ * envelope (#272). A session entry may be a harness event, a plugin note, or
+ * a human annotation, so the ingester does not enumerate producers: any entry
+ * carrying a plain string text field contributes that field as message
+ * content. The extraction is deliberately shallow (the entry's own dominant
+ * text field, never a recursive search) so structured payloads such as step
+ * lists or registries stay out of the corpus while annotations and
+ * notifications come through.
+ */
+function extractLooseEntryText(obj: {
+	content?: unknown;
+	data?: unknown;
+}): string | null {
+	const content = obj.content;
+	if (typeof content === "string" && content.length > 0) return content;
+	if (Array.isArray(content)) {
+		const parts: string[] = [];
+		for (const part of content) {
+			if (!part || typeof part !== "object") continue;
+			const p = part as Record<string, unknown>;
+			if (p.type === "text" && typeof p.text === "string" && p.text.length > 0) parts.push(p.text);
+		}
+		if (parts.length > 0) return parts.join("\n");
+	}
+
+	const data = obj.data;
+	if (typeof data === "string" && data.length > 0) return data;
+	if (data && typeof data === "object") {
+		const d = data as Record<string, unknown>;
+		for (const field of ["text", "content", "body"]) {
+			const value = d[field];
+			if (typeof value === "string" && value.length > 0) return value;
+		}
 	}
 
 	return null;
@@ -456,7 +517,9 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 					// result (name resolved from the tool_use map) carrying Pi's markers
 					// is classified identically, so both hosts feed one vocabulary.
 					const subagent = classifySubagentResult(toolName, resultText || null);
-					results.push(subagent ? { ...result, subagent } : result);
+					const errorClass = classifyToolError(result.isError, resultText || null);
+					const withSub = subagent ? { ...result, subagent } : result;
+					results.push(errorClass ? { ...withSub, errorClass } : withSub);
 					if (resultText) textParts.push(resultText);
 				}
 			}
@@ -721,3 +784,7 @@ export function normalizeManifestTools(value: unknown): Array<{ name: string; de
 	}
 	return out;
 }
+
+// Re-exported so callers importing the parser keep one entry point for a line's
+// derived facts; the signature table itself lives in ./tool-errors.
+export { classifyToolError };
