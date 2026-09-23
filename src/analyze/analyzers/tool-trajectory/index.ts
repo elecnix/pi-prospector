@@ -95,7 +95,24 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// decides whether a run of repeats counts as a stuck-loop. Major: previously
 	// reported signals can disappear and new ones appear, because the inputs to
 	// the detectors were wrong.
-	major: 2,
+	//
+	// 3.0: a structured tool call's target now comes from `file_path` or `path`,
+	// and a search's target is its pattern *and* its scope. Pi names the argument
+	// `path`, so every Pi read/edit/write normalised to an empty target — and
+	// `isNearIdentical` compares targets, so any two of them matched. Major:
+	// polling-loop signals over unrelated files disappear, and repeated-edit
+	// signals appear where the empty target had hidden them.
+	//
+	// 4.0 (issue #261): a read's target now carries its window — `offset` and
+	// `limit` — so consecutive reads of *different regions* of one file stop
+	// comparing as near-identical. Pagination through a large file read as a
+	// polling loop: on the live corpus 293 of 424 read polling-loop signals had
+	// every participating read at a distinct offset. Major: polling-loop signals
+	// over paginated reads disappear, while genuine repeats keep firing. The
+	// split of turn-level repetition from cross-turn polling proposed by the
+	// same issue is deliberately not done here — it needs a new pattern name
+	// and a schema change.
+	major: 4,
 	minor: 0,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
