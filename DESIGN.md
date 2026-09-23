@@ -306,6 +306,17 @@ roughly the order concepts build on one another.
   the old conclusion; it adds a newer one beside it, and both remain navigable
   “at the same level.” This is what lets you compare how analysis changed as the
   logic improved.
+- **Current generation** — the live nodes no live node *revises*: the head of
+  each lineage chain (the `current_nodes` view). Aggregate reads — `prospect
+  stats`, `prospect nodes` and its counts — report the current generation, so
+  a version bump *replaces* the old implementation's counts rather than adding
+  to them; superseded generations are an explicit opt-in (`--all-versions`).
+  Supersession is read from the *revises* edge the recomputation wrote, never
+  inferred from the analyzer version (wrong after a downgrade) or `created_at`
+  (wrong after a re-run of an older recipe). A retracted successor supersedes
+  nothing, so its predecessor is current again; a live head whose predecessor
+  was retracted is still current. Not to be confused with the **current** unit
+  status, which is about a unit's recipe, not a node's place in its lineage.
 
 ### Trajectory analysis (deterministic, session-level)
 
@@ -1031,7 +1042,8 @@ wrong.
   `retracted_at` tombstone (with a `retracted_by_run` provenance) instead of
   issuing a `DELETE`, so the node and its history remain and as-of reads still
   see it before its retraction. Ordinary reads go through the `live_nodes` view
-  (`retracted_at IS NULL`); a retracted node is absent from live reads and from
+  (`retracted_at IS NULL`) — aggregates through `current_nodes`, its
+  current-generation subset; a retracted node is absent from live reads and from
   scanning, so its unit classifies `missing` and is recomputed. Retraction is
   reversible (`retract --undo` clears the column) and only a deliberate
   `purge --retracted-before <ts>` physically reclaims the space. A retracted
