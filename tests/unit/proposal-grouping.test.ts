@@ -2,33 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { nestProposals, serialiseGrouped, renderGroupedProposals, type SupportMap } from "../../src/commands/grouping.js";
 import type { Proposal } from "../../src/types.js";
-
-function makeProposal(overrides: Partial<Proposal>): Proposal {
-	return {
-		id: "id",
-		created_at: "2026-01-01T00:00:00.000Z",
-		updated_at: "2026-01-01T00:00:00.000Z",
-		session_id: "sess",
-		source_node_id: null,
-		analyzer_id: "session-overview",
-		target_type: "agents_md",
-		target_path: null,
-		title: "t",
-		severity: "friction",
-		summary: "s",
-		detail: null,
-		evidence: null,
-		confidence: null,
-		cost_usd: null,
-		status: "open",
-		input_key: "k",
-		source_message_ids: null,
-		validated_score: null,
-		validation_status: "unvalidated",
-		validation_node_id: null,
-		...overrides,
-	};
-}
+import { makeProposal } from "./helpers.js";
 
 /** Synthetic fixture: one general proposal over two specific turn-level ones. */
 function generalFixture() {
@@ -47,48 +21,72 @@ test("nestProposals: a general proposal nests the specific proposals it generali
 	assert.deepEqual(tree[0]!.supports.map((s) => s.proposal.id), ["spec-a", "spec-b"]);
 });
 
-test("nestProposals: supports keep the caller's ranking order", () => {
-	const { general } = generalFixture();
-	const first = makeProposal({ id: "spec-a", source_node_id: "n1", title: "first ranked" });
-	const second = makeProposal({ id: "spec-b", source_node_id: "n2", title: "second ranked" });
-	const supportOf: SupportMap = new Map([["gen", ["spec-a", "spec-b"]]]);
-	// Ranked order puts spec-a before spec-b even though the map lists them reversed.
-	const tree = nestProposals([general, first, second], new Map([["gen", ["spec-b", "spec-a"]]]));
-	assert.deepEqual(tree[0]!.supports.map((s) => s.proposal.id), ["spec-a", "spec-b"]);
-});
+// ── nesting edge cases (each pins one documented decision through the same pipeline) ──
 
-test("nestProposals: ungrouped proposals stay roots with empty supports", () => {
-	const solo = makeProposal({ id: "solo", title: "no relations" });
-	const tree = nestProposals([solo], new Map());
-	assert.equal(tree.length, 1);
-	assert.deepEqual(tree[0]!.proposal, solo);
-	assert.deepEqual(tree[0]!.supports, []);
-});
+type NestingTree = ReturnType<typeof nestProposals>;
+type NestingCase = {
+	name: string;
+	listing: Proposal[];
+	supportOf: SupportMap;
+	check: (tree: NestingTree) => void;
+};
 
-// ── partial support (documented decision: nest whatever resolves; provenance, not coverage) ──
+const nestingCases: NestingCase[] = [
+	{
+		name: "supports keep the caller's ranking order",
+		listing: [
+			generalFixture().general,
+			makeProposal({ id: "spec-a", source_node_id: "n1", title: "first ranked" }),
+			makeProposal({ id: "spec-b", source_node_id: "n2", title: "second ranked" }),
+		],
+		supportOf: new Map([["gen", ["spec-b", "spec-a"]]]),
+		// Ranked order puts spec-a before spec-b even though the map lists them reversed.
+		check: (tree) => assert.deepEqual(tree[0]!.supports.map((s) => s.proposal.id), ["spec-a", "spec-b"]),
+	},
+	{
+		name: "ungrouped proposals stay roots with empty supports",
+		listing: [makeProposal({ id: "solo", title: "no relations" })],
+		supportOf: new Map(),
+		check: (tree) => {
+			assert.equal(tree.length, 1);
+			// makeProposal is deterministic, so this equals the listed "solo" row verbatim.
+			assert.deepEqual(tree[0]!.proposal, makeProposal({ id: "solo", title: "no relations" }));
+			assert.deepEqual(tree[0]!.supports, []);
+		},
+	},
+	{
+		// Documented decision: nest whatever resolves; provenance, not coverage. Only one
+		// of the consumed nodes produced a listed proposal; the other two produced nothing
+		// listed (or were filtered out). The edge to "ghost" points at a proposal outside
+		// the listing and must not surface.
+		name: "partial support nests the resolving children only",
+		listing: [
+			makeProposal({ id: "gen", source_node_id: "node-summary", title: "covers three turns" }),
+			makeProposal({ id: "child", source_node_id: "node-turn-a", title: "the one that materialised" }),
+		],
+		supportOf: new Map([["gen", ["child", "ghost"]]]),
+		check: (tree) => {
+			assert.equal(tree.length, 1);
+			assert.deepEqual(tree[0]!.supports.map((s) => s.proposal.id), ["child"]);
+		},
+	},
+	{
+		// The parent proposal was filtered away (e.g. status filter): the child belongs to
+		// this view even though its parent belongs to another one.
+		name: "a child whose parent is outside the listing stays a root",
+		listing: [makeProposal({ id: "child", source_node_id: "node-turn-a" })],
+		supportOf: new Map([["filtered-parent-source", ["child"]]]),
+		check: (tree) => {
+			assert.equal(tree.length, 1);
+			assert.equal(tree[0]!.proposal.id, "child");
+			assert.deepEqual(tree[0]!.supports, []);
+		},
+	},
+];
 
-test("nestProposals: partial support nests the resolving children only", () => {
-	const general = makeProposal({ id: "gen", source_node_id: "node-summary", title: "covers three turns" });
-	// Only one of the consumed nodes produced a listed proposal; the other two
-	// produced nothing listed (or were filtered out). The edge to "ghost" points
-	// at a proposal outside the listing and must not surface.
-	const child = makeProposal({ id: "child", source_node_id: "node-turn-a", title: "the one that materialised" });
-	const supportOf: SupportMap = new Map([["gen", ["child", "ghost"]]]);
-	const tree = nestProposals([general, child], supportOf);
-	assert.equal(tree.length, 1);
-	assert.deepEqual(tree[0]!.supports.map((s) => s.proposal.id), ["child"]);
-});
-
-test("nestProposals: a child whose parent is outside the listing stays a root", () => {
-	// The parent proposal was filtered away (e.g. status filter): the child
-	// belongs to this view even though its parent belongs to another one.
-	const child = makeProposal({ id: "child", source_node_id: "node-turn-a" });
-	const supportOf: SupportMap = new Map([["filtered-parent-source", ["child"]]]);
-	const tree = nestProposals([child], supportOf);
-	assert.equal(tree.length, 1);
-	assert.equal(tree[0]!.proposal.id, "child");
-	assert.deepEqual(tree[0]!.supports, []);
-});
+for (const { name, listing, supportOf, check } of nestingCases) {
+	test(`nestProposals: ${name}`, () => check(nestProposals(listing, supportOf)));
+}
 
 // ── multi-parent (documented decision: show under each parent — existence stays additive) ──
 
