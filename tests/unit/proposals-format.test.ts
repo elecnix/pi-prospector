@@ -3,33 +3,7 @@ import assert from "node:assert/strict";
 import { parseProposalsArgs, parseDecisionArgs, parseRemediateArgs, formatDecisionLine, rankProposals, sessionLabel, sessionGroupHeader, statusLabel } from "../../src/commands/proposals.js";
 import type { Proposal, ProposalDecision } from "../../src/types.js";
 import { homedir } from "node:os";
-
-function makeProposal(overrides: Partial<Proposal>): Proposal {
-	return {
-		id: "id",
-		created_at: "2026-01-01T00:00:00.000Z",
-		updated_at: "2026-01-01T00:00:00.000Z",
-		session_id: "sess",
-		source_node_id: null,
-		analyzer_id: "session-overview",
-		target_type: "agents_md",
-		target_path: null,
-		title: "t",
-		severity: "friction",
-		summary: "s",
-		detail: null,
-		evidence: null,
-		confidence: null,
-		cost_usd: null,
-		status: "open",
-		input_key: "k",
-		source_message_ids: null,
-		validated_score: null,
-		validation_status: "unvalidated",
-		validation_node_id: null,
-		...overrides,
-	};
-}
+import { makeProposal } from "./helpers.js";
 
 test("parseProposalsArgs: empty yields no status and concise", () => {
 	assert.deepEqual(parseProposalsArgs(""), { status: undefined, severity: undefined, full: false, sessionId: undefined });
