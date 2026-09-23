@@ -139,10 +139,14 @@ function pathFromArgs(args: Record<string, unknown>): string | null {
 	return null;
 }
 
-/** Whether a path's final segment looks like a file name (`name.ext`, `.env`). */
-function looksLikeFile(path: string): boolean {
+/**
+ * Whether a path's final segment looks like a file name (`name.ext`, `.env`).
+ * `.` and `..` are directories: neither pattern matches them, since both need
+ * a non-dot character after the last dot.
+ */
+export function looksLikeFile(path: string): boolean {
 	const base = path.replace(/\/+$/, "").split("/").pop() ?? "";
-	return /^[^.].*\.[^.]+$/.test(base) || /^\.[^./]+$/.test(base) && base !== "..";
+	return /^[^.].*\.[^.]+$/.test(base) || /^\.[^.]+$/.test(base);
 }
 
 /** Split a shell command into simple-command segments on unquoted `&&`, `||`, `;`, and `|`. */

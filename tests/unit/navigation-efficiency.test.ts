@@ -18,6 +18,7 @@ import {
 	detectZoomOut,
 	extractNavigation,
 	isAncestor,
+	looksLikeFile,
 	scanNavigation,
 	sliceOverlap,
 	splitShellSegments,
@@ -134,6 +135,11 @@ describe("splitShellSegments", () => {
 });
 
 describe("structure helpers", () => {
+	it("looksLikeFile accepts named and dotfile files and rejects `.`, `..`, and bare directories", () => {
+		for (const f of ["a.ts", "src/a.test.ts", ".env", "dir/.gitignore"]) assert.ok(looksLikeFile(f), f);
+		for (const d of [".", "..", "src", "src/", "../x/.."]) assert.ok(!looksLikeFile(d), d);
+	});
+
 	it("isAncestor treats `.` as the root of every relative path", () => {
 		assert.ok(isAncestor(".", "src/a.ts"));
 		assert.ok(isAncestor("src", "src/a/b.ts"));
