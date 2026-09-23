@@ -97,8 +97,11 @@ export function extractInstructedMentions(text: string, availableToolNames: Read
 			const verb = IMPERATIVE_VERBS.exec(rest);
 			if (!verb) continue;
 
-			// Backticked command span right after the verb.
-			const afterVerb = rest.slice(verb[0].length);
+			// Backticked command span right after the verb. A chained verb
+			// ("try to run `x`", "try to use rg") names the tool after the second.
+			let afterVerb = rest.slice(verb[0].length);
+			const chained = IMPERATIVE_VERBS.exec(afterVerb);
+			if (chained) afterVerb = afterVerb.slice(chained[0].length);
 			const bt = /^`([^`\n]+)`/.exec(afterVerb);
 			if (bt) {
 				const token = firstToken(bt[1] ?? "");
@@ -111,7 +114,9 @@ export function extractInstructedMentions(text: string, availableToolNames: Read
 
 			// Bare word: only counts when it names an available tool.
 			const bare = /^(?:the\s+)?([A-Za-z][\w.-]*)/.exec(afterVerb);
-			const word = bare?.[1];
+			// The token class admits dots (for names like `foo.sh`), so drop a
+			// sentence-final period: "Use grep." names grep.
+			const word = bare?.[1]?.replace(/\.+$/, "");
 			if (word && availableToolNames.has(word) && !seen.has(word)) {
 				seen.add(word);
 				mentions.push({ mention: word, source: "known-tool" });
