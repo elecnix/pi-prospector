@@ -79,6 +79,7 @@ flowchart TD
     CTX[context-economy<br/>token carry attribution]
     SL[secret-leak<br/>credential detection]
     TU[token-units<br/>MITE per request segment]
+    RCL[repetition-collapse<br/>looping steps]
   end
 
   subgraph deterministic [Deterministic layers]
@@ -111,6 +112,7 @@ flowchart TD
   TPC -->|friction + trajectory| RO
   TF -->|frustration signals| RO
   TT -->|trajectory signals| RO
+  RCL -->|collapsed steps| RO
   TPC -->|pair metrics| SO
   TPL -->|classifications| SO
   TT -->|trajectory signals| SO
@@ -176,9 +178,15 @@ Tells you which tool results are bloating your context window. Attributes a sess
 
 Source: [`context-economy/index.ts`](./src/analyze/analyzers/context-economy/index.ts).
 
+### repetition-collapse — steps that loop until the budget runs out (deterministic)
+
+Finds the step that fell into a loop: the model repeats a phrase, or a fragment like `CustomCustomCustom…` or `-_-_-_…`, until the generation ends, and the transcript records an ordinary step that happens to be very long. Each step's reasoning and answer get two scores, because each one misses what the other catches: the share of words inside a repeated word n-gram, and the longest run of one short character motif. Length only sets a floor for judging a step. The score is what triggers. A looping step that returned no answer and no tool call was billed in full for nothing. That earns a proposal against model configuration, and routing-opportunity labels the turn *escalate*. The node keeps the repeating motif, never the looping text. No LLM.
+
+Source: [`repetition-collapse/index.ts`](./src/analyze/analyzers/repetition-collapse/index.ts) · measures in [`detect.ts`](./src/analyze/analyzers/repetition-collapse/detect.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/repetition-collapse/config.ts).
+
 ### routing-opportunity — model routing labels (deterministic)
 
-Labels each turn as downshiftable (a cheaper model could have handled it) or escalation-worthy (a better model was needed), based on existing friction and trajectory signals. Attaches the serving model and billed cost so the corpus-level efficiency frontier can be computed honestly — a turn labeled "downshiftable" that cost $0.03 on an expensive model is a concrete saving opportunity. No LLM.
+Labels each turn as downshiftable (a cheaper model could have handled it) or escalation-worthy (a better model was needed), based on existing friction, trajectory, and repetition-collapse signals. Attaches the serving model and billed cost so the corpus-level efficiency frontier can be computed honestly — a turn labeled "downshiftable" that cost $0.03 on an expensive model is a concrete saving opportunity. No LLM.
 
 Source: [`routing-opportunity/index.ts`](./src/analyze/analyzers/routing-opportunity/index.ts).
 

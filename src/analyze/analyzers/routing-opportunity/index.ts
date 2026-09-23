@@ -22,7 +22,9 @@
  *   - escalate   — a correction or a trajectory pathology (stuck-loop /
  *                  oscillation / pre-flight gap) indicates the turn's model
  *                  failed and retried; the retries often cost more than one
- *                  capable turn would have.
+ *                  capable turn would have. A step that collapsed into
+ *                  repetition (repetition-collapse) is the same verdict from
+ *                  inside one generation: the model looped instead of answering.
  *   - neutral    — neither.
  *
  * The label is structural (model-independent). The model-price pairing — is an
@@ -57,6 +59,7 @@ import { type TurnPair, type PairToolResult } from "../turn-pair-core/build.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF, type ToolTrajectoryProperties } from "../tool-trajectory/index.js";
+import { REPETITION_COLLAPSE_DEF, type RepetitionCollapseProperties } from "../repetition-collapse/index.js";
 import { DEFAULT_ROUTING_CONFIG, type RoutingConfig } from "./config.js";
 import { Type, type Static } from "typebox";
 
@@ -87,6 +90,8 @@ export const RoutingProperties = Type.Object({
 		stuck_loop: Type.Boolean(),
 		oscillation: Type.Boolean(),
 		preflight_gap: Type.Boolean(),
+		/** A step of the turn looped on repeated text (repetition-collapse). */
+		repetition_collapse: Type.Boolean(),
 	}),
 	easy: Type.Boolean(),
 	hard: Type.Boolean(),
@@ -100,14 +105,16 @@ export const ROUTING_OPPORTUNITY_DEF: AnalyzerDef = {
 	description:
 		"Labels each turn downshiftable or escalation-worthy from existing friction/trajectory signals (no LLM), attaching the serving model and billed cost so the corpus-level efficiency frontier can be computed honestly.",
 	anchorSpan: "pair",
-	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_FRUSTRATION_DEF.id, TOOL_TRAJECTORY_DEF.id],
+	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_FRUSTRATION_DEF.id, TOOL_TRAJECTORY_DEF.id, REPETITION_COLLAPSE_DEF.id],
 	outputSchema: RoutingProperties,
 };
 
 export const ROUTING_OPPORTUNITY_VERSION: AnalyzerVersion = {
 	analyzerId: ROUTING_OPPORTUNITY_DEF.id,
 	major: 1,
-	minor: 1,
+	// 1.2 (#278): a step that collapsed into repetition escalates its turn, and
+	// every dependency node folded into a unit's identity is a consumes edge.
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/routing-opportunity/index.ts",
 };
@@ -126,6 +133,8 @@ interface TurnInputs {
 	} | null;
 	frustration: boolean;
 	trajectorySignals: Array<{ pattern: string; messageIds: string[] }>;
+	/** Assistant message ids of steps that collapsed into repetition. */
+	collapsedStepIds: ReadonlySet<string>;
 	modelByMessageId: Map<string, string | null>;
 	costByMessageId: Map<string, number>;
 	usageByMessageId: Map<string, { input: number; cacheRead: number }>;
@@ -186,7 +195,9 @@ export function evaluateTurn(inputs: TurnInputs): RoutingProperties {
 		if (s.pattern === "pre-flight-gap") preflightGap = true;
 	}
 
-	const hard = correction || stuckLoop || oscillation || preflightGap;
+	const repetitionCollapse = pair.messageIds.some((id) => inputs.collapsedStepIds.has(id));
+
+	const hard = correction || stuckLoop || oscillation || preflightGap || repetitionCollapse;
 	const easy =
 		!hard &&
 		toolCallCount <= inputs.cfg.easyToolCallMax &&
@@ -213,6 +224,7 @@ export function evaluateTurn(inputs: TurnInputs): RoutingProperties {
 			stuck_loop: stuckLoop,
 			oscillation,
 			preflight_gap: preflightGap,
+			repetition_collapse: repetitionCollapse,
 		},
 		easy,
 		hard,
@@ -303,6 +315,15 @@ export const routingOpportunityAnalyzer: Analyzer = {
 			}
 		}
 
+		// Collapsed steps (session-level node) — the step message ids that looped.
+		const collapsedStepIds = new Set<string>();
+		const collapseNodeKeys: string[] = [];
+		for (const n of ctx.dependencyNodes[REPETITION_COLLAPSE_DEF.id] ?? []) {
+			const c = JSON.parse(n.content_json) as Partial<RepetitionCollapseProperties>;
+			for (const step of c.collapsed ?? []) collapsedStepIds.add(step.message_id);
+			collapseNodeKeys.push(n.output_key);
+		}
+
 		const units: AnalysisUnit[] = [];
 		for (const pair of await ctx.getTurnPairs(ctx.sessionId)) {
 			const core = coreProps.get(pair.userMessageId) ?? null;
@@ -312,6 +333,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 				core,
 				frustration,
 				trajectorySignals,
+				collapsedStepIds,
 				modelByMessageId,
 				costByMessageId,
 				usageByMessageId,
@@ -331,6 +353,11 @@ export const routingOpportunityAnalyzer: Analyzer = {
 						}
 					})
 					.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+				// Only a turn the collapse touches folds that node in, so a loop
+				// found elsewhere in the session does not re-identify this turn.
+				...(properties.features.repetition_collapse
+					? collapseNodeKeys.map((id) => ({ kind: "analysis_node" as const, id }))
+					: []),
 			];
 			units.push({
 				sources,
@@ -361,6 +388,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 				stuck_loop: false,
 				oscillation: false,
 				preflight_gap: false,
+				repetition_collapse: false,
 			},
 			easy: false,
 			hard: false,
@@ -373,6 +401,11 @@ export const routingOpportunityAnalyzer: Analyzer = {
 			anchorRef: unit.anchorRef,
 			edges: [
 				{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
+				// The dependency nodes folded into this unit's identity are what the
+				// label was built from; record each as a consumes edge.
+				...unit.sources
+					.filter((src) => src.kind === "analysis_node")
+					.map((src, i) => ({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: src.id, edgeKind: EDGE_KINDS.CONSUMES, ordinal: i + 1 })),
 			],
 		};
 	},

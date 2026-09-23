@@ -92,6 +92,7 @@ describe("routing-opportunity consumes deliberation_paragraphs", () => {
 			core: { correction_detected: false, tool_failure_count: 0, friction_score: 0, deliberation_paragraphs: deliberation },
 			frustration: false,
 			trajectorySignals: [],
+			collapsedStepIds: new Set<string>(),
 			modelByMessageId: new Map([["u0", "claude-sonnet"], ["a0", "claude-sonnet"]]),
 			costByMessageId: new Map<string, number>(),
 			usageByMessageId: new Map([["u0", { input: 1000, cacheRead: 0 }], ["a0", { input: 1000, cacheRead: 0 }]]),

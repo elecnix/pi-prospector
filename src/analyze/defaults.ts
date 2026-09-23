@@ -35,6 +35,7 @@ import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { groundedClaimsAnalyzer } from "./analyzers/grounded-claims/index.js";
 import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
 import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
+import { repetitionCollapseAnalyzer } from "./analyzers/repetition-collapse/index.js";
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
@@ -61,6 +62,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"uncompleted-leads",
 	"compression-checklist",
 	"language-mismatch",
+	"repetition-collapse",
 	"session-ending",
 	"files-in-play",
 	"similarity-cluster",
@@ -166,6 +168,12 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// beside the other compaction-adjacent grader so its findings sit in the
 	// same region of the registry.
 	languageMismatchAnalyzer,
+	// A step whose own text loops until the budget runs out (#278): word n-gram
+	// and character-motif repetition ratios over each step's reasoning and
+	// answer. Deterministic and standalone; the within-step twin of
+	// tool-trajectory's across-step action loops. Placed before
+	// routing-opportunity, which reads a collapsed step as a reason to escalate.
+	repetitionCollapseAnalyzer,
 	// How each session ended — resolved / abandoned / handed-off / errored /
 	// the conservative unclear — read deterministically from the transcript tail
 	// and the shared action stream (#102). Emits a metric node only: the label
