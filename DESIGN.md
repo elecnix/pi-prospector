@@ -320,8 +320,8 @@ ordered stream of tool calls and emits **trajectory signal** nodes that
 contribute to the session's friction score and surface in the digest.
 
 - **Trajectory signal** — a deterministic, session-level detection of a
-  problematic tool-call pattern (stuck-loop, polling-loop, oscillation, or
-  pre-flight gap). Each signal carries the pattern name, the tool(s) involved,
+  problematic tool-call pattern (stuck-loop, polling-loop, oscillation,
+  pre-flight gap, or no-effect edit). Each signal carries the pattern name, the tool(s) involved,
   the count of repetitions, the message ids that participate, and a
   normalised argument fingerprint. Trajectory signals are node kind **metric**
   (deterministic measurement of a session) and anchor to the session.
@@ -345,6 +345,15 @@ contribute to the session's friction score and surface in the digest.
   (e.g. `mv` into a non-existent directory, `git push` of an unpushed
   branch). Pre-flight gaps signal that the agent acted without checking or
   establishing prerequisites.
+- **No-effect edit** — an edit the tool reported as successful that replaced a
+  string with itself: an edit tool's old text byte-identical to its new text,
+  or a `sed -i` substitution of a literal with itself. Nothing changed, yet no
+  error exists for failure analysis to match and the turn reads as productive,
+  so the call's own arguments are the only evidence. Byte-identical, not
+  "identical after trimming": an indentation or trailing-newline change is a
+  real edit. A no-effect edit is not progress, so a run of them on one file is
+  also a stuck-loop. An edit the tool *rejected* for the same reason is a tool
+  failure, classified by failure analysis, not a trajectory signal.
 
 ### Failure analysis (deterministic, session-level)
 
@@ -373,7 +382,7 @@ any session where one step issued several calls.
 - **Failure class** — the curated category a failure falls into: rate limit,
   transport failure, provider server error, malformed tool call, context
   ceiling, authentication, quota, model unavailable, abort; and on the tool side
-  invalid input, edit-anchor miss, script error, guardrail block,
+  invalid input, no-effect edit, edit-anchor miss, script error, guardrail block,
   tool-or-command not found, path not found, permission denied, remote rate
   limit, unavailable backing service, timeout, a command that reported its own
   error, and a non-zero exit used as a signal. A class is decided by matching a

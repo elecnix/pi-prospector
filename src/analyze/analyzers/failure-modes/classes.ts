@@ -437,6 +437,24 @@ export const TOOL_FAILURE_CLASSES: readonly FailureClassDef[] = [
 		extensions: [],
 	},
 	{
+		// Before edit-anchor-miss, whose "no changes made to" would otherwise claim
+		// this text and name the wrong cause: the anchor was found; the
+		// replacement was the text already there (issue #255).
+		id: "no-effect-edit",
+		label: "edit replaced text with itself",
+		axis: "tool",
+		remedyKind: "prompt",
+		actionable: true,
+		matchers: [
+			{ label: "replacement identical to the original", re: /produced identical content|old_string and new_string are (?:exactly )?the same/i },
+		],
+		remedy:
+			"The edit asked to replace text with the same text, so it changed nothing. The model believed the file still needed the change — usually because it had already been applied, or because the intended difference was lost when writing the replacement. " +
+			"Re-read the region before editing it again, and check that the replacement actually differs from what it replaces.",
+		// No package can know what the model meant to write instead.
+		extensions: [],
+	},
+	{
 		id: "edit-anchor-miss",
 		label: "edit anchor did not match",
 		axis: "tool",

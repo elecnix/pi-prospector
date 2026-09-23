@@ -247,7 +247,9 @@ export function normalizeToolCall(call: {
 
 	// edit, write, mkdir — mutating tools
 	if (name === "edit" || name === "write") {
-		const filePath = typeof args?.["file_path"] === "string" ? args["file_path"] as string : "";
+		// pi names the file `path`; other hosts `file_path`.
+		const raw = args?.["file_path"] ?? args?.["path"];
+		const filePath = typeof raw === "string" ? raw : "";
 		return {
 			tool: name,
 			normalizedArgs: filePath ? `${name} ${filePath}` : name,
