@@ -159,6 +159,23 @@ describe("premature-patching", () => {
 			assert.ok(!kindsOf(detectPhaseSignals(entries, CFG)).includes("premature-patching"));
 		}
 	});
+
+	it("stays quiet when the first turn reads before it edits", () => {
+		const entries = classify([
+			turn([tool("read", { file_path: "/src/x.ts" }), tool("edit", { file_path: "/src/x.ts" })]),
+			turn([bash("npm test")]),
+		]);
+		assert.deepEqual(phasesOf(entries), ["patch", "validate"]);
+		assert.ok(!kindsOf(detectPhaseSignals(entries, CFG)).includes("premature-patching"));
+	});
+
+	it("fires when the first turn edits before it reads", () => {
+		const entries = classify([
+			turn([tool("edit", { file_path: "/src/x.ts" }), tool("read", { file_path: "/src/x.ts" })]),
+			turn([bash("npm test")]),
+		]);
+		assert.deepEqual(kindsOf(detectPhaseSignals(entries, CFG)), ["premature-patching"]);
+	});
 });
 
 describe("skip-validation", () => {
