@@ -44,6 +44,11 @@ suggests a wrong assumption baked into standing instructions or a misleading
 tool description. Propose fixing the artifact the signal points at, citing the
 quoted evidence.
 
+Each TRAJECTORY SIGNALS entry carries its own EVIDENCE SLICE — the turns since
+the previous trigger of any kind, not a fixed window. Read the slice as the
+run-up that produced the signal: what the agent was doing, what it repeated,
+and where the pattern began. Cite turns from the slice in your evidence.
+
 STEP 1 — ENUMERATE FRICTION: List EVERY distinct friction point in the session.
 For each one, write a textual gradient: what went wrong, what should change, the
 evidence that supports it, and how severe it is. Do NOT merge or drop distinct

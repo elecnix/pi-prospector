@@ -7,6 +7,7 @@
  */
 
 import { shortHash } from "../../input-hash.js";
+import { EVIDENCE_SLICE_CEILING } from "../../evidence-slices.js";
 import { Type, type Static } from "typebox";
 
 export const CLASSIFY_PROMPT = `You classify a single turn in a coding-agent session.
@@ -24,6 +25,11 @@ prose. The tool takes exactly these fields:
 
 Judge only what the text supports. If the user is simply continuing the task with
 no friction, use sentiment "neutral", friction_type "none", is_genuine_correction false.
+
+When PRIOR TURNS SINCE LAST SIGNAL are shown, treat them as the run-up that
+produced this turn — what was already tried, repeated, or failing before now.
+Use them to judge repetition and wrong_approach; do not reclassify them, they
+are context only.
 
 When TOOL CALLS are shown, use them to ground your diagnosis: prefer friction_type
 "tool_misuse" when the tool name, arguments, or error reveal the mechanism of the
@@ -69,6 +75,17 @@ export interface ToolResultEvidence {
 	errorHead: string | null;
 }
 
+/** One bounded prior turn in the event-centered evidence slice (issue #118). */
+export const SliceTurn = Type.Object({
+	/** Zero-based turn-pair index within the session. */
+	index: Type.Number(),
+	/** The turn-starting message's text (truncated at plan time). */
+	userText: Type.String(),
+	/** The assistant's response text (truncated at plan time). */
+	assistantText: Type.String(),
+});
+export type SliceTurn = Static<typeof SliceTurn>;
+
 export interface ClassifyInput {
 	userText: string;
 	assistantText: string;
@@ -77,6 +94,12 @@ export interface ClassifyInput {
 	toolCalls: ToolCallEvidence[];
 	/** Tool results (including errors) in this turn. */
 	toolResults: ToolResultEvidence[];
+	/**
+	 * Event-centered evidence slice (issue #118): the turns since the previous
+	 * trigger point, current turn excluded (it is rendered in full below).
+	 * Empty when no earlier trigger exists within the ceiling window.
+	 */
+	priorTurns?: SliceTurn[];
 }
 
 /**
@@ -86,18 +109,46 @@ export interface ClassifyInput {
  */
 export const MAX_TOOL_EVIDENCE_PER_TURN = 8;
 
+/** Per-turn text truncation inside the prior-turns slice section. */
+const SLICE_USER_TEXT_MAX = 300;
+const SLICE_ASSISTANT_TEXT_MAX = 400;
+
 export function buildClassifyPrompt(input: ClassifyInput): string {
-	const sections: string[] = [
+	// The run-up is rendered chronologically BEFORE the current turn: the model
+	// reads what already happened, then the turn it must classify.
+	const sections: string[] = [];
+
+	// Event-centered evidence slice (issue #118, after LivePlan §II-B): the turns
+	// since the previous trigger point, so repetition/wrong-approach judgments are
+	// grounded in what actually led up to this turn rather than one turn alone.
+	// The slice is already clamped by EVIDENCE_SLICE_CEILING at plan time; taking
+	// the last EVIDENCE_SLICE_CEILING entries here is a second deterministic bound
+	// on the rendered prompt.
+	const priorTurns = (input.priorTurns ?? []).slice(-EVIDENCE_SLICE_CEILING);
+	if (priorTurns.length > 0) {
+		sections.push(`PRIOR TURNS SINCE LAST SIGNAL (${priorTurns.length} turns of run-up):`);
+		for (const t of priorTurns) {
+			sections.push(
+				`--- prior turn #${t.index} ---`,
+				`USER: ${truncate(t.userText, SLICE_USER_TEXT_MAX)}`,
+				`ASSISTANT: ${truncate(t.assistantText, SLICE_ASSISTANT_TEXT_MAX)}`,
+			);
+		}
+	}
+
+	sections.push(
 		"USER MESSAGE:",
 		truncate(input.userText, 1500),
 		"",
 		"ASSISTANT RESPONSE:",
 		truncate(input.assistantText, 1500),
-	];
+	);
 
 	if (input.correctionText) {
 		sections.push("", `HEURISTIC CORRECTION HINT: ${truncate(input.correctionText, 300)}`);
 	}
+
+	// Event-centered evidence slice moved above — see priorTurns rendering there.
 
 	// Tool-call evidence: failing tool names, truncated arguments, and error heads.
 	// Bounded to the first MAX_TOOL_EVIDENCE_PER_TURN calls/results so the rendered
