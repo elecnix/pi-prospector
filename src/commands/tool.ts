@@ -142,6 +142,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 			filter: Type.Optional(Type.Array(Type.String(), { description: "key=value content filters, repeatable (nodes action); typed against the analyzer's declared outputSchema when it declares one." })),
 			counts: Type.Optional(Type.String({ description: "Group counts over this top-level content property across all matching nodes (nodes action)." })),
 			latest_per_key: Type.Optional(Type.String({ description: "Keep only the newest node per distinct value of this content property, e.g. 'term' for the newest lexicon verdict per term (nodes action)." })),
+			all_versions: Type.Optional(Type.Boolean({ description: "Include superseded generations — nodes a newer node revises (nodes action). Off by default: counts describe the current generation only." })),
 			output_key: Type.Optional(Type.String({ description: "The node's content-addressed output key, or an unambiguous prefix (node action)." })),
 			query: Type.Optional(
 				Type.String({ description: "search action: FTS5 MATCH query — plain terms (implicit AND), \"quoted phrases\", prefix terms (lexicon*), OR/NOT/AND, NEAR(a b, n), column:term." }),
@@ -324,6 +325,7 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 						filters: Array.isArray(params.filter) ? (params.filter as string[]) : [],
 						counts: params.counts as string | undefined,
 						latestPerKey: params.latest_per_key as string | undefined,
+						allVersions: params.all_versions as boolean | undefined,
 						limit: params.limit as number | undefined,
 						offset: params.offset as number | undefined,
 						sessionId: params.session_id as string | undefined,
@@ -396,8 +398,8 @@ Workflow:
   6. remediate — accept many proposals under one shared remediation record
 
 Analysis-graph & point-in-time commands (slash commands):
-  - prospect tool actions: nodes (--analyzer <id> | all=true, node_kind, filter[], counts, latest_per_key, limit, offset) and node (output_key) — read analyzer output from the surface
-  - /prospect-nodes --analyzer <id> [--node-kind <k>] [--filter k=v]... [--counts <prop>] [--latest-per-key <prop>] [--limit n] [--offset n]
+  - prospect tool actions: nodes (--analyzer <id> | all=true, node_kind, filter[], counts, latest_per_key, all_versions, limit, offset) and node (output_key) — read analyzer output from the surface
+  - /prospect-nodes --analyzer <id> [--node-kind <k>] [--filter k=v]... [--counts <prop>] [--latest-per-key <prop>] [--all-versions] [--limit n] [--offset n]
   - /prospect-node <output-key> — one node + resolved outgoing edges (consumes/anchors/produces/revises)
   - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
   - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
