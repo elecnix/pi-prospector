@@ -1,5 +1,6 @@
 	import { type AsyncDatabase } from "./async-db.js";
 import { prep } from "./prepared.js";
+import { Type, type Static } from "typebox";
 import {
 	ASSERTION_SUBJECT_KINDS,
 	REMEDIATION_VERDICT,
@@ -123,6 +124,18 @@ export interface SessionLabel {
 /** Lightweight labels (project/cwd/message_count/source/name) for every session, for display. */
 export async function getSessionLabels(db: AsyncDatabase): Promise<SessionLabel[]> {
 	return (await prep(db, "SELECT id, project, cwd, message_count, source, name FROM sessions").all()) as SessionLabel[];
+}
+
+export const SessionScope = Type.Object({
+	/** The coding harness: "pi" | "claude"; anything else is unknown. */
+	source: Type.String(),
+	cwd: Type.String(),
+});
+export type SessionScope = Static<typeof SessionScope>;
+
+/** Which harness ran a session and where — what decides the instruction files in scope for it. */
+export async function getSessionScope(db: AsyncDatabase, sessionId: string): Promise<SessionScope | undefined> {
+	return (await prep(db, "SELECT source, cwd FROM sessions WHERE id = ?").get(sessionId)) as SessionScope | undefined;
 }
 
 // ── Subagent runs ──
@@ -604,6 +617,23 @@ export async function listSessionIdsWithOpenProposals(db: AsyncDatabase, limit?:
 		.all()) as Array<{ session_id: string }>;
 	const ids = rows.map((r) => r.session_id);
 	return typeof limit === "number" ? ids.slice(0, limit) : ids;
+}
+
+/**
+ * Write a restatement check's result back onto the proposal it judged (issue
+ * #265), matched by the proposal's content-addressed input_key. Only open
+ * proposals are touched, as with replay validation. Returns true if a row changed.
+ */
+export async function setProposalRuleStatus(
+	db: AsyncDatabase,
+	params: { proposalInputKey: string; ruleStatus: string; rulePath: string | null; ruleQuote: string | null; nodeId: string; now: string },
+): Promise<boolean> {
+	const res = await prep(
+		db,
+		"UPDATE proposals SET rule_status = ?, rule_path = ?, rule_quote = ?, restatement_node_id = ?, updated_at = ? " +
+			"WHERE input_key = ? AND status = 'open'",
+	).run(params.ruleStatus, params.rulePath, params.ruleQuote, params.nodeId, params.now, params.proposalInputKey);
+	return res.changes > 0;
 }
 
 /** Count open proposals grouped by validation status, for a run summary. */
