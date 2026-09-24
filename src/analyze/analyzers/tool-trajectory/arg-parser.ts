@@ -183,6 +183,22 @@ function parseGhSubcommand(command: string): { subcommand: string; target: strin
 }
 
 /**
+ * The file path a structured tool call targets.
+ *
+ * Pi names the argument `path`, Claude Code names it `file_path`. Reading only
+ * one collapsed every call from the other harness to an empty target, and
+ * `isNearIdentical` compares targets — so any two such calls matched and the
+ * polling-loop detector fired on unrelated files.
+ */
+function extractPath(args: Record<string, unknown> | undefined): string {
+	for (const key of ["file_path", "path"]) {
+		const v = args?.[key];
+		if (typeof v === "string" && v) return v;
+	}
+	return "";
+}
+
+/**
  * Normalise a tool call's arguments into a structured NormalizedToolCall.
  */
 export function normalizeToolCall(call: {
@@ -233,21 +249,35 @@ export function normalizeToolCall(call: {
 
 	// Structured tool calls
 	if (READ_ONLY_TOOLS.has(name)) {
-		const filePath = typeof args?.["file_path"] === "string" ? args["file_path"] as string : "";
+		const filePath = extractPath(args);
 		const pattern = typeof args?.["pattern"] === "string" ? args["pattern"] as string : "";
+		// A search is identified by pattern AND scope: same pattern in two
+		// directories is not the same call, and neither is two patterns in one.
+		// A read is identified by its file AND its window (issue #261): offset and
+		// limit are part of what makes it the same call, so an agent paging
+		// sequentially through one large file no longer reads as a polling loop.
+		// Without the window, every region of one file compared as near-identical
+		// and 293 of 424 read polling-loop signals were pagination misread as
+		// polling. Windowless calls (glob, grep, whole-file reads) are unchanged.
+		const offset = typeof args?.["offset"] === "number" ? args["offset"] : undefined;
+		const limit = typeof args?.["limit"] === "number" ? args["limit"] : undefined;
+		const windowPart = offset !== undefined || limit !== undefined
+			? `@${offset ?? ""}+${limit ?? ""}`
+			: "";
+		const target = [pattern, filePath, windowPart].filter(Boolean).join(" ");
 		return {
 			tool: name,
-			normalizedArgs: filePath || pattern ? `${name} ${filePath || pattern}` : name,
+			normalizedArgs: target ? `${name} ${target}` : name,
 			readOnly: true,
 			subcommand: "",
-			target: filePath || pattern,
+			target,
 			messageId,
 		};
 	}
 
 	// edit, write, mkdir — mutating tools
 	if (name === "edit" || name === "write") {
-		const filePath = typeof args?.["file_path"] === "string" ? args["file_path"] as string : "";
+		const filePath = extractPath(args);
 		return {
 			tool: name,
 			normalizedArgs: filePath ? `${name} ${filePath}` : name,

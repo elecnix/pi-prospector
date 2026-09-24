@@ -62,6 +62,12 @@ export async function getCursor(db: AsyncDatabase, filePath: string): Promise<{ 
 	return (await prep(db, "SELECT last_line, last_modified FROM sessions WHERE file_path = ?").get(filePath)) as { last_line: number; last_modified: number } | undefined;
 }
 
+/** The source JSONL path a session was synced from, for report headers. */
+export async function getSessionFilePath(db: AsyncDatabase, sessionId: string): Promise<string | undefined> {
+	const row = (await prep(db, "SELECT file_path FROM sessions WHERE id = ?").get(sessionId)) as { file_path: string } | undefined;
+	return row?.file_path;
+}
+
 export async function updateCursor(db: AsyncDatabase, sessionId: string, lastLine: number, lastModified: number): Promise<void> {
 	await prep(db, "UPDATE sessions SET last_line = ?, last_modified = ? WHERE id = ?").run(lastLine, lastModified, sessionId);
 }
