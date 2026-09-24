@@ -32,7 +32,7 @@ import { prep } from "./prepared.js";
 import { shortHash } from "../analyze/input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 import { computeSourceSetHash } from "../analyze/input-hash.js";
-import { findLatestNodeBySourceSet, insertEdge } from "./analysis-queries.js";
+import { findLatestNodeBySourceSet, insertEdge, selectByKeyIn } from "./analysis-queries.js";
 import { FRUSTRATION_LEXICON_DEF } from "../analyze/analyzers/frustration-lexicon/index.js";
 
 /** The subject kinds an assertion can be about. Extensible. */
@@ -151,12 +151,14 @@ export async function getActiveAssertions(db: AsyncDatabase): Promise<AssertionR
 
 /** Currently-active assertions restricted to the given subject kinds. */
 export async function getActiveAssertionsForKinds(db: AsyncDatabase, subjectKinds: readonly string[]): Promise<AssertionRow[]> {
-	if (subjectKinds.length === 0) return [];
-	const placeholders = subjectKinds.map(() => "?").join(", ");
-	return (await prep(
-		db,
-		`SELECT ${ASSERTION_COLS} FROM assertions WHERE superseded_at IS NULL AND subject_kind IN (${placeholders}) ORDER BY subject_key ASC, verdict ASC`,
-	).all(...subjectKinds)) as AssertionRow[];
+	return selectByKeyIn<AssertionRow>(db, {
+		table: "assertions",
+		columns: ASSERTION_COLS,
+		keyColumn: "subject_kind",
+		keys: subjectKinds,
+		where: "superseded_at IS NULL",
+		orderBy: "subject_key ASC, verdict ASC",
+	});
 }
 
 /** The currently-muted terms (subject_kind='term', verdict='muted', active). */

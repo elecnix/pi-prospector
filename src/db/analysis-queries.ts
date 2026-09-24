@@ -596,6 +596,59 @@ export async function getEdgesTo(db: AsyncDatabase, toRefId: string, edgeKind?: 
 	return (await prep(db, "SELECT * FROM analysis_edges WHERE to_ref_id = ?").all(toRefId)) as AnalysisEdgeRow[];
 }
 
+/**
+ * Every edge whose source node belongs to the session, in stream order.
+ *
+ * This is the viz read: the edge table is the single source of truth for
+ * relationships, so a rendering walks it rather than any embedded reference.
+ * Includes edges out of retracted nodes — a retracted node stays inspectable,
+ * and its relationships are part of what happened.
+ */
+export async function getSessionEdges(db: AsyncDatabase, sessionId: string): Promise<AnalysisEdgeRow[]> {
+	return (await prep(db,
+			"SELECT e.* FROM analysis_edges e JOIN analysis_nodes n ON n.id = e.from_node_id " +
+				"WHERE n.session_id = ? ORDER BY n.created_at ASC, n.id ASC, e.ordinal ASC",
+		)
+		.all(sessionId)) as AnalysisEdgeRow[];
+}
+
+/**
+ * A session's nodes including retracted ones. The viz shows a retracted node as
+ * filterable, never falsely absent; callers that want only live nodes use
+ * `getSessionNodes`, which reads the `live_nodes` view.
+ */
+export async function getSessionNodesIncludingRetracted(db: AsyncDatabase, sessionId: string): Promise<AnalysisNodeRow[]> {
+	return (await prep(db, "SELECT * FROM analysis_nodes WHERE session_id = ? ORDER BY created_at ASC, id ASC")
+		.all(sessionId)) as AnalysisNodeRow[];
+}
+
+/**
+ * Shared keyed lookup behind the `IN (...)` row getters: builds the placeholder
+ * list, returns nothing for empty input, and lets callers add extra WHERE
+ * conditions and ordering without re-deriving the query shape per table.
+ */
+export async function selectByKeyIn<Row>(
+	db: AsyncDatabase,
+	params: { table: string; columns: string; keyColumn: string; keys: readonly string[]; where?: string; orderBy?: string },
+): Promise<Row[]> {
+	if (params.keys.length === 0) return [];
+	const marks = params.keys.map(() => "?").join(", ");
+	const conditions = [`${params.keyColumn} IN (${marks})`];
+	if (params.where !== undefined) conditions.push(params.where);
+	const order = params.orderBy !== undefined ? ` ORDER BY ${params.orderBy}` : "";
+	return (await prep(db, `SELECT ${params.columns} FROM ${params.table} WHERE ${conditions.join(" AND ")}${order}`).all(...params.keys)) as Row[];
+}
+
+/** Content-addressed prompt rows by hash (viz provenance targets for `uses_prompt` edges). */
+export async function getPromptRegistryRows(db: AsyncDatabase, hashes: readonly string[]): Promise<PromptVersion[]> {
+	return selectByKeyIn<PromptVersion>(db, { table: "prompt_registry", columns: "hash, content, role", keyColumn: "hash", keys: hashes });
+}
+
+/** Config rows by id (viz provenance targets for `uses_config` edges). */
+export async function getAnalyzerConfigRows(db: AsyncDatabase, ids: readonly string[]): Promise<Array<{ id: string; analyzer_id: string; config_json: string }>> {
+	return selectByKeyIn<{ id: string; analyzer_id: string; config_json: string }>(db, { table: "analyzer_configs", columns: "id, analyzer_id, config_json", keyColumn: "id", keys: ids });
+}
+
 /** Message ids that a node anchors to (via `anchors` edges with message targets). */
 export async function getAnchoredMessageIds(db: AsyncDatabase, nodeId: string): Promise<string[]> {
 	const rows = (await prep(db, "SELECT to_ref_id FROM analysis_edges WHERE from_node_id = ? AND edge_kind = ? AND to_ref_kind = ?")
