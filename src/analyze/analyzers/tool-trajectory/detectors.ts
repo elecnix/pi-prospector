@@ -7,6 +7,7 @@
  */
 
 import type { NormalizedToolCall } from "./arg-parser.js";
+import type { EditReplacements } from "./no-effect-edit.js";
 import { fingerprintHex, fingerprintSimilarity, type ReasoningFingerprint } from "./reasoning-fingerprint.js";
 import { Type, type Static } from "typebox";
 
@@ -16,6 +17,7 @@ export const TrajectoryPattern = Type.Union([
 	Type.Literal("oscillation"),
 	Type.Literal("pre-flight-gap"),
 	Type.Literal("thought-oscillation"),
+	Type.Literal("no-effect-edit"),
 ]);
 export type TrajectoryPattern = Static<typeof TrajectoryPattern>;
 
@@ -38,7 +40,9 @@ export type RiskClass = Static<typeof RiskClass>;
 
 /**
  * The canonical pattern → risk-grade table (issue #119). Action and thought
- * oscillation block; loops, polling, and pre-flight gaps do not.
+ * oscillation block; loops, polling, pre-flight gaps, and no-effect edits do
+ * not — a no-op edit is waste, and when it repeats it is the stuck-loop that
+ * grades the retry.
  */
 export const SIGNAL_RISK_CLASSES: Record<TrajectoryPattern, RiskClass> = {
 	"stuck-loop": "non-blocking",
@@ -46,6 +50,7 @@ export const SIGNAL_RISK_CLASSES: Record<TrajectoryPattern, RiskClass> = {
 	"oscillation": "blocking",
 	"thought-oscillation": "blocking",
 	"pre-flight-gap": "non-blocking",
+	"no-effect-edit": "non-blocking",
 };
 
 export const TrajectorySignal = Type.Object({
@@ -95,6 +100,22 @@ export interface ToolCallWithResult {
 	 * call), or null when the transcript recorded none. Money is never inferred.
 	 */
 	costUsd: number | null;
+	/**
+	 * The text replacements the call asked for (an edit tool's old/new pairs, or
+	 * `sed -i` substitutions), or null/absent when it asked for none.
+	 */
+	replacements?: EditReplacements | null;
+}
+
+/**
+ * Whether a call demonstrably changed something: it succeeded, and it was not
+ * an edit whose every replacement put back the text it removed. A no-op edit
+ * reports success, but it is no more progress than a failed one (issue #255).
+ */
+function madeProgress(entry: ToolCallWithResult): boolean {
+	if (entry.isError) return false;
+	const r = entry.replacements;
+	return !r || r.identical < r.total;
 }
 
 /**
@@ -135,9 +156,9 @@ export function detectStuckLoops(
 		const current = calls[i]!;
 		// Find the end of a run of near-identical calls
 		let j = i + 1;
-		let lastSuccess = !current.isError;
+		let lastSuccess = madeProgress(current);
 		while (j < calls.length && isNearIdenticalCall(current.call, calls[j]!.call)) {
-			if (!calls[j]!.isError) lastSuccess = true;
+			if (madeProgress(calls[j]!)) lastSuccess = true;
 			j++;
 		}
 		const runLength = j - i;
@@ -374,6 +395,38 @@ export function detectPreFlightGaps(
 }
 
 /**
+ * Detect no-effect edits (issue #255, Graphectory's NoEffectEdit): a successful
+ * edit call that replaced a string with itself. One signal per call, counting
+ * its identical replacements.
+ *
+ * Only calls known to have succeeded qualify. A rejected no-op edit is a tool
+ * failure and failure-modes classifies it; a call whose result never arrived
+ * is not known to have done anything at all.
+ */
+export function detectNoEffectEdits(calls: ToolCallWithResult[]): TrajectorySignal[] {
+	const signals: TrajectorySignal[] = [];
+	for (const entry of calls) {
+		const r = entry.replacements;
+		if (!r || r.identical === 0 || entry.isError || !entry.resultMessageId) continue;
+		const { call } = entry;
+		// A bash target is sed's script, not the file; the command says both.
+		const where = call.tool === "bash" ? ` (${call.normalizedArgs})` : call.target ? ` in ${call.target}` : "";
+		const share = r.total > 1 ? `${r.identical} of ${r.total} replacements` : "its replacement";
+		signals.push({
+			pattern: "no-effect-edit",
+			tool: call.tool,
+			normalizedArgs: call.normalizedArgs,
+			count: r.identical,
+			messageIds: [call.messageId],
+			cost_usd: signalCost([entry]),
+			riskClass: SIGNAL_RISK_CLASSES["no-effect-edit"],
+			description: `No-effect edit: ${call.tool}${where} replaced text with itself (${share}) and reported success`,
+		});
+	}
+	return signals;
+}
+
+/**
  * One reasoning turn offered to the thought-oscillation detector.
  *
  * Built from assistant messages that carry private reasoning (issue #117), with
@@ -521,6 +574,7 @@ export function detectAllSignals(
 		...pollingLoops,
 		...oscillations,
 		...preFlightGaps,
+		...detectNoEffectEdits(calls),
 		...detectThoughtOscillation(reasoningBlocks, {
 			oscillationWindow: config.oscillationWindow,
 			thoughtOscillationSimilarity: config.thoughtOscillationSimilarity,

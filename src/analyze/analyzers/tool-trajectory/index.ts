@@ -2,7 +2,8 @@
  * tool-trajectory — deterministic session-level tool-call trajectory analysis.
  *
  * Produces one `metric` node per session, containing all trajectory signals
- * (stuck-loops, polling-loops, oscillations, pre-flight gaps) detected in the
+ * (stuck-loops, polling-loops, oscillations, pre-flight gaps, no-effect edits,
+ * thought-oscillation) detected in the
  * session's ordered tool-call stream. No LLM is used: all detectors are pure
  * functions operating on normalised tool-call representations.
  *
@@ -27,6 +28,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { buildToolStream } from "../../tool-stream.js";
 import { normalizeToolCall } from "./arg-parser.js";
+import { editReplacements } from "./no-effect-edit.js";
 import { detectAllSignals, TrajectorySignal, SIGNAL_RISK_CLASSES, type ReasoningBlock, type ToolCallWithResult, type RiskClass } from "./detectors.js";
 import { fingerprintReasoning } from "./reasoning-fingerprint.js";
 import { DEFAULT_TOOL_TRAJECTORY_CONFIG, type ToolTrajectoryConfig } from "./config.js";
@@ -67,7 +69,7 @@ export const TOOL_TRAJECTORY_DEF: AnalyzerDef = {
 	id: "tool-trajectory",
 	label: "Tool-Call Trajectory (deterministic)",
 	description:
-		"Detects stuck-loops, polling-loops, action oscillation, pre-flight gaps, and thought-oscillation (repeated near-duplicate reasoning without progress) in the ordered session stream. No LLM.",
+		"Detects stuck-loops, polling-loops, action oscillation, pre-flight gaps, no-effect edits (a successful edit that replaced a string with itself), and thought-oscillation (repeated near-duplicate reasoning without progress) in the ordered session stream. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [TURN_PAIR_CORE_DEF.id],
 	outputSchema: ToolTrajectoryProperties,
@@ -129,7 +131,13 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// semantics change: blocking-class oscillation weighs double by default.
 	// Major: old nodes are revised cleanly under --revise major; the new config
 	// keys also re-identify every node as stale/config on their own.
-	major: 6,
+	//
+	// 7.0 (issue #255): new no-effect-edit detector — a successful edit (pi's
+	// `edit`, or `sed -i`) that replaced a string with itself. Such an edit also
+	// no longer counts as the success that breaks a stuck-loop, so repeated no-op
+	// edits to one file now read as the retry loop they are. Major: signals
+	// appear on existing sessions.
+	major: 7,
 	minor: 0,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
@@ -159,6 +167,7 @@ function extractToolCalls(messages: MessageRow[]): ToolCallWithResult[] {
 		isError: inv.outcome?.isError ?? false,
 		resultMessageId: inv.outcome?.messageId ?? "",
 		costUsd: inv.costUsd,
+		replacements: editReplacements(inv.name, inv.args),
 	}));
 }
 
@@ -246,6 +255,9 @@ export function computeTrajectoryFriction(
 				break;
 			case "pre-flight-gap":
 				score += config.preFlightGapWeight * multiplier;
+				break;
+			case "no-effect-edit":
+				score += config.noEffectEditWeight * multiplier;
 				break;
 			case "thought-oscillation":
 				score += config.thoughtOscillationWeight * multiplier;
