@@ -77,6 +77,17 @@ describe("extractInstructedMentions", () => {
 		assert.deepEqual(extractInstructedMentions("Use ripgrep across the repo.", AVAILABLE), []);
 	});
 
+	it("extracts a bare tool that ends its sentence", () => {
+		assert.deepEqual(extractInstructedMentions("Use rg.", AVAILABLE), [{ mention: "rg", source: "known-tool" }]);
+	});
+
+	it("extracts the tool after a chained verb", () => {
+		assert.deepEqual(extractInstructedMentions("Try to run `make test` first.", AVAILABLE), [
+			{ mention: "make", source: "backticked" },
+		]);
+		assert.deepEqual(extractInstructedMentions("Try to use rg here.", AVAILABLE), [{ mention: "rg", source: "known-tool" }]);
+	});
+
 	it("ignores prose mentions that are not imperative sentences", () => {
 		const text =
 			"You can use `rg` for fast search.\nThe reviewer should run `git diff` themselves.\nWe used grep last time.";
