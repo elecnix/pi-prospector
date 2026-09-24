@@ -10,6 +10,7 @@
 import { type AsyncDatabase } from "../db/async-db.js";
 import { shortHash, uuidv7 } from "./input-hash.js";
 import { insertEdge, sumSourceTurnCost } from "../db/analysis-queries.js";
+import { setProposalRuleStatus } from "../db/queries.js";
 import { EDGE_KINDS, REF_KINDS } from "./edge-kinds.js";
 
 export interface RawProposal {
@@ -182,4 +183,32 @@ export async function applyValidationFromNode(
 		)
 		.run(score, status, params.validationNodeId, params.now, proposalInputKey);
 	return res.changes > 0;
+}
+
+/**
+ * Write a `restatement` node's verdict back onto the proposal it judged (issue
+ * #265): whether the proposal's rule is a gap or already in the instruction
+ * corpus, and where. Matched by the proposal's content-addressed `input_key`,
+ * like replay validation, so it survives a wipe and recompute. Returns true if a
+ * proposal row was updated.
+ */
+export async function applyRestatementFromNode(
+	db: AsyncDatabase,
+	params: { restatementNodeId: string; contentJson: Record<string, unknown>; now: string },
+): Promise<boolean> {
+	const proposalInputKey = params.contentJson["proposal_input_key"];
+	if (typeof proposalInputKey !== "string" || proposalInputKey.length === 0) return false;
+	const rawStatus = params.contentJson["rule_status"];
+	const ruleStatus =
+		rawStatus === "gap" || rawStatus === "partial" || rawStatus === "restated" || rawStatus === "ungrounded" ? rawStatus : "unchecked";
+	const rulePath = params.contentJson["rule_path"];
+	const ruleQuote = params.contentJson["rule_quote"];
+	return setProposalRuleStatus(db, {
+		proposalInputKey,
+		ruleStatus,
+		rulePath: typeof rulePath === "string" ? rulePath : null,
+		ruleQuote: typeof ruleQuote === "string" ? ruleQuote : null,
+		nodeId: params.restatementNodeId,
+		now: params.now,
+	});
 }
