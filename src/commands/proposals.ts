@@ -4,6 +4,7 @@ import { migrate } from "../db/schema.js";
 import { listProposals, listProposalsAsOf, acceptProposal, rejectProposal, acceptProposalsWithRemediation, getSessionLabels, getLatestDecision } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { getNode } from "../db/analysis-queries.js";
+import { collectSupportMap, nestProposals, renderGroupedProposals } from "./grouping.js";
 import { getDbPath } from "../config.js";
 import { parseFlags, resolveTimepoint } from "../timepoint.js";
 import type { Proposal, ProposalDecision } from "../types.js";
@@ -318,9 +319,13 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 		const blocks: string[] = [];
 		for (const [sessionId, group] of groups) {
 			const header = sessionGroupHeader(labels.get(sessionId), sessionId, group.length);
-			const entries: string[] = [];
-			for (const p of group) entries.push(await format(p));
-			blocks.push(`${header}\n${entries.join("\n\n")}`);
+			// Issue #107: walk consumes/produces backwards and display-time group a
+			// general proposal together with the lower-level proposals it generalises.
+			// Display only — nothing is dropped or suppressed at synthesis time.
+			const supportOf = await collectSupportMap(db, group);
+			const tree = nestProposals(group, supportOf);
+			const rendered = await renderGroupedProposals(tree, format);
+			blocks.push(`${header}\n${rendered.join("\n\n")}`);
 		}
 
 		const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validation, then cost, then confidence:${asOfLabel ? `\n  (VIEW ${asOfLabel} — status reconstructed from decisions, not current state)` : ""}`;

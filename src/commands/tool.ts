@@ -7,6 +7,7 @@ import { buildAdapters } from "./sync.js";
 import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposalsBulk, rejectProposalsBulk, acceptProposalsWithRemediation, getLatestDecision, getSessionLabels } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
+import { collectSupportMap, nestProposals, renderGroupedProposals, serialiseGrouped } from "./grouping.js";
 import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
 import { prospectAnalyze } from "./analyze.js";
 import { getLatestAnalyzeRuns } from "../db/analysis-queries.js";
@@ -218,15 +219,23 @@ export function registerProspectTool(pi: ExtensionAPI): void {
 							if (bucket) bucket.push(p);
 							else groups.set(p.session_id, [p]);
 						}
+						// Issue #107: display-time grouping — a general proposal nests the
+						// lower-level proposals it generalises (consumes/produces walk-back),
+						// both in the human-readable text and as a `supports` structure on
+						// these machine-readable details. Nothing is dropped: ungrouped rows
+						// keep their flat shape; grouped ones embed their supports.
+						const tree: Array<Record<string, unknown>> = [];
 						const blocks: string[] = [];
 						for (const [sessionId, group] of groups) {
 							const header = sessionGroupHeader(labels.get(sessionId), sessionId, group.length);
-							const entries: string[] = [];
-							for (const p of group) entries.push(conciseEntry(p, await getLatestDecision(db, p.input_key)));
-							blocks.push(`${header}\n${entries.join("\n\n")}`);
+							const format = async (p: Proposal) => conciseEntry(p, await getLatestDecision(db, p.input_key));
+							const nested = nestProposals(group, await collectSupportMap(db, group));
+							tree.push(...nested.map(serialiseGrouped));
+							const rendered = await renderGroupedProposals(nested, format);
+							blocks.push(`${header}\n${rendered.join("\n\n")}`);
 						}
 						const headline = `Proposals (${proposals.length}${filterDesc ? `, ${filterDesc}` : ""}) in ${groups.size} session(s), ranked by validated score then confidence:`;
-						return text(`${headline}\n\n${blocks.join("\n\n")}`, proposals);
+						return text(`${headline}\n\n${blocks.join("\n\n")}`, tree);
 					}
 					case "accept": {
 						const decision = decisionInputFrom(params);

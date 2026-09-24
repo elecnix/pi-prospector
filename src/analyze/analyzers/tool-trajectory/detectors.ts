@@ -19,6 +19,35 @@ export const TrajectoryPattern = Type.Union([
 ]);
 export type TrajectoryPattern = Static<typeof TrajectoryPattern>;
 
+/**
+ * The risk grade of a trajectory signal (issue #119, after LivePlan §III-C1,
+ * Table VI): blocking-class drifts — plan violations and oscillation — are the
+ * ones whose reduction correlates with resolution gains; non-blocking drifts
+ * (loops, polling, missed preconditions) are inefficiency that often survives a
+ * completed trajectory. "Blocking" here is a RISK GRADE, not the paper's online
+ * intervention policy: this system never intervenes (DESIGN.md §5). The field
+ * is deliberately named `riskClass`, never `blocking`, to keep that distinction
+ * honest. The friction weighting multiplies each signal's weight by its class's
+ * config multiplier (blockingRiskMultiplier / nonBlockingRiskMultiplier).
+ */
+export const RiskClass = Type.Union([
+	Type.Literal("blocking"),
+	Type.Literal("non-blocking"),
+]);
+export type RiskClass = Static<typeof RiskClass>;
+
+/**
+ * The canonical pattern → risk-grade table (issue #119). Action and thought
+ * oscillation block; loops, polling, and pre-flight gaps do not.
+ */
+export const SIGNAL_RISK_CLASSES: Record<TrajectoryPattern, RiskClass> = {
+	"stuck-loop": "non-blocking",
+	"polling-loop": "non-blocking",
+	"oscillation": "blocking",
+	"thought-oscillation": "blocking",
+	"pre-flight-gap": "non-blocking",
+};
+
 export const TrajectorySignal = Type.Object({
 	/** Which pattern was detected. */
 	pattern: TrajectoryPattern,
@@ -39,6 +68,13 @@ export const TrajectorySignal = Type.Object({
 	cost_usd: Type.Union([Type.Number(), Type.Null()]),
 	/** Human-readable description. */
 	description: Type.String(),
+	/**
+	 * The risk grade of this pattern (issue #119): "blocking" signals are graded
+	 * higher in the friction weighting because they most often end in an
+	 * unresolved trajectory; "non-blocking" ones usually survive a completed
+	 * trajectory as mere inefficiency. See SIGNAL_RISK_CLASSES for the table.
+	 */
+	riskClass: RiskClass,
 	/**
 	 * For thought-oscillation only: the highest pairwise fingerprint similarity
 	 * within the oscillating run, in [0, 1]. Absent on the tool-call patterns,
@@ -114,6 +150,7 @@ export function detectStuckLoops(
 				count: runLength,
 				messageIds: participants.map((p) => p.call.messageId),
 				cost_usd: signalCost(participants),
+				riskClass: SIGNAL_RISK_CLASSES["stuck-loop"],
 				description: `${current.call.tool} called ${runLength}× with near-identical args without success: ${current.call.normalizedArgs}`,
 			});
 		}
@@ -155,6 +192,7 @@ export function detectPollingLoops(
 				count: runLength,
 				messageIds: participants.map((p) => p.call.messageId),
 				cost_usd: signalCost(participants),
+				riskClass: SIGNAL_RISK_CLASSES["polling-loop"],
 				description: `Read-only ${current.call.tool} called ${runLength}× polling for state: ${current.call.normalizedArgs}`,
 			});
 		}
@@ -205,6 +243,7 @@ export function detectOscillation(
 								count: 3,
 								messageIds: [current.messageId, later.messageId, returnCall.messageId],
 								cost_usd: signalCost([calls[i]!, calls[j]!, calls[k]!]),
+								riskClass: SIGNAL_RISK_CLASSES["oscillation"],
 								description: `Checkout oscillation: ${current.target} → ${later.target} → ${current.target}`,
 							});
 							break;
@@ -224,6 +263,7 @@ export function detectOscillation(
 						messageIds: [current.messageId, later.messageId],
 						cost_usd: signalCost([calls[i]!, calls[j]!]),
 						description: `Oscillation: ${current.normalizedArgs} then reversed by ${later.normalizedArgs}`,
+						riskClass: SIGNAL_RISK_CLASSES["oscillation"],
 					});
 				}
 			}
@@ -290,6 +330,7 @@ export function detectPreFlightGaps(
 						count: 1,
 						messageIds: [call.messageId],
 						cost_usd: signalCost([entry]),
+						riskClass: SIGNAL_RISK_CLASSES["pre-flight-gap"],
 						description: `Pre-flight gap: ${parsed.base} into non-existent directory '${destDir}' (no prior mkdir)`,
 					});
 				}
@@ -306,6 +347,7 @@ export function detectPreFlightGaps(
 					count: 1,
 					messageIds: [call.messageId],
 					cost_usd: signalCost([entry]),
+					riskClass: SIGNAL_RISK_CLASSES["pre-flight-gap"],
 					description: `Pre-flight gap: git push of branch '${call.target}' without --set-upstream`,
 				});
 			}
@@ -322,6 +364,7 @@ export function detectPreFlightGaps(
 					count: 1,
 					messageIds: [call.messageId],
 					cost_usd: signalCost([entry]),
+					riskClass: SIGNAL_RISK_CLASSES["pre-flight-gap"],
 					description: `Pre-flight gap: ${call.tool} to non-existent parent directory '${parentDir}'`,
 				});
 			}
@@ -410,6 +453,7 @@ export function detectThoughtOscillation(
 				count: run.length,
 				messageIds: run.map((p) => p.messageId),
 				cost_usd: reasoningSignalCost(run),
+				riskClass: SIGNAL_RISK_CLASSES["thought-oscillation"],
 				description: `Thought oscillation: ${run.length} near-duplicate reasoning blocks without progress (similarity ${maxSimilarity.toFixed(2)})`,
 				similarity: maxSimilarity,
 			});

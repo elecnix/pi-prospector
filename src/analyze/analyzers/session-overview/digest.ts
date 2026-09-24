@@ -15,6 +15,7 @@ import type { FailureModesProperties } from "../failure-modes/index.js";
 import { failureClass } from "../failure-modes/classes.js";
 import type { TurnFrustrationProperties } from "../turn-frustration/index.js";
 import type { AssistantCognitionProperties } from "../assistant-cognition/prompt.js";
+import type { PlanComplianceProperties } from "../plan-compliance/index.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
 
 /** Properties stored in a user-reply-acts classification node. */
@@ -75,6 +76,8 @@ export interface SessionDigest {
 	cognitionTurnCount: number;
 	/** Capped per-turn assistant-cognition digest lines (one per signalling turn). */
 	cognitionLines: string[];
+	/** The plan-compliance digest line, when a phase-trajectory node existed for this session. */
+	complianceLine: string | null;
 }
 
 export interface BuildDigestInput {
@@ -96,6 +99,8 @@ export interface BuildDigestInput {
 	replyActsNodes?: AnalysisNodeRow[];
 	/** assistant-cognition classification nodes for this session. */
 	cognitionNodes?: AnalysisNodeRow[];
+	/** plan-compliance metric node for this session (issue #121). */
+	complianceNodes?: AnalysisNodeRow[];
 	/**
 	 * Hard ceiling on cognition digest lines per session — mirrors turn-pair-llm's
 	 * high-signal enrichment ceiling: full coverage on short sessions, bounded
@@ -240,6 +245,19 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		const props = safeParse<AssistantCognitionProperties>(node.content_json);
 		if (props && props.user_message_id) cognitionByUser.set(props.user_message_id, props);
 	}
+
+	// Parse the plan-compliance metric node (issue #121): one bounded line telling
+	// the synthesiser how well the session followed its plan — so a proposal can
+	// say "the agent never validated its patch" with a number behind it. A feature
+	// for ranking and contrast, never an outcome label.
+	const latestComplianceNode = (input.complianceNodes ?? [])
+		.filter((n) => n.node_kind !== "error")
+		.sort((a, b) => a.created_at.localeCompare(b.created_at))
+		.at(-1);
+	const complianceProps = latestComplianceNode
+		? safeParse<PlanComplianceProperties>(latestComplianceNode.content_json)
+		: null;
+	const complianceLine = complianceProps ? complianceProps.digest_line : null;
 
 	// Build per-turn assistant-cognition lines. Only turns carrying at least one
 	// non-empty signal array get a line — an abstention (all arrays empty) is stored
@@ -397,6 +415,9 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 			);
 		}
 	}
+	if (complianceLine) {
+		headerLines.push(complianceLine);
+	}
 	if (trajectory.length > 0) {
 		headerLines.push(`trajectory_friction=${trajectory.reduce((max, t) => Math.max(max, t.trajectory_friction_score ?? 0), 0).toFixed(2)}`);
 		// Pricing coverage: state what fraction of trajectory signals could
@@ -465,6 +486,7 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		replyActsLines,
 		cognitionTurnCount,
 		cognitionLines,
+		complianceLine,
 	};
 }
 

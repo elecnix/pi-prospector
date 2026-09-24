@@ -49,23 +49,38 @@ describe("context-economy readRangesOverlap", () => {
 });
 
 describe("context-economy countRedundantReads", () => {
-	it("counts zero duplicates for three disjoint slices of one file (issue #156 case 1)", () => {
-		const n = countRedundantReads([
-			readRangeFromArgs({ offset: 0, limit: 200 }),
-			readRangeFromArgs({ offset: 200, limit: 200 }),
-			readRangeFromArgs({ offset: 400, limit: 200 }),
-		]);
-		assert.equal(n, 0);
-	});
+	interface CountCase {
+		name: string;
+		args: Array<Parameters<typeof readRangeFromArgs>[0]>;
+		expected: number;
+	}
 
-	it("counts both participants of one overlapping pair", () => {
-		const n = countRedundantReads([
-			readRangeFromArgs({ offset: 0, limit: 200 }),
-			readRangeFromArgs({ offset: 100, limit: 200 }),
-			readRangeFromArgs({ offset: 400, limit: 200 }),
-		]);
-		assert.equal(n, 2);
-	});
+	const countCases: CountCase[] = [
+		{
+			name: "counts zero duplicates for three disjoint slices of one file (issue #156 case 1)",
+			args: [
+				{ offset: 0, limit: 200 },
+				{ offset: 200, limit: 200 },
+				{ offset: 400, limit: 200 },
+			],
+			expected: 0,
+		},
+		{
+			name: "counts both participants of one overlapping pair",
+			args: [
+				{ offset: 0, limit: 200 },
+				{ offset: 100, limit: 200 },
+				{ offset: 400, limit: 200 },
+			],
+			expected: 2,
+		},
+	];
+
+	for (const c of countCases) {
+		it(c.name, () => {
+			assert.equal(countRedundantReads(c.args.map(readRangeFromArgs)), c.expected);
+		});
+	}
 
 	it("whole-file reads overlap every other read of the path", () => {
 		const whole = countRedundantReads([

@@ -13,10 +13,9 @@ import {
 	insertSession,
 	insertMessages,
 	mockFramework,
-	mockFrameworkWithOverrides,
 	readAnalyzerNodes,
-	assertPlainRerunIsNoOpFill,
-	reviseBesidePredecessor,
+	expectPlainRerunIsNoOpFill,
+	expectConfigChangeRevises,
 	sessionProposals,
 	assertProposalEvidenceTrail,
 	type TestMessage,
@@ -266,15 +265,9 @@ describe("tool-inventory-tax component tests", () => {
 	it("re-running the same recipe is idempotent: no new nodes, keys unchanged", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "tax-idem");
-			await setInventory(db, "tax-idem", INVENTORY_TOOLS);
-			await insertMessages(db, "tax-idem", mixedUsageSession());
-			await assertPlainRerunIsNoOpFill(
-				mockFramework(db),
-				toolInventoryTaxAnalyzer,
-				"tax-idem",
-				() => readAnalyzerNodes(db, ANALYZER_ID),
-			);
+			await expectPlainRerunIsNoOpFill(db, toolInventoryTaxAnalyzer, "tax-idem", mixedUsageSession(), {
+				prepareSession: (d) => setInventory(d, "tax-idem", INVENTORY_TOOLS),
+			});
 		} finally {
 			await close();
 		}
@@ -283,23 +276,12 @@ describe("tool-inventory-tax component tests", () => {
 	it("changing config marks nodes stale for the `config` reason and revises beside them", async () => {
 		const { db, close } = await tempDb();
 		try {
-			await insertSession(db, "tax-config");
-			await setInventory(db, "tax-config", INVENTORY_TOOLS);
-			await insertMessages(db, "tax-config", mixedUsageSession());
-
-			const fw = mockFramework(db);
-			await fw.register(toolInventoryTaxAnalyzer);
-			const first = await fw.run("tax-config", {});
-			assert.equal(first.errors.length, 0);
-			const before = await readAnalyzerNodes(db, ANALYZER_ID);
-			assert.equal(before.length, 1);
-
 			// Raising the materiality gate above this session's $0.28 tax changes
 			// the resolved config fingerprint → stale for the `config` reason; the
 			// revise run recomputes beside its predecessor as a clean metric.
-			const revisedFw = mockFrameworkWithOverrides(db, ANALYZER_ID, { materialTaxUsd: 10 });
-			await revisedFw.register(toolInventoryTaxAnalyzer);
-			const after = await reviseBesidePredecessor(db, revisedFw, ANALYZER_ID, "tax-config", before);
+			const { after } = await expectConfigChangeRevises(db, toolInventoryTaxAnalyzer, "tax-config", mixedUsageSession(), { materialTaxUsd: 10 }, {
+				prepareSession: (d) => setInventory(d, "tax-config", INVENTORY_TOOLS),
+			});
 
 			assert.deepEqual(
 				after.map((n) => n.node_kind).sort(),
