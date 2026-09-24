@@ -38,6 +38,7 @@ import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
+import { navigationEfficiencyAnalyzer } from "./analyzers/navigation-efficiency/index.js";
 import { similarityClusterAnalyzer } from "./analyzers/similarity-cluster/index.js";
 import { frictionAccumulationAnalyzer } from "./analyzers/friction-accumulation/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
@@ -64,6 +65,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"language-mismatch",
 	"session-ending",
 	"files-in-play",
+	"navigation-efficiency",
 	"similarity-cluster",
 	"friction-accumulation",
 	"tool-inventory-tax",
@@ -185,6 +187,13 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// the other session-level deterministic graders, before the synthesizer, so
 	// a future consumer can declare it as a dependency without reordering.
 	filesInPlayAnalyzer,
+	// The structural twin of files-in-play (#254): where that one sees the flat
+	// set of files a session touched, this reconstructs *how* it moved between
+	// them — directory ↦ file ↦ block depth — and flags Graphectory's
+	// localization anti-patterns (Scroll, ZoomOut, OverlyDeepZoom,
+	// RepeatedView) plus the structural-edge count and breadth. Session-level,
+	// standalone, deterministic (no LLM); reads the same action stream.
+	navigationEfficiencyAnalyzer,
 	// Near-duplicate text clustering over three domains (#145): user prompts,
 	// normalised tool calls, and tool results, pooled across the sessions of a
 	// repo (via the same cwd-grouped raw-message mechanism as cross-session
