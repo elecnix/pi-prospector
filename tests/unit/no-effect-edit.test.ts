@@ -119,6 +119,16 @@ describe("editReplacements — sed -i", () => {
 		assert.deepEqual(sed("sed -i 's/a/a/; s/b/b/' f"), { total: 2, identical: 2 });
 	});
 
+	it("reads a ; inside a pattern as part of it, not as a command separator", () => {
+		assert.deepEqual(sed("sed -i 's/;/;/' f"), { total: 1, identical: 1 });
+		assert.deepEqual(sed("sed -i 's/a;b/a;b/; s/c/d/' f"), { total: 2, identical: 1 });
+	});
+
+	it("honours an escaped delimiter and skips other sed commands", () => {
+		assert.deepEqual(sed("sed -i 's/a\\/b/a\\/b/' f"), { total: 1, identical: 0 });
+		assert.deepEqual(sed("sed -i '/^#/d; s/x/x/' f"), { total: 1, identical: 1 });
+	});
+
 	it("finds sed inside a compound command", () => {
 		assert.deepEqual(sed("cd src && sed -i 's/x/x/' a.ts && git diff"), { total: 1, identical: 1 });
 	});

@@ -96,36 +96,61 @@ function sedPairs(command: unknown): Pair[] {
 		if (!inPlace) continue;
 		// Without -e, the first operand is the script and the rest are files.
 		if (scripts.length === 0 && operands[0] !== undefined) scripts.push(operands[0]);
-		for (const script of scripts) {
-			for (const cmd of script.split(/[;\n]/)) {
-				const pair = substitution(cmd.trim());
-				if (pair) pairs.push(pair);
-			}
-		}
+		for (const script of scripts) pairs.push(...substitutions(script));
 	}
 	return pairs;
 }
 
 /**
- * One `s<d>pattern<d>replacement<d>flags` command, or null when `cmd` is not a
- * substitution. It is a no-op only when the pattern can match nothing but
- * itself (no metacharacters), the replacement is that same literal (no `&`),
- * and no flag widens the match (only `g` and an occurrence number qualify).
+ * Every `s<d>pattern<d>replacement<d>flags` command in a sed script.
+ *
+ * Read left to right rather than split on `;`, because a `;` inside a pattern
+ * (`s/;/;/`) is part of the pattern, not a command separator. A backslash
+ * escapes the next character, delimiter included. Other sed commands are
+ * skipped up to their `;` or newline.
+ *
+ * A substitution is a no-op only when the pattern can match nothing but itself
+ * (no metacharacters), the replacement is that same literal (no `&`), and no
+ * flag widens the match (only `g` and an occurrence number qualify).
  */
-function substitution(cmd: string): Pair | null {
-	if (cmd.length < 4 || cmd[0] !== "s") return null;
-	const d = cmd[1]!;
-	if (/[\s\\a-zA-Z0-9]/.test(d)) return null;
-	const parts = cmd.slice(2).split(d);
-	if (parts.length !== 3) return null;
-	const [pattern, replacement, flags] = parts as [string, string, string];
-	const identical =
-		pattern.length > 0 &&
-		pattern === replacement &&
-		!REGEX_META.test(pattern) &&
-		!replacement.includes("&") &&
-		/^(?:g|\d+)*$/.test(flags);
-	return { identical };
+function substitutions(script: string): Pair[] {
+	const pairs: Pair[] = [];
+	let i = 0;
+	const isEnd = (ch: string | undefined): boolean => ch === ";" || ch === "\n";
+	const field = (d: string): string | null => {
+		let out = "";
+		while (i < script.length && script[i] !== d) {
+			if (script[i] === "\\" && i + 1 < script.length) out += script[i++];
+			out += script[i++];
+		}
+		if (i >= script.length) return null;
+		i++; // the closing delimiter
+		return out;
+	};
+	while (i < script.length) {
+		while (i < script.length && (isEnd(script[i]) || /\s/.test(script[i]!))) i++;
+		if (i >= script.length) break;
+		const d = script[i + 1];
+		if (script[i] === "s" && d !== undefined && !/[\s\\a-zA-Z0-9]/.test(d)) {
+			i += 2;
+			const pattern = field(d);
+			const replacement = pattern === null ? null : field(d);
+			if (pattern === null || replacement === null) break;
+			let flags = "";
+			while (i < script.length && !isEnd(script[i])) flags += script[i++];
+			pairs.push({
+				identical:
+					pattern.length > 0 &&
+					pattern === replacement &&
+					!REGEX_META.test(pattern) &&
+					!replacement.includes("&") &&
+					/^(?:g|\d+)*$/.test(flags.trim()),
+			});
+		} else {
+			while (i < script.length && !isEnd(script[i])) i++;
+		}
+	}
+	return pairs;
 }
 
 /**
