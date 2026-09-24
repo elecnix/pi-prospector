@@ -947,8 +947,10 @@ current result set, which keeps it cheap and reversible:
 - Machine-readable output gains the same structure (`supports`, present only
   when non-empty), so ungrouped rows keep their exact prior shape.
 - Grouping is one hop (direct consumption) — today's shipped analyzers relate
-  at two altitudes (session-level synthesis over per-turn signals), so deeper
-  traversal buys nothing yet.
+  at two altitudes: `session-overview`'s synthesis over the deterministic
+  session-level detectors (failure modes, context economy, …) whose nodes carry
+  proposals of their own. Per-turn nodes carry signals, not proposals, so
+  deeper traversal buys nothing yet.
 
 ### Model access through the host platform, with a test seam
 
