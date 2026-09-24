@@ -518,6 +518,49 @@ session, which is precisely the mistake that hid this class in the first place.
 Costs follow the same rule as everywhere else: an unpriced failure contributes
 nothing, and a total that omits unpriced failures says so.
 
+### Decode collapse (deterministic, corpus-calibrated)
+
+A generation can fail without any failure being recorded: the provider returns
+a normal stop, and the text is not language. It is corrupt from its first token
+to its last — real words and code fragments in an order that means nothing,
+often leaking the chat template's own control tokens — and usually a large
+reasoning block with an empty answer. The tokens are billed and no work comes
+back. It carries no error text for the failure catalogue to match, it is mostly
+Latin by letter count so a script check passes it, and it never repeats so a
+repetition check passes it. It is the opposite degeneration to **repetition
+collapse**: a loop scores low perplexity by construction and garbage never
+repeats, so each detector is blind to the other's shape.
+
+- **Document** — one scoreable piece of an assistant message: its reasoning, or
+  its answer text, each judged separately.
+- **Perplexity** — how improbable a document is under a language model. Scored
+  per line and summarised by the **median**, so a coherent turn quoting one
+  foreign block reads as the coherent turn it is.
+- **Reference corpus** — the sessions the language model is trained and
+  calibrated on: the *earliest* sessions of the index, up to a cap. Earliest, so
+  that once the corpus outgrows the cap a newly synced session changes nothing
+  about the reference, and every existing conclusion stays current. Each
+  reference session is folded into every scored session's **source set** by the
+  fingerprint of its content, exactly like a contrast sibling.
+- **Cross-session filter** — before training, a reference document whose share of
+  word shingles also seen in some *other* session is too low is kept out of
+  training and calibration. Collapsed output is novel everywhere and shares
+  nothing; ordinary technical language repeats across sessions. It needs no
+  labels.
+- **Held-out calibration** — some reference sessions are held out of training and
+  scored; the **threshold** sits above their maximum. The threshold is a
+  property of the corpus and is derived, never configured as a perplexity.
+- **Self-exclusion** — a session is always scored by a model that never saw it:
+  its own training counts are subtracted and its own held-out documents are left
+  out of its threshold. A model that scores a document it trained on has
+  memorised it and reports collapse as ordinary text.
+
+A corpus too small to train on yields an **unknown** collapse count, never zero,
+by the same coverage rule as failure counts. The threshold is a **ranking aid**:
+the conclusion always carries the highest-scoring documents, so a person can
+confirm the tail — a label set built from the detector's own ranking would make
+any recall figure circular.
+
 ### Learned frustration lexicon (corpus-scoped)
 
 Friction is often stated in words, and the shipped correction patterns are
