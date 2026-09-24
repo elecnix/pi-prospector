@@ -35,10 +35,12 @@ import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
 import { groundedClaimsAnalyzer } from "./analyzers/grounded-claims/index.js";
 import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
 import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
+import { repetitionCollapseAnalyzer } from "./analyzers/repetition-collapse/index.js";
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
 import { decodeCollapseAnalyzer } from "./analyzers/decode-collapse/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
+import { navigationEfficiencyAnalyzer } from "./analyzers/navigation-efficiency/index.js";
 import { similarityClusterAnalyzer } from "./analyzers/similarity-cluster/index.js";
 import { frictionAccumulationAnalyzer } from "./analyzers/friction-accumulation/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
@@ -64,8 +66,10 @@ export const DEFAULT_ANALYZER_IDS = [
 	"compression-checklist",
 	"language-mismatch",
 	"decode-collapse",
+	"repetition-collapse",
 	"session-ending",
 	"files-in-play",
+	"navigation-efficiency",
 	"similarity-cluster",
 	"friction-accumulation",
 	"tool-inventory-tax",
@@ -179,6 +183,12 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// Session-level, standalone, deterministic; beside the other text-quality
 	// grader.
 	decodeCollapseAnalyzer,
+	// A step whose own text loops until the budget runs out (#278): word n-gram
+	// and character-motif repetition ratios over each step's reasoning and
+	// answer. Deterministic and standalone; the within-step twin of
+	// tool-trajectory's across-step action loops. Placed before
+	// routing-opportunity, which reads a collapsed step as a reason to escalate.
+	repetitionCollapseAnalyzer,
 	// How each session ended — resolved / abandoned / handed-off / errored /
 	// the conservative unclear — read deterministically from the transcript tail
 	// and the shared action stream (#102). Emits a metric node only: the label
@@ -196,6 +206,13 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// the other session-level deterministic graders, before the synthesizer, so
 	// a future consumer can declare it as a dependency without reordering.
 	filesInPlayAnalyzer,
+	// The structural twin of files-in-play (#254): where that one sees the flat
+	// set of files a session touched, this reconstructs *how* it moved between
+	// them — directory ↦ file ↦ block depth — and flags Graphectory's
+	// localization anti-patterns (Scroll, ZoomOut, OverlyDeepZoom,
+	// RepeatedView) plus the structural-edge count and breadth. Session-level,
+	// standalone, deterministic (no LLM); reads the same action stream.
+	navigationEfficiencyAnalyzer,
 	// Near-duplicate text clustering over three domains (#145): user prompts,
 	// normalised tool calls, and tool results, pooled across the sessions of a
 	// repo (via the same cwd-grouped raw-message mechanism as cross-session
