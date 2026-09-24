@@ -257,6 +257,9 @@ console.log("\nAnalyzer coverage + targeted backfill (#195):");
 
 console.log("\nRevise re-run with a new analyzer version (lineage):");
 const firstSession = sessions[0]!;
+const { getAnalysisStats: statsBeforeRevise } = await import("../../src/db/analysis-queries.js");
+const preRevise = await statsBeforeRevise(db);
+const coreBeforeRevise = preRevise.nodesByAnalyzer["turn-pair-core"] ?? 0;
 const v2 = new AnalyzerFramework({ db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
 await v2.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, major: 2 } });
 const deep = await v2.run(firstSession.id, { revise: ["major"], analyzerIds: ["turn-pair-core"] });
@@ -270,6 +273,20 @@ if (coreRows) {
 	assert(versions.length === 2, "two versions coexist for a logical unit", `got ${versions.length}`);
 	const newest = versions[versions.length - 1]!;
 	assert((await getRevisedNode(db, newest.id)) !== undefined, "newest version revises an older one");
+}
+{
+	// #260: a revision replaces its predecessor in the aggregates rather than adding to them.
+	const after = await statsBeforeRevise(db);
+	assert(
+		(after.nodesByAnalyzer["turn-pair-core"] ?? 0) === coreBeforeRevise,
+		"per-analyzer count is the current generation, not the sum of versions",
+		`before ${coreBeforeRevise}, after ${after.nodesByAnalyzer["turn-pair-core"]}`,
+	);
+	assert(
+		after.supersededNodes - preRevise.supersededNodes === deep.nodesRevised,
+		"superseded nodes are reported apart",
+		`got ${after.supersededNodes - preRevise.supersededNodes}`,
+	);
 }
 
 console.log("\nProposal lifecycle:");
@@ -300,7 +317,14 @@ console.log("\nRetraction excluded from per-analyzer stats (#155, end of run —
 	const { getAnalysisStats } = await import("../../src/db/analysis-queries.js");
 	const before = await getAnalysisStats(db);
 	const beforeCount = before.nodesByAnalyzer["turn-pair-core"] ?? 0;
-	await db.prepare("UPDATE analysis_nodes SET retracted_at = ? WHERE id = (SELECT id FROM live_nodes WHERE analyzer_id = 'turn-pair-core' LIMIT 1)").run(new Date().toISOString());
+	// Retract a current node that revises nothing: retracting a superseded node,
+	// or a head whose predecessor then becomes current again (#260), would
+	// rightly leave the current-generation count unchanged.
+	await db
+		.prepare(
+			"UPDATE analysis_nodes SET retracted_at = ? WHERE id = (SELECT id FROM current_nodes n WHERE analyzer_id = 'turn-pair-core' AND NOT EXISTS (SELECT 1 FROM analysis_edges e WHERE e.from_node_id = n.id AND e.edge_kind = 'revises') LIMIT 1)",
+		)
+		.run(new Date().toISOString());
 	const after = await getAnalysisStats(db);
 	assert((after.nodesByAnalyzer["turn-pair-core"] ?? 0) === beforeCount - 1, "retracted nodes are excluded from nodesByAnalyzer");
 	assert(after.nodes === before.nodes - 1, "total node count drops with the retraction");
