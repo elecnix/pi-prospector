@@ -24,6 +24,13 @@ export const ToolTrajectoryConfig = Type.Object({
 	oscillationWeight: Type.Number({ minimum: 0, maximum: 1 }),
 	/** Weight contributed by each pre-flight gap signal. */
 	preFlightGapWeight: Type.Number({ minimum: 0, maximum: 1 }),
+	/**
+	 * Weight contributed by each no-effect edit signal (issue #255): a
+	 * successful edit that replaced a string with itself. Weighted like a
+	 * pre-flight gap — one wasted, billed step — and repeated no-op edits to one
+	 * file additionally surface as a stuck-loop.
+	 */
+	noEffectEditWeight: Type.Number({ minimum: 0, maximum: 1 }),
 	/** Fingerprint similarity above which two reasoning blocks count as near-duplicates (issue #117). */
 	thoughtOscillationSimilarity: Type.Number({ minimum: 0, maximum: 1 }),
 	/**
@@ -56,6 +63,7 @@ export const DEFAULT_TOOL_TRAJECTORY_CONFIG: ToolTrajectoryConfig = {
 	pollingLoopWeight: 0.25,
 	oscillationWeight: 0.35,
 	preFlightGapWeight: 0.2,
+	noEffectEditWeight: 0.2,
 	thoughtOscillationSimilarity: 0.85,
 	thoughtOscillationMinRepeat: 2,
 	// Equal to oscillationWeight: repeated thinking without progress costs as

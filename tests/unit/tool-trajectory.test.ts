@@ -482,6 +482,7 @@ describe("signal risk classes", () => {
 			"oscillation": "blocking",
 			"thought-oscillation": "blocking",
 			"pre-flight-gap": "non-blocking",
+			"no-effect-edit": "non-blocking",
 		});
 	});
 

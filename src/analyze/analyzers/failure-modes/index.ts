@@ -112,8 +112,11 @@ export const FAILURE_MODES_VERSION: AnalyzerVersion = {
 	// 1.1: child-run failures, classified from subagent artifact metadata — the
 	// only record a spawn-level child failure leaves — with a remedy-kind axis
 	// that keeps environment classes away from extension proposals.
+	// 1.2 (issue #255): a rejected no-op edit — pi's "replacement produced
+	// identical content" — is its own class, no-effect-edit, instead of being
+	// counted as an edit-anchor miss it never was.
 	major: 1,
-	minor: 1,
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/failure-modes/index.ts",
 };
