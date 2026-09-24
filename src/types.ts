@@ -264,6 +264,17 @@ export interface Proposal {
 	validation_status: string;
 	/** The validation node that produced the grounded score, if any. */
 	validation_node_id: string | null;
+	/**
+	 * Whether the proposal's rule is already in the instruction corpus (issue
+	 * #265): unchecked | gap | partial | restated | ungrounded.
+	 */
+	rule_status: string;
+	/** The instruction file holding the existing rule, when partial/restated. */
+	rule_path: string | null;
+	/** The existing rule, quoted from that file. */
+	rule_quote: string | null;
+	/** The restatement node that produced the rule status, if any. */
+	restatement_node_id: string | null;
 }
 
 // ─── Decisions (append-only human feedback) ───

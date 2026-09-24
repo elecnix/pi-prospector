@@ -43,6 +43,7 @@ import { frictionAccumulationAnalyzer } from "./analyzers/friction-accumulation/
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
 import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
+import { ruleRestatementAnalyzer } from "./analyzers/rule-restatement/index.js";
 
 export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-core",
@@ -81,6 +82,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"token-units",
 	"request-classes",
 	"session-overview",
+	"rule-restatement",
 ] as const;
 
 /** The built-in analyzers registered by a plain analyze run, in dependency order. */
@@ -311,6 +313,13 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	tokenUnitsAnalyzer,
 	requestClassesAnalyzer,
 	sessionOverviewAnalyzer,
+	// Whether each rule-shaped proposal the synthesizer just emitted is already a
+	// rule (#265): reads the instruction files the session's harness loads and
+	// asks a model, quote required, whether the rule is stated there. Separates
+	// adherence findings (a rule that exists and was not followed) from gaps.
+	// Consumes session-overview, so it runs after it; plans nothing for a session
+	// with no rule-shaped proposal or no instruction file on disk.
+	ruleRestatementAnalyzer,
 ];
 
 export async function registerDefaults(framework: AnalyzerFramework): Promise<void> {
