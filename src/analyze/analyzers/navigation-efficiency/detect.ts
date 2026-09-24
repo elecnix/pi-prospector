@@ -514,7 +514,15 @@ export function detectRepeatedView(actions: readonly NavAction[], config: Naviga
 		const between = actions.slice(prior.index + 1, index);
 		// Any edit leaves the reading context; a successful one to this very file is excluded below.
 		const left = between.some((b) => b.kind === "edit" || !sameRegion(b, a));
-		const verified = between.some((b) => b.kind === "edit" && b.ok && b.path === a.path);
+		// Verification is a re-read *right after* a successful edit to this file:
+		// nothing but that edit (or views of this same region) since. Leaving for
+		// another region after the edit makes the return a revisit again.
+		let lastOkEdit = -1;
+		between.forEach((b, k) => {
+			if (b.kind === "edit" && b.ok && b.path === a.path) lastOkEdit = k;
+		});
+		const verified =
+			lastOkEdit >= 0 && between.slice(lastOkEdit + 1).every((b) => b.kind === "view" && sameRegion(b, a));
 		if (!left || verified) return;
 		let list = revisits.get(a.path);
 		if (!list) {

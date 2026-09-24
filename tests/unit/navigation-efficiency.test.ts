@@ -265,6 +265,15 @@ describe("detectRepeatedView", () => {
 		);
 	});
 
+	it("counts a return after a successful edit when the agent left for another region first", () => {
+		const eps = detectRepeatedView(
+			nav(read("a.ts"), edit("a.ts"), read("b.ts"), read("a.ts"), edit("a.ts"), read("c.ts"), read("a.ts")),
+			CONFIG,
+		);
+		assert.equal(eps.length, 1);
+		assert.equal(eps[0]!.views, 3);
+	});
+
 	it("counts a re-read after a failed edit", () => {
 		const eps = detectRepeatedView(nav(read("a.ts"), edit("a.ts", true), read("a.ts"), edit("a.ts", true), read("a.ts")), CONFIG);
 		assert.equal(eps.length, 1);

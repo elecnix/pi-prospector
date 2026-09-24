@@ -114,8 +114,13 @@ export const NAVIGATION_EFFICIENCY_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/navigation-efficiency/index.ts",
 };
 
+/**
+ * The framework already layers user overrides over the defaults; merging here
+ * too means a direct caller passing a partial object still gets every
+ * threshold, instead of `undefined` comparisons that silently pass.
+ */
 function resolveConfig(raw: unknown): NavigationEfficiencyConfig {
-	return (raw as NavigationEfficiencyConfig) ?? DEFAULT_NAVIGATION_EFFICIENCY_CONFIG;
+	return { ...DEFAULT_NAVIGATION_EFFICIENCY_CONFIG, ...((raw as Partial<NavigationEfficiencyConfig> | null) ?? {}) };
 }
 
 /**
