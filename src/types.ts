@@ -358,11 +358,14 @@ export interface Stats {
 	sessionsAnalyzed: number;
 	proposalsByStatus: Record<ProposalStatus, number>;
 	analysis: {
+		/** Current-generation nodes: live, and revised by no live node (#260). */
 		nodes: number;
+		/** Live nodes a live node revises — superseded generations kept as lineage. */
+		supersededNodes: number;
 		edges: number;
 		runs: number;
 		nodesByKind: Record<string, number>;
-		/** Non-retracted node count per analyzer_id */
+		/** Current-generation node count per analyzer_id */
 		nodesByAnalyzer: Record<string, number>;
 	};
 	/** Per-source token and tool-call stats */
