@@ -145,7 +145,22 @@ export function statusLabel(p: Proposal): string {
 	// proposal's source turns when one is recorded, so a user can see at a glance
 	// what a finding cost.
 	if (p.cost_usd != null) label += ` · ${formatUsd(p.cost_usd)}`;
+	const rule = ruleLabel(p);
+	if (rule) label += ` · ${rule}`;
 	return label;
+}
+
+/**
+ * Whether a rule-shaped proposal's rule already exists (issue #265). A restated
+ * rule is an adherence finding — it goes to whoever owns the behaviour, not to
+ * whoever owns the file — so the listing says so instead of rendering it like a
+ * gap. Unchecked and ungrounded proposals carry no label: nothing was shown.
+ */
+export function ruleLabel(p: Proposal): string | null {
+	if (p.rule_status === "restated") return `already a rule: ${p.rule_path ?? "?"}`;
+	if (p.rule_status === "partial") return `partly a rule: ${p.rule_path ?? "?"}`;
+	if (p.rule_status === "gap") return "new rule";
+	return null;
 }
 
 /**

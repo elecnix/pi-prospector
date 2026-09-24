@@ -86,7 +86,7 @@ import {
 } from "../db/analysis-queries.js";
 import { prep } from "../db/prepared.js";
 import { getSubagentRunsForSession } from "../db/queries.js";
-import { materializeProposalsFromNode, applyValidationFromNode } from "./proposal-materializer.js";
+import { materializeProposalsFromNode, applyValidationFromNode, applyRestatementFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { buildTurnPairs, type TurnPair } from "./analyzers/turn-pair-core/build.js";
 import { scanCwdSmoothness, type CwdSmoothnessCache } from "./analyzers/session-overview/cross-session.js";
@@ -540,6 +540,14 @@ export class AnalyzerFramework {
 			// replay score back onto the proposal it scored (matched by input_key).
 			await applyValidationFromNode(this.deps.db, {
 				validationNodeId: nodeId,
+				contentJson: analysis.contentJson,
+				now,
+			});
+		} else if (analysis.nodeKind === "restatement") {
+			// Likewise: a restatement node writes whether the proposal's rule is a
+			// gap or already in the instruction corpus back onto the proposal.
+			await applyRestatementFromNode(this.deps.db, {
+				restatementNodeId: nodeId,
 				contentJson: analysis.contentJson,
 				now,
 			});

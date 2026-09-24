@@ -145,7 +145,9 @@ roughly the order concepts build on one another.
   **metric** (deterministic measurements of a turn or session), **classification**
   (a language-model judgement about a turn), **summary** (a session-level
   synthesis that carries proposals), **validation** (a replay test of a proposal
-  against the turns it came from — see *Replay validation* below), and **error**
+  against the turns it came from — see *Replay validation* below),
+  **restatement** (whether a proposed rule is already in the instruction corpus
+  — see *Restatement check* below), and **error**
   (a record that an analysis attempt failed). An error node's identity is its
   recipe plus the failure's message and timestamp, so every failure is a distinct,
   append-only record that never
@@ -655,6 +657,49 @@ contain the new word have anything to compute.
   the test injects the proposal as a standing instruction, and "install this
   package" is not something a text classifier can act on — scoring it would
   produce a number out of noise. They stay *unvalidated*, which is what they are.
+  Replay validation also cannot tell a new rule from one the agent already had:
+  its baseline replays the turn text without the instructions that were in
+  force, so a restated rule "averts" friction exactly as well as a new one. That
+  question is the *restatement check's*.
+- **Instruction corpus** — the standing-instruction text a session ran under:
+  the harness's global instruction file, the project instruction files the
+  harness loads walking up from the session's `cwd` (Pi: one `AGENTS.md` or
+  `CLAUDE.md` per directory; Claude Code: `CLAUDE.md`, `.claude/CLAUDE.md`,
+  `CLAUDE.local.md`), and any files the user configures as in scope (a skill's
+  text, a protocol an orchestrator injects into every sub-agent brief — text no
+  transcript records and no `cwd` reveals). Transcripts do not keep a copy, so
+  the corpus is read from disk **as it is now**, which is the question a reader
+  of a proposal is asking: *is this rule already in the file I would add it
+  to?* Each file enters a unit's source set as an `instruction` source keyed by
+  path and content hash, so editing a file re-identifies every check that read
+  it and the next scan finds those checks missing. A session whose harness is
+  unknown gets no harness files: guessing a host would put the wrong host's
+  rules in scope.
+- **Restatement check** — for each open **rule-shaped** proposal (one whose
+  target is a standing instruction, skill, or prompt), a model reads the
+  proposal and the instruction corpus and says whether the rule is already
+  stated there — in any wording, or from its other end ("the orchestrator never
+  closes tickets" and "whoever opens the PR closes the ticket" are one rule). It
+  is semantic by necessity: a rule proposed after the fact rarely shares words
+  with the rule that exists, so term matching misses real restatements and fires
+  on coincidences. A claim that the rule exists must **quote** it, and the quote
+  is checked verbatim (whitespace- and markup-insensitive) against the corpus
+  before it is believed. The result is a content-addressed *restatement* node
+  that `consumes` the proposal's summary; its verdict is written back onto the
+  proposal like a validation score. When the corpus exceeds the budget, the
+  passages sharing the most terms with the proposal are what the model reads —
+  that ranking chooses what is read, never what is concluded.
+- **Rule status** — the restatement check's verdict on a proposal: **gap** (the
+  corpus does not state the rule), **partial** (it states part or a weaker form),
+  **restated** (it already states it), **ungrounded** (the model said it does,
+  but its quote is not in the corpus — neither a gap nor a restatement was
+  shown), or **unchecked** (not rule-shaped, no corpus on disk, or not yet
+  judged). A restated rule is an **adherence finding** — a rule that exists and
+  was not followed — as distinct from a **gap**, a rule that does not exist. The
+  friction is equally real; the response is not: an adherence finding goes to
+  whoever owns the behaviour, a gap to whoever owns the document, and adding a
+  restated rule to a context-budgeted file costs every future session and
+  changes nothing.
 - **Positive signal** — a deterministic or model-derived observation that
   something went *well* in a session: the task was completed without correction,
   a correction was followed by a clean recovery, or the tool-failure density was
