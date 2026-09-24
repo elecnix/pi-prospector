@@ -133,6 +133,9 @@ export async function prospectStats(args: string, ctx: ExtensionCommandContext):
 			"",
 			"  ── Analysis graph ──",
 			`  Nodes: ${s.analysis.nodes}   Edges: ${s.analysis.edges}   Runs: ${s.analysis.runs}`,
+			...(s.analysis.supersededNodes > 0
+				? [`  (current generation; ${s.analysis.supersededNodes} superseded node(s) kept as lineage — \`nodes --all-versions\` lists them)`]
+				: []),
 			...(kindLines.length > 0 ? ["  Nodes by kind:", ...kindLines] : []),
 			...(analyzerLines.length > 0 ? ["  Nodes by analyzer:", ...analyzerLines] : []),
 			"",
