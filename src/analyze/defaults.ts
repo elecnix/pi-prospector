@@ -12,6 +12,8 @@ import { turnPairLLMAnalyzer } from "./analyzers/turn-pair-llm/index.js";
 import { assistantCognitionAnalyzer } from "./analyzers/assistant-cognition/index.js";
 import { sessionOverviewAnalyzer } from "./analyzers/session-overview/index.js";
 import { toolTrajectoryAnalyzer } from "./analyzers/tool-trajectory/index.js";
+import { taskToolMismatchAnalyzer } from "./analyzers/task-tool-mismatch/index.js";
+import { toolInventoryTaxAnalyzer } from "./analyzers/tool-inventory-tax/index.js";
 import { contextEconomyAnalyzer } from "./analyzers/context-economy/index.js";
 import { cacheEconomyAnalyzer } from "./analyzers/cache-economy/index.js";
 import { routingOpportunityAnalyzer } from "./analyzers/routing-opportunity/index.js";
@@ -28,6 +30,7 @@ import { presidioAnalyzer } from "./analyzers/presidio/index.js";
 import { piicatcherAnalyzer } from "./analyzers/piicatcher/index.js";
 import { dataprofilerAnalyzer } from "./analyzers/dataprofiler/index.js";
 import { failureModesAnalyzer } from "./analyzers/failure-modes/index.js";
+import { groundedClaimsAnalyzer } from "./analyzers/grounded-claims/index.js";
 import { uncompletedLeadsAnalyzer } from "./analyzers/uncompleted-leads/index.js";
 import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/index.js";
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
@@ -46,7 +49,9 @@ export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
+	"task-tool-mismatch",
 	"failure-modes",
+	"grounded-claims",
 	"revive-chains",
 	"uncompleted-leads",
 	"compression-checklist",
@@ -54,6 +59,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"session-ending",
 	"files-in-play",
 	"friction-accumulation",
+	"tool-inventory-tax",
 	"context-economy",
 	"cache-economy",
 	"routing-opportunity",
@@ -87,10 +93,28 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// it sits beside the other per-turn LLM analyzer.
 	assistantCognitionAnalyzer,
 	toolTrajectoryAnalyzer,
+	// What the task asked for versus what the agent did (#158): the first user
+	// message instructs a specific tool/command, that tool was in the session's
+	// recorded inventory, yet the agent made zero calls of it and rebuilt the
+	// result by hand with many substitute calls. The proposal points at the
+	// instructed-but-avoided tool — never at the substitute symptom (redundant
+	// reads/greps are context-economy's territory and are not the disease).
+	// Deterministic, standalone, session-level; reads the same action stream as
+	// the other trajectory-adjacent graders, before the synthesizer.
+	taskToolMismatchAnalyzer,
 	// What failed, of every kind. Deterministic and standalone; ordered next to
 	// tool-trajectory because the two read the same action stream — one for the
 	// shape of the sequence, the other for what went wrong in it.
 	failureModesAnalyzer,
+	// The claim-consistency twin of failure-modes (#100): both read the same
+	// action stream, but where failure-modes sees what the tools reported,
+	// grounded-claims checks what the agent *claimed* against it — ungrounded
+	// claims (a stated fact absent from that turn's tool results) and unacted
+	// requests (a concrete request no call in this or the next turn satisfied).
+	// Deterministic, turn-anchored metric nodes only (one per signal, anchored to
+	// the turn's user message); placed beside the other action-stream readers so
+	// a future session-overview consumer can declare it without reordering.
+	groundedClaimsAnalyzer,
 	// The orchestration-waste twin of failure-modes: both read the same action
 	// stream, but where failure-modes sees what broke, revive-chains sees the
 	// waste that no single call records — a chain of individually successful
@@ -140,6 +164,15 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// (no LLM); placed with the other session-level deterministic graders, before
 	// the synthesizer, so a future consumer can declare it without reordering.
 	frictionAccumulationAnalyzer,
+	// The price of what a session merely *carried* (#70): the set difference
+	// between the synced tool inventory and the tools actually invoked, with the
+	// unused definitions' static prefix cost estimated from per-bucket implied
+	// rates across billed turns. The cost-economy sibling of context-economy —
+	// that one prices what a session *read*, this prices what it *had available*
+	// and never called. Session-level, standalone, deterministic (no LLM); the
+	// UNKNOWN-inventory case is skipped, never read as empty. Placed with the
+	// other session-level deterministic graders, before the synthesizer.
+	toolInventoryTaxAnalyzer,
 	contextEconomyAnalyzer,
 	cacheEconomyAnalyzer,
 	routingOpportunityAnalyzer,

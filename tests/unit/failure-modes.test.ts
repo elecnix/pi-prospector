@@ -32,29 +32,11 @@ import {
 } from "../../src/analyze/analyzers/failure-modes/installed.js";
 import { buildToolStream } from "../../src/analyze/tool-stream.js";
 import type { MessageRow } from "../../src/analyze/types.js";
+import { makeMessageRow } from "./helpers.js";
 
 // ──────────────────── helpers ────────────────────
 
-let seq = 0;
-
-function msg(over: Partial<MessageRow>): MessageRow {
-	return {
-		id: over.id ?? `m${seq++}`,
-		session_id: "s1",
-		parent_id: null,
-		timestamp: null,
-		role: "assistant",
-		content_text: null,
-		content_thinking: null,
-		tool_calls: null,
-		tool_results: null,
-		model: null,
-		cost_usd: null,
-		stop_reason: null,
-		error_message: null,
-		...over,
-	};
-}
+const msg = makeMessageRow;
 
 function assistantFailure(id: string, error: string, costUsd: number | null = null): MessageRow {
 	return msg({ id, role: "assistant", stop_reason: "error", error_message: error, cost_usd: costUsd });
@@ -90,6 +72,27 @@ function callAndResult(
 }
 
 const NO_INSTALLS = { names: new Set<string>(), known: true };
+
+/**
+ * One failed bash call per command: an assistant tool-call row paired with its
+ * error-flagged result row. Fixture for grouping/proposal tests.
+ */
+function failedBashCalls(commands: string[]): MessageRow[] {
+	const rows: MessageRow[] = [];
+	for (const cmd of commands) {
+		const id = `c${rows.length / 2}`;
+		rows.push(
+			msg({ id: `a-${id}`, role: "assistant", tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command: cmd } }]) }),
+			msg({
+				id: `r-${id}`,
+				role: "toolResult",
+				content_text: "",
+				tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError: true, textLength: 0 }]),
+			}),
+		);
+	}
+	return rows;
+}
 
 // ──────────────────── the catalogue ────────────────────
 
@@ -441,20 +444,7 @@ describe("groupFailures", () => {
 
 describe("classification from the call", () => {
 	it("groups a silent grep failure under the signal class, keyed by the command", () => {
-		const rows: MessageRow[] = [];
-		for (const cmd of ["grep -n A f", "grep -n B f", "grep -n A f"]) {
-			const id = `c${rows.length}`;
-			rows.push(
-				msg({ id: `a-${id}`, role: "assistant", tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command: cmd } }]) }),
-				msg({
-					id: `r-${id}`,
-					role: "toolResult",
-					content_text: "",
-					tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError: true, textLength: 0 }]),
-				}),
-			);
-		}
-		const groups = groupFailures(buildToolStream(rows));
+		const groups = groupFailures(buildToolStream(failedBashCalls(["grep -n A f", "grep -n B f", "grep -n A f"])));
 		const g = groups.find((x) => x.class_id === "exit-status-signal")!;
 		assert.equal(g.count, 3);
 		// Two distinct commands, so two distinct causes — the repeat collapses.
@@ -597,39 +587,13 @@ describe("buildProposals", () => {
 	});
 
 	it("merges repeated causes in the evidence instead of listing them one by one", () => {
-		const rows: MessageRow[] = [];
-		for (const cmd of ["grep -n A f", "grep -n B f", "grep -n C f"]) {
-			const id = `c${rows.length}`;
-			rows.push(
-				msg({ id: `a-${id}`, role: "assistant", tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command: cmd } }]) }),
-				msg({
-					id: `r-${id}`,
-					role: "toolResult",
-					content_text: "",
-					tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError: true, textLength: 0 }]),
-				}),
-			);
-		}
-		const [p] = proposalsFor(rows);
+		const [p] = proposalsFor(failedBashCalls(["grep -n A f", "grep -n B f", "grep -n C f"]));
 		assert.ok(p!.evidence.includes("a search that found nothing ×3"));
 		assert.ok(!p!.evidence.includes("×1;"), "three distinct commands, one cause the reader cares about");
 	});
 
 	it("does not say a call 'failed' when the class is that nothing failed", () => {
-		const rows: MessageRow[] = [];
-		for (let i = 0; i < 3; i++) {
-			const id = `c${i}`;
-			rows.push(
-				msg({ id: `a-${id}`, role: "assistant", tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command: `grep -n X${i} f` } }]) }),
-				msg({
-					id: `r-${id}`,
-					role: "toolResult",
-					content_text: "",
-					tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError: true, textLength: 0 }]),
-				}),
-			);
-		}
-		const [p] = proposalsFor(rows);
+		const [p] = proposalsFor(failedBashCalls(["grep -n X0 f", "grep -n X1 f", "grep -n X2 f"]));
 		assert.ok(!p!.title.includes("failed"));
 		assert.ok(!p!.summary.includes("failed with"));
 		assert.ok(p!.detail.includes("|| true"));

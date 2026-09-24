@@ -22,7 +22,7 @@ import { Type, type Static } from "typebox";
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { type TurnPair } from "./build.js";
-import { classifyCorrection, detectRepetition } from "./patterns.js";
+import { classifyCorrection, detectRepetition, countDeliberationParagraphs } from "./patterns.js";
 import { DEFAULT_TURN_PAIR_CORE_CONFIG, type TurnPairCoreConfig } from "./config.js";
 
 export const TurnPairCoreProperties = Type.Object({
@@ -33,6 +33,8 @@ export const TurnPairCoreProperties = Type.Object({
 	correction_patterns: Type.Array(Type.String()),
 	correction_text: Type.Union([Type.String(), Type.Null()]),
 	tool_call_count: Type.Number(),
+	/** Paragraphs in the assistant's reasoning; null when no reasoning was recorded for the turn. */
+	deliberation_paragraphs: Type.Union([Type.Number(), Type.Null()]),
 	tool_failure_count: Type.Number(),
 	tool_result_bytes: Type.Number(),
 	tool_waste_bytes: Type.Number(),
@@ -55,7 +57,7 @@ export const TURN_PAIR_CORE_DEF: AnalyzerDef = {
 export const TURN_PAIR_CORE_VERSION: AnalyzerVersion = {
 	analyzerId: TURN_PAIR_CORE_DEF.id,
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-pair-core/index.ts",
 };
@@ -68,6 +70,12 @@ export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairC
 	const toolResultBytes = pair.toolResults.reduce((sum, r) => sum + r.textLength, 0);
 	const toolWasteBytes = toolResultBytes > config.toolWasteByteThreshold ? toolResultBytes - config.toolWasteByteThreshold : 0;
 	const emptyResponse = pair.assistantText.trim().length === 0 && pair.toolCalls.length === 0;
+
+	// Deliberation: paragraphs in the preserved reasoning text. Reasoning is not
+	// always present or preserved (hosts may drop it), so an absent/empty
+	// thinkingText carries null — "not recorded" — never 0, which would falsely
+	// assert that no thinking happened.
+	const deliberationParagraphs = pair.thinkingText.trim().length > 0 ? countDeliberationParagraphs(pair.thinkingText) : null;
 
 	let score = 0;
 	if (correction.detected) score += config.correctionWeight;
@@ -84,6 +92,7 @@ export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairC
 		correction_patterns: correction.patterns,
 		correction_text: correction.correctionText,
 		tool_call_count: pair.toolCalls.length,
+		deliberation_paragraphs: deliberationParagraphs,
 		tool_failure_count: toolFailureCount,
 		tool_result_bytes: toolResultBytes,
 		tool_waste_bytes: toolWasteBytes,

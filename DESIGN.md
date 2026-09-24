@@ -475,13 +475,26 @@ list — the system **learns the vocabulary from the corpus**.
   rather than to one session, and which therefore reads a declared dependency's
   nodes across all sessions. Dependency-scoped visibility still holds: only the
   *session* scope is lifted, never the dependency scope.
-- **Phrase** — *withdrawn.* Multi-word entries were tried and removed: over a real
-  corpus they were 84% of all adjudications and 75% of all hits while being
-  overwhelmingly noise, because adjacent words in running prose are not idioms.
-  The genuine cases (`laisse tomber`, `trop lent`) are real but too rare to find
-  by adjudicating every adjacent pair. A future attempt needs a different
-  mechanism — a curated seed list, or statistical n-gram selection — not per-pair
-  judgement.
+- **Phrase** — one normalised two-word entry (`laisse tomber`, `trop lent`),
+  nominated from adjacent tokens within a single sentence segment, judged once
+  for the whole corpus exactly like any other term, and matched at turn level by
+  a windowed n-gram compare over the same segmentation nomination used. A
+  phrase's source ref stays `{kind: "term", id: "laisse tomber"}` — a phrase is
+  just a longer corpus-keyed subject, so it inherits the lexicon's cache,
+  lineage, and prompt envelope unchanged; nomination changing (not adjudication)
+  is what alters what gets judged.
+  A first attempt (#40) judged *every* adjacent pair uncapped and was removed:
+  over a real corpus such pairs were 84% of all adjudications and 75% of all hits
+  while being overwhelmingly noise, because adjacent words in running prose are
+  not idioms. Phrases return under a conservative mechanism: frequency-ranked
+  bigrams under a deliberately tight per-session nomination cap, which spends the
+  permanent verdict cache on repeated candidates instead of flooding it with
+  every pair that ever occurred. Trigrams remain unbuilt until bigram
+  adjudications prove clean enough to widen the window.
+  When a term and an extending phrase both match one turn, both hits are emitted
+  (existence stays additive) but weight follows **longest-match-preferred**: a
+  shorter hit fully covered by longer matches carries weight 0, so overlapping
+  spans are never counted twice toward ranking.
 - **Nomination** — the deterministic first stage: tokenise a session's user
   messages and put forward the distinct terms worth judging, ranked by frequency
   and capped per session. Nomination is language-blind by design — no stopword
@@ -498,6 +511,15 @@ list — the system **learns the vocabulary from the corpus**.
   vocabulary: shouting, repeated punctuation, a held-down letter. These need
   neither a lexicon nor a language, and they exist so that a user whose words the
   lexicon has never seen is still legible.
+- **Modulator** — a turn-level form feature that fires no hit of its own but
+  *scales the weight* of the signals already present on that same turn. It is
+  distinct from a signal: a signal exists on its own and produces a hit node; a
+  modulator produces nothing when there is nothing to modulate, and only ever
+  changes `weight` — feeding ranking, never existence. Node identity stays one
+  node per (turn, signal). The first modulator is a lone exclamation mark: a
+  single `!` carries no polarity (`great!` and `hi!` are not frustration), so it
+  can never be a signal of its own, yet it amplifies whatever frustration the
+  turn's words already express.
 
 **The lexicon widens recall; it must never gate it.** Every path that detected
 friction before it existed — tool failures, re-asking, empty replies, wasted

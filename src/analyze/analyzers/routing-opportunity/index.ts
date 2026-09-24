@@ -16,8 +16,9 @@
  * downshifts is a router that loses money on retries:
  *
  *   - downshift  — the turn showed every marker of being easy (few tool calls,
- *                  small context, a bounded edit, no correction, no trajectory
- *                  pathology). Running it on a powerful model was probably waste.
+ *                  small context, a bounded edit, little recorded deliberation,
+ *                  no correction, no trajectory pathology). Running it on a
+ *                  powerful model was probably waste.
  *   - escalate   — a correction or a trajectory pathology (stuck-loop /
  *                  oscillation / pre-flight gap) indicates the turn's model
  *                  failed and retried; the retries often cost more than one
@@ -76,6 +77,8 @@ export const RoutingProperties = Type.Object({
 	turn_cost_usd: Type.Union([Type.Number(), Type.Null()]),
 	features: Type.Object({
 		tool_call_count: Type.Number(),
+		/** Paragraphs in the turn's preserved reasoning, or null when none was recorded. */
+		deliberation_paragraphs: Type.Union([Type.Number(), Type.Null()]),
 		context_tokens: Type.Number(),
 		edit_chars: Type.Number(),
 		correction_detected: Type.Boolean(),
@@ -104,7 +107,7 @@ export const ROUTING_OPPORTUNITY_DEF: AnalyzerDef = {
 export const ROUTING_OPPORTUNITY_VERSION: AnalyzerVersion = {
 	analyzerId: ROUTING_OPPORTUNITY_DEF.id,
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/routing-opportunity/index.ts",
 };
@@ -119,6 +122,7 @@ interface TurnInputs {
 		correction_detected: boolean;
 		tool_failure_count: number;
 		friction_score: number;
+		deliberation_paragraphs: number | null;
 	} | null;
 	frustration: boolean;
 	trajectorySignals: Array<{ pattern: string; messageIds: string[] }>;
@@ -164,6 +168,10 @@ export function evaluateTurn(inputs: TurnInputs): RoutingProperties {
 	const toolCallCount = pair.toolCalls.length;
 	const correction = inputs.core?.correction_detected ?? false;
 	const toolFailure = inputs.core?.tool_failure_count ?? 0;
+	// Deliberation paragraphs come from the turn-pair-core node; null means no
+	// reasoning was recorded for the turn — absence of evidence, never read as
+	// "no thinking happened" (so it never blocks easiness on its own).
+	const deliberationParagraphs = inputs.core?.deliberation_paragraphs ?? null;
 
 	// Which trajectory pathologies touch this turn (by message id overlap).
 	let stuckLoop = false;
@@ -183,7 +191,8 @@ export function evaluateTurn(inputs: TurnInputs): RoutingProperties {
 		!hard &&
 		toolCallCount <= inputs.cfg.easyToolCallMax &&
 		contextTokens <= inputs.cfg.easyContextTokensMax &&
-		editChars <= inputs.cfg.easyEditCharsMax;
+		editChars <= inputs.cfg.easyEditCharsMax &&
+		(deliberationParagraphs ?? 0) <= inputs.cfg.easyDeliberationParagraphsMax;
 
 	const verdict: RoutingVerdict = hard ? "escalate" : easy ? "downshift" : "neutral";
 
@@ -195,6 +204,7 @@ export function evaluateTurn(inputs: TurnInputs): RoutingProperties {
 		turn_cost_usd: turnCostUsd,
 		features: {
 			tool_call_count: toolCallCount,
+			deliberation_paragraphs: deliberationParagraphs,
 			context_tokens: contextTokens,
 			edit_chars: editChars,
 			correction_detected: correction,
@@ -250,15 +260,16 @@ export const routingOpportunityAnalyzer: Analyzer = {
 		}
 
 		// turn-pair-core per-turn properties, keyed by user_message_id.
-		const coreProps = new Map<string, { correction_detected: boolean; tool_failure_count: number; friction_score: number }>();
+		const coreProps = new Map<string, { correction_detected: boolean; tool_failure_count: number; friction_score: number; deliberation_paragraphs: number | null }>();
 		for (const n of ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? []) {
 			try {
-				const c = JSON.parse(n.content_json) as { user_message_id?: string; correction_detected?: boolean; tool_failure_count?: number; friction_score?: number };
+				const c = JSON.parse(n.content_json) as { user_message_id?: string; correction_detected?: boolean; tool_failure_count?: number; friction_score?: number; deliberation_paragraphs?: number | null };
 				if (typeof c.user_message_id === "string") {
 					coreProps.set(c.user_message_id, {
 						correction_detected: !!c.correction_detected,
 						tool_failure_count: typeof c.tool_failure_count === "number" ? c.tool_failure_count : 0,
 						friction_score: typeof c.friction_score === "number" ? c.friction_score : 0,
+						deliberation_paragraphs: typeof c.deliberation_paragraphs === "number" ? c.deliberation_paragraphs : null,
 					});
 				}
 			} catch {
@@ -341,6 +352,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 			turn_cost_usd: null,
 			features: {
 				tool_call_count: 0,
+				deliberation_paragraphs: null,
 				context_tokens: 0,
 				edit_chars: 0,
 				correction_detected: false,

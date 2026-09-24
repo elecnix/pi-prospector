@@ -9,10 +9,13 @@ export interface RoutingConfig {
 	easyContextTokensMax: number;
 	/** A turn whose edit size is at most this many chars counts as easy. */
 	easyEditCharsMax: number;
+	/** A turn with at most this many deliberation paragraphs in its reasoning counts as easy (null = not recorded, never blocks). */
+	easyDeliberationParagraphsMax: number;
 }
 
 export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
 	easyToolCallMax: 2,
 	easyContextTokensMax: 20000,
 	easyEditCharsMax: 2000,
+	easyDeliberationParagraphsMax: 3,
 };

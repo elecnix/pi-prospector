@@ -15,7 +15,7 @@ import {
 	type ScriptJudgement,
 } from "../../src/analyze/analyzers/language-mismatch/detect.js";
 import type { TurnPair } from "../../src/analyze/analyzers/turn-pair-core/build.js";
-import type { MessageRow } from "../../src/analyze/types.js";
+import { makeMessageRow } from "./helpers.js";
 
 const CONFIG: LanguageMismatchConfig = { ...DEFAULT_LANGUAGE_MISMATCH_CONFIG };
 
@@ -42,24 +42,8 @@ function pair(userText: string, assistantText: string): TurnPair {
 	};
 }
 
-let rowSeq = 0;
-function row(role: string, text: string): MessageRow {
-	const id = `row-${rowSeq++}`;
-	return {
-		id,
-		session_id: "s",
-		parent_id: null,
-		timestamp: null,
-		role,
-		content_text: text,
-		content_thinking: null,
-		tool_calls: null,
-		tool_results: null,
-		model: null,
-		cost_usd: null,
-		stop_reason: null,
-		error_message: null,
-	};
+function row(role: string, text: string): ReturnType<typeof makeMessageRow> {
+	return makeMessageRow({ role, content_text: text, session_id: "s" });
 }
 
 // Long synthetic sentences per script (each well past the 40-letter minimum,

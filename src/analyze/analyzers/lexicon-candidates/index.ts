@@ -27,12 +27,19 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { rankTerms, tokenize, TermCount } from "./tokenize.js";
+import { rankPhrases } from "./phrases.js";
 import { DEFAULT_LEXICON_CANDIDATES_CONFIG, type LexiconCandidatesConfig } from "./config.js";
 import { Type, type Static } from "typebox";
 
 export const LexiconCandidatesProperties = Type.Object({
 	/** Nominated single terms, most frequent first. */
 	terms: Type.Array(TermCount),
+	/**
+	 * Nominated two-word phrases (adjacent tokens within one sentence segment),
+	 * most frequent first, under their own cap. A phrase is judged as a unit by
+	 * `frustration-lexicon`, keyed on its space-joined normalised form.
+	 */
+	phrases: Type.Array(TermCount),
 	/** How many user messages were read. */
 	user_message_count: Type.Number(),
 	/** Distinct tokens seen before the cap was applied. */
@@ -46,7 +53,7 @@ export const LEXICON_CANDIDATES_DEF: AnalyzerDef = {
 	id: "lexicon-candidates",
 	label: "Lexicon Candidates (deterministic)",
 	description:
-		"Tokenises a session's user messages and nominates the distinct terms worth adjudicating for the frustration lexicon, ranked by frequency and capped per session. Language-blind: no stopwords, no stemming, only a shape filter that drops code, paths, and identifiers. No LLM.",
+		"Tokenises a session's user messages and nominates the distinct terms worth adjudicating for the frustration lexicon, ranked by frequency and capped per session: single words without limit in practice, plus two-word phrases from adjacent tokens within a sentence under their own tighter cap. Language-blind: no stopwords, no stemming, only a shape filter that drops code, paths, and identifiers. No LLM.",
 	anchorSpan: "full_session",
 	dependencies: [],
 	outputSchema: LexiconCandidatesProperties,
@@ -62,7 +69,13 @@ export const LEXICON_CANDIDATES_VERSION: AnalyzerVersion = {
 	// 1.3: hyphenated compounds are kept whole. Splitting them nominated bare
 	// prefixes, and `re` and `non` were duly judged as frustration and fired 1,110
 	// times between them over a real corpus.
-	minor: 3,
+	// 1.4: phrases return, conservatively (issue #40). Adjacent bigrams within a
+	// sentence segment are nominated again — but ranked by frequency and capped
+	// per session (`maxPhrasesPerSession`, default 50) so the permanent corpus-wide
+	// verdict cache is spent on repeated candidates rather than flooded with junk,
+	// which is what sank 1.2's predecessor. Trigrams stay out; see the TODO in
+	// tokenize.ts.
+	minor: 4,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/lexicon-candidates/index.ts",
 };
@@ -111,7 +124,8 @@ export const lexiconCandidatesAnalyzer: Analyzer = {
 
 		const allTokens = texts.flatMap((t) => tokenize(t));
 		const properties: LexiconCandidatesProperties = {
-				terms: rankTerms(texts, config.maxTermsPerSession),
+			terms: rankTerms(texts, config.maxTermsPerSession),
+			phrases: rankPhrases(texts, config.maxPhrasesPerSession),
 			user_message_count: texts.length,
 			distinct_token_count: new Set(allTokens).size,
 			total_token_count: allTokens.length,

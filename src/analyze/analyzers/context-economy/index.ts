@@ -103,6 +103,13 @@ const ContextEconomyFlag = Type.Union([
 	}),
 ]);
 
+/** One recorded read of a path as a byte range: [start, end). `end` is `Infinity` when the limit is unknown (rest of file). */
+export const ReadRange = Type.Object({
+	start: Type.Number(),
+	end: Type.Number(),
+});
+export type ReadRange = Static<typeof ReadRange>;
+
 const ContextEconomyRawProposal = Type.Object({
 	target_type: Type.String(),
 	target_path: Type.Optional(Type.String()),
@@ -170,8 +177,12 @@ export const CONTEXT_ECONOMY_VERSION: AnalyzerVersion = {
 	// compaction policy, not just accounts for it — per-cycle carry-avoided vs
 	// rebuild cost, with fired-too-late and fired-too-often flags and new config
 	// keys. Existing 1.2 nodes go stale/major and are revisable.
+	// 2.1 (issue #156): minor. Redundant-read detection is slice-aware — reads
+	// count as duplicates only when their byte ranges overlap, so paginated
+	// reads of one large file no longer false-positive. Same node shape, fewer
+	// redundant-read flags; existing 2.0 nodes go stale/minor and are revisable.
 	major: 2,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/context-economy/index.ts",
 };
@@ -232,6 +243,54 @@ export const DEFAULT_CONTEXT_ECONOMY_CONFIG: ContextEconomyConfig = {
 	/** Rebuild cost above this is expensive enough to be a candidate fired-too-often. */
 	firedTooOftenRebuildTokens: 50_000,
 };
+
+// ── slice-aware redundant-read counting (issue #156) ──
+
+/**
+ * Coerce a tool-call argument into a finite non-negative number, or null when
+ * it is absent / not numeric.
+ */
+function nonNegNumberArg(v: unknown): number | null {
+	if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
+	if (typeof v === "string" && v.trim() !== "") {
+		const n = Number(v);
+		if (Number.isFinite(n) && n >= 0) return n;
+	}
+	return null;
+}
+
+/**
+ * Build a read's byte range from its call arguments. A missing offset is 0;
+ * a missing (or unknown) limit means "rest of file", i.e. an unbounded range.
+ * A whole-file read is therefore [0, ∞) and overlaps every other read of the
+ * same path, while two disjoint slices never overlap.
+ */
+export function readRangeFromArgs(args: Record<string, unknown> | undefined): ReadRange {
+	const offset = nonNegNumberArg(args?.["offset"]) ?? 0;
+	const limit = nonNegNumberArg(args?.["limit"]);
+	return { start: offset, end: limit === null ? Infinity : offset + limit };
+}
+
+/** Two read ranges overlap iff their half-open intervals intersect. */
+export function readRangesOverlap(a: ReadRange, b: ReadRange): boolean {
+	return Math.max(a.start, b.start) < Math.min(a.end, b.end);
+}
+
+/**
+ * Count how many of a path's reads re-read content some earlier read already
+ * loaded: a read counts when its range overlaps ANY other read of that path.
+ * Paginating a large file (disjoint slices) yields 0; genuinely re-reading an
+ * overlapping region — including whole-file reads before or after slices —
+ * makes both participants of the overlap count.
+ */
+export function countRedundantReads(ranges: ReadRange[]): number {
+	let count = 0;
+	for (let i = 0; i < ranges.length; i++) {
+		const r = ranges[i]!;
+		if (ranges.some((other, j) => j !== i && readRangesOverlap(r, other))) count++;
+	}
+	return count;
+}
 
 // ── threshold defaults for analyze() (plan already used config values) ──
 
@@ -408,7 +467,10 @@ export const contextEconomyAnalyzer: Analyzer = {
 		let turns = 0;
 		const carryByTool: Record<string, number> = {};
 		const results: Array<{ tool: string; tokens: number; turnsAfter: number; carry: number; ordinal: number }> = [];
-		const readPathCounts: Record<string, number> = {};
+		// Slice-aware read tracking (issue #156): reads are recorded as byte ranges
+	// per path, so paginated reads of one large file (disjoint slices) are not
+	// flagged as redundant — only genuinely overlapping content reads are.
+	const readPathRanges: Record<string, ReadRange[]> = {};
 		const skillEvents: SkillEvent[] = [];
 
 		for (let i = 0; i < n; i++) {
@@ -432,7 +494,9 @@ export const contextEconomyAnalyzer: Analyzer = {
 					for (const c of calls) {
 						if (c.name === "read") {
 							const p = c.arguments?.["path"];
-							if (typeof p === "string") readPathCounts[p] = (readPathCounts[p] ?? 0) + 1;
+							if (typeof p === "string") {
+								(readPathRanges[p] ??= []).push(readRangeFromArgs(c.arguments));
+							}
 						}
 						if (c.name === "Skill") {
 							const skillName = c.arguments?.["skill"];
@@ -483,7 +547,8 @@ export const contextEconomyAnalyzer: Analyzer = {
 				flags.push({ kind: "oversized-tool-result", tool: res.tool, tokens: Math.round(res.tokens), ordinal: res.ordinal });
 			}
 		}
-		for (const [path, count] of Object.entries(readPathCounts)) {
+		for (const [path, ranges] of Object.entries(readPathRanges)) {
+			const count = countRedundantReads(ranges);
 			if (count >= 2) flags.push({ kind: "redundant-read", path, count });
 		}
 

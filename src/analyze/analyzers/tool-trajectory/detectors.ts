@@ -7,6 +7,7 @@
  */
 
 import type { NormalizedToolCall } from "./arg-parser.js";
+import { fingerprintHex, fingerprintSimilarity, type ReasoningFingerprint } from "./reasoning-fingerprint.js";
 import { Type, type Static } from "typebox";
 
 export const TrajectoryPattern = Type.Union([
@@ -14,6 +15,7 @@ export const TrajectoryPattern = Type.Union([
 	Type.Literal("polling-loop"),
 	Type.Literal("oscillation"),
 	Type.Literal("pre-flight-gap"),
+	Type.Literal("thought-oscillation"),
 ]);
 export type TrajectoryPattern = Static<typeof TrajectoryPattern>;
 
@@ -37,6 +39,12 @@ export const TrajectorySignal = Type.Object({
 	cost_usd: Type.Union([Type.Number(), Type.Null()]),
 	/** Human-readable description. */
 	description: Type.String(),
+	/**
+	 * For thought-oscillation only: the highest pairwise fingerprint similarity
+	 * within the oscillating run, in [0, 1]. Absent on the tool-call patterns,
+	 * which have no similarity measure.
+	 */
+	similarity: Type.Optional(Type.Number()),
 });
 export type TrajectorySignal = Static<typeof TrajectorySignal>;
 
@@ -323,14 +331,132 @@ export function detectPreFlightGaps(
 }
 
 /**
+ * One reasoning turn offered to the thought-oscillation detector.
+ *
+ * Built from assistant messages that carry private reasoning (issue #117), with
+ * everything the detector needs already decided by the caller: whether the
+ * block's own turn also made a state-changing tool call (re-think-then-act is
+ * not oscillation), and the block's lexical fingerprint.
+ */
+export interface ReasoningBlock {
+	/** Message id of the assistant message carrying the thinking content. */
+	messageId: string;
+	/** Zero-based turn ordinal: how many user-message boundaries preceded this message. */
+	turnIndex: number;
+	/** Whether any state-changing tool call was made in this same turn. */
+	stateChanging: boolean;
+	/** Lexical fingerprint of the block's normalised prose shingles. */
+	fingerprint: ReasoningFingerprint;
+	/** The billed dollar cost of the assistant message, or null when unrecorded. */
+	costUsd: number | null;
+}
+
+/** Thought-oscillation thresholds; `oscillationWindow` is shared with action oscillation. */
+export interface ThoughtOscillationConfig {
+	oscillationWindow: number;
+	thoughtOscillationSimilarity: number;
+	thoughtOscillationMinRepeat: number;
+}
+
+/** Sum the billed cost over a run's participating reasoning blocks (same rule as tool signals). */
+function reasoningSignalCost(blocks: ReasoningBlock[]): number | null {
+	let sum = 0;
+	let any = false;
+	for (const b of blocks) {
+		if (typeof b.costUsd === "number" && Number.isFinite(b.costUsd)) {
+			sum += b.costUsd;
+			any = true;
+		}
+	}
+	return any && sum > 0 ? sum : null;
+}
+
+/**
+ * Detect thought-oscillation: repeated near-duplicate reasoning without progress
+ * (issue #117). Where stuck-loop detects the agent re-*doing* the same thing,
+ * this detects it re-*thinking* the same thing — a run of thinking blocks whose
+ * fingerprints sit above the similarity threshold within a sliding window of
+ * turns.
+ *
+ * Two safeguards keep legitimate reconsideration out:
+ *
+ *   1. Only blocks unaccompanied by a state-changing tool call in their own turn
+ *      qualify. A turn where the agent re-thought and then acted made progress.
+ *   2. A single repetition never fires: `thoughtOscillationMinRepeat` (default 2)
+ *      counts near-duplicate repetitions beyond the first block, so a pair of
+ *      identical thoughts — the agent reconsidered once — stays quiet, while a
+ *      run of three or more fires.
+ *
+ * The window (`oscillationWindow`, shared with action oscillation) bounds how far
+ * apart two blocks may sit in turns and still count as consecutive members of a
+ * run; a qualifying pair separated by more than that ends the run.
+ */
+export function detectThoughtOscillation(
+	blocks: ReasoningBlock[],
+	config: ThoughtOscillationConfig,
+): TrajectorySignal[] {
+	const signals: TrajectorySignal[] = [];
+	let run: ReasoningBlock[] = [];
+	let maxSimilarity = 0;
+
+	const flush = (): void => {
+		// Safeguard 2: a run needs at least minRepeat near-duplicate repetitions
+		// beyond the first block — one repetition is reconsideration, a run is a loop.
+		if (run.length - 1 >= config.thoughtOscillationMinRepeat) {
+			signals.push({
+				pattern: "thought-oscillation",
+				tool: "reasoning",
+				normalizedArgs: `fingerprint:${fingerprintHex(run[0]!.fingerprint)}`,
+				count: run.length,
+				messageIds: run.map((p) => p.messageId),
+				cost_usd: reasoningSignalCost(run),
+				description: `Thought oscillation: ${run.length} near-duplicate reasoning blocks without progress (similarity ${maxSimilarity.toFixed(2)})`,
+				similarity: maxSimilarity,
+			});
+		}
+		run = [];
+		maxSimilarity = 0;
+	};
+
+	for (const block of blocks) {
+		// Safeguard 1: a turn that also changed state made progress; it breaks any
+		// run rather than merely being skipped, so two honest runs separated by an
+		// action never merge into one false oscillation.
+		if (block.stateChanging) {
+			flush();
+			continue;
+		}
+		const prev = run[run.length - 1];
+		if (
+			prev &&
+			(block.turnIndex - prev.turnIndex > config.oscillationWindow ||
+				fingerprintSimilarity(prev.fingerprint, block.fingerprint) < config.thoughtOscillationSimilarity)
+		) {
+			flush();
+		}
+		run.push(block);
+		const last = run[run.length - 1]!;
+		const secondLast = run[run.length - 2];
+		if (secondLast) {
+			maxSimilarity = Math.max(maxSimilarity, fingerprintSimilarity(secondLast.fingerprint, last.fingerprint));
+		}
+	}
+	flush();
+	return signals;
+}
+
+/**
  * Run all detectors and return combined, deduplicated signals.
  */
 export function detectAllSignals(
 	calls: ToolCallWithResult[],
+	reasoningBlocks: ReasoningBlock[],
 	config: {
 		stuckLoopMin: number;
 		pollingLoopMin: number;
 		oscillationWindow: number;
+		thoughtOscillationSimilarity: number;
+		thoughtOscillationMinRepeat: number;
 	},
 ): TrajectorySignal[] {
 	const stuckLoops = detectStuckLoops(calls, config.stuckLoopMin);
@@ -346,7 +472,17 @@ export function detectAllSignals(
 		(sl) => !sl.messageIds.every((id) => pollingIds.has(id)),
 	);
 
-	return [...filteredStuckLoops, ...pollingLoops, ...oscillations, ...preFlightGaps];
+	return [
+		...filteredStuckLoops,
+		...pollingLoops,
+		...oscillations,
+		...preFlightGaps,
+		...detectThoughtOscillation(reasoningBlocks, {
+			oscillationWindow: config.oscillationWindow,
+			thoughtOscillationSimilarity: config.thoughtOscillationSimilarity,
+			thoughtOscillationMinRepeat: config.thoughtOscillationMinRepeat,
+		}),
+	];
 }
 
 // ──────────────────────────── helpers ────────────────────────────

@@ -32,8 +32,9 @@
  * Everything here is pure and deterministic.
  */
 
-import type { MessageRow } from "../../types.js";
+import { looksLikePath } from "../../path-utils.js";
 import { buildToolStream, type ToolInvocation } from "../../tool-stream.js";
+import type { MessageRow } from "../../types.js";
 import {
 	DEFAULT_FILES_IN_PLAY_CONFIG,
 	type FilesInPlayConfig,
@@ -109,22 +110,6 @@ function tokenize(command: string): Token[] {
 	}
 	if (hasContent || cur.length > 0) tokens.push({ text: cur, quoted: hasContent });
 	return tokens;
-}
-
-/**
- * Whether a bare token looks like a file path rather than a subcommand, flag
- * value, URL, or punctuation. Deliberately conservative: a slash anywhere
- * (absolute or relative paths), or a dotted final segment (`name.ext`,
- * `.env`, `archive.tar.gz`). Flags, URLs, operators, and bare words
- * (`test`, `build`) are rejected.
- */
-export function looksLikePath(token: string): boolean {
-	if (token.includes("://")) return false; // URLs, not files
-	if (/^[|&;<>()]+$/.test(token)) return false; // shell operators
-	if (token.includes("/")) return true;
-	// Dotted final segment: something before the dot, a non-empty extension,
-	// and no trailing dot. Dotfiles (`.env`) qualify; `1.` does not.
-	return /^[^.].*\.[^.]+$/.test(token);
 }
 
 /** Strip trailing shell punctuation a path may drag along (`src/x.ts;`). */
