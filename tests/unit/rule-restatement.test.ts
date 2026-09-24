@@ -163,6 +163,10 @@ describe("locateQuote and groundJudgement", () => {
 		assert.equal(locateQuote("Worktrees must use absolute paths.", files, "/g/AGENTS.md"), "/p/AGENTS.md");
 	});
 
+	it("is case-sensitive: a quote must match the file's capitalisation", () => {
+		assert.equal(locateQuote("worktrees must use absolute paths.", files, "/p/AGENTS.md"), null);
+	});
+
 	it("rejects an invented or trivially short quote", () => {
 		assert.equal(locateQuote("Always ask before deleting branches.", files, "/g/AGENTS.md"), null);
 		assert.equal(locateQuote("paths", files, "/p/AGENTS.md"), null);

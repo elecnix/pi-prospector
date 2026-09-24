@@ -111,14 +111,15 @@ export function extractJudgement(structured: unknown, text: string): JudgeRestat
 }
 
 function squash(s: string): string {
-	return s.replace(/\s+/g, " ").trim().toLowerCase();
+	return s.replace(/\s+/g, " ").trim();
 }
 
 /**
  * Where the quote actually appears: the cited file if it contains it, else the
  * first corpus file that does. Null when the quote is in none of them — the
- * model's claim that the rule exists is then unsupported. Markdown emphasis and
- * list markers are ignored so a quote without the `**` still matches.
+ * model's claim that the rule exists is then unsupported. Whitespace, markdown
+ * emphasis and list markers are ignored so a quote without the `**` still
+ * matches; case is not, because a copied quote keeps its capitalisation.
  */
 export function locateQuote(quote: string, files: ReadonlyArray<{ path: string; content: string }>, citedPath: string): string | null {
 	const strip = (s: string): string => squash(s.replace(/[*_`>]/g, "").replace(/(^|\n)\s*(?:[-+]|\d+\.)\s+/g, "$1"));
