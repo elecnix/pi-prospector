@@ -38,6 +38,7 @@ import { compressionChecklistAnalyzer } from "./analyzers/compression-checklist/
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
+import { similarityClusterAnalyzer } from "./analyzers/similarity-cluster/index.js";
 import { frictionAccumulationAnalyzer } from "./analyzers/friction-accumulation/index.js";
 import { reviveChainsAnalyzer } from "./analyzers/revive-chains/index.js";
 import { tokenUnitsAnalyzer } from "./analyzers/token-units/index.js";
@@ -62,6 +63,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"language-mismatch",
 	"session-ending",
 	"files-in-play",
+	"similarity-cluster",
 	"friction-accumulation",
 	"tool-inventory-tax",
 	"context-economy",
@@ -181,6 +183,16 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// the other session-level deterministic graders, before the synthesizer, so
 	// a future consumer can declare it as a dependency without reordering.
 	filesInPlayAnalyzer,
+	// Near-duplicate text clustering over three domains (#145): user prompts,
+	// normalised tool calls, and tool results, pooled across the sessions of a
+	// repo (via the same cwd-grouped raw-message mechanism as cross-session
+	// contrast, committed to sibling content through source-set fingerprints)
+	// and within one session. Deterministic — shingle-index nomination,
+	// length-band pruning, LCS scoring, exact-hash classes plus non-transitive
+	// near-miss pairs; no LLM. Session-level, standalone; placed with the other
+	// session-level deterministic graders, before the synthesizer, so a future
+	// consumer can declare it as a dependency without reordering.
+	similarityClusterAnalyzer,
 	// The session-level accumulator over the per-turn friction signals (#101):
 	// consumes turn-pair-core scores, turn-frustration hit weights, and culminating
 	// tool-trajectory patterns (all three declared as dependencies — their node
