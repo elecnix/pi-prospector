@@ -171,6 +171,12 @@ function kindOfCall(
 export interface ClassifiedTurn {
 	turnIndex: number;
 	phase: PhaseNameType;
+	/**
+	 * A patch turn whose agent read, searched or ran tests before its first
+	 * edit. The turn still resolves to `patch` (one phase per turn), but it did
+	 * not patch blind — so it cannot be premature.
+	 */
+	workedBeforePatch: boolean;
 	userMessageId: string;
 	messageIds: string[];
 	sampleCommands: string[];
@@ -217,6 +223,7 @@ export function classifyTurnPhases(
 		turns.push({
 			turnIndex: current.turnIndex,
 			phase,
+			workedBeforePatch: phase === "patch" && workedBeforeFirstMutation(current.calls, testRe, checkRe),
 			userMessageId: current.userMessageId,
 			messageIds: current.messageIds,
 			sampleCommands: current.calls.slice(0, SAMPLE_COMMAND_CAP).map((c) => c.display),
@@ -232,14 +239,17 @@ export function classifyTurnPhases(
 			continue;
 		}
 		if (!current || !message.tool_calls) continue;
-		let parsed: Array<{ name?: unknown; arguments?: Record<string, unknown> }>;
+		let parsed: unknown;
 		try {
-			parsed = JSON.parse(message.tool_calls) as Array<{ name?: unknown; arguments?: Record<string, unknown> }>;
+			parsed = JSON.parse(message.tool_calls);
 		} catch (e) {
 			throw new Error(`phase-trajectory: unparseable tool_calls JSON on message ${message.id}: ${String(e)}`);
 		}
-		for (const call of parsed) {
-			if (typeof call.name !== "string") continue;
+		if (!Array.isArray(parsed)) {
+			throw new Error(`phase-trajectory: tool_calls on message ${message.id} is not a JSON array`);
+		}
+		for (const call of parsed as Array<{ name?: unknown; arguments?: Record<string, unknown> }>) {
+			if (typeof call?.name !== "string") continue;
 			const args = (call.arguments ?? {}) as Record<string, unknown>;
 			const command = typeof args["command"] === "string" ? (args["command"] as string) : "";
 			current.messageIds.push(message.id);
@@ -256,6 +266,21 @@ export function classifyTurnPhases(
 	flush();
 
 	return turns;
+}
+
+/** Whether any read-only, test or check call precedes the turn's first mutating call. */
+function workedBeforeFirstMutation(
+	calls: Array<{ name: string; argsText: string }>,
+	testRe: readonly RegExp[],
+	checkRe: readonly RegExp[],
+): boolean {
+	for (const call of calls) {
+		const args: Record<string, unknown> = call.argsText !== "" ? { command: call.argsText } : {};
+		const kind = kindOfCall(call.name, args, testRe, checkRe);
+		if (kind === "mutating") return false;
+		if (kind === "readonly" || kind === "test" || kind === "check") return true;
+	}
+	return false;
 }
 
 interface ResolutionInput {
@@ -342,7 +367,8 @@ export function detectPhaseSignals(
 	// ── premature-patching ──
 	// The first non-other phase of the session is already a patch: the agent
 	// edited source before it navigated anything or reproduced the problem.
-	if (workEntries.length > 0 && workEntries[0]?.phase === "patch") {
+	// A first turn that read or tested before its first edit is not blind.
+	if (workEntries.length > 0 && workEntries[0]?.phase === "patch" && !workEntries[0].workedBeforePatch) {
 		const offender = workEntries[0];
 		signals.push({
 			signal: "premature-patching",
