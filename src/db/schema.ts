@@ -1,5 +1,6 @@
 import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
+import { NOT_REVISED_LIVE } from "./current-generation.js";
 
 /**
  * Schema for pi-prospector.
@@ -413,6 +414,12 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	// for everything that treats a retracted node as absent (scanning, live gaps).
 	await db.exec("DROP VIEW IF EXISTS live_nodes");
 	await db.exec("CREATE VIEW live_nodes AS SELECT * FROM analysis_nodes WHERE retracted_at IS NULL");
+	// Current generation (#260): a live node that no live node revises — the head
+	// of its lineage chain. Supersession is the `revises` edge the recomputation
+	// wrote, not an inference from analyzer version or created_at. A retracted
+	// successor supersedes nothing, so its predecessor is current again.
+	await db.exec("DROP VIEW IF EXISTS current_nodes");
+	await db.exec(`CREATE VIEW current_nodes AS SELECT * FROM live_nodes n WHERE ${NOT_REVISED_LIVE}`);
 
 	// Create indexes after schema evolution (they may reference new columns)
 	await db.exec(`

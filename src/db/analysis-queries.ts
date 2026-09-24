@@ -25,6 +25,7 @@ import type {
 import { computeConfigHash, uuidv7 } from "../analyze/input-hash.js";
 import { versionIdOf } from "../analyze/version.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
+import { NOT_REVISED_AS_OF } from "./current-generation.js";
 
 // ───────────────────────── analyzer registry ─────────────────────────
 
@@ -374,19 +375,23 @@ export interface NodeListFilter {
 	sessionId?: string;
 	/** When set, read the graph as it stood at this instant (see src/timepoint.ts). */
 	asOf?: string;
+	/**
+	 * Include superseded generations — live nodes some live node `revises` (#260).
+	 * Off by default: an aggregate over every generation blends output from
+	 * implementations the current one replaced.
+	 */
+	allVersions?: boolean;
 	limit?: number;
 	offset?: number;
 }
 
 /**
- * The surface read for `prospect nodes`: live nodes matching an analyzer /
- * node-kind / session filter, newest first, paged. This is a *read* of what
- * analysis already found — it writes nothing and declares no dependencies
- * (outputs are exempt from the dependency rule, see DESIGN.md).
+ * The FROM/WHERE shared by {@link listAnalysisNodes} and {@link countAnalysisNodes},
+ * so the page and its denominator can never disagree about what matches.
  */
-export async function listAnalysisNodes(db: AsyncDatabase, filter: NodeListFilter = {}): Promise<AnalysisNodeRow[]> {
+function nodeFilterSql(filter: NodeListFilter): { sql: string; params: Array<string | number> } {
 	const asOf = filter.asOf;
-	const table = asOf ? "analysis_nodes" : "live_nodes";
+	const table = asOf ? "analysis_nodes" : filter.allVersions ? "live_nodes" : "current_nodes";
 	const where: string[] = [];
 	const params: Array<string | number> = [];
 	if (filter.analyzerId) {
@@ -413,47 +418,31 @@ export async function listAnalysisNodes(db: AsyncDatabase, filter: NodeListFilte
 		where.push("created_at <= ?");
 		where.push("(retracted_at IS NULL OR retracted_at > ?)");
 		params.push(asOf, asOf);
+		if (!filter.allVersions) {
+			where.push(NOT_REVISED_AS_OF);
+			params.push(asOf, asOf);
+		}
 	}
-	const sql =
-		`SELECT * FROM ${table}${where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""} ` +
-		"ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?";
-	params.push(filter.limit ?? 200, filter.offset ?? 0);
-	return (await prep(db, sql).all(...params)) as AnalysisNodeRow[];
+	return { sql: `FROM ${table} n${where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""}`, params };
 }
 
-/** How many live nodes match a {@link NodeListFilter}, ignoring limit/offset — the denominator for paging. */
+/**
+ * The surface read for `prospect nodes`: current nodes (or, with
+ * `allVersions`, every live generation) matching an analyzer / node-kind /
+ * session filter, newest first, paged. This is a *read* of what analysis
+ * already found — it writes nothing and declares no dependencies (outputs are
+ * exempt from the dependency rule, see DESIGN.md).
+ */
+export async function listAnalysisNodes(db: AsyncDatabase, filter: NodeListFilter = {}): Promise<AnalysisNodeRow[]> {
+	const { sql, params } = nodeFilterSql(filter);
+	return (await prep(db, `SELECT * ${sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+		.all(...params, filter.limit ?? 200, filter.offset ?? 0)) as AnalysisNodeRow[];
+}
+
+/** How many nodes match a {@link NodeListFilter}, ignoring limit/offset — the denominator for paging. */
 export async function countAnalysisNodes(db: AsyncDatabase, filter: NodeListFilter = {}): Promise<number> {
-	const asOf = filter.asOf;
-	const table = asOf ? "analysis_nodes" : "live_nodes";
-	const where: string[] = [];
-	const params: Array<string | number> = [];
-	if (filter.analyzerId) {
-		where.push("analyzer_id = ?");
-		params.push(filter.analyzerId);
-	}
-	if (filter.analyzerIds && filter.analyzerIds.length > 0) {
-		where.push(`analyzer_id IN (${filter.analyzerIds.map(() => "?").join(", ")})`);
-		params.push(...filter.analyzerIds);
-	}
-	if (filter.source) {
-		where.push("session_id IN (SELECT id FROM sessions WHERE source = ?)");
-		params.push(filter.source);
-	}
-	if (filter.nodeKind) {
-		where.push("node_kind = ?");
-		params.push(filter.nodeKind);
-	}
-	if (filter.sessionId) {
-		where.push("session_id = ?");
-		params.push(filter.sessionId);
-	}
-	if (asOf) {
-		where.push("created_at <= ?");
-		where.push("(retracted_at IS NULL OR retracted_at > ?)");
-		params.push(asOf, asOf);
-	}
-	const sql = `SELECT COUNT(*) AS c FROM ${table}${where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""}`;
-	return ((await prep(db, sql).get(...params)) as { c: number }).c;
+	const { sql, params } = nodeFilterSql(filter);
+	return ((await prep(db, `SELECT COUNT(*) AS c ${sql}`).get(...params)) as { c: number }).c;
 }
 
 /**
@@ -753,52 +742,53 @@ export async function getRevisions(db: AsyncDatabase, nodeId: string): Promise<A
 // ───────────────────────── analysis stats ─────────────────────────
 
 export interface AnalysisStats {
+	/** Current-generation node count: live nodes no live node revises (#260). */
 	nodes: number;
+	/** Live nodes a live node revises — superseded generations kept as lineage. */
+	supersededNodes: number;
+	/** Edges out of current-generation nodes. */
 	edges: number;
 	runs: number;
 	nodesByKind: Record<string, number>;
-	/** Non-retracted node count per analyzer_id (#155). */
+	/** Current-generation node count per analyzer_id (#155, #260). */
 	nodesByAnalyzer: Record<string, number>;
 }
 
 export async function getAnalysisStats(db: AsyncDatabase, asOf?: string): Promise<AnalysisStats> {
-	const nodes = asOf
-		? ((await prep(db, "SELECT COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?)").get(asOf, asOf)) as { c: number }).c
-		: ((await prep(db, "SELECT COUNT(*) AS c FROM live_nodes").get()) as { c: number }).c;
-	// Edges have no timestamp of their own; they are bounded by their source node,
-	// so an as-of edge count counts edges whose source node exists at T.
-	const edges = asOf
-		? ((await prep(
-					db,
-					"SELECT COUNT(*) AS c FROM analysis_edges e JOIN live_nodes n ON n.id = e.from_node_id WHERE n.created_at <= ? AND (n.retracted_at IS NULL OR n.retracted_at > ?)",
-				)
-				.get(asOf, asOf)) as { c: number }).c
-		: ((await prep(db, "SELECT COUNT(*) AS c FROM analysis_edges e JOIN live_nodes n ON n.id = e.from_node_id").get()) as { c: number }).c;
-	const runs = ((await prep(db, "SELECT COUNT(*) AS c FROM analysis_runs").get()) as { c: number }).c;
-	const kindRows = asOf
-		? ((await prep(db, "SELECT node_kind, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) GROUP BY node_kind").all(asOf, asOf)) as Array<{
-				node_kind: string;
-				c: number;
-			}>)
-		: ((await prep(db, "SELECT node_kind, COUNT(*) AS c FROM live_nodes GROUP BY node_kind").all()) as Array<{
-				node_kind: string;
-				c: number;
-			}>);
-	const nodesByKind: Record<string, number> = {};
-	for (const r of kindRows) nodesByKind[r.node_kind] = r.c;
-	// Same aggregation over analyzer_id — served by idx_nodes_analyzer.
-	const analyzerRows = asOf
-		? ((await prep(db, "SELECT analyzer_id, COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?) GROUP BY analyzer_id").all(asOf, asOf)) as Array<{
-				analyzer_id: string;
-				c: number;
-			}>)
-		: ((await prep(db, "SELECT analyzer_id, COUNT(*) AS c FROM live_nodes GROUP BY analyzer_id").all()) as Array<{
-				analyzer_id: string;
-				c: number;
-			}>);
-	const nodesByAnalyzer: Record<string, number> = {};
-	for (const r of analyzerRows) nodesByAnalyzer[r.analyzer_id] = r.c;
-	return { nodes, edges, runs, nodesByKind, nodesByAnalyzer };
+	// Every aggregate reads the current generation, so a version bump replaces
+	// the counts of the implementation it superseded rather than adding to them.
+	// Edges have no timestamp of their own; they are bounded by their source node.
+	const current = asOf
+		? {
+				from: `analysis_nodes n WHERE n.created_at <= ? AND (n.retracted_at IS NULL OR n.retracted_at > ?) AND ${NOT_REVISED_AS_OF}`,
+				params: [asOf, asOf, asOf, asOf],
+			}
+		: { from: "current_nodes n", params: [] };
+	const count = async (sql: string, params: readonly string[]): Promise<number> =>
+		((await prep(db, sql).get(...params)) as { c: number }).c;
+	const groupCounts = async (column: "node_kind" | "analyzer_id"): Promise<Record<string, number>> => {
+		const rows = (await prep(db, `SELECT n.${column} AS k, COUNT(*) AS c FROM ${current.from} GROUP BY n.${column}`)
+			.all(...current.params)) as Array<{ k: string; c: number }>;
+		const out: Record<string, number> = {};
+		for (const r of rows) out[r.k] = r.c;
+		return out;
+	};
+
+	const nodes = await count(`SELECT COUNT(*) AS c FROM ${current.from}`, current.params);
+	const liveNodes = asOf
+		? await count("SELECT COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?)", [asOf, asOf])
+		: await count("SELECT COUNT(*) AS c FROM live_nodes", []);
+	const edges = await count(`SELECT COUNT(*) AS c FROM analysis_edges e WHERE e.from_node_id IN (SELECT n.id FROM ${current.from})`, current.params);
+	const runs = await count("SELECT COUNT(*) AS c FROM analysis_runs", []);
+	return {
+		nodes,
+		supersededNodes: liveNodes - nodes,
+		edges,
+		runs,
+		nodesByKind: await groupCounts("node_kind"),
+		// Served by idx_nodes_analyzer.
+		nodesByAnalyzer: await groupCounts("analyzer_id"),
+	};
 }
 
 // ───────────────────────── analyzer coverage ─────────────────────────

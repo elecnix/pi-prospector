@@ -60,12 +60,14 @@ export interface NodesQuery {
 	sessionId?: string;
 	asOf?: string;
 	asOfRun?: string;
+	/** Include superseded generations (#260); the default reads the current generation only. */
+	allVersions?: boolean;
 }
 
 const NODE_FLAGS = [
 	"--analyzer <id>", "--all", "--node-kind <kind>", "--filter key=value (repeatable)",
 	"--counts <property>", "--latest-per-key <property>", "--limit <n>", "--offset <n>",
-	"--session <id>", "--as-of <ts|7d>", "--as-of-run <id>",
+	"--session <id>", "--as-of <ts|7d>", "--as-of-run <id>", "--all-versions",
 ];
 
 /** The usage line for `prospect nodes`. */
@@ -136,6 +138,9 @@ export function parseNodeArgs(args: string): NodesQuery {
 				break;
 			case "--as-of-run":
 				q.asOfRun = val();
+				break;
+			case "--all-versions":
+				q.allVersions = true;
 				break;
 			default:
 				throw new Error(`unknown flag or stray argument: "${tok}"`);
@@ -361,9 +366,10 @@ export async function readNodes(db: AsyncDatabase, q: NodesQuery): Promise<Nodes
 		nodeKind: q.nodeKind,
 		sessionId: q.sessionId,
 		asOf,
+		allVersions: q.allVersions,
 		limit: MAX_SCAN,
 	};
-	const totalLive = await countAnalysisNodes(db, filter);
+	const totalBeforeFilters = await countAnalysisNodes(db, filter);
 	let rows = await listAnalysisNodes(db, filter);
 
 	// Typed filters over the analyzer's declared outputSchema; best-effort when
@@ -395,10 +401,11 @@ export async function readNodes(db: AsyncDatabase, q: NodesQuery): Promise<Nodes
 		q.sessionId ? `session=${q.sessionId}` : "",
 		filters.length > 0 ? `filters: ${q.filters.join(" ")}` : "",
 		asOf ? `as of ${asOf}` : "",
+		q.allVersions ? "all versions" : "",
 	].filter(Boolean);
 	const lines: string[] = [];
 	lines.push(
-		`Nodes — ${headerParts.join(" ")}${schemaNote}: ${paged.length} shown of ${totalMatching} matching (${totalLive} live before filters).`,
+		`Nodes — ${headerParts.join(" ")}${schemaNote}: ${paged.length} shown of ${totalMatching} matching (${totalBeforeFilters} ${q.allVersions ? "live" : "current"} before filters).`,
 	);
 	for (const row of paged) lines.push(formatNodeLine(row));
 	if (totalMatching > offset + paged.length) {
