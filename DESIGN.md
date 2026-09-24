@@ -367,6 +367,18 @@ contribute to the session's friction score and surface in the digest.
   real edit. A no-effect edit is not progress, so a run of them on one file is
   also a stuck-loop. An edit the tool *rejected* for the same reason is a tool
   failure, classified by failure analysis, not a trajectory signal.
+- **Repetition collapse** — the within-step twin of a stuck-loop: one **step**
+  whose own reasoning or answer repeats a phrase or a sub-word fragment until
+  the generation ends. It is measured by two ratios that are each blind to the
+  other's loops — the share of words inside a repeated word n-gram, and the
+  longest run of one short character motif — and the step's score is the
+  stronger of the two. Length is only a floor below which nothing is judged,
+  never the trigger: most long steps are long analyses that do not repeat. A
+  collapsed step that produced no answer and no tool call is **undelivered**,
+  billed in full for nothing, and that is a routing signal: it earns a
+  proposal against model configuration and escalates its turn in
+  routing-opportunity. The node records the repeating motif, never the looping
+  text.
 
 ### Navigation analysis (deterministic, session-level)
 

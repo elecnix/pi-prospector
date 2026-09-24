@@ -43,6 +43,7 @@ describe("routing-opportunity evaluateTurn", () => {
 		core?: { correction_detected: boolean; tool_failure_count: number; friction_score: number } | null;
 		frustration?: boolean;
 		trajectorySignals?: Array<{ pattern: string; messageIds: string[] }>;
+		collapsedStepIds?: string[];
 		model?: string | null;
 		cost?: number;
 		usage?: { input: number; cacheRead: number };
@@ -61,6 +62,7 @@ describe("routing-opportunity evaluateTurn", () => {
 			core: overrides.core ?? { correction_detected: false, tool_failure_count: 0, friction_score: 0 },
 			frustration: overrides.frustration ?? false,
 			trajectorySignals: overrides.trajectorySignals ?? [],
+			collapsedStepIds: new Set(overrides.collapsedStepIds ?? []),
 			modelByMessageId,
 			costByMessageId,
 			usageByMessageId,
@@ -93,6 +95,17 @@ describe("routing-opportunity evaluateTurn", () => {
 		);
 		assert.equal(r.verdict, "escalate");
 		assert.equal(r.features.stuck_loop, true);
+	});
+
+	it("labels a turn with a step that collapsed into repetition as escalate", () => {
+		const p = pair({ messageIds: ["u0", "a0"] });
+		const r = evaluateTurn(inputs({ pair: p, collapsedStepIds: ["a0"] }));
+		assert.equal(r.verdict, "escalate");
+		assert.equal(r.features.repetition_collapse, true);
+
+		const elsewhere = evaluateTurn(inputs({ pair: p, collapsedStepIds: ["a9"] }));
+		assert.equal(elsewhere.features.repetition_collapse, false, "a loop in another turn does not touch this one");
+		assert.equal(elsewhere.verdict, "downshift");
 	});
 
 	it("keeps a many-tool-call clean turn neutral", () => {
@@ -149,12 +162,12 @@ describe("model-mix", () => {
 	it("aggregates per-model correction/friction/cost and coverage", () => {
 		const nodes = [
 			// m-a: cheap, no corrections, low cost (won't dominate on price anyway below threshold)
-			routingNode("s1", { pair_index: 0, features: { tool_call_count: 1, context_tokens: 1000, edit_chars: 10, correction_detected: false, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false }, easy: true, hard: false, verdict: "downshift", model: "m-a", turn_cost_usd: 0.001 }),
-			routingNode("s1", { pair_index: 1, features: { tool_call_count: 1, context_tokens: 1000, edit_chars: 10, correction_detected: false, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false }, easy: true, hard: false, verdict: "downshift", model: "m-a", turn_cost_usd: 0.001 }),
+			routingNode("s1", { pair_index: 0, features: { tool_call_count: 1, context_tokens: 1000, edit_chars: 10, correction_detected: false, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false, repetition_collapse: false }, easy: true, hard: false, verdict: "downshift", model: "m-a", turn_cost_usd: 0.001 }),
+			routingNode("s1", { pair_index: 1, features: { tool_call_count: 1, context_tokens: 1000, edit_chars: 10, correction_detected: false, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false, repetition_collapse: false }, easy: true, hard: false, verdict: "downshift", model: "m-a", turn_cost_usd: 0.001 }),
 			// m-b: expensive, a correction
-			routingNode("s1", { pair_index: 2, features: { tool_call_count: 3, context_tokens: 90000, edit_chars: 100, correction_detected: true, tool_failure_count: 1, frustration: true, stuck_loop: false, oscillation: false, preflight_gap: false }, easy: false, hard: true, verdict: "escalate", model: "m-b", turn_cost_usd: 0.05 }),
+			routingNode("s1", { pair_index: 2, features: { tool_call_count: 3, context_tokens: 90000, edit_chars: 100, correction_detected: true, tool_failure_count: 1, frustration: true, stuck_loop: false, oscillation: false, preflight_gap: false, repetition_collapse: false }, easy: false, hard: true, verdict: "escalate", model: "m-b", turn_cost_usd: 0.05 }),
 			// unrecorded model
-			routingNode("s2", { pair_index: 0, features: { tool_call_count: 2, context_tokens: 8000, edit_chars: 20, correction_detected: false, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false }, easy: true, hard: false, verdict: "downshift", model: "unrecorded", model_recorded: false }),
+			routingNode("s2", { pair_index: 0, features: { tool_call_count: 2, context_tokens: 8000, edit_chars: 20, correction_detected: false, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false, repetition_collapse: false }, easy: true, hard: false, verdict: "downshift", model: "unrecorded", model_recorded: false }),
 		];
 		const { result: props } = aggregateModels(nodes, mcfg);
 
@@ -178,7 +191,7 @@ describe("model-mix", () => {
 
 	it("draws no verdict below minTurnCountPerModel (thin corpus)", () => {
 		const nodes = [
-			routingNode("s1", { pair_index: 0, features: { tool_call_count: 1, context_tokens: 100, edit_chars: 10, correction_detected: false, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false }, easy: true, hard: false, verdict: "downshift", model: "m-a", turn_cost_usd: 0.001 }),
+			routingNode("s1", { pair_index: 0, features: { tool_call_count: 1, context_tokens: 100, edit_chars: 10, correction_detected: false, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false, repetition_collapse: false }, easy: true, hard: false, verdict: "downshift", model: "m-a", turn_cost_usd: 0.001 }),
 		];
 		const { result: props, suggestions } = aggregateModels(nodes, { ...mcfg, minTurnCountPerModel: 20 });
 		assert.equal(props.per_model[0]!.turn_count, 1);
@@ -187,7 +200,7 @@ describe("model-mix", () => {
 
 	it("surfaces a downshift suggestion for a dominated model with enough turns", () => {
 		function make(model: string, cost: number, correction: boolean, stuck: boolean, easy: boolean, verdict: "downshift" | "escalate" | "neutral"): AnalysisNodeRow {
-			return routingNode("s1", { pair_index: 0, features: { tool_call_count: 1, context_tokens: 100, edit_chars: 10, correction_detected: correction, tool_failure_count: 0, frustration: false, stuck_loop: stuck, oscillation: false, preflight_gap: false }, easy, hard: stuck || correction, verdict, model, turn_cost_usd: cost });
+			return routingNode("s1", { pair_index: 0, features: { tool_call_count: 1, context_tokens: 100, edit_chars: 10, correction_detected: correction, tool_failure_count: 0, frustration: false, stuck_loop: stuck, oscillation: false, preflight_gap: false, repetition_collapse: false }, easy, hard: stuck || correction, verdict, model, turn_cost_usd: cost });
 		}
 		// 25 cheap, clean, easy turns on m-cheap; 25 expensive, clean, easy turns on m-pricey
 		const nodes: AnalysisNodeRow[] = [];
@@ -205,7 +218,7 @@ describe("model-mix", () => {
 
 	it("flags a cheap model with a high escalation rate for retries", () => {
 		function make(model: string, cost: number, correction: boolean, verdict: "downshift" | "escalate" | "neutral"): AnalysisNodeRow {
-			return routingNode("s1", { pair_index: 0, features: { tool_call_count: 1, context_tokens: 100, edit_chars: 10, correction_detected: correction, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false }, easy: !correction, hard: correction, verdict, model, turn_cost_usd: cost });
+			return routingNode("s1", { pair_index: 0, features: { tool_call_count: 1, context_tokens: 100, edit_chars: 10, correction_detected: correction, tool_failure_count: 0, frustration: false, stuck_loop: false, oscillation: false, preflight_gap: false, repetition_collapse: false }, easy: !correction, hard: correction, verdict, model, turn_cost_usd: cost });
 		}
 		const nodes: AnalysisNodeRow[] = [];
 		for (let i = 0; i < 10; i++) nodes.push(make("m-cheap", 0.001, false, "downshift"));
