@@ -94,6 +94,7 @@ flowchart TD
     RC[request-classes<br/>open-vocabulary request types]
     TPL[turn-pair-llm<br/>per-turn classification]
     SO[session-overview<br/>synthesis &amp; proposals]
+    RR[rule-restatement<br/>is the rule already a rule?]
     PV[proposal-validate<br/>replay validation]
     URA[user-reply-acts<br/>multi-act reply classification]
   end
@@ -207,6 +208,12 @@ Source: [`secret-leak/index.ts`](./src/analyze/analyzers/secret-leak/index.ts) �
 Consumes the per-turn and trajectory analyzers above and turns a whole session into a short summary, a list of **positive signals** (what went well), and a set of **ranked improvement proposals**. It uses an *enumerate-then-propose* strategy — first list every friction point as a textual gradient, then emit one proposal per point — so recurring issues are not collapsed away. It emits a node even for clean sessions, which can yield `reinforcement` proposals that praise good habits. Proposals are materialised into the `proposals` table, each linked to the node that justifies it.
 
 Source: [`session-overview/index.ts`](./src/analyze/analyzers/session-overview/index.ts) · deterministic digest in [`digest.ts`](./src/analyze/analyzers/session-overview/digest.ts) · map/reduce prompts in [`prompt-map.ts`](./src/analyze/analyzers/session-overview/prompt-map.ts) and [`prompt-reduce.ts`](./src/analyze/analyzers/session-overview/prompt-reduce.ts).
+
+### rule-restatement — is the proposed rule already a rule? (LLM, default)
+
+Runs after session-overview, on every open proposal that targets a standing instruction, skill, or prompt. It reads the session's **instruction corpus** from disk — the harness's global file (`~/.pi/agent/AGENTS.md` for Pi, `~/.claude/CLAUDE.md` for Claude Code), the project instruction files the harness loads walking up from the session's `cwd`, and any extra files you list in `analyzers["rule-restatement"].instructionPaths` (a skill's `SKILL.md`, a protocol injected into sub-agent briefs) — and asks a cheap-tier model whether the rule is already stated there, in any wording. A "yes" must quote the existing rule, and the quote is checked against the files before it is believed. The verdict — `gap`, `partial`, `restated`, `ungrounded`, or `unchecked` — is written back onto the proposal as `rule_status` with the file and quote. A `restated` proposal is an **adherence** finding (the rule exists and was not followed), not a gap: the fix is not another line in the file. Editing an instruction file re-identifies every check that read it, so the next run re-judges them. A session with no instruction file on disk is not checked.
+
+Source: [`rule-restatement/index.ts`](./src/analyze/analyzers/rule-restatement/index.ts) · corpus discovery in [`corpus.ts`](./src/analyze/analyzers/rule-restatement/corpus.ts) · prompt and quote grounding in [`prompt.ts`](./src/analyze/analyzers/rule-restatement/prompt.ts) · options in [`config.ts`](./src/analyze/analyzers/rule-restatement/config.ts).
 
 ### proposal-validate — replay validation (opt-in LLM, advisory)
 
@@ -365,6 +372,7 @@ List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `d
 - **Severity** — the nature of the signal: `friction` | `correction` | `waste` | `suggestion` | `reinforcement` (listed as `reinforce`)
 - **Status** — `open`, `applied`, `rejected`, or `duplicate`
 - **Score** — either `replay-validated:<supported|unsupported> NN%` once the proposal has been replay-validated (see `/prospect-validate`), or `model-rated NN%` (the synthesising model's self-rating) until then
+- **Rule** — for a rule-shaped proposal the restatement check has judged: `new rule` (a gap), `partly a rule: <file>`, or `already a rule: <file>` (an adherence finding — see rule-restatement above)
 
 Proposals are ranked **supported → unvalidated → unsupported**, so a replay-validated success rises to the top and a replay-validated failure sinks below untested ones — regardless of the model's self-rated confidence. Add `--full` (or `-v`) to also print each proposal's detail, evidence, validation delta, and source node.
 
@@ -518,7 +526,7 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 
 Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. All model access goes through Pi's own provider system — pick any model Pi supports (configured via `/login` or API keys). The deterministic `turn-pair-core` layer needs no model and always runs.
 
-The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CLAUDE_SESSIONS_DIR`, `PROSPECTOR_CONFIG`.
+The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CLAUDE_SESSIONS_DIR`, `PROSPECTOR_CONFIG`, and `PROSPECTOR_INSTRUCTIONS_HOME` (the home directory the rule-restatement check reads harness instruction files under).
 
 ## Running headlessly
 
