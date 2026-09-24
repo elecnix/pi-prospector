@@ -31,6 +31,10 @@ describe("decode-collapse tokenize", () => {
 		assert.deepEqual(tokenize("Read the Config.\n\n这件 x", 100), [["read", "the", "config", "."], ["这", "件", "x"]]);
 	});
 
+	it("drops control characters, so no token can contain the n-gram key separator", () => {
+		assert.deepEqual(tokenize("a \u0001 b\u0001c \u0007", 100), [["a", "b", "c"]]);
+	});
+
 	it("keeps at most maxTokens tokens, from the start", () => {
 		assert.deepEqual(tokenize("a b c\nd e f", 4), [["a", "b", "c"], ["d"]]);
 	});
@@ -54,6 +58,15 @@ describe("decode-collapse n-gram model", () => {
 		const without = new NgramModel(countsOf(3, texts), 0.75);
 		const subtracted = new NgramModel(countsOf(3, [...texts, extra]), 0.75, countsOf(3, [extra]));
 		for (const line of [["the", "bird", "sat"], ["the", "cat", "sat", "on", "the", "fence"], ["a", "dog"]]) {
+			assert.ok(Math.abs(without.linePerplexity(line) - subtracted.linePerplexity(line)) < 1e-9, line.join(" "));
+		}
+	});
+
+	it("subtraction stays exact when the excluded text carries control characters", () => {
+		const extra = "the bird \u0001 sat on the \u0001 fence";
+		const without = new NgramModel(countsOf(3, texts), 0.75);
+		const subtracted = new NgramModel(countsOf(3, [...texts, extra]), 0.75, countsOf(3, [extra]));
+		for (const line of [["the", "bird", "sat"], ["sat", "on", "the", "mat"]]) {
 			assert.ok(Math.abs(without.linePerplexity(line) - subtracted.linePerplexity(line)) < 1e-9, line.join(" "));
 		}
 	});

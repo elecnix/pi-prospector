@@ -18,12 +18,14 @@ export const TokenizedDocument = Type.Array(Type.Array(Type.String()));
 export type TokenizedDocument = Static<typeof TokenizedDocument>;
 
 const TOKEN_RE =
-	/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[\p{L}\p{M}\p{N}_]+|[^\s\p{L}\p{M}\p{N}_]/gu;
+	/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[\p{L}\p{M}\p{N}_]+|[^\s\p{Cc}\p{L}\p{M}\p{N}_]/gu;
 
 /**
  * Split text into lines of lowercased tokens: word runs, single punctuation
- * marks, and single CJK characters (which carry no spaces to split on). Empty
- * lines are dropped. At most `maxTokens` tokens are kept, from the start.
+ * marks, and single CJK characters (which carry no spaces to split on). Control
+ * characters are never tokens: n-gram keys are joined on one, so a token that
+ * contained it would split into the wrong context. Empty lines are dropped. At
+ * most `maxTokens` tokens are kept, from the start.
  */
 export function tokenize(text: string, maxTokens: number): TokenizedDocument {
 	const lines: TokenizedDocument = [];
