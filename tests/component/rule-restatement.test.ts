@@ -154,6 +154,44 @@ describe("rule-restatement (issue #265)", () => {
 		}
 	});
 
+	it("reads configured instructionPaths into the corpus (plan receives the resolved config)", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "rr-cfg-"));
+		const skill = path.join(root, "skills", "ship", "SKILL.md");
+		fs.mkdirSync(path.dirname(skill), { recursive: true });
+		fs.writeFileSync(skill, `# Ship\n\n${GLOBAL_RULE}\n`);
+		const { db, close } = await tempDb();
+		try {
+			await withInstructionHome(path.join(root, "empty-home"), async () => {
+				await insertSession(db, "rr3", "/tmp/rr3.jsonl", path.join(root, "nowhere"), "pi");
+				await insertMessages(db, "rr3", [
+					{ role: "user", text: "open a PR" },
+					{ role: "assistant", text: "done, ticket closed" },
+					{ role: "user", text: "no, don't close the ticket" },
+					{ role: "assistant", text: "reopening" },
+				]);
+				const mock = createMockLLM({ responder: respond });
+				const fw = new AnalyzerFramework({
+					db,
+					llm: mock.caller,
+					modelTiers: DEFAULT_MODEL_TIERS,
+					configOverrides: { [RULE_RESTATEMENT_DEF.id]: { instructionPaths: [skill], targetTypes: ["agents_md"] } },
+				});
+				await registerDefaults(fw);
+				const summary = await fw.run("rr3", {});
+				assert.equal(summary.errors.length, 0, summary.errors.join("; "));
+				const judged = mock.calls.filter((c) => c.tool?.name === "judge_restatement");
+				assert.equal(judged.length, 2, "configured targetTypes narrow the check to agents_md proposals");
+				assert.ok(judged.every((c) => c.user.includes(`=== ${skill} ===`)), "the configured file is the corpus");
+				const restated = (await listProposals(db)).find((p) => p.title === RESTATED)!;
+				assert.equal(restated.rule_status, "restated");
+				assert.equal(restated.rule_path, skill);
+			});
+		} finally {
+			await close();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("plans nothing when the session has no instruction file on disk", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "rr-empty-"));
 		const { db, close } = await tempDb();
