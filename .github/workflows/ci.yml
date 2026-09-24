@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: arc-runners
+    runs-on: ubuntu-latest
     # The suite takes 1-3 minutes. A test file that leaks a handle never exits
     # -- node's --test-timeout does not cover it, because the subtests all
     # finish and it is the process that will not drain -- so without a job
@@ -30,6 +30,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
+      - name: Install native build tools only when missing (no-op once the runner image ships them)
+        run: command -v make >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential; }
       - run: npm install --legacy-peer-deps
       - run: npm test
 
@@ -38,25 +40,29 @@ jobs:
     # migration left `readLeaks` and `readSearch` unawaited on the tool surface,
     # which no test exercises, and only the typechecker caught them. Runs on the
     # minimum supported Node, since that is the version the types must satisfy.
-    runs-on: arc-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      - name: Install native build tools only when missing (no-op once the runner image ships them)
+        run: command -v make >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential; }
       - run: npm install --legacy-peer-deps
       - run: npm run check
 
   integration-test:
     needs: test
-    runs-on: arc-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      - name: Install native build tools only when missing (no-op once the runner image ships them)
+        run: command -v make >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential; }
       - run: npm install --legacy-peer-deps
       - run: node --import tsx test/integration/test-commands.ts
 
@@ -64,7 +70,7 @@ jobs:
     # Reports only the duplication this pull request introduces, as inline
     # warnings on the diff. Never fails the build.
     if: github.event_name == 'pull_request'
-    runs-on: arc-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -76,7 +82,7 @@ jobs:
     # Flags a PR description that renders badly on GitHub: hard-wrapped
     # paragraphs, broken list items, collapsed tables, unparsable mermaid.
     if: github.event_name == 'pull_request'
-    runs-on: arc-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       pull-requests: read
