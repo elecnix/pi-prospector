@@ -49,11 +49,14 @@ function valueImports(file: string): string[] {
 /** Resolve a relative specifier to a file under `src/`, or undefined for a package. */
 function resolve(from: string, specifier: string): string | undefined {
 	if (!specifier.startsWith(".")) return undefined;
-	const target = path.resolve(path.dirname(from), specifier.replace(/\.js$/, ".ts"));
-	if (!fs.existsSync(target)) {
-		throw new Error(`${path.relative(SRC, from)} imports ${specifier}, which does not resolve to ${path.relative(SRC, target)}`);
+	const base = path.resolve(path.dirname(from), specifier);
+	// A relative import names either a module (`./x.js` resolves to `x.ts`) or a
+	// directory, in which case it resolves to that directory's index.
+	const candidates = [base.replace(/\.js$/, ".ts"), path.join(base, "index.ts")];
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
 	}
-	return target;
+	throw new Error(`${path.relative(SRC, from)} imports ${specifier}, which resolves to none of ${candidates.map((c) => path.relative(SRC, c)).join(", ")}`);
 }
 
 /** Every file reachable from `src/index.ts` through static value imports. */

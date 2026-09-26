@@ -11,7 +11,7 @@ export const PROSPECT_TOOL = {
 	name: "prospect",
 	label: "Prospect",
 	description:
-		"Index sessions, run analysis, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, analyze, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, help. " +
+		"Index sessions, run analysis, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, analyze, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, nodes, node, session_summary, leaks, search, help. " +
 		"list_proposals accepts source (pi|claude) to filter by coding harness. " +
 		"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 		"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
