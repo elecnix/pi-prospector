@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getAllSessions, getRecentSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
@@ -322,14 +322,6 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 	} finally {
 		db.close();
 	}
-}
-
-export function registerAnalyzeCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-analyze", {
-		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --backfill-missing (run only the analyzers each analysed session is missing — closes coverage gaps after a new or previously-unselected analyzer ships, without re-running everything), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --source pi|claude (restrict to sessions from one coding harness), --analyzer ID, --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
-		handler: prospectAnalyze,
-	});
 }
 
 /**

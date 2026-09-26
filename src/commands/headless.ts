@@ -1,47 +1,18 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
-import { prospectSync } from "./sync.js";
-import { prospectStats } from "./stats.js";
-import { prospectProposals, prospectAccept, prospectReject, prospectRemediate } from "./proposals.js";
-import { prospectAnalyze } from "./analyze.js";
-import { prospectAnalyzers } from "./analyzers.js";
-import { prospectOutput } from "./output.js";
-import { prospectVerify } from "./verify.js";
-import { prospectValidate } from "./validate.js";
-import { prospectShow } from "./show.js";
-import { prospectNodes, prospectNode } from "./nodes.js";
-import { prospectDiff } from "./diff.js";
-import { prospectRuns } from "./runs.js";
-import { prospectGc } from "./gc.js";
-import { prospectRetract } from "./retract.js";
-import { prospectMute, prospectUnmute, prospectMutes } from "./mutes.js";
+import { COMMANDS, type ProspectHandler } from "./registry.js";
 
 /** A command runnable both as a slash command and via the `--prospect` flag. */
-export type ProspectAction = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+export type ProspectAction = ProspectHandler;
 
-/** Maps a `--prospect` sub-command name to its handler. */
-export const PROSPECT_ACTIONS: Record<string, ProspectAction> = {
-	sync: prospectSync,
-	analyze: prospectAnalyze,
-	analyzers: prospectAnalyzers,
-	output: prospectOutput,
-	stats: prospectStats,
-	proposals: prospectProposals,
-	show: prospectShow,
-	nodes: prospectNodes,
-	node: prospectNode,
-	diff: prospectDiff,
-	runs: prospectRuns,
-	gc: prospectGc,
-	retract: prospectRetract,
-	verify: prospectVerify,
-	validate: prospectValidate,
-	accept: prospectAccept,
-	reject: prospectReject,
-	remediate: prospectRemediate,
-	mute: prospectMute,
-	unmute: prospectUnmute,
-	mutes: prospectMutes,
-};
+/**
+ * Maps a `--prospect` sub-command name to its handler.
+ *
+ * Derived from the command table (#292) so the flag cannot drift from the slash
+ * commands it names — and so a `--prospect` run loads the one module it needs
+ * instead of the whole extension.
+ */
+const flagged = COMMANDS.flatMap((command) => (command.flag === undefined ? [] : [[command.flag, command.run] as const]));
+export const PROSPECT_ACTIONS: Record<string, ProspectAction> = Object.fromEntries(flagged);
 
 const USAGE =
 	'Usage: pi -e <prospector>/src/index.ts --prospect "<command> [args]"\n' +

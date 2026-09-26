@@ -13,7 +13,7 @@
  * Reporting surface only: reads the indexes, writes nothing, calls no model.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { Type, type Static } from "typebox";
 import { migrate } from "../db/schema.js";
@@ -231,17 +231,4 @@ export async function prospectSearch(rawArgs: string, ctx: ExtensionCommandConte
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerSearchCommands(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-search", {
-		description:
-			"Content and pattern search over proposals and the session corpus (SQLite FTS5). " +
-			"Every hit names its record kind, id, session, and a highlighted snippet, ranked by bm25, " +
-			"with links into prospect show / prospect node. " +
-			"Syntax: plain terms (implicit AND), \"quoted phrases\", prefix terms (lexicon*), OR / NOT / AND, " +
-			"NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence). " +
-			"Flags: --kind <all|messages|proposals>, --limit <n>, --source <pi|claude>.",
-		handler: prospectSearch,
-	});
 }

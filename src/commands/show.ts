@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getProposal, listProposals, getSessionLabels, getLatestDecision, getSessionFilePath } from "../db/queries.js";
@@ -441,13 +441,4 @@ export function formatSummaryContent(content: Record<string, unknown>): string[]
 		lines.push("", `Stats: ${parts.join(" ")}`);
 	}
 	return lines;
-}
-
-export function registerShowCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-show", {
-		description:
-			"Show a proposal with the verbatim anchored turns (user/assistant text + tool calls) it was synthesised from, " +
-			"or --session <id> for the session-level summary with its evidence (consumed turns, produced proposals, contrast siblings).",
-		handler: prospectShow,
-	});
 }

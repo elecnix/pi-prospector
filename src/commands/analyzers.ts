@@ -11,7 +11,7 @@
  * restart.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { getAnalyzerPaths, loadConfig } from "../config.js";
 import { loadCustomAnalyzers } from "../analyze/loader.js";
 import { BUILTIN_ANALYZERS } from "../analyze/defaults.js";
@@ -118,14 +118,6 @@ async function validate(ctx: ExtensionCommandContext, target: string): Promise<v
 	for (const e of errors) lines.push(`  FAIL  ${e.path}: ${e.message}`);
 	if (lines.length === 0) lines.push("  (no analyzer files found at that path)");
 	out(ctx, `Validation of ${target}:\n${lines.join("\n")}`, errors.length > 0 ? "warning" : "info");
-}
-
-export function registerAnalyzersCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-analyzers", {
-		description:
-			"Inspect locally-authored custom analyzers. Subcommands: list (built-ins + discovered custom analyzers, each with its declared output properties, and any load errors), list --schema <analyzer-id> (print that analyzer's declared node-content schema as JSON), validate <file|dir> (check one analyzer file/dir, including its outputSchema declaration). Custom analyzers are loaded from ~/.pi/agent/prospector/analyzers, ./.prospector/analyzers, and config analyzerPaths.",
-		handler: prospectAnalyzers,
-	});
 }
 
 function out(ctx: ExtensionCommandContext, text: string, level: string): void {

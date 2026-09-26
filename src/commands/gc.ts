@@ -11,7 +11,7 @@
  * decisions and remediations are never touched.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { parseFlags, parseTimestamp } from "../timepoint.js";
@@ -96,12 +96,4 @@ export async function prospectGc(rawArgs: string, ctx: ExtensionCommandContext):
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerGcCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-gc", {
-		description:
-			"Remove one run's or one analyzer's output (or everything after a timestamp), in one transaction: the nodes, the edges from them, the edges pointing at them, and the proposals materialised from them — never human decisions/remediations. Dry run by default; pass --apply to perform.",
-		handler: prospectGc,
-	});
 }

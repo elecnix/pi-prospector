@@ -13,7 +13,7 @@
  *   prospect mutes
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getDbPath } from "../config.js";
@@ -151,19 +151,4 @@ export async function prospectMutes(args: string, ctx: ExtensionCommandContext):
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerMutesCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-mute", {
-		description: "Mute a lexicon term: it stops matching new turns (its prior hit nodes stay as stale/config lineage). Usage: /prospect-mute <term> [--reason \"why\"] [--by operator|agent]",
-		handler: prospectMute,
-	});
-	pi.registerCommand("prospect-unmute", {
-		description: "Unmute a lexicon term (append-only via superseded_at). Usage: /prospect-unmute <term>",
-		handler: prospectUnmute,
-	});
-	pi.registerCommand("prospect-mutes", {
-		description: "List term assertions — what is muted, by whom, when, and why. The mute corpus is the training input for improving the classifier prompt.",
-		handler: prospectMutes,
-	});
 }

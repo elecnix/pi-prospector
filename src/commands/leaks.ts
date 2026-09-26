@@ -23,7 +23,7 @@
  * sessions leaked" view, which is what this command is for.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
@@ -317,14 +317,4 @@ export async function prospectLeaks(rawArgs: string, ctx: ExtensionCommandContex
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerLeaksCommands(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-leaks", {
-		description:
-			"Report which sessions contain detected secrets: every finding from the credential-detector analyzers " +
-			"(secret-leak, gitleaks, nosey-parker, detect-secrets, trufflehog, secret-scanner) with its severity, rule, " +
-			"redacted preview, fingerprint, and the message it appeared in. Flags: --severity <critical|high|medium> (floor), --limit <n>, --source <pi|claude>.",
-		handler: prospectLeaks,
-	});
 }

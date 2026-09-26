@@ -22,7 +22,7 @@
  * by `--latest-per-key <property>`.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
@@ -557,17 +557,4 @@ export async function prospectNode(rawArgs: string, ctx: ExtensionCommandContext
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerNodesCommands(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-nodes", {
-		description:
-			"Read analyzer output nodes from the surface. Flags: --analyzer <id> (or --all), --node-kind <metric|classification|summary|validation|error>, --filter key=value (repeatable, typed against the analyzer's declared outputSchema), --counts <property>, --latest-per-key <property> (e.g. newest verdict per term), --limit/--offset, --session <id>, --as-of <ts|7d>, --as-of-run <id>.",
-		handler: prospectNodes,
-	});
-	pi.registerCommand("prospect-node", {
-		description:
-			"Show one analysis node by output-key (prefix ok) with its content and resolved outgoing edges — what it consumed, what messages anchor it, what it produced.",
-		handler: prospectNode,
-	});
 }

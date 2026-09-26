@@ -12,7 +12,7 @@
  * Human decisions and remediations are never touched by any of these.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { parseFlags, parseTimestamp } from "../timepoint.js";
@@ -70,12 +70,4 @@ export async function prospectRetract(rawArgs: string, ctx: ExtensionCommandCont
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerRetractCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-retract", {
-		description:
-			"Make retraction (from /prospect-gc) legible and reversible, and provide the space escape hatch. --list shows retracted nodes + provenance; --undo <gcRunId> reverses a retraction; --purge --retracted-before <ts> physically deletes retracted nodes from before ts. Never touches decisions/remediations.",
-		handler: prospectRetract,
-	});
 }

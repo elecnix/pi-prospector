@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { listRuns } from "../db/analysis-queries.js";
@@ -40,11 +40,4 @@ export async function prospectRuns(rawArgs: string, ctx: ExtensionCommandContext
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerRunsCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-runs", {
-		description: "List recent analysis runs (ids, mode, status, node counts, timestamps) so their ids are discoverable for diff --runs and --as-of-run.",
-		handler: prospectRuns,
-	});
 }

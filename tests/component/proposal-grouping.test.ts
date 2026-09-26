@@ -8,7 +8,7 @@ import { migrate } from "../../src/db/schema.js";
 import { insertNode, insertEdge } from "../../src/db/analysis-queries.js";
 import { insertSession } from "./helpers.js";
 import { prospectProposals } from "../../src/commands/proposals.js";
-import { registerProspectTool } from "../../src/commands/tool.js";
+import { registerProspector } from "../../src/commands/registry.js";
 import type { ExtensionAPI, ExtensionCommandContext, ToolResult } from "../../src/pi-stubs.js";
 import type { Proposal } from "../../src/types.js";
 
@@ -59,7 +59,7 @@ let dbPath: string;
 let db: AsyncDatabase;
 
 before(async () => {
-	registerProspectTool(fakePi);
+	registerProspector(fakePi);
 	assert.ok(toolExec, "prospect tool must register");
 	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-grouping-"));
 	dbPath = path.join(tmpDir, "grouping.db");
