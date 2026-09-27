@@ -9,7 +9,7 @@
  * could go stale.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getDbPath } from "../config.js";
@@ -75,11 +75,4 @@ export async function prospectModels(_args: string, ctx: ExtensionCommandContext
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerModelsCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-models", {
-		description: "Show the per-model quality/cost efficiency frontier over the analyzed routing corpus",
-		handler: prospectModels,
-	});
 }

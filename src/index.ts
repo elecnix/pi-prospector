@@ -1,46 +1,16 @@
 import type { ExtensionAPI } from "./pi-stubs.js";
-import { registerSyncCommand } from "./commands/sync.js";
-import { registerStatsCommand } from "./commands/stats.js";
-import { registerProposalsCommand } from "./commands/proposals.js";
-import { registerAnalyzeCommand } from "./commands/analyze.js";
-import { registerAnalyzersCommand } from "./commands/analyzers.js";
-import { registerOutputCommand } from "./commands/output.js";
-import { registerVerifyCommand } from "./commands/verify.js";
-import { registerValidateCommand } from "./commands/validate.js";
-import { registerShowCommand } from "./commands/show.js";
-import { registerNodesCommands } from "./commands/nodes.js";
-import { registerLeaksCommands } from "./commands/leaks.js";
-import { registerSearchCommands } from "./commands/search.js";
-import { registerDiffCommand } from "./commands/diff.js";
-import { registerRunsCommand } from "./commands/runs.js";
-import { registerGcCommand } from "./commands/gc.js";
-import { registerRetractCommand } from "./commands/retract.js";
-import { registerProspectTool } from "./commands/tool.js";
-import { registerVizCommand } from "./commands/viz.js";
+import { registerProspector } from "./commands/registry.js";
 import { registerHeadlessFlag } from "./commands/headless.js";
-import { registerMutesCommand } from "./commands/mutes.js";
-import { registerModelsCommand } from "./commands/models.js";
 
-export default function (pi: ExtensionAPI) {
-	registerSyncCommand(pi);
-	registerStatsCommand(pi);
-	registerProposalsCommand(pi);
-	registerAnalyzeCommand(pi);
-	registerAnalyzersCommand(pi);
-	registerOutputCommand(pi);
-	registerVerifyCommand(pi);
-	registerValidateCommand(pi);
-	registerShowCommand(pi);
-	registerNodesCommands(pi);
-	registerLeaksCommands(pi);
-	registerSearchCommands(pi);
-	registerDiffCommand(pi);
-	registerRunsCommand(pi);
-	registerGcCommand(pi);
-	registerRetractCommand(pi);
-	registerProspectTool(pi);
-	registerVizCommand(pi);
+/**
+ * pi-prospector's entry point, loaded on every `pi` start.
+ *
+ * It imports the registration surface only: the command table, the `prospect`
+ * tool's metadata, and the `--prospect` flag. Every command implementation sits
+ * behind a dynamic import in that table, so a startup transpiles a handful of
+ * files instead of the whole extension (#292).
+ */
+export default function (pi: ExtensionAPI): void {
+	registerProspector(pi);
 	registerHeadlessFlag(pi);
-	registerMutesCommand(pi);
-	registerModelsCommand(pi);
 }

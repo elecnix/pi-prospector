@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { listSessionIdsWithOpenProposals, countOpenProposalsByValidationStatus } from "../db/queries.js";
@@ -86,14 +86,6 @@ export async function prospectValidate(rawArgs: string, ctx: ExtensionCommandCon
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerValidateCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-validate", {
-		description:
-			"Replay-validate open proposals: re-classify each proposal's originating turns with and without the candidate rule (distinct model) and write a grounded validated_score. Flags: --revise major|minor|config|all, --limit N, --session ID, --model provider/model.",
-		handler: prospectValidate,
-	});
 }
 
 function out(ctx: ExtensionCommandContext, text: string, level: string): void {

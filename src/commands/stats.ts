@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getStats } from "../db/queries.js";
@@ -167,11 +167,4 @@ export async function prospectStats(args: string, ctx: ExtensionCommandContext):
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerStatsCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-stats", {
-		description: "Show prospector database statistics with token and tool-call breakdowns, plus the analyzer-coverage summary (which registered analyzers have run against which sessions — #195). Flags: --as-of <ts|7d|24h> / --as-of-run <id> to view stats as of a past point (labelled as a view, not current state).",
-		handler: prospectStats,
-	});
 }

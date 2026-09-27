@@ -15,7 +15,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getDbPath, loadConfig } from "../config.js";
@@ -87,12 +87,4 @@ export async function renderSessionPage(db: AsyncDatabase, sessionId: string, ou
 function out(ctx: ExtensionCommandContext, text: string, level: string): void {
 	ctx.ui.notify(text, level);
 	console.log(text);
-}
-
-export function registerVizCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-viz", {
-		description:
-			"Render one session as a self-contained interactive HTML page: transcript rail, analysis graph with typed edges, proposal click-through to anchored messages, remediations, revises lineage, filters and depth-collapse. `viz` lists sessions; `viz <session-id> [--out DIR]` renders. Reads only — never writes to the graph.",
-		handler: prospectViz,
-	});
 }

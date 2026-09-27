@@ -25,6 +25,37 @@ describe("PROSPECT_ACTIONS", () => {
 		assert.equal(typeof PROSPECT_ACTIONS["unmute"], "function");
 		assert.equal(typeof PROSPECT_ACTIONS["mutes"], "function");
 	});
+
+	it("keeps the --prospect command set exactly as documented", () => {
+		// The flag is a CLI contract: `--prospect <name>` either runs or prints
+		// usage. The set is derived from the command table (#292), so this pins it.
+		assert.deepEqual(Object.keys(PROSPECT_ACTIONS).sort(), [
+			"accept",
+			"analyze",
+			"analyzers",
+			"diff",
+			"gc",
+			"mute",
+			"mutes",
+			"node",
+			"nodes",
+			"output",
+			"proposals",
+			"reject",
+			"remediate",
+			"retract",
+			"runs",
+			"show",
+			"stats",
+			"sync",
+			"unmute",
+			"validate",
+			"verify",
+		]);
+		for (const [name, action] of Object.entries(PROSPECT_ACTIONS)) {
+			assert.equal(typeof action, "function", `${name} must be runnable`);
+		}
+	});
 });
 
 describe("runProspectSpec", () => {

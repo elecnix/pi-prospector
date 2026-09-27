@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
@@ -87,12 +87,4 @@ function parseSyncArgs(raw: string): SyncArgs {
 		}
 	}
 	return result;
-}
-
-export function registerSyncCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-sync", {
-		description:
-			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude (restrict to one coding harness)",
-		handler: prospectSync,
-	});
 }

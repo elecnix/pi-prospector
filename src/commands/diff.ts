@@ -22,7 +22,7 @@
  * line-based.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import {
@@ -265,12 +265,4 @@ export async function prospectDiff(rawArgs: string, ctx: ExtensionCommandContext
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerDiffCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-diff", {
-		description:
-			"Compare analysis nodes across versions, runs, and points in time. Modes: --unit <analyzer> <source_set_hash> (the revises chain), --runs <A> <B> (two runs' node sets), --as-of <T1> <T2> (graph at two times). Default shows per-analyzer added/removed/changed counts; add --full for structural per-node detail.",
-		handler: prospectDiff,
-	});
 }

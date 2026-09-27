@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getAllAnalysisNodes } from "../db/analysis-queries.js";
@@ -142,12 +142,4 @@ export async function prospectVerify(_args: string, ctx: ExtensionCommandContext
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerVerifyCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-verify", {
-		description:
-			"Verify analysis-graph integrity: recompute each node's output_key AND validate every edge's referential integrity (evidence trails resolve to real targets).",
-		handler: prospectVerify,
-	});
 }

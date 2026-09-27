@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { openAsyncDatabase } from "../db/async-db.js";
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { getAnalyzerPaths, getDbPath, loadConfig } from "../config.js";
 import { migrate } from "../db/schema.js";
 import { loadCustomAnalyzers } from "../analyze/loader.js";
@@ -120,14 +120,6 @@ export async function prospectOutput(rawArgs: string, ctx: ExtensionCommandConte
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerOutputCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-output", {
-		description:
-			"Render an analyzer's outputs to files. `output list` shows what is available; `output <analyzer>:<output> [--out DIR] [--as-of TS] [--key value]` renders it. Unknown --key value pairs are passed to the output (e.g. --day 2026-08-14, --previews false). Reads the graph only — it never writes nodes and never runs analysis.",
-		handler: prospectOutput,
-	});
 }
 
 function out(ctx: ExtensionCommandContext, text: string, level: string): void {

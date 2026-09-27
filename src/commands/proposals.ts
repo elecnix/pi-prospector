@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
+import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { listProposals, listProposalsAsOf, acceptProposal, rejectProposal, acceptProposalsWithRemediation, getSessionLabels, getLatestDecision } from "../db/queries.js";
@@ -406,27 +406,4 @@ export async function prospectRemediate(args: string, ctx: ExtensionCommandConte
 	} finally {
 		await db.close();
 	}
-}
-
-export function registerProposalsCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("prospect-proposals", {
-		description:
-			"List proposals, ranked by trust tier (replay-validated) then billed cost, then confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, --source <pi|claude>, --session <id> (only that session's proposals), and --full for evidence/source.",
-		handler: prospectProposals,
-	});
-
-	pi.registerCommand("prospect-accept", {
-		description: "Accept (apply) a proposal by ID",
-		handler: prospectAccept,
-	});
-
-	pi.registerCommand("prospect-reject", {
-		description: "Reject a proposal by ID",
-		handler: prospectReject,
-	});
-
-	pi.registerCommand("prospect-remediate", {
-		description: "Accept many proposals at once under ONE shared remediation action: <id> <id>... [--planned|--done|--done-differently] <description>",
-		handler: prospectRemediate,
-	});
 }
