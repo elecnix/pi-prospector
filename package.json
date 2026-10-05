@@ -34,6 +34,9 @@
     },
     "@earendil-works/pi-ai": {
       "optional": true
+    },
+    "typebox": {
+      "optional": true
     }
   },
   "dependencies": {
