@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — pi-prospector</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 5 5; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .lbl { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-6xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-4">
+        <div class="flex items-baseline gap-3 flex-wrap">
+          <h1 class="font-serif text-4xl tracking-tight">pi-prospector</h1>
+          <span class="text-sm text-slate-500 font-mono">/ architecture review</span>
+        </div>
+        <p class="text-sm text-slate-600 font-mono">2 October 2026 &middot; scoped to the hot spots of the last 3 months (89k lines of TypeScript, 42 analyzer modules, 25 commands, 2 coding harnesses)</p>
+        <div class="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-600 pt-2 border-t border-stone-300">
+          <span class="flex items-center gap-2"><span class="inline-block w-6 h-4 border border-slate-400 bg-white"></span> module</span>
+          <span class="flex items-center gap-2"><svg width="26" height="6"><line class="seam" x1="0" y1="3" x2="26" y2="3" stroke="#64748b" stroke-width="2"/></svg> seam</span>
+          <span class="flex items-center gap-2"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="#dc2626" stroke-width="2"/></svg> leakage</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-6 h-4 deep border-2 border-slate-900"></span> deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-12">
+
+        <!-- ============ 1 ============ -->
+        <article id="c1" class="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+          <div class="px-7 pt-7 pb-4 space-y-3">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="font-serif text-2xl">One operation catalogue behind the tool and the slash commands</h2>
+              <div class="flex gap-2 shrink-0">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Strong</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">in-process</span>
+              </div>
+            </div>
+            <p class="mono text-sm text-slate-500">src/commands/tool.ts (335) &middot; proposals.ts (409) &middot; registry.ts (276) &middot; tool-schema.ts (110) &middot; grouping.ts (199)</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-px bg-stone-200 border-y border-stone-200">
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">Before — three copies of one pipeline</p>
+              <pre class="mermaid">
+flowchart TB
+  SL["/prospect-proposals<br/>proposals.ts:319-345"]
+  TL["prospect tool<br/>tool.ts:114-135"]
+  HM["headless --prospect<br/>registry.ts:78"]
+  subgraph G["group by session → support map → nest → render"]
+    SL --> G
+    TL --> G
+  end
+  SL -.->|"re-parses flag string"| TA["tool.ts:71-84<br/>typed params → text → parse"]
+  TA -.-> SL
+  TL -.->|"no --as-of, no --full"| SL
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  classDef dup fill:#f5f5f4,stroke:#a8a29e;
+  class TA,TL leak
+  class G,SL dup
+              </pre>
+              <p class="text-xs text-slate-500">The grouping rule has one owner. Its <em>application</em> is written twice, and the tool reaches back into a command module for a header helper.</p>
+            </div>
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">After — one catalogue, two adapters</p>
+              <div class="rounded-lg deep text-stone-100 p-5 space-y-3">
+                <p class="lbl text-slate-400">Operation catalogue — action → params → render → payload</p>
+                <div class="h-px bg-slate-600"></div>
+                <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div class="rounded border border-slate-600 py-2">list_proposals</div>
+                  <div class="rounded border border-slate-600 py-2">node / nodes</div>
+                  <div class="rounded border border-slate-600 py-2">accept / reject</div>
+                  <div class="rounded border border-slate-600 py-2">search</div>
+                  <div class="rounded border border-slate-600 py-2">session_summary</div>
+                  <div class="rounded border border-slate-600 py-2">leaks</div>
+                </div>
+                <p class="text-xs text-slate-400 pt-1">grouping · ranking · as-of label · machine payload — all inside</p>
+              </div>
+              <div class="flex items-center gap-3 text-xs">
+                <div class="flex-1 rounded border-2 border-slate-800 py-2 text-center">tool.ts adapter</div>
+                <div class="flex-1 rounded border-2 border-slate-800 py-2 text-center">registry.ts adapter</div>
+                <div class="flex-1 rounded border-2 border-slate-800 py-2 text-center">--prospect adapter</div>
+              </div>
+              <svg width="100%" height="14"><path d="M50 0 V10 M50 10 H350 M350 10 V0" fill="none" stroke="#64748b" stroke-width="1.5"/></svg>
+            </div>
+          </div>
+
+          <div class="px-7 py-6 space-y-4">
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Problem</span> The <code class="mono text-[13px]">prospect</code> tool is a second, hand-maintained command table: 16 actions re-dispatch against the same queries, and the ranking sentence is stated four times with three different rules.</p>
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Solution</span> One operation catalogue keyed by action, holding params, rendering and the machine payload; the tool, the slash commands and <code class="mono text-[13px]">--prospect</code> become three thin adapters over it.</p>
+            <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2">
+              <p class="text-sm">• locality: one ranking sentence, one grouping</p>
+              <p class="text-sm">• leverage: an operation lands in all three surfaces</p>
+              <p class="text-sm">• interface shrinks; the flag round-trip dies</p>
+              <p class="text-sm">• tests hit <code class="mono text-[13px]">action + params</code>, no fake host</p>
+              <p class="text-sm">• kills ~90 duplicated lines in the 2nd-hottest file</p>
+              <p class="text-sm">• the tool stops silently dropping <code class="mono text-[13px]">--as-of</code></p>
+            </div>
+            <div class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+              <strong>Evidence of cost, not theory:</strong> <code class="mono text-[13px]">tool.ts</code> has 28 commits in 3 months — nearly all of them adding or adjusting an action. The churn <em>is</em> the second surface.
+            </div>
+          </div>
+        </article>
+
+        <!-- ============ 2 ============ -->
+        <article id="c2" class="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+          <div class="px-7 pt-7 pb-4 space-y-3">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="font-serif text-2xl">The harness seam stops at the file, not at the vocabulary</h2>
+              <div class="flex gap-2 shrink-0">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Strong</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">local-substitutable</span>
+              </div>
+            </div>
+            <p class="mono text-sm text-slate-500">sync/parser.ts (790) &middot; sources/pi-file.ts (144) &middot; claude-file.ts (98) &middot; tool-stream.ts:213 &middot; tool-trajectory/arg-parser.ts:194 &middot; files-in-play/detect.ts:63 &middot; navigation-efficiency/detect.ts:132 &middot; dataprofiler/file-touches.ts:161</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-px bg-stone-200 border-y border-stone-200">
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">Before — the seam is real, then leaks</p>
+              <div class="space-y-2">
+                <div class="rounded deep text-stone-100 px-4 py-3">
+                  <p class="lbl text-slate-400">SessionSourceAdapter — discover + read</p>
+                  <p class="text-xs text-slate-300 mt-1">pi-file &middot; claude-file &middot; pi-subagent</p>
+                </div>
+                <div class="text-center text-slate-400 text-xs">seam holds here &darr;</div>
+                <div class="rounded border-2 border-dashed border-slate-400 px-4 py-3 space-y-1">
+                  <p class="lbl text-slate-500">below it: <code class="mono">source === "claude"</code> switches</p>
+                  <p class="text-xs text-slate-600">tool <em>names</em> normalised at ingest &middot; tool <em>argument shapes</em> are not</p>
+                </div>
+                <svg width="100%" height="20"><path class="leak" d="M50 0 V14" stroke-width="2"/><path d="M44 10 L50 18 L56 10" fill="none" class="leak" stroke-width="2"/></svg>
+                <div class="space-y-1.5 text-xs">
+                  <div class="rounded border border-slate-300 px-3 py-2 mono">tool-stream.ts:213 &nbsp;args["arguments"] ?? args["input"]</div>
+                  <div class="rounded border border-slate-300 px-3 py-2 mono">arg-parser.ts:194 &nbsp;["file_path","path"]</div>
+                  <div class="rounded border-2 border-red-400 bg-red-50 px-3 py-2 mono">files-in-play/detect.ts:63 &nbsp;4 keys</div>
+                  <div class="rounded border-2 border-red-400 bg-red-50 px-3 py-2 mono">navigation-efficiency:132 &nbsp;5 keys + .trim()</div>
+                  <div class="rounded border border-slate-300 px-3 py-2 mono">dataprofiler/file-touches.ts:161 &nbsp;4 keys</div>
+                </div>
+              </div>
+            </div>
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">After — normalise once, at ingest</p>
+              <div class="space-y-2">
+                <div class="rounded deep text-stone-100 p-4 space-y-2">
+                  <p class="lbl text-slate-400">Harness vocabulary normaliser</p>
+                  <div class="h-px bg-slate-600"></div>
+                  <p class="text-xs text-slate-300">canonical tool name &middot; canonical argument keys &middot; cost extraction</p>
+                  <p class="text-xs text-slate-400">knows Claude capitalises; knows <code class="mono">input</code> vs <code class="mono">arguments</code></p>
+                </div>
+                <svg width="100%" height="20"><path d="M50 0 V12" stroke="#64748b" stroke-width="1.5"/><path d="M44 8 L50 16 L56 8" fill="none" stroke="#64748b" stroke-width="1.5"/></svg>
+                <div class="rounded border-2 border-slate-800 px-4 py-3 text-center text-xs">analyzers read one canonical stream</div>
+                <p class="text-xs text-slate-500 pt-1">A third harness, or a new Claude tool, is one edit here — not five.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-7 py-6 space-y-4">
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Problem</span> Two adapters justify the seam, and discovery honours it — but below the file boundary every analyzer re-learns that Claude writes <code class="mono text-[13px]">input</code> where Pi writes <code class="mono text-[13px]">arguments</code>, and three copies of <code class="mono text-[13px]">PATH_KEYS</code> already disagree (one adds <code class="mono text-[13px]">notebook_path</code>, one trims and one doesn't).</p>
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Solution</span> Deepen the seam to cover vocabulary, not just file shape: the parser emits a canonical tool name and canonical argument keys, so no analyzer below it needs to know which harness it read.</p>
+            <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2">
+              <p class="text-sm">• locality: harness quirks in one module</p>
+              <p class="text-sm">• leverage: 5 call sites become 1</p>
+              <p class="text-sm">• the divergent <code class="mono text-[13px]">.trim()</code> stops being a coin flip</p>
+              <p class="text-sm">• tests assert two adapters, one stream</p>
+            </div>
+            <div class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+              <strong>Touches identity:</strong> argument keys feed fingerprints, so this is a <em>major</em> version bump for every analyzer that reads tool arguments, plus a corpus re-analyse. Do it deliberately, not as a drive-by.
+            </div>
+          </div>
+        </article>
+
+        <!-- ============ 3 ============ -->
+        <article id="c3" class="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+          <div class="px-7 pt-7 pb-4 space-y-3">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="font-serif text-2xl">Turn boundaries: one owner, six re-derivations</h2>
+              <div class="flex gap-2 shrink-0">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Strong</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">in-process</span>
+              </div>
+            </div>
+            <p class="mono text-sm text-slate-500">turn-pair-core/build.ts:24 &middot; session-overview/cross-session.ts:113 &middot; similarity-cluster/extract.ts:51 &middot; token-units/fold.ts:174 &middot; tool-trajectory/index.ts:189 &middot; phase-trajectory/classify.ts:235 &middot; session-overview/digest.ts:192 &middot; request-classes/index.ts:145</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-px bg-stone-200 border-y border-stone-200">
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">Before — the rule, copied until it drifts</p>
+              <div class="rounded deep text-stone-100 px-4 py-3">
+                <p class="lbl text-slate-400">build.ts:24 — correct</p>
+                <p class="mono text-xs text-slate-300 mt-1">{user, bashExecution,<br/>branch_summary, custom_message}</p>
+              </div>
+              <svg width="100%" height="18"><path d="M50 0 V10" stroke="#64748b"/><path d="M44 6 L50 14 L56 6" fill="none" stroke="#64748b"/></svg>
+              <div class="rounded border-2 border-slate-800 px-4 py-3">
+                <p class="lbl text-slate-500">cross-session.ts:113 — a verbatim copy</p>
+                <p class="mono text-xs text-slate-700 mt-1">{user, bashExecution,<br/>branch_summary, custom_message}</p>
+              </div>
+              <svg width="100%" height="18"><path class="leak" d="M50 0 V10" stroke-width="2"/><path d="M44 6 L50 14 L56 6" fill="none" class="leak" stroke-width="2"/></svg>
+              <div class="space-y-1.5 text-xs">
+                <p class="lbl text-slate-400">six more walkers guess</p>
+                <div class="rounded border-2 border-red-400 bg-red-50 px-3 py-2 mono">role === "user"</div>
+                <div class="rounded border-2 border-red-400 bg-red-50 px-3 py-2 mono">role !== "user"</div>
+                <p class="text-slate-600 mt-1">silently drop the three non-user turn starts</p>
+              </div>
+            </div>
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">After — the predicate, asked for explicitly</p>
+              <div class="rounded deep text-stone-100 p-4 space-y-3">
+                <p class="lbl text-slate-400">Turn-pair module owns</p>
+                <div class="h-px bg-slate-600"></div>
+                <p class="text-xs text-slate-300">isTurnStart(m) &middot; iterateTurns(messages) &middot; getTurnPairs (already cached per session)</p>
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-xs text-center mt-3">
+                <div class="rounded border border-slate-400 py-2">all turns</div>
+                <div class="rounded border border-slate-400 py-2">user-started only</div>
+              </div>
+              <p class="text-xs text-slate-500">A consumer that genuinely wants user-only turns <em>asks</em> for it, instead of accidentally getting user-only turns by writing its own loop.</p>
+            </div>
+          </div>
+
+          <div class="px-7 py-6 space-y-4">
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Problem</span> <code class="mono text-[13px]">buildTurnPairs</code> is a genuinely deep module — cached once per session, four analyzers reach it through the interface — but the host's turn-boundary rule beside it is re-derived in six more places, and one file has already copied the set verbatim.</p>
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Solution</span> Give the turn-pair module the boundary predicate and turn iteration itself; downstream walkers stop re-deriving what a turn is.</p>
+            <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2">
+              <p class="text-sm">• locality: the rule stops drifting from its copy</p>
+              <p class="text-sm">• one fixture exercises the rule, not seven</p>
+              <p class="text-sm">• the drift it already caused becomes visible</p>
+              <p class="text-sm">• deletion test: the six walkers <em>concentrate</em> complexity</p>
+            </div>
+          </div>
+        </article>
+
+        <!-- ============ 4 ============ -->
+        <article id="c4" class="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+          <div class="px-7 pt-7 pb-4 space-y-3">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="font-serif text-2xl">The as-of predicate: one flag, two graph shapes</h2>
+              <div class="flex gap-2 shrink-0">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Strong</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">in-process</span>
+              </div>
+            </div>
+            <p class="mono text-sm text-slate-500">db/analysis-queries.ts (924) &middot; db/current-generation.ts (29) &middot; timepoint.ts (133)</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-px bg-stone-200 border-y border-stone-200">
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">Before — visibility is half-owned</p>
+              <div class="rounded border-2 border-slate-800 px-4 py-3 space-y-1">
+                <p class="lbl text-slate-500">current-generation.ts owns</p>
+                <p class="text-xs text-slate-600">the <em>revises</em> half — supersession</p>
+              </div>
+              <p class="text-xs text-red-700 text-center">nothing owns the retraction half</p>
+              <div class="rounded border-2 border-red-400 bg-red-50 px-4 py-3 space-y-1">
+                <p class="lbl text-red-700">hand-typed 6× in one file</p>
+                <p class="mono text-xs text-red-800">created_at &lt;= ? AND<br/>(retracted_at IS NULL OR retracted_at &gt; ?)</p>
+              </div>
+              <div class="space-y-2 text-xs mt-3">
+                <div class="rounded border border-slate-300 px-3 py-2"><code class="mono">nodeFilterSql:419</code> — applies <code class="mono">NOT_REVISED_AS_OF</code> ✓</div>
+                <div class="rounded border-2 border-red-400 bg-red-50 px-3 py-2"><code class="mono">getSessionNodes:362</code> — omits it ✗</div>
+              </div>
+            </div>
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">After — one owner of "visible at T"</p>
+              <div class="rounded deep text-stone-100 p-4 space-y-3">
+                <p class="lbl text-slate-400">visibleAt(t, { allVersions })</p>
+                <div class="h-px bg-slate-600"></div>
+                <div class="space-y-1 text-xs text-slate-300">
+                  <p>• created at or before t</p>
+                  <p>• not retracted at t</p>
+                  <p>• no node live-at-t revises it</p>
+                </div>
+              </div>
+              <div class="space-y-2 text-xs mt-3">
+                <div class="rounded border-2 border-slate-800 px-3 py-2 text-center">every as-of read composes it</div>
+                <div class="rounded border border-slate-300 px-3 py-2 text-center text-slate-600">one test, not a matrix across five functions</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-7 py-6 space-y-4">
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Problem</span> <code class="mono text-[13px]">prospect nodes --as-of</code> shows one generation per output key; <code class="mono text-[13px]">prospect show --session --as-of</code> blends every superseded generation — the same flag, decided by which query function the command happened to call.</p>
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Solution</span> Deepen <code class="mono text-[13px]">current-generation.ts</code> from "the supersession predicate" into "what is visible at T", covering retraction and supersession together, and compose it into every as-of read.</p>
+            <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2">
+              <p class="text-sm">• locality: eight paste sites become one</p>
+              <p class="text-sm">• fixes the flag inconsistency for free</p>
+              <p class="text-sm">• one predicate to test, not five variants</p>
+              <p class="text-sm">• retraction stays reversible, as DESIGN.md requires</p>
+            </div>
+            <div class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+              <strong>Smallest candidate here, and the one that touches a stated invariant.</strong> Confirm at runtime against a revised graph before changing which shape is correct — then make it consistent deliberately.
+            </div>
+          </div>
+        </article>
+
+        <!-- ============ 5 ============ -->
+        <article id="c5" class="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+          <div class="px-7 pt-7 pb-4 space-y-3">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="font-serif text-2xl">"Never inferred" needs a second owner at the LLM seam</h2>
+              <div class="flex gap-2 shrink-0">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Worth exploring</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">in-process</span>
+              </div>
+            </div>
+            <p class="mono text-sm text-slate-500">analyze/pi-llm.ts:178-185 &middot; mock-llm.ts:87-92 &middot; framework.ts:346,491 &middot; sync/parser.ts:728</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-px bg-stone-200 border-y border-stone-200">
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">Before — one ingress honours the rule</p>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="rounded border-2 border-emerald-500 bg-emerald-50 px-3 py-4 space-y-2">
+                  <p class="lbl text-emerald-800">parser.ts:728</p>
+                  <p class="text-xs text-emerald-900">unpriced &rarr; <strong>null</strong></p>
+                  <p class="text-xs text-emerald-700">extractCostUsd: total &gt; 0</p>
+                </div>
+                <div class="rounded border-2 border-red-400 bg-red-50 px-3 py-4 space-y-2">
+                  <p class="lbl text-red-700">pi-llm.ts:178</p>
+                  <p class="text-xs text-red-900">unpriced &rarr; <strong>0</strong></p>
+                  <p class="mono text-xs text-red-800">?? 0 on all four fields</p>
+                </div>
+              </div>
+              <div class="rounded border border-slate-300 px-4 py-3">
+                <p class="lbl text-slate-500">framework.ts:491</p>
+                <p class="mono text-xs text-slate-700 mt-1">costUsd ?? null</p>
+                <p class="text-xs text-slate-600">cannot repair a zero that already arrived</p>
+              </div>
+              <p class="text-xs text-slate-500">The mock does the same, so the suite never surfaces it.</p>
+            </div>
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">After — two ingress, one rule</p>
+              <div class="space-y-2">
+                <div class="rounded border-2 border-emerald-500 bg-emerald-50 px-4 py-3 text-center text-xs text-emerald-900">sync parser — cost enters</div>
+                <div class="rounded border-2 border-emerald-500 bg-emerald-50 px-4 py-3 text-center text-xs text-emerald-900">LLM caller — cost enters</div>
+              </div>
+              <svg width="100%" height="18"><path d="M25 0 V8 M25 8 H175 M175 8 V0" fill="none" stroke="#64748b"/><path d="M169 4 L175 12 L181 4" fill="none" stroke="#64748b"/></svg>
+              <div class="rounded deep text-stone-100 px-4 py-4 space-y-1">
+                <p class="lbl text-slate-400">one statement of the rule</p>
+                <p class="text-xs text-slate-300">an unpriced measurement is null, never zero</p>
+              </div>
+              <p class="text-xs text-slate-500">mock gains a null-token mode, so tests can assert UNKNOWN actually propagates.</p>
+            </div>
+          </div>
+
+          <div class="px-7 py-6 space-y-4">
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Problem</span> DESIGN.md says node cost "carries nulls, not zeros, by the same rule as <strong>billed cost</strong>" — but the parser's rule is written once at ingest, and <code class="mono text-[13px]">pi-llm.ts</code> answers <code class="mono text-[13px]">?? 0</code> for cost and all three token buckets.</p>
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Solution</span> The LLM caller is the second boundary where a measurement enters; state the same rule there, and let the mock exercise it.</p>
+            <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2">
+              <p class="text-sm">• locality: one rule, two ingress points</p>
+              <p class="text-sm">• the test double can finally prove it</p>
+              <p class="text-sm">• node cost is outside identity — safe to change</p>
+              <p class="text-sm">• run-level sums need priced/unpriced counts kept</p>
+            </div>
+          </div>
+        </article>
+
+        <!-- ============ 6 ============ -->
+        <article id="c6" class="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+          <div class="px-7 pt-7 pb-4 space-y-3">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <h2 class="font-serif text-2xl">The plan/analyze seam hands out the database</h2>
+              <div class="flex gap-2 shrink-0">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Worth exploring</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">in-process</span>
+              </div>
+            </div>
+            <p class="mono text-sm text-slate-500">analyze/types.ts:459-479 &middot; 10 analyzers issuing raw <code class="mono">.prepare()</code> &middot; 22 <code class="mono">unit.meta</code> reads</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-px bg-stone-200 border-y border-stone-200">
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">Before — the interface leaks its implementation</p>
+              <pre class="mermaid">
+flowchart TB
+  CTX["AnalyzerPlanContext<br/>types.ts:479 — db: AsyncDatabase"]
+  A1["context-economy:567"]
+  A2["cache-economy:348"]
+  A3["tool-inventory-tax:360"]
+  A4["revive-chains:228"]
+  A5["routing-opportunity:263"]
+  CTX --> A1 & A2 & A3 & A4 & A5
+  A1 -.->|raw SELECT| SQL[("analysis_nodes<br/>usage rows")]
+  A2 -.->|raw SELECT| SQL
+  A3 -.->|raw SELECT| SQL
+  SQL -.->|"AGENTS.md: all SQL lives in src/db"| BAD["rule violated"]
+  META["unit.meta: Record&lt;string, unknown&gt;<br/>22 readers carry computation across<br/>plan → analyze with `as unknown as X`"]
+  CTX --> META
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
+  classDef dup fill:#f5f5f4,stroke:#a8a29e;
+  class A1,A2,A3,A4,A5,SQL,BAD leak
+  class META dup
+              </pre>
+            </div>
+            <div class="bg-white p-5 space-y-3">
+              <p class="lbl text-slate-400">After — named reads, typed payload</p>
+              <div class="rounded deep text-stone-100 p-4 space-y-3">
+                <p class="lbl text-slate-400">the interface declares what a session can be asked</p>
+                <div class="h-px bg-slate-600"></div>
+                <div class="grid grid-cols-2 gap-2 text-xs text-center">
+                  <div class="rounded border border-slate-600 py-2">getTurnPairs</div>
+                  <div class="rounded border border-slate-600 py-2">tool inventory</div>
+                  <div class="rounded border border-slate-600 py-2">usage rows</div>
+                  <div class="rounded border border-slate-600 py-2">sibling session ids</div>
+                </div>
+                <p class="text-xs text-slate-400 pt-1">SQL stays in src/db, where the rule already says it lives</p>
+              </div>
+              <div class="rounded border-2 border-slate-800 px-4 py-3 space-y-1">
+                <p class="lbl text-slate-500">typed plan payload</p>
+                <p class="text-xs text-slate-600">analyze() callable from a synthetic payload — no plan() detection needed</p>
+              </div>
+              <p class="text-xs text-slate-500">Narrowing the interface also <em>enforces</em> "an analyzer reads only the conversation, its own nodes, and its declared dependencies" — so the corpus-wide reads need naming first.</p>
+            </div>
+          </div>
+
+          <div class="px-7 py-6 space-y-4">
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Problem</span> AGENTS.md puts all SQL in <code class="mono text-[13px]">src/db/</code>, yet the plan context hands analyzers a raw <code class="mono text-[13px]">db</code> handle and ten of them write their own <code class="mono text-[13px]">SELECT</code> — while 22 others smuggle their whole computation across plan&rarr;analyze through an untyped <code class="mono text-[13px]">unit.meta</code>.</p>
+            <p class="text-sm"><span class="lbl text-slate-400 mr-2">Solution</span> Replace the handle with named session-read accessors, and give each analyzer a typed plan payload so the interface can describe what actually crosses it.</p>
+            <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2">
+              <p class="text-sm">• locality: SQL returns to one module</p>
+              <p class="text-sm">• duplicate reads collapse (plan <em>and</em> analyze, same read)</p>
+              <p class="text-sm">• test surface: analyze() without running detection</p>
+              <p class="text-sm">• enforces dependency-scoped visibility</p>
+            </div>
+            <div class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+              Name the legitimate corpus-wide reads first (contrast siblings, lexicon reference, similarity clusters). Narrowing before they are named will look like breakage.
+            </div>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- ============ already good ============ -->
+      <section id="good" class="bg-white rounded-xl border border-stone-200 p-7 space-y-4">
+        <h2 class="font-serif text-2xl">Already deep — leave these alone</h2>
+        <p class="text-sm text-slate-600">Named so the next review doesn't re-suggest them. Each has a small interface, real complexity behind it, and knowledge that cannot be duplicated without consequence.</p>
+        <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+          <p>• <code class="mono text-[13px]">sync/adapter.ts</code> + <code class="mono text-[13px]">scanner.ts</code> — two adapters justify the harness seam for discovery</p>
+          <p>• <code class="mono text-[13px]">tool-stream.ts</code> — one pairing-by-call-id, so trajectory and failure analysis cannot disagree</p>
+          <p>• <code class="mono text-[13px]">harness.ts</code> — 42 lines, one vocabulary, explicit <em>unknown</em> instead of a silent default</p>
+          <p>• <code class="mono text-[13px]">evidence-slices.ts</code> — pure, two consumers, cannot disagree</p>
+          <p>• <code class="mono text-[13px]">commands/registry.ts</code> — 25 implementations behind <code class="mono text-[13px]">load()</code>; high leverage per line</p>
+          <p>• <code class="mono text-[13px]">commands/grouping.ts</code> — the display-time-grouping rule has exactly one owner</p>
+          <p>• <code class="mono text-[13px]">proposal-materializer.ts</code> — the proposal lifecycle in one place</p>
+          <p>• <code class="mono text-[13px]">db/</code> as a whole — commands contain <strong>zero</strong> <code class="mono text-[13px]">SELECT</code>s; 924 lines is size, not shallowness</p>
+          <p>• <code class="mono text-[13px]">viz/collect.ts</code> + <code class="mono text-[13px]">render.ts</code> — pure read, pure render, no clock</p>
+          <p>• <code class="mono text-[13px]">buildTurnPairs</code> — cached per session, reached through the interface</p>
+          <p>• the parser's cost and tool-inventory invariants — the clearest encoded domain knowledge in the repo</p>
+          <p>• <code class="mono text-[13px]">outputs.ts</code> — the "rendering writes nothing" invariant holds for free</p>
+        </div>
+      </section>
+
+      <!-- ============ faint ============ -->
+      <section id="faint" class="space-y-4">
+        <h2 class="font-serif text-2xl">Queued, not yet candidates</h2>
+        <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2 text-sm text-slate-700">
+          <p>• <code class="mono text-[13px]">defaults.ts</code> (392) — one analyzer costs four edits; a 41-entry id array only a test reads</p>
+          <p>• the per-session-unit plan skeleton — 15 near-identical fingerprint blocks; <strong>re-identifies every session node</strong>, so it needs a version move</p>
+          <p>• connection lifecycle re-decided at 27 call sites; one <code class="mono text-[13px]">SELECT</code> escaped <code class="mono text-[13px]">src/db/</code> in <code class="mono text-[13px]">timepoint.ts:128</code></p>
+          <p>• argument parsing — <code class="mono text-[13px]">parseFlags</code> exists and is good; ten commands hand-roll the loop, nine without a schema</p>
+          <p>• <code class="mono text-[13px]">tool-stream.ts</code> rebuilt 16× across 12 analyzers — extend the existing per-session cache</p>
+          <p>• <code class="mono text-[13px]">tests/component/helpers.ts</code> types a driver the code no longer uses; <code class="mono text-[13px]">tsconfig</code> excludes tests, so CI's check job can't see it</p>
+          <p>• <code class="mono text-[13px]">content_json</code> parsed with a different fallback at seven call sites</p>
+          <p>• model-tier resolution written out in eight places — fold when a third default appears</p>
+        </div>
+      </section>
+
+      <!-- ============ top ============ -->
+      <section id="top-recommendation" class="rounded-xl deep text-stone-100 p-8 space-y-4">
+        <p class="lbl text-slate-400">Top recommendation</p>
+        <h2 class="font-serif text-3xl"><a href="#c1" class="hover:underline">One operation catalogue behind the tool and the slash commands</a></h2>
+        <p class="text-slate-300 max-w-3xl">It has the clearest evidence of cost — the second-hottest file in the repo is a duplicate surface, not hard work — it touches no invariant, and it converts the largest existing test file's fake-host harness into an interface the tests can call directly. Delete the duplication and the churn stops; that is the whole bet.</p>
+        <p class="text-slate-400 text-sm max-w-3xl">If correctness outranks refactor today, do <a href="#c4" class="text-slate-200 underline">the as-of predicate</a> first instead: it is the smallest candidate here, and it makes a stated invariant true rather than tidying anything.</p>
+      </section>
+
+    </main>
+  </body>
+</html>

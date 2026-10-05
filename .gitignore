@@ -4,3 +4,6 @@ dist/
 *.db-journal
 *.tgz
 .DS_Store
+
+# Local agent state (session scratch, local scratchpads) — never committed.
+.pi/
