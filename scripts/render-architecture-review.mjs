@@ -107,9 +107,11 @@ try {
 
 	const pick = (id) => {
 		const esc = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-		const m = dom.match(new RegExp(`<pre id="${esc}">([A-Za-z0-9+/=]*)</pre>`));
+		// The id may carry attributes and the payload may be wrapped, so match the
+		// element rather than a literal opening tag.
+		const m = dom.match(new RegExp(`<pre[^>]*\\bid="${esc}"[^>]*>([\\s\\S]*?)</pre>`));
 		if (!m) throw new Error(`probe produced no ${id} — the authoring source may not have finished rendering`);
-		return Buffer.from(m[1], "base64").toString("utf8");
+		return Buffer.from(m[1].trim(), "base64").toString("utf8");
 	};
 
 	const css = pick("__CSS__");
@@ -233,8 +235,15 @@ const withoutScripts = source
 	// (mermaid-<stamp>_flowchart-v2-pointEnd), and \b does not match between
 	// the digits and the underscore, which would leave the timestamped half in
 	// place and make every run differ from the last.
-	out = out.replace(/\bmermaid-(\d+)/g, (match, stamp) =>
-		stampToFigure.has(stamp) ? `mermaid-${stampToFigure.get(stamp)}` : match,
+	// A stamp is matched only when it starts the string or follows a
+	// non-word character — `#mermaid-…`, `url(#mermaid-…)`, `id="mermaid-…"`.
+	// The preceding character is captured and put back, so requiring the
+	// boundary does not consume it. A plain `\b` was wrong here for the same
+	// reason the trailing one was: `\b` asserts a boundary rather than
+	// establishing one, and a stamp preceded by a word character would have
+	// been left with its timestamp in place.
+	out = out.replace(/(^|[^\w])mermaid-(\d+)/g, (match, before, stamp) =>
+		`${before}mermaid-${stampToFigure.get(stamp) ?? stamp}`,
 	);
 
 	// Nothing below this point may report success on a broken artifact. Every
