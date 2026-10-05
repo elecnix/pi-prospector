@@ -102,12 +102,14 @@ try {
 	);
 
 	const pick = (id) => {
-		const m = dom.match(new RegExp(`<pre id="${id}">([A-Za-z0-9+/=]*)</pre>`));
+		const esc = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const m = dom.match(new RegExp(`<pre id="${esc}">([A-Za-z0-9+/=]*)</pre>`));
 		if (!m) throw new Error(`probe produced no ${id} — the authoring source may not have finished rendering`);
 		return Buffer.from(m[1], "base64").toString("utf8");
 	};
 
 	const css = pick("__CSS__");
+	const allSvgs = []; // kept for id renumbering; the splice below consumes a copy
 	let svgs;
 	try {
 		svgs = JSON.parse(pick("__SVG__"));
@@ -144,7 +146,20 @@ try {
 	const customLayer = customLayerMatch[0];
 	const customCss = customLayer.replace(/<\/?style>/g, "");
 
-	const withoutScripts = source
+	// Stripping is deliberately blind to which script it removes — the artifact
+	// must contain none. That means a module script added to the source later
+	// would vanish with no error and no diff signal, so state the expectation
+	// instead: exactly the Tailwind CDN tag and the Mermaid loader, nothing else.
+const scriptTags = source.match(/<script\b[^>]*>/g) ?? [];
+const moduleScripts = source.match(/<script type="module">/g) ?? [];
+if (scriptTags.length !== 2 || moduleScripts.length !== 1) {
+	throw new Error(
+		`${SRC} has ${scriptTags.length} script tag(s) and ${moduleScripts.length} module script(s); ` +
+			"the renderer expects exactly the Tailwind CDN tag and the Mermaid loader — a new script would be stripped silently",
+	);
+}
+
+const withoutScripts = source
 		.replace(/<script src="https:\/\/cdn\.tailwindcss\.com"><\/script>\s*/g, "")
 		.replace(/<script type="module">[\s\S]*?<\/script>\s*/g, "");
 
@@ -175,6 +190,7 @@ try {
 	}
 	out = out.replace(MERMAID_BLOCK, () => {
 		const svg = svgs.shift();
+		allSvgs.push(svg);
 		fig += 1;
 		if (!svg) {
 			throw new Error(`figure ${fig} has no rendered SVG — the render pass produced fewer than the ${declared} declared`);
@@ -186,25 +202,50 @@ try {
 	}
 
 	// Mermaid stamps each render with a fresh id (mermaid-<epoch-ms>) and
-	// references it from the SVG's own CSS, its marker urls, its aria wiring,
-	// and a page-level stylesheet. Left alone, every regeneration rewrites
-	// those ids and the tracked artifact shows a diff that changes nothing.
-	// Renumber them per figure, everywhere at once — the page-level stylesheet
-	// is the reason this runs over `out` rather than over each SVG. The number
-	// must stay unique per figure: each SVG carries its own `#mermaid-N { ... }`
-	// rules, so a collision would silently restyle one figure with the other.
-	const idMap = new Map();
+	// references that stamp from the SVG's own CSS, its marker urls, its aria
+	// wiring, and a page-level stylesheet. Left alone, every regeneration
+	// rewrites those ids and the tracked artifact shows a diff that changes
+	// nothing.
+	//
+	// Renumber by figure identity rather than by order of appearance: numbering
+	// on first sight would interleave the page-level stylesheet's stamps with the
+	// figures' own and hand out numbers by a walk over a mixed string, which is
+	// where two figures could end up sharing one id. Each figure's stamp is
+	// mapped to that figure's number up front, so the mapping is injective by
+	// construction and the page-level rules follow their own figure. A stamp
+	// belonging to no figure is left alone rather than renumbered into one.
+	const stampToFigure = new Map();
+	for (const svg of allSvgs) {
+		const stamp = svg.match(/id="mermaid-(\d+)"/)?.[1];
+		if (stamp && !stampToFigure.has(stamp)) stampToFigure.set(stamp, stampToFigure.size + 1);
+	}
+	// No trailing \b: Mermaid's marker ids carry a suffix
+	// (mermaid-<stamp>_flowchart-v2-pointEnd), and \b does not match between
+	// the digits and the underscore, which would leave the timestamped half in
+	// place and make every run differ from the last.
+	out = out.replace(/\bmermaid-(\d+)/g, (match, stamp) =>
+		stampToFigure.has(stamp) ? `mermaid-${stampToFigure.get(stamp)}` : match,
+	);
 
-	out = out.replace(/\bmermaid-(\d+)/g, (match, stamp) => {
-		if (!idMap.has(stamp)) idMap.set(stamp, idMap.size + 1);
-		return `mermaid-${idMap.get(stamp)}`;
-	});
-
+	// Nothing below this point may report success on a broken artifact. Every
+	// one of these is a case that has already gone wrong once in this script's
+	// own history.
 	if (out.includes("<script")) {
 		throw new Error("output still contains a script tag — the artifact must not execute anything");
 	}
-	if (/<(link|img)[^>]+href="http/i.test(out)) {
-		throw new Error("output still references a remote asset");
+	// Any remote reference at all, not just href on link/img: src, srcset, and
+	// url() inside the inlined stylesheet all fetch, and the generated CSS dump
+	// is exactly where a url() would land. The artifact carries no URL today, so
+	// the blunt test costs nothing and cannot be routed around.
+	//
+	// XML namespace declarations are exempt: the inlined SVG carries
+	// xmlns="http://www.w3.org/2000/svg" and friends. Those are identifiers the
+	// parser matches on, never dereferenced, and there are forty of them.
+	const fetchable = out
+		.replace(/xmlns(:[\w-]+)?\s*=\s*"[^"]*"/g, "")
+		.replace(/xmlns(:[\w-]+)?\s*=\s*'[^']*'/g, "");
+	if (/https?:\/\//i.test(fetchable)) {
+		throw new Error("output still references a remote URL");
 	}
 
 	// The custom layer's rules reach the artifact inside the generated stylesheet
@@ -214,14 +255,12 @@ try {
 	// becomes `5, 5`, `.12em` becomes `0.12em` — so a rule's text can never be
 	// compared literally. The property check is what makes this stronger than a
 	// bare selector test: a generated class sharing the name would pass that.
-	// Look each selector up where a rule actually starts — after a `}` or at
-	// the top of the stylesheet — rather than harvesting every rule in the file,
+	// Look each selector up where a rule actually starts — after a `}` or at the
+	// top of the stylesheet — rather than harvesting every rule in the file,
 	// which mis-attributes rules when a comment or a nested block throws the
 	// brace counting off.
 	const bodyOf = (sel) => {
 		const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-		// multiline: a rule can start at the beginning of a line inside the
-		// stylesheet, which `^` alone would miss.
 		const m = out.match(new RegExp(`(?:^|[};])\\s*${esc}\\s*(?:,[^{]*)?\\{([^}]*)\\}`, "m"));
 		return m ? m[1] : undefined;
 	};
