@@ -152,10 +152,14 @@ try {
 	// instead: exactly the Tailwind CDN tag and the Mermaid loader, nothing else.
 const scriptTags = source.match(/<script\b[^>]*>/g) ?? [];
 const moduleScripts = source.match(/<script type="module">/g) ?? [];
-if (scriptTags.length !== 2 || moduleScripts.length !== 1) {
+// Compared as the exact expected pair, not as counts: a count passes any two
+// tags of which one is a module script, which is not the same as the two tags
+// the stripping regexes below actually know how to remove.
+const EXPECTED_TAGS = ['<script src="https://cdn.tailwindcss.com">', '<script type="module">'];
+if (scriptTags.length !== EXPECTED_TAGS.length || EXPECTED_TAGS.some((tag, i) => scriptTags[i] !== tag)) {
 	throw new Error(
-		`${SRC} has ${scriptTags.length} script tag(s) and ${moduleScripts.length} module script(s); ` +
-			"the renderer expects exactly the Tailwind CDN tag and the Mermaid loader — a new script would be stripped silently",
+		`${SRC} has script tags [${scriptTags.join(", ")}] (${moduleScripts.length} module); ` +
+			`expected exactly [${EXPECTED_TAGS.join(", ")}] — the renderer strips these two and nothing else, so a new script would be removed silently or left in the artifact`,
 	);
 }
 
@@ -189,12 +193,14 @@ const withoutScripts = source
 		throw new Error(`source declares ${declared} diagram(s) but ${blocks.length} survive into the output — a script or style replacement consumed one`);
 	}
 	out = out.replace(MERMAID_BLOCK, () => {
-		const svg = svgs.shift();
-		allSvgs.push(svg);
+		// Check before consuming, so a failure reports the state it was given
+		// rather than an array it has already mutated.
 		fig += 1;
-		if (!svg) {
+		if (svgs.length === 0) {
 			throw new Error(`figure ${fig} has no rendered SVG — the render pass produced fewer than the ${declared} declared`);
 		}
+		const svg = svgs.shift();
+		allSvgs.push(svg);
 		return `<div class="mermaid">${svg}</div>`;
 	});
 	if (svgs.length > 0) {
