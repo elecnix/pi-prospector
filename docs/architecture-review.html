@@ -6,7 +6,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
       import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
     </script>
     <style>
       .seam { stroke-dasharray: 5 5; }
@@ -53,20 +53,26 @@
               <p class="lbl text-slate-400">Before — three copies of one pipeline</p>
               <pre class="mermaid">
 flowchart TB
-  SL["/prospect-proposals<br/>proposals.ts:319-345"]
-  TL["prospect tool<br/>tool.ts:114-135"]
-  HM["headless --prospect<br/>registry.ts:78"]
-  subgraph G["group by session → support map → nest → render"]
-    SL --> G
-    TL --> G
+  subgraph B["Before — one pipeline, three copies"]
+    SL["/prospect-proposals<br/>proposals.ts:319-345"]
+    TL["prospect tool<br/>tool.ts:114-135"]
+    GR["group by session → support map → nest → render"]
+    SL --> GR
+    TL --> GR
   end
-  SL -.->|"re-parses flag string"| TA["tool.ts:71-84<br/>typed params → text → parse"]
-  TA -.-> SL
+  HM["--prospect flag<br/>registry.ts:78"] --> SL
+  RT["tool.ts:71-84<br/>typed params → flag string → re-parse"] -.-> SL
   TL -.->|"no --as-of, no --full"| SL
+  subgraph A["After — one catalogue, three adapters"]
+    CAT["Operation catalogue<br/>action → params → render → machine payload"]
+    AT["tool.ts adapter"] --> CAT
+    AR["registry.ts adapter"] --> CAT
+    AH["--prospect adapter"] --> CAT
+  end
   classDef leak stroke:#dc2626,stroke-width:2px,color:#dc2626;
-  classDef dup fill:#f5f5f4,stroke:#a8a29e;
-  class TA,TL leak
-  class G,SL dup
+  classDef deep fill:#1e293b,stroke:#0f172a,color:#f8fafc;
+  class RT,TL leak
+  class CAT deep
               </pre>
               <p class="text-xs text-slate-500">The grouping rule has one owner. Its <em>application</em> is written twice, and the tool reaches back into a command module for a header helper.</p>
             </div>
