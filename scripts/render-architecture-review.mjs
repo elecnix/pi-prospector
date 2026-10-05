@@ -17,6 +17,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const SRC = "docs/architecture-review.src.html";
 const OUT = "docs/architecture-review.html";
@@ -96,7 +97,10 @@ try {
 			"--no-sandbox",
 			"--virtual-time-budget=30000",
 			"--dump-dom",
-			`file://${probePage}`,
+			// pathToFileURL, not string concatenation: `file://${probePage}` gives
+			// `file://C:\Users\...` on Windows, which Chrome parses as host `c`
+			// with a path of `\Users\...` and fails to load.
+			pathToFileURL(probePage).href,
 		],
 		{ encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
 	);
