@@ -101,9 +101,16 @@ try {
 	const css = pick("__CSS__");
 	const svgs = JSON.parse(pick("__SVG__"));
 
+	// One pattern, shared by the count and the replacement below, so the two
+	// cannot disagree about how many figures there are. An earlier version
+	// counted `/<pre class="mermaid">/g` but replaced with a pattern that also
+	// required a newline, so a source whose block differed in whitespace passed
+	// the guard and then spliced `undefined` into the page as a figure.
+	const MERMAID_BLOCK = /<pre class="mermaid">[\s\S]*?<\/pre>/g;
+
 	// Every diagram in the source must have rendered, or we would silently ship
 	// a file with a missing figure.
-	const declared = (source.match(/<pre class="mermaid">/g) ?? []).length;
+	const declared = (source.match(MERMAID_BLOCK) ?? []).length;
 	if (svgs.length !== declared) {
 		throw new Error(`source declares ${declared} diagram(s) but ${svgs.length} rendered — fix the Mermaid source first`);
 	}
@@ -127,12 +134,18 @@ try {
 	// text is NOT carried into the output: it still lives in the authoring
 	// source, and it contains `-->`, which would close an HTML comment early
 	// and spill diagram source into the rendered page.
-
-	out = out.replace(/<pre class="mermaid">\n([\s\S]*?)<\/pre>/g, () => {
+	let fig = 0;
+	out = out.replace(MERMAID_BLOCK, () => {
 		const svg = svgs.shift();
-
+		fig += 1;
+		if (!svg) {
+			throw new Error(`figure ${fig} has no rendered SVG — the render pass produced fewer than the ${declared} declared`);
+		}
 		return `<div class="mermaid">${svg}</div>`;
 	});
+	if (svgs.length > 0) {
+		throw new Error(`${svgs.length} rendered SVG(s) had no matching block in the source — the count and the replacement disagreed`);
+	}
 
 	// Mermaid stamps each render with a fresh id (mermaid-<epoch-ms>) and
 	// references it from the SVG's own CSS, its marker urls, its aria wiring,
