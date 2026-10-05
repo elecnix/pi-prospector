@@ -25,7 +25,8 @@
   "license": "MIT",
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.74.0",
-    "@earendil-works/pi-coding-agent": ">=0.74.0"
+    "@earendil-works/pi-coding-agent": ">=0.74.0",
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
@@ -36,13 +37,13 @@
     }
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
-    "typebox": "^1.1.38"
+    "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typebox": "^1.1.38"
   }
 }
