@@ -128,6 +128,14 @@ try {
 	if (!Array.isArray(svgs)) {
 		throw new Error("probe payload in __SVG__ is not an array of diagrams");
 	}
+	// Array.isArray says nothing about the elements. A null or empty element
+	// would pass every count check and then be spliced into the page as the
+	// literal text "null" — the same silent-wrong-output failure the rest of
+	// these checks exist to prevent.
+	const notSvg = svgs.findIndex((s) => typeof s !== "string" || s.length === 0);
+	if (notSvg !== -1) {
+		throw new Error(`probe payload in __SVG__ has a non-SVG entry at index ${notSvg} (${typeof svgs[notSvg]})`);
+	}
 
 	// One pattern, shared by the count and the replacement below, so the two
 	// cannot disagree about how many figures there are. An earlier version
