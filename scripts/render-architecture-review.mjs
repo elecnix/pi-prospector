@@ -110,7 +110,13 @@ try {
 
 	// Drop the two CDN script tags; carry the custom layer and the generated
 	// Tailwind CSS in one <style> instead.
-	const customLayer = source.match(/<style>[\s\S]*?<\/style>/)[0];
+	const customLayerMatch = source.match(/<style>[\s\S]*?<\/style>/);
+	if (!customLayerMatch) {
+		throw new Error(`authoring source has no <style> block — ${SRC} must keep its custom CSS layer`);
+	}
+	const customLayer = customLayerMatch[0];
+	const customCss = customLayer.replace(/<\/?style>/g, "");
+
 	const withoutScripts = source
 		.replace(/<script src="https:\/\/cdn\.tailwindcss\.com"><\/script>\s*/g, "")
 		.replace(/<script type="module">[\s\S]*?<\/script>\s*/g, "");
@@ -121,9 +127,26 @@ try {
 	// text is NOT carried into the output: it still lives in the authoring
 	// source, and it contains `-->`, which would close an HTML comment early
 	// and spill diagram source into the rendered page.
+
 	out = out.replace(/<pre class="mermaid">\n([\s\S]*?)<\/pre>/g, () => {
 		const svg = svgs.shift();
+
 		return `<div class="mermaid">${svg}</div>`;
+	});
+
+	// Mermaid stamps each render with a fresh id (mermaid-<epoch-ms>) and
+	// references it from the SVG's own CSS, its marker urls, its aria wiring,
+	// and a page-level stylesheet. Left alone, every regeneration rewrites
+	// those ids and the tracked artifact shows a diff that changes nothing.
+	// Renumber them per figure, everywhere at once — the page-level stylesheet
+	// is the reason this runs over `out` rather than over each SVG. The number
+	// must stay unique per figure: each SVG carries its own `#mermaid-N { ... }`
+	// rules, so a collision would silently restyle one figure with the other.
+	const idMap = new Map();
+
+	out = out.replace(/\bmermaid-(\d+)/g, (match, stamp) => {
+		if (!idMap.has(stamp)) idMap.set(stamp, idMap.size + 1);
+		return `mermaid-${idMap.get(stamp)}`;
 	});
 
 	if (out.includes("<script")) {
@@ -131,6 +154,17 @@ try {
 	}
 	if (/<(link|img)[^>]+href="http/i.test(out)) {
 		throw new Error("output still references a remote asset");
+	}
+
+	// The custom layer is spliced in by matching its exact text, and the script
+	// stripping above runs regexes over the same region of the file. If either
+	// ever drifts, the artifact would ship with the custom CSS silently missing
+	// — the report would render, just wrong. Assert every selector survived.
+	const lost = Array.from(customCss.matchAll(/(^|[\n{}])\s*([.#][a-zA-Z][\w-]*)/g))
+		.map((m) => m[2])
+		.filter((sel) => !out.includes(sel));
+	if (lost.length > 0) {
+		throw new Error(`custom CSS did not survive into the output: ${[...new Set(lost)].join(", ")}`);
 	}
 
 	writeFileSync(OUT, out);
