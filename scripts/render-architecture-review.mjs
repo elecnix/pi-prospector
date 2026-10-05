@@ -112,7 +112,10 @@ try {
 	try {
 		svgs = JSON.parse(pick("__SVG__"));
 	} catch (cause) {
-		throw new Error(`probe payload in __SVG__ is not valid JSON (${cause.message}) — the probe did not finish rendering`);
+		// JSON.parse throws a SyntaxError in practice, but naming the cause is
+		// the whole point of this message, so do not assume it is an Error.
+		const why = cause instanceof Error ? cause.message : String(cause);
+		throw new Error(`probe payload in __SVG__ is not valid JSON (${why}) — the probe did not finish rendering`);
 	}
 	if (!Array.isArray(svgs)) {
 		throw new Error("probe payload in __SVG__ is not an array of diagrams");
@@ -152,6 +155,14 @@ try {
 	// source, and it contains `-->`, which would close an HTML comment early
 	// and spill diagram source into the rendered page.
 	let fig = 0;
+	// The count above is taken from the source; the replacement runs on `out`,
+	// which is the source minus its scripts and with the style layer swapped.
+	// Comparing the two makes an honest statement of what is being replaced,
+	// and keeps the leftover check below meaningful rather than unreachable.
+	const blocks = out.match(MERMAID_BLOCK) ?? [];
+	if (blocks.length !== declared) {
+		throw new Error(`source declares ${declared} diagram(s) but ${blocks.length} survive into the output — a script or style replacement consumed one`);
+	}
 	out = out.replace(MERMAID_BLOCK, () => {
 		const svg = svgs.shift();
 		fig += 1;
@@ -161,7 +172,7 @@ try {
 		return `<div class="mermaid">${svg}</div>`;
 	});
 	if (svgs.length > 0) {
-		throw new Error(`${svgs.length} rendered SVG(s) had no matching block in the source — the count and the replacement disagreed`);
+		throw new Error(`${svgs.length} rendered SVG(s) had no matching block in the output — the replacement consumed fewer figures than were rendered`);
 	}
 
 	// Mermaid stamps each render with a fresh id (mermaid-<epoch-ms>) and
