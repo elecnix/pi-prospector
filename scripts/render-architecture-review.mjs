@@ -76,8 +76,17 @@ const probe = `
 
 const dir = mkdtempSync(join(tmpdir(), "arch-review-"));
 try {
+	// The probe closes the document, so it goes after the LAST </body>. Splicing
+	// at the first one — which is what String.replace with a string pattern
+	// does — would truncate the real body if the source ever contained that
+	// literal text earlier, e.g. inside a code sample or a comment, and the
+	// render would then fail with a probe error naming neither cause.
+	const bodyClose = source.lastIndexOf("</body>");
+	if (bodyClose === -1) {
+		throw new Error(`${SRC} has no </body> — the probe cannot be appended`);
+	}
 	const probePage = join(dir, "probe.html");
-	writeFileSync(probePage, source.replace("</body>", `${probe}</body>`));
+	writeFileSync(probePage, `${source.slice(0, bodyClose)}${probe}${source.slice(bodyClose)}`);
 
 	const dom = execFileSync(
 		chrome,
@@ -99,7 +108,15 @@ try {
 	};
 
 	const css = pick("__CSS__");
-	const svgs = JSON.parse(pick("__SVG__"));
+	let svgs;
+	try {
+		svgs = JSON.parse(pick("__SVG__"));
+	} catch (cause) {
+		throw new Error(`probe payload in __SVG__ is not valid JSON (${cause.message}) — the probe did not finish rendering`);
+	}
+	if (!Array.isArray(svgs)) {
+		throw new Error("probe payload in __SVG__ is not an array of diagrams");
+	}
 
 	// One pattern, shared by the count and the replacement below, so the two
 	// cannot disagree about how many figures there are. An earlier version
@@ -173,9 +190,14 @@ try {
 	// stripping above runs regexes over the same region of the file. If either
 	// ever drifts, the artifact would ship with the custom CSS silently missing
 	// — the report would render, just wrong. Assert every selector survived.
+	// Matched with an identifier-boundary lookahead, not includes(): a plain
+	// substring test would accept `.card` as present because `.card-header`
+	// survived, which is the same silent-wrong-render failure this guards.
+	const survives = (sel) =>
+		new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(out);
 	const lost = Array.from(customCss.matchAll(/(^|[\n{}])\s*([.#][a-zA-Z][\w-]*)/g))
 		.map((m) => m[2])
-		.filter((sel) => !out.includes(sel));
+		.filter((sel) => !survives(sel));
 	if (lost.length > 0) {
 		throw new Error(`custom CSS did not survive into the output: ${[...new Set(lost)].join(", ")}`);
 	}

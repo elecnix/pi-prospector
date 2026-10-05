@@ -4,19 +4,24 @@
     <meta charset="utf-8" />
     <title>Architecture review — pi-prospector</title>
     <!--
-      AUTHORING SOURCE. This file loads Tailwind and Mermaid from CDNs and is
-      never opened directly — it is the input to
-      scripts/render-architecture-review.mjs, which bakes the generated CSS
-      and static SVG into docs/architecture-review.html, the committed
-      self-contained artifact that executes nothing.
+      Architecture review — rendering provenance. This comment travels with
+      both files, because the artifact is generated from the source.
 
-      To change the review: edit this file, run
+      Edit docs/architecture-review.src.html and run
         node scripts/render-architecture-review.mjs
-      and commit both files.
+      then commit both files.
+
+      The authoring source loads Tailwind and Mermaid from CDNs to do that
+      rendering. Mermaid is pinned to an exact version. Tailwind is not: the
+      Play CDN serves a JIT engine at a stable URL with no version path and no
+      published digest, so neither pinning nor SRI is available for it. Opening
+      the source in a browser therefore executes whatever that host returns at
+      that moment. The generated artifact has no scripts and no remote
+      references, and is the file to read.
     -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
-      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.esm.min.mjs";
       mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
     </script>
     <style>
