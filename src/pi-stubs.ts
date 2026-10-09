@@ -19,10 +19,14 @@ export type ResolvedRequestAuth =
 	| { ok: true; apiKey?: string; headers?: Record<string, string> }
 	| { ok: false; error: string };
 
+/**
+ * Pi's registry answers synchronously. The standalone `prospect` command loads
+ * pi's registry on first use, so its lookups may answer with a promise.
+ */
 export interface ModelRegistry {
-	find(provider: string, modelId: string): PiModel | undefined;
-	getAll(): PiModel[];
-	getAvailable(): PiModel[];
+	find(provider: string, modelId: string): PiModel | undefined | Promise<PiModel | undefined>;
+	getAll(): PiModel[] | Promise<PiModel[]>;
+	getAvailable(): PiModel[] | Promise<PiModel[]>;
 	getApiKeyAndHeaders(model: PiModel): Promise<ResolvedRequestAuth>;
 }
 

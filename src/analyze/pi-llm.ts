@@ -12,11 +12,13 @@
  *      `@earendil-works/pi-ai` runs the request through Pi's provider adapters.
  *
  * `@earendil-works/pi-ai` is an optional peer dependency, so it is loaded with a
- * runtime dynamic import; tests never reach this path (they use the mock caller).
+ * runtime dynamic import, from the pi on PATH when the standalone `prospect`
+ * command runs outside pi. Tests never reach this path (they use the mock caller).
  */
 
 import type { LLMCaller, LLMRequest, LLMResponse, ModelTierConfig } from "./types.js";
 import { resolveModelSpec, splitModelSpec } from "./model-tiers.js";
+import { importPiPackage } from "../pi-host.js";
 import type {
 	ExtensionContext,
 	PiAiModule,
@@ -26,11 +28,10 @@ import type {
 
 let cachedModule: Promise<PiAiModule> | null = null;
 
-/** Lazily load pi-ai via a non-literal specifier so tsc/CI don't require it. */
+/** Lazily load pi-ai: from the host inside pi, from the pi on PATH outside it. */
 function loadPiAi(): Promise<PiAiModule> {
 	if (!cachedModule) {
-		const specifier = "@earendil-works/pi-ai";
-		cachedModule = import(specifier).then((mod) => mod as unknown as PiAiModule);
+		cachedModule = importPiPackage<PiAiModule>("@earendil-works/pi-ai");
 	}
 	return cachedModule;
 }
@@ -51,7 +52,7 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 		const spec = resolveModelSpec(request.model || "mid", opts.modelTiers);
 		const { provider, modelId } = splitModelSpec(spec);
 
-		const model = ctx.modelRegistry.find(provider, modelId);
+		const model = await ctx.modelRegistry.find(provider, modelId);
 		if (!model) {
 			throw new Error(`Model not found in Pi registry: ${provider}/${modelId}. Configure it via Pi or set modelTiers in prospector.json.`);
 		}
