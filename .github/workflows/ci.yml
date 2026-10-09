@@ -33,7 +33,9 @@ jobs:
       - name: Install native build tools only when missing (no-op once the runner image ships them)
         run: command -v make >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential; }
       - run: npm install --legacy-peer-deps
-      - run: npm test
+      # Runs `npm test` and reports its wall and CPU time in the job summary,
+      # so a change to test speed shows up as a number on the pull request.
+      - run: scripts/ci-timed-test.sh
 
   check:
     # `tsc --noEmit`. The suite is not a substitute for it: the async-driver
