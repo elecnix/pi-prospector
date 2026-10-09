@@ -68,27 +68,6 @@ jobs:
       - run: npm install --legacy-peer-deps
       - run: node --import tsx test/integration/test-commands.ts
 
-  bench-ab:
-    # Temporary, for #301: times the suite with main's async-db.ts and this
-    # branch's, alternating on one runner. Remove before merging.
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      matrix:
-        node-version: [22, 24]
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-        with:
-          fetch-depth: 0 # origin/main supplies the "before" file
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
-        with:
-          node-version: ${{ matrix.node-version }}
-      - name: Install native build tools only when missing (no-op once the runner image ships them)
-        run: command -v make >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential; }
-      - run: npm install --legacy-peer-deps
-      - run: scripts/ci-ab-bench.sh
-
   dupdelta:
     # Reports only the duplication this pull request introduces, as inline
     # warnings on the diff. Never fails the build.
