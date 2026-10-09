@@ -54,23 +54,23 @@ export function getAnalyzerConfigOverrides(config?: ProspectorConfig): Record<st
 
 /**
  * The default analyzer set (#291): `defaultAnalyzers` (every registered analyzer
- * when absent) minus `disabledAnalyzers`, in registration order. `unknown` lists
- * the configured ids that match no registered analyzer, so the caller can warn
- * about a typo or a custom analyzer that failed to load.
+ * when absent, nothing when `[]`) minus `disabledAnalyzers`, in registration
+ * order. `unknown` lists each configured id that matches no registered analyzer,
+ * with the field it came from, so the caller can say which field has the typo or
+ * the custom analyzer that failed to load.
  */
 export function resolveDefaultAnalyzers(
 	registeredIds: readonly string[],
 	config?: ProspectorConfig,
-): { ids: string[]; unknown: string[] } {
+): { ids: string[]; unknown: Array<{ field: "defaultAnalyzers" | "disabledAnalyzers"; id: string }> } {
 	const c = config ?? loadConfig();
 	const allow = c.defaultAnalyzers ? new Set(c.defaultAnalyzers) : undefined;
 	const deny = new Set(c.disabledAnalyzers ?? []);
 	const registered = new Set(registeredIds);
 	const ids = registeredIds.filter((id) => (allow ? allow.has(id) : true) && !deny.has(id));
-	// Every id the user wrote in either list, checked against the registry. A
-	// disabled id that is registered is valid and stays out of `unknown`.
-	const configured = new Set([...(c.defaultAnalyzers ?? []), ...(c.disabledAnalyzers ?? [])]);
-	const unknown = [...configured].filter((id) => !registered.has(id));
+	const unknownIn = (field: "defaultAnalyzers" | "disabledAnalyzers", list: Iterable<string>) =>
+		[...new Set(list)].filter((id) => !registered.has(id)).map((id) => ({ field, id }));
+	const unknown = [...unknownIn("defaultAnalyzers", allow ?? []), ...unknownIn("disabledAnalyzers", deny)];
 	return { ids, unknown };
 }
 

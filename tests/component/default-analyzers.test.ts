@@ -126,7 +126,7 @@ describe("default analyzer set (#291)", () => {
 	it("warns about an id that matches no registered analyzer", async () => {
 		writeConfig({ defaultAnalyzers: ["turn-pair-core", "turn-pair-cor"] });
 		const out = await run(prospectAnalyze, "--all");
-		assert.match(out, /turn-pair-cor/);
+		assert.match(out, /defaultAnalyzers in prospector.json lists .turn-pair-cor./);
 		assert.match(out, /0 failed/);
 	});
 

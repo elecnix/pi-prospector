@@ -135,8 +135,8 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			framework.list().map((a) => a.def.id),
 			config,
 		);
-		for (const id of defaults.unknown) {
-			out(ctx, `defaultAnalyzers/disabledAnalyzers name '${id}', which matches no registered analyzer.`, "warning");
+		for (const { field, id } of defaults.unknown) {
+			out(ctx, `${field} in prospector.json lists '${id}', which matches no registered analyzer.`, "warning");
 		}
 		const analyzerIds = args.analyzer ? [args.analyzer] : defaults.ids;
 		// Stop here: running nothing would still retire every session from the

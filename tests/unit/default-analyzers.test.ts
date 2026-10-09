@@ -24,12 +24,19 @@ describe("resolveDefaultAnalyzers (#291)", () => {
 		assert.deepEqual(r, { ids: ["alpha"], unknown: [] });
 	});
 
-	it("reports ids that match no registered analyzer, once each", () => {
+	it("reports ids that match no registered analyzer, once per field", () => {
 		const r = resolveDefaultAnalyzers(REGISTERED, {
-			defaultAnalyzers: ["alpha", "alhpa"],
-			disabledAnalyzers: ["alhpa", "delta"],
+			defaultAnalyzers: ["alpha", "alhpa", "alhpa"],
+			disabledAnalyzers: ["alhpa", "delta", "beta"],
 		});
-		assert.deepEqual(r, { ids: ["alpha"], unknown: ["alhpa", "delta"] });
+		assert.deepEqual(r, {
+			ids: ["alpha"],
+			unknown: [
+				{ field: "defaultAnalyzers", id: "alhpa" },
+				{ field: "disabledAnalyzers", id: "alhpa" },
+				{ field: "disabledAnalyzers", id: "delta" },
+			],
+		});
 	});
 
 	it("selects nothing for an empty allowlist", () => {
