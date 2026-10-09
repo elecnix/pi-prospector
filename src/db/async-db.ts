@@ -43,6 +43,19 @@ interface Pending {
 
 const IN_TX = new AsyncLocalStorage<boolean>();
 
+/**
+ * The `execArgv` for the sqlite worker, or undefined to inherit the parent's.
+ *
+ * The worker imports only better-sqlite3 and node builtins, so when Node strips
+ * types itself (`process.features.typescript`) it runs the `.ts` source with no
+ * loader. Inheriting a loader such as `--import tsx` gives every worker its own
+ * hooks thread, and every database open pays for it: about 1.4 s of wall time
+ * per worker under load, against 0.2 s without.
+ */
+export function workerExecArgv(ext: string, typescript: string | false | undefined): string[] | undefined {
+	return ext === ".ts" && typescript ? [] : undefined;
+}
+
 export class AsyncStatement {
 	#db: AsyncDatabase;
 	#sql: string;
@@ -87,8 +100,10 @@ export class AsyncDatabase {
 		const here = dirname(fileURLToPath(import.meta.url));
 		const ext = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
 		const workerFile = join(here, `async-db-worker${ext}`);
+		const features = process.features as { typescript?: string | false };
 		this.#worker = new Worker(workerFile, {
 			workerData: { dbPath: path },
+			execArgv: workerExecArgv(ext, features.typescript),
 		});
 		this.#worker.on("message", (msg: { id: number; ok: boolean; value?: unknown; error?: { message: string; stack?: string; code?: string } }) => {
 			const p = this.#pending.get(msg.id);
