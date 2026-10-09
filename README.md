@@ -347,7 +347,7 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
   Reasons only *select* which out-of-date nodes a run touches. A selected node is always recomputed to the **current recipe in full** (latest version, latest config, latest resolved model), and the new node is linked to its predecessor by a `revises` edge so lineage stays navigable. A plain fill scans only not-yet-analysed sessions; any `--revise` reason re-scans every session so stale work can be found.
 - `--limit N` — cap how many sessions are scanned
 - `--session ID` — analyse a single session
-- `--analyzer ID` — run a single analyzer (`turn-pair-core`, `turn-pair-llm`, `tool-trajectory`, `secret-leak`, or `session-overview`) and its dependencies
+- `--analyzer ID` — run a single analyzer (`turn-pair-core`, `turn-pair-llm`, `tool-trajectory`, `secret-leak`, or `session-overview`) and its dependencies. This runs the analyzer even when `defaultAnalyzers` or `disabledAnalyzers` leaves it out of plain runs.
 - `--model provider/model` — pin **every** model tier to one concrete model for this run. Because the resolved model is part of a node's identity, a pinned run produces its own nodes; switching back to the normal mapping marks them stale (reason `config`).
 
 Proposals are never auto-applied. They sit in the database with status `open` until you accept or reject them.
@@ -523,8 +523,24 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 |-------|---------|-------------|
 | `dbPath` | `~/.pi/agent/prospector.db` | Path to the SQLite database. A leading `~` is expanded. |
 | `modelTiers` | Claude haiku-4-5 / sonnet-4-5 / opus-4-1 | Maps the abstract tiers analyzers request (`cheap`/`mid`/`expensive`) to concrete `provider/model` strings. Each must be a model Pi has credentials for. Override every tier for a single run with `--model`. |
+| `defaultAnalyzers` | every registered analyzer | The analyzers `/prospect-analyze` runs when you don't pass `--analyzer`. |
+| `disabledAnalyzers` | `[]` | Analyzers to take out of that default set, for example one you want to try on a few sessions before running it everywhere. |
 
-Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. All model access goes through Pi's own provider system — pick any model Pi supports (configured via `/login` or API keys). The deterministic `turn-pair-core` layer needs no model and always runs.
+Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. All model access goes through Pi's own provider system. You can pick any model Pi supports (configured via `/login` or API keys). The deterministic `turn-pair-core` layer needs no model.
+
+### Choosing which analyzers run by default
+
+A plain `/prospect-analyze` runs `defaultAnalyzers` minus `disabledAnalyzers`. With neither field set, it runs every built-in and custom analyzer. Use the denylist to leave out one analyzer and still get the analyzers that later releases add. Use the allowlist for strict opt-in:
+
+```json
+{ "disabledAnalyzers": ["presidio", "assistant-cognition"] }
+```
+
+```json
+{ "defaultAnalyzers": ["turn-pair-core", "failure-modes", "session-overview"] }
+```
+
+A selected analyzer still runs its dependencies, even ones you disabled. `--analyzer ID` runs any analyzer for one run. To make a trial analyzer permanent, add it to the default set and run `/prospect-analyze --backfill-missing`, which runs it on the sessions you analysed earlier. `--backfill-missing` and the coverage section of `/prospect-stats` count gaps for the default set only, and `/prospect-analyzers list` tags the rest `[off by default]`. The selection isn't part of any node's recipe, so editing these fields marks nothing stale. An id that matches no registered analyzer prints a warning on each run.
 
 The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CLAUDE_SESSIONS_DIR`, `PROSPECTOR_CONFIG`, and `PROSPECTOR_INSTRUCTIONS_HOME` (the home directory the rule-restatement check reads harness instruction files under).
 

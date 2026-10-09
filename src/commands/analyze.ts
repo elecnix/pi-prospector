@@ -2,7 +2,15 @@ import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getAllSessions, getRecentSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
-import { getAnalyzerConfigOverrides, getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, loadConfig } from "../config.js";
+import {
+	getAnalyzerConfigOverrides,
+	getAnalyzerPaths,
+	getDbPath,
+	getLlmTimeoutMs,
+	getModelTiers,
+	loadConfig,
+	resolveDefaultAnalyzers,
+} from "../config.js";
 import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerAll } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
@@ -121,7 +129,27 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			out(ctx, `Loaded ${customRegistered.length} custom analyzer(s): ${customRegistered.join(", ")}`, "info");
 		}
 		for (const e of loadErrors) out(ctx, `Skipped analyzer ${e.path}: ${e.message}`, "warning");
-		const analyzerIds = args.analyzer ? [args.analyzer] : undefined;
+		// Without --analyzer, a run selects the configured default set (#291).
+		// --analyzer is the ad hoc opt-in: it runs any registered analyzer.
+		const defaults = resolveDefaultAnalyzers(
+			framework.list().map((a) => a.def.id),
+			config,
+		);
+		for (const { field, id } of defaults.unknown) {
+			out(ctx, `${field} in prospector.json lists '${id}', which matches no registered analyzer.`, "warning");
+		}
+		const analyzerIds = args.analyzer ? [args.analyzer] : defaults.ids;
+		// Stop here: running nothing would still retire every session from the
+		// unanalysed queue.
+		if (analyzerIds.length === 0) {
+			out(
+				ctx,
+				"The default analyzer set is empty: defaultAnalyzers minus disabledAnalyzers in prospector.json " +
+					"selects nothing. Edit those fields, or pass --analyzer <id>.",
+				"warning",
+			);
+			return;
+		}
 
 		// A plain fill focuses on not-yet-analysed sessions; any revise reason
 		// re-scans every session so stale nodes can be picked up.
@@ -148,8 +176,9 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		} else if (args.recent) {
 			sessions = await getRecentSessions(db, args.recent, args.source);
 		} else if (args.backfillMissing) {
-			const coverageIds = args.analyzer ? [args.analyzer] : framework.list().map((a) => a.def.id);
-			const coverage = await getAnalyzerCoverage(db, coverageIds, {
+			// Gaps are measured against the selection, so an analyzer outside the
+			// default set never counts as missing.
+			const coverage = await getAnalyzerCoverage(db, analyzerIds, {
 				onlyAnalyzed: true,
 				source: args.source,
 			});
@@ -172,7 +201,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			out(
 				ctx,
 				args.backfillMissing
-					? "No coverage gaps — every registered analyzer has run against every analysed session."
+					? "No coverage gaps — every selected analyzer has run against every analysed session."
 					: "No sessions to analyse. Run /prospect-sync first.",
 				"info",
 			);
@@ -187,10 +216,9 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		// frustration-lexicon, which is not. Judging by the requested ids alone would
 		// fan sessions out at the wide deterministic limit with no LLM gate in front
 		// of a run that really does call a provider.
-		// Under `--backfill-missing` the per-session analyzer set varies, so size the
-		// fan-out against the whole registry — the conservative choice.
-		const planIds = gapBySession && !analyzerIds ? undefined : analyzerIds;
-		const effectiveIds = new Set(framework.topologicalSort(planIds));
+		// Under `--backfill-missing` the per-session analyzer set varies, but each
+		// is a subset of the selection, so sizing against the selection is safe.
+		const effectiveIds = new Set(framework.topologicalSort(analyzerIds));
 		const selected = framework.list().filter((a) => effectiveIds.has(a.def.id));
 		const runHasLLM = selected.some((a) => a.version.implementationKind !== "deterministic");
 		const sessionConcurrency = runHasLLM ? llmConcurrency : analyzerConcurrency;

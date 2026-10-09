@@ -52,6 +52,28 @@ export function getAnalyzerConfigOverrides(config?: ProspectorConfig): Record<st
 	return c.analyzers ?? {};
 }
 
+/**
+ * The default analyzer set (#291): `defaultAnalyzers` (every registered analyzer
+ * when absent, nothing when `[]`) minus `disabledAnalyzers`, in registration
+ * order. `unknown` lists each configured id that matches no registered analyzer,
+ * with the field it came from, so the caller can say which field has the typo or
+ * the custom analyzer that failed to load.
+ */
+export function resolveDefaultAnalyzers(
+	registeredIds: readonly string[],
+	config?: ProspectorConfig,
+): { ids: string[]; unknown: Array<{ field: "defaultAnalyzers" | "disabledAnalyzers"; id: string }> } {
+	const c = config ?? loadConfig();
+	const allow = c.defaultAnalyzers ? new Set(c.defaultAnalyzers) : undefined;
+	const deny = new Set(c.disabledAnalyzers ?? []);
+	const registered = new Set(registeredIds);
+	const ids = registeredIds.filter((id) => (allow ? allow.has(id) : true) && !deny.has(id));
+	const unknownIn = (field: "defaultAnalyzers" | "disabledAnalyzers", list: Iterable<string>) =>
+		[...new Set(list)].filter((id) => !registered.has(id)).map((id) => ({ field, id }));
+	const unknown = [...unknownIn("defaultAnalyzers", allow ?? []), ...unknownIn("disabledAnalyzers", deny)];
+	return { ids, unknown };
+}
+
 /** Resolve the model-tier mapping, falling back to defaults. */
 export function getModelTiers(config?: ProspectorConfig): ModelTierConfig {
 	const c = config ?? loadConfig();
