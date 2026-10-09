@@ -139,6 +139,17 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			out(ctx, `defaultAnalyzers/disabledAnalyzers name '${id}', which matches no registered analyzer.`, "warning");
 		}
 		const analyzerIds = args.analyzer ? [args.analyzer] : defaults.ids;
+		// Stop here: running nothing would still retire every session from the
+		// unanalysed queue.
+		if (analyzerIds.length === 0) {
+			out(
+				ctx,
+				"The default analyzer set is empty: defaultAnalyzers minus disabledAnalyzers in prospector.json " +
+					"selects nothing. Edit those fields, or pass --analyzer <id>.",
+				"warning",
+			);
+			return;
+		}
 
 		// A plain fill focuses on not-yet-analysed sessions; any revise reason
 		// re-scans every session so stale nodes can be picked up.

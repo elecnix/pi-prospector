@@ -83,6 +83,18 @@ after(() => {
 });
 
 describe("default analyzer set (#291)", () => {
+	it("an empty default set stops before marking any session analysed", async () => {
+		writeConfig({ defaultAnalyzers: ["turn-pair-core"], disabledAnalyzers: ["turn-pair-core"] });
+		const out = await run(prospectAnalyze);
+		assert.match(out, /default analyzer set is empty/);
+		const analysed = await withDb(async (db) => {
+			const row = (await db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE analyzed_at IS NOT NULL").get()) as { n: number };
+			return row.n;
+		});
+		assert.equal(analysed, 0);
+		assert.deepEqual(await ranAnalyzers(), []);
+	});
+
 	it("a plain run selects the allowlist minus the denylist", async () => {
 		writeConfig({
 			defaultAnalyzers: ["turn-pair-core", "files-in-play", "session-ending"],

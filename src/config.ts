@@ -67,7 +67,10 @@ export function resolveDefaultAnalyzers(
 	const deny = new Set(c.disabledAnalyzers ?? []);
 	const registered = new Set(registeredIds);
 	const ids = registeredIds.filter((id) => (allow ? allow.has(id) : true) && !deny.has(id));
-	const unknown = [...new Set([...(c.defaultAnalyzers ?? []), ...deny])].filter((id) => !registered.has(id));
+	// Every id the user wrote in either list, checked against the registry. A
+	// disabled id that is registered is valid and stays out of `unknown`.
+	const configured = new Set([...(c.defaultAnalyzers ?? []), ...(c.disabledAnalyzers ?? [])]);
+	const unknown = [...configured].filter((id) => !registered.has(id));
 	return { ids, unknown };
 }
 
