@@ -3,7 +3,7 @@ import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getStats } from "../db/queries.js";
 import { getAnalyzerCoverage } from "../db/analysis-queries.js";
-import { getAnalyzerPaths, getDbPath, loadConfig } from "../config.js";
+import { getAnalyzerPaths, getDbPath, loadConfig, resolveDefaultAnalyzers } from "../config.js";
 import { BUILTIN_ANALYZERS } from "../analyze/defaults.js";
 import { loadCustomAnalyzers } from "../analyze/loader.js";
 import { parseFlags, resolveTimepoint } from "../timepoint.js";
@@ -50,13 +50,17 @@ function tokenBlock(label: string, stats: TokenStats): string[] {
  * produced analysis for which sessions. The registry is the live one — built-ins
  * plus every custom analyzer that loads from the configured paths — so an
  * analyzer that just shipped shows up here as a wall of gaps before any analyze
- * run has ever heard of it.
+ * run has ever heard of it. Only the default analyzer set (#291) counts toward
+ * gaps: an analyzer the user turned off is listed apart, not as a backlog.
  */
 export async function coverageLines(db: AsyncDatabase): Promise<string[]> {
 	const config = loadConfig();
 	const builtinIds = BUILTIN_ANALYZERS.map((a) => a.def.id);
 	const { loaded } = await loadCustomAnalyzers({ paths: getAnalyzerPaths([], config), builtinIds });
-	const coverage = await getAnalyzerCoverage(db, [...builtinIds, ...loaded.map((a) => a.def.id)]);
+	const registeredIds = [...builtinIds, ...loaded.map((a) => a.def.id)];
+	const { ids: defaultIds } = resolveDefaultAnalyzers(registeredIds, config);
+	const offByDefault = registeredIds.filter((id) => !defaultIds.includes(id));
+	const coverage = await getAnalyzerCoverage(db, defaultIds);
 
 	const lines: string[] = [];
 	lines.push("  ── Analyzer coverage ──");
@@ -75,13 +79,14 @@ export async function coverageLines(db: AsyncDatabase): Promise<string[]> {
 		);
 	}
 	if (gapped.length === 0) {
-		lines.push("  Every registered analyzer has run against every session.");
+		lines.push("  Every analyzer in the default set has run against every session.");
 	} else {
 		lines.push(
 			`  ${coverage.gaps.length} session(s) have coverage gaps — ` +
 				"run '/prospect-analyze --backfill-missing' to fill only what is missing.",
 		);
 	}
+	if (offByDefault.length > 0) lines.push(`  Off by default: ${offByDefault.join(", ")}`);
 	return lines;
 }
 

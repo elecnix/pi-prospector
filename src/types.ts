@@ -49,6 +49,17 @@ export interface ProspectorConfig {
 	 */
 	analyzers?: Record<string, Record<string, unknown>>;
 	/**
+	 * The analyzers a run selects when `--analyzer` names none (#291). Absent
+	 * means every registered analyzer. `disabledAnalyzers` is then removed from
+	 * that set. `--analyzer <id>` still runs any analyzer, and a selected
+	 * analyzer still pulls in its dependencies.
+	 *
+	 * Selection is not part of any recipe: changing it marks nothing stale, it
+	 * only decides which units a run scans.
+	 */
+	defaultAnalyzers?: string[];
+	disabledAnalyzers?: string[];
+	/**
 	 * Session sources to enable beyond the built-in pi and claude file sources.
 	 * Example: ["pi-subagent", "snowflake"]
 	 *

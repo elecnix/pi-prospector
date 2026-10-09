@@ -12,7 +12,7 @@
  */
 
 import type { ExtensionCommandContext } from "../pi-stubs.js";
-import { getAnalyzerPaths, loadConfig } from "../config.js";
+import { getAnalyzerPaths, loadConfig, resolveDefaultAnalyzers } from "../config.js";
 import { loadCustomAnalyzers } from "../analyze/loader.js";
 import { BUILTIN_ANALYZERS } from "../analyze/defaults.js";
 import type { AnalyzerDef } from "../analyze/types.js";
@@ -95,13 +95,19 @@ async function list(ctx: ExtensionCommandContext): Promise<void> {
 	const builtinIds = BUILTIN_ANALYZERS.map((a) => a.def.id);
 	const { loaded, errors } = await loadCustomAnalyzers({ paths, builtinIds });
 
+	// Mark what a plain analyze run skips (#291), so the config is checkable here.
+	const { ids: defaultIds } = resolveDefaultAnalyzers([...builtinIds, ...loaded.map((a) => a.def.id)], config);
+	const selected = new Set(defaultIds);
+	const line = (a: (typeof BUILTIN_ANALYZERS)[number]): string =>
+		formatAnalyzerLine(a) + (selected.has(a.def.id) ? "" : "  [off by default]");
+
 	const lines: string[] = [];
 	lines.push("Built-in analyzers:");
-	for (const a of BUILTIN_ANALYZERS) lines.push(formatAnalyzerLine(a));
+	for (const a of BUILTIN_ANALYZERS) lines.push(line(a));
 	lines.push("");
 	lines.push(`Custom analyzers (${loaded.length}) — scanned: ${paths.join(", ")}`);
 	if (loaded.length === 0) lines.push("  (none)");
-	for (const a of loaded) lines.push(formatAnalyzerLine(a));
+	for (const a of loaded) lines.push(line(a));
 	if (errors.length > 0) {
 		lines.push("");
 		lines.push(`Load errors (${errors.length}):`);
