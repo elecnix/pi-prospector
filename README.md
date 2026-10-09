@@ -6,7 +6,7 @@ Incremental session analysis and proposal generation for the [Pi coding agent](h
 
 pi-prospector reads your Pi and Claude Code session transcripts, indexes them into a local SQLite database, and builds an **append-only analysis graph** over them — measuring every turn deterministically and using an LLM only where the signal warrants it. From that graph it surfaces concrete, ranked proposals to improve your prompts, skills, and configuration. It never applies them. You decide what to develop.
 
-pi-prospector is a Pi **extension**: it has no standalone CLI. Everything runs through slash commands and a `prospect` tool inside a Pi session.
+pi-prospector is a Pi **extension**: it adds slash commands and a `prospect` tool to a Pi session. The same commands also run from the shell as `prospect <command>`, without starting Pi (see [Running from the shell](#running-from-the-shell)).
 
 ## How it works
 
@@ -543,6 +543,22 @@ A plain `/prospect-analyze` runs `defaultAnalyzers` minus `disabledAnalyzers`. W
 A selected analyzer still runs its dependencies, even ones you disabled. `--analyzer ID` runs any analyzer for one run. To make a trial analyzer permanent, add it to the default set and run `/prospect-analyze --backfill-missing`, which runs it on the sessions you analysed earlier. `--backfill-missing` and the coverage section of `/prospect-stats` count gaps for the default set only, and `/prospect-analyzers list` tags the rest `[off by default]`. The selection isn't part of any node's recipe, so editing these fields marks nothing stale. An id that matches no registered analyzer prints a warning on each run.
 
 The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CLAUDE_SESSIONS_DIR`, `PROSPECTOR_CONFIG`, and `PROSPECTOR_INSTRUCTIONS_HOME` (the home directory the rule-restatement check reads harness instruction files under).
+
+## Running from the shell
+
+The `prospect` executable runs one command under plain Node and exits. Each command takes the same arguments as its slash command, without the `prospect-` prefix:
+
+```bash
+npm install && npm link   # from a clone: puts `prospect` on your PATH
+prospect sync
+prospect analyze --limit 3
+prospect proposals --full
+prospect help analyze     # a command's flags
+```
+
+`prospect` with no arguments lists the commands. Since it doesn't start Pi, it reads Pi and Claude Code sessions alike. LLM analyzers still need a model, so on the first model lookup `prospect` loads the model catalogue and credentials of the `pi` on your PATH. Commands that call no model never load Pi. Without `pi` on PATH, the deterministic analyzers still run, and each LLM analyzer fails with a message that says to install Pi.
+
+The exit code is 0 on success, 1 when the command reports an error, and 2 for an unknown command.
 
 ## Running headlessly
 
