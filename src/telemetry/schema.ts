@@ -93,6 +93,11 @@ export const COUNT_FIELDS = [
 
 const Count = Type.Integer({ minimum: 0, maximum: MAX_COUNT });
 
+type KnownAnalyzer = (typeof KNOWN_ANALYZER_IDS)[number];
+type Harness = (typeof HARNESSES)[number];
+const AnalyzerDimension = Type.Unsafe<KnownAnalyzer>(Type.Union(KNOWN_ANALYZER_IDS.map((id) => Type.Literal(id))));
+const HarnessDimension = Type.Unsafe<Harness>(Type.Union(HARNESSES.map((h) => Type.Literal(h))));
+
 /** One analyzer's totals for one harness over the reporting window. */
 export const UsageRow = Type.Object(
 	{
@@ -128,12 +133,14 @@ export const UsageReport = Type.Object(
 				{
 					dimensions: Type.Object(
 						{
-							analyzer: Type.Union(KNOWN_ANALYZER_IDS.map((id) => Type.Literal(id))),
-							harness: Type.Union(HARNESSES.map((h) => Type.Literal(h))),
+							analyzer: AnalyzerDimension,
+							harness: HarnessDimension,
 						},
 						{ additionalProperties: false },
 					),
-					counts: Type.Object(Object.fromEntries(COUNT_FIELDS.map((field) => [field, Count])), { additionalProperties: false }),
+					counts: Type.Unsafe<Record<(typeof COUNT_FIELDS)[number], number>>(
+						Type.Object(Object.fromEntries(COUNT_FIELDS.map((field) => [field, Count])), { additionalProperties: false }),
+					),
 				},
 				{ additionalProperties: false },
 			),
@@ -144,6 +151,13 @@ export const UsageReport = Type.Object(
 );
 export type UsageReport = Static<typeof UsageReport>;
 
+const KNOWN = new Set<string>(KNOWN_ANALYZER_IDS);
+
+/** The id a report may carry for an analyzer: its own when shipped, `custom` otherwise. */
+export function reportedAnalyzer(id: string): KnownAnalyzer {
+	return KNOWN.has(id) ? (id as KnownAnalyzer) : "custom";
+}
+
 /** Turn flat rows into the tracker's dimensions-and-counts shape. */
 export function toReport(installId: string, version: string, rows: UsageRow[]): UsageReport {
 	return {
@@ -151,8 +165,8 @@ export function toReport(installId: string, version: string, rows: UsageRow[]): 
 		installId,
 		version,
 		rows: rows.slice(0, MAX_ROWS).map((row) => ({
-			dimensions: { analyzer: row.analyzer, harness: row.harness },
-			counts: Object.fromEntries(COUNT_FIELDS.map((field) => [field, row[field]])),
-		})) as UsageReport["rows"],
+			dimensions: { analyzer: reportedAnalyzer(row.analyzer), harness: row.harness === "claude" ? "claude" : "pi" },
+			counts: Object.fromEntries(COUNT_FIELDS.map((field) => [field, row[field]])) as Record<(typeof COUNT_FIELDS)[number], number>,
+		})),
 	};
 }

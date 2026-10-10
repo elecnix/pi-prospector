@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Check } from "typebox/value";
 import type { AsyncDatabase } from "../db/async-db.js";
 import { collectUsageCounts } from "../db/telemetry-queries.js";
-import { KNOWN_ANALYZER_IDS, UsageReport, COUNT_FIELDS, toReport, type UsageRow } from "./schema.js";
+import { UsageReport, COUNT_FIELDS, reportedAnalyzer, toReport, type UsageRow } from "./schema.js";
 import { readState, sendDue, statePath, utcDay, writeState, type TelemetryState } from "./state.js";
 
 /**
@@ -20,7 +20,6 @@ import { readState, sendDue, statePath, utcDay, writeState, type TelemetryState 
 export const DEFAULT_TRACKER_URL = "https://prospector-telemetry.pi-prospector.workers.dev";
 const SEND_TIMEOUT_MS = 3000;
 
-const KNOWN = new Set<string>(KNOWN_ANALYZER_IDS);
 
 /** The window a report covers: from the last send (or the user's consent) to now. */
 export function reportWindow(state: TelemetryState, now: Date): { since: string; until: string } {
@@ -31,7 +30,7 @@ export function reportWindow(state: TelemetryState, now: Date): { since: string;
 export async function buildPayload(db: AsyncDatabase, state: TelemetryState, window: { since: string; until: string }): Promise<UsageReport> {
 	const merged = new Map<string, UsageRow>();
 	for (const counts of await collectUsageCounts(db, window.since, window.until)) {
-		const analyzer = KNOWN.has(counts.analyzer) ? counts.analyzer : "custom";
+		const analyzer = reportedAnalyzer(counts.analyzer);
 		const harness = counts.harness === "claude" ? "claude" : "pi";
 		const key = `${analyzer}\u0000${harness}`;
 		const existing = merged.get(key);

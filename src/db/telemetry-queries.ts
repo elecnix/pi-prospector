@@ -92,7 +92,14 @@ export async function collectUsageCounts(db: AsyncDatabase, since: string, until
 		return r;
 	};
 
-	for (const r of runs) Object.assign(row(r.analyzer, r.harness), { ...r, durationSec: Math.max(0, r.durationSec ?? 0) });
+	for (const r of runs) {
+		const target = row(r.analyzer, r.harness);
+		target.runs = r.runs;
+		target.runsFailed = r.runsFailed;
+		target.sessions = r.sessions;
+		target.nodes = r.nodes ?? 0;
+		target.durationSec = Math.max(0, r.durationSec ?? 0);
+	}
 	for (const p of proposals) {
 		const r = row(p.analyzer, p.harness);
 		r.proposals += p.n;
