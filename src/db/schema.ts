@@ -343,15 +343,17 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 		);
 	`);
 
-	// Full-text virtual table (must be recreated to sync with messages table changes)
-	await db.exec(`
-		DROP TABLE IF EXISTS messages_fts;
+	// Full-text index over messages. External-content, kept in sync by the
+	// triggers below; ensureFtsIndex creates it only when it is missing or its
+	// definition changed, and rebuilds it from the content table then.
+	await ensureFtsIndex(db, "messages_fts", "messages", `
 		CREATE VIRTUAL TABLE messages_fts USING fts5(
 			content_text,
 			content_thinking,
 			content='messages',
 			content_rowid='rowid'
-		);
+		)`);
+	await db.exec(`
 
 		DROP TRIGGER IF EXISTS messages_ai;
 		CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
@@ -370,8 +372,7 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	// search surface. External-content over proposals, kept in sync by triggers
 	// exactly like messages_fts — gc deletes proposals, so the delete trigger
 	// is load-bearing, not decorative.
-	db.exec(`
-		DROP TABLE IF EXISTS proposals_fts;
+	await ensureFtsIndex(db, "proposals_fts", "proposals", `
 		CREATE VIRTUAL TABLE proposals_fts USING fts5(
 			title,
 			summary,
@@ -379,7 +380,8 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			evidence,
 			content='proposals',
 			content_rowid='rowid'
-		);
+		)`);
+	await db.exec(`
 
 		DROP TRIGGER IF EXISTS proposals_ai;
 		CREATE TRIGGER proposals_ai AFTER INSERT ON proposals BEGIN
@@ -720,4 +722,33 @@ async function migrateProposalsToV2(db: AsyncDatabase): Promise<void> {
 		'unchecked' AS rule_status, NULL AS rule_path, NULL AS rule_quote, NULL AS restatement_node_id
 		FROM proposals_old`);
 	await db.exec("DROP TABLE proposals_old");
+}
+
+/**
+ * Create an external-content FTS5 index if it is missing or its definition
+ * changed, and keep it complete.
+ *
+ * `migrate()` runs every time a command opens the database. Dropping and
+ * recreating the index there emptied it on every command while its content
+ * table kept its rows: search then missed everything older than the current
+ * command, and deleting a row the index never saw (gc deleting a proposal)
+ * failed with "database disk image is malformed". So the index is recreated
+ * only when its stored definition differs from `createSql`, and rebuilt from
+ * the content table whenever it was just created or its row count differs
+ * from the content table's — which also repairs a database an earlier version
+ * left empty.
+ */
+async function ensureFtsIndex(db: AsyncDatabase, name: string, contentTable: string, createSql: string): Promise<void> {
+	const normalise = (sql: string) => sql.replace(/\s+/g, " ").trim();
+	const existing = (await db
+		.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+		.get(name)) as { sql: string } | undefined;
+	if (!existing || normalise(existing.sql) !== normalise(createSql)) {
+		await db.exec(`DROP TABLE IF EXISTS ${name}; ${createSql};`);
+		await db.exec(`INSERT INTO ${name}(${name}) VALUES('rebuild')`);
+		return;
+	}
+	const indexed = (await db.prepare(`SELECT COUNT(*) AS n FROM ${name}_docsize`).get()) as { n: number };
+	const content = (await db.prepare(`SELECT COUNT(*) AS n FROM ${contentTable}`).get()) as { n: number };
+	if (indexed.n !== content.n) await db.exec(`INSERT INTO ${name}(${name}) VALUES('rebuild')`);
 }
