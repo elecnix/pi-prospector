@@ -50,8 +50,11 @@ export async function collectUsageCounts(db: AsyncDatabase, since: string, until
 		  GROUP BY 1, 2, 3`,
 	).all(since, until)) as Array<{ analyzer: string; harness: string; severity: string; n: number }>;
 
-	// A decision is an assertion on the proposal's input_key. Several proposal
-	// rows can share one input_key across recomputes, so pick one of them.
+	// A decision is an assertion on the proposal's input_key, which is
+	// H(source output_key | ordinal): one source node, so one analyzer and one
+	// session. The materializer (src/analyze/proposal-materializer.ts) skips the
+	// insert when a row with that key exists, so there is one row per key. The
+	// MIN(id) only keeps the join to one row if that rule ever loosens.
 	const decisions = (await prep(
 		db,
 		`SELECT COALESCE(p.analyzer_id, 'custom') AS analyzer, COALESCE(s.source, 'pi') AS harness, a.verdict AS verdict, COUNT(*) AS n
