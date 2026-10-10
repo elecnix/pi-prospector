@@ -4,19 +4,20 @@ import { fileURLToPath } from "node:url";
 import { Check } from "typebox/value";
 import type { AsyncDatabase } from "../db/async-db.js";
 import { collectUsageCounts } from "../db/telemetry-queries.js";
-import { KNOWN_ANALYZER_IDS, MAX_ROWS, UsagePayload, COUNT_FIELDS, type UsageRow } from "./schema.js";
+import { KNOWN_ANALYZER_IDS, UsageReport, COUNT_FIELDS, toReport, type UsageRow } from "./schema.js";
 import { readState, sendDue, statePath, utcDay, writeState, type TelemetryState } from "./state.js";
 
 /**
  * Build and send the daily anonymous usage report (#290).
  *
- * One POST a day carries per-analyzer totals since the last successful send.
- * The cursor moves only when the Worker accepts the report, so a failed send is
- * retried on a later day with the same window.
+ * One POST a day carries per-analyzer totals since the last successful send,
+ * to a usage-tracker deployment (https://github.com/elecnix/usage-tracker).
+ * The cursor moves only when the tracker accepts the report, so a failed send
+ * is retried on a later day with the same window.
  */
 
-/** The Worker that stores the reports. `PROSPECTOR_TELEMETRY_URL` overrides it. */
-export const DEFAULT_ENDPOINT = "https://prospector-telemetry.pi-prospector.workers.dev/v1/usage";
+/** The tracker that stores the reports. `PROSPECTOR_TELEMETRY_URL` overrides it. */
+export const DEFAULT_TRACKER_URL = "https://prospector-telemetry.pi-prospector.workers.dev";
 const SEND_TIMEOUT_MS = 3000;
 
 const KNOWN = new Set<string>(KNOWN_ANALYZER_IDS);
@@ -26,8 +27,8 @@ export function reportWindow(state: TelemetryState, now: Date): { since: string;
 	return { since: state.sentThrough ?? state.consentAt ?? now.toISOString(), until: now.toISOString() };
 }
 
-/** Build the payload for a window. Analyzers outside the shipped set report as `custom`. */
-export async function buildPayload(db: AsyncDatabase, state: TelemetryState, window: { since: string; until: string }): Promise<UsagePayload> {
+/** Build the report for a window. Analyzers outside the shipped set report as `custom`. */
+export async function buildPayload(db: AsyncDatabase, state: TelemetryState, window: { since: string; until: string }): Promise<UsageReport> {
 	const merged = new Map<string, UsageRow>();
 	for (const counts of await collectUsageCounts(db, window.since, window.until)) {
 		const analyzer = KNOWN.has(counts.analyzer) ? counts.analyzer : "custom";
@@ -41,7 +42,7 @@ export async function buildPayload(db: AsyncDatabase, state: TelemetryState, win
 		for (const field of COUNT_FIELDS) existing[field] += counts[field];
 	}
 	const rows = [...merged.values()].sort((a, b) => a.analyzer.localeCompare(b.analyzer) || a.harness.localeCompare(b.harness));
-	return { schema: 1, installId: state.installId, version: packageVersion(), rows: rows.slice(0, MAX_ROWS) };
+	return toReport(state.installId, packageVersion(), rows);
 }
 
 export interface SendOptions {
@@ -68,7 +69,7 @@ export async function sendDailyReport(options: SendOptions): Promise<SendResult>
 	try {
 		const window = reportWindow(state, now);
 		const payload = await buildPayload(await options.db(), state, window);
-		if (!Check(UsagePayload, payload)) return { failed: "payload does not match the schema" };
+		if (!Check(UsageReport, payload)) return { failed: "report does not match the schema" };
 		if (env["PROSPECTOR_TELEMETRY_DEBUG"]) {
 			(options.debug ?? ((line) => process.stderr.write(line + "\n")))(JSON.stringify(payload, null, 2));
 			return "debug";
@@ -77,7 +78,7 @@ export async function sendDailyReport(options: SendOptions): Promise<SendResult>
 		// run an analysis, and its totals belong in today's report.
 		if (payload.rows.length === 0) return "empty";
 		const done = { ...state, lastSentDay: utcDay(now), sentThrough: window.until };
-		const response = await (options.fetch ?? fetch)(env["PROSPECTOR_TELEMETRY_URL"] || DEFAULT_ENDPOINT, {
+		const response = await (options.fetch ?? fetch)(new URL("/v1/report", env["PROSPECTOR_TELEMETRY_URL"] || DEFAULT_TRACKER_URL), {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(payload),

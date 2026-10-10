@@ -484,14 +484,14 @@ The result is a content-addressed `validation` node (covered by `/prospect-verif
 
 Anonymous usage reports are off until you say yes. The first time pi or `prospect` starts on a terminal, it asks once whether to share them. Pressing Enter accepts, and any other way out of the question counts as no. Neither CI nor headless runs ask.
 
-With reports on, pi-prospector sends one report a day to a Cloudflare Worker that the maintainers run. The report holds per-analyzer counts for each harness: runs, failed runs, sessions, nodes, run time, proposals by severity, and how many proposals you accepted, rejected, or accepted with changes. Every value is a number or comes from a fixed list. Analyzers you wrote yourself are counted as `custom`, never by name. The report never contains conversation text, file paths, proposal titles, or session ids. The Worker stores the day, a random install id, the version, and those counts. It doesn't store your IP address.
+With reports on, pi-prospector sends one report a day to a [usage-tracker](https://github.com/elecnix/usage-tracker) Worker that the maintainers run on Cloudflare. The report holds per-analyzer counts for each harness: runs, failed runs, sessions, nodes, run time, proposals by severity, and how many proposals you accepted, rejected, or accepted with changes. Every value is a number or comes from a fixed list. Analyzers you wrote yourself are counted as `custom`, never by name. The report never contains conversation text, file paths, proposal titles, or session ids. The Worker stores the day, a random install id, the version, and those counts. It doesn't store your IP address.
 
 - `telemetry show` prints the next report without sending it.
 - `telemetry on` and `telemetry off` change the setting. `telemetry reset-id` replaces the install id.
 - `DO_NOT_TRACK=1` or `PROSPECTOR_TELEMETRY_DISABLED=1` turns reports off whatever the setting says.
 - `PROSPECTOR_TELEMETRY_DEBUG=1` prints each report to stderr instead of sending it.
 
-The setting lives in `~/.pi/agent/prospector-telemetry.json`. The Worker's code and its database schema are in [`telemetry-worker/`](telemetry-worker/).
+The setting lives in `~/.pi/agent/prospector-telemetry.json`. [`telemetry/tracker.config.json`](telemetry/tracker.config.json) lists every value the tracker accepts from pi-prospector.
 
 ## Pi tool: `prospect`
 

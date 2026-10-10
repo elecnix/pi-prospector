@@ -7,7 +7,7 @@ import { Check } from "typebox/value";
 import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 import { acceptProposal, rejectProposal } from "../../src/db/queries.js";
-import { UsagePayload } from "../../src/telemetry/schema.js";
+import { UsageReport } from "../../src/telemetry/schema.js";
 import { buildPayload, sendDailyReport } from "../../src/telemetry/report.js";
 import { readState, writeState } from "../../src/telemetry/state.js";
 
@@ -69,11 +69,10 @@ beforeEach(() => {
 describe("buildPayload", () => {
 	it("counts runs, proposals, and decisions per analyzer and harness", async () => {
 		const payload = await buildPayload(db, { installId: "0b5e8c1e-6f0a-4d43-9a7e-3f1d2c4b5a69" }, ALL_TIME);
-		assert.ok(Check(UsagePayload, payload));
-		const overview = payload.rows.find((r) => r.analyzer === "session-overview");
-		assert.deepEqual(overview, {
-			analyzer: "session-overview",
-			harness: "claude",
+		assert.ok(Check(UsageReport, payload));
+		const overview = payload.rows.find((r) => r.dimensions.analyzer === "session-overview");
+		assert.deepEqual(overview?.dimensions, { analyzer: "session-overview", harness: "claude" });
+		assert.deepEqual(overview?.counts, {
 			runs: 2,
 			runsFailed: 1,
 			sessions: 1,
@@ -94,7 +93,7 @@ describe("buildPayload", () => {
 	it("reports a locally authored analyzer as custom, never by its id", async () => {
 		const payload = await buildPayload(db, { installId: "0b5e8c1e-6f0a-4d43-9a7e-3f1d2c4b5a69" }, ALL_TIME);
 		assert.deepEqual(
-			payload.rows.map((r) => r.analyzer),
+			payload.rows.map((r) => r.dimensions.analyzer),
 			["custom", "session-overview"],
 		);
 		const text = JSON.stringify(payload);
@@ -105,8 +104,8 @@ describe("buildPayload", () => {
 
 	it("counts nothing outside the window", async () => {
 		const payload = await buildPayload(db, { installId: "0b5e8c1e-6f0a-4d43-9a7e-3f1d2c4b5a69" }, { since: "2026-10-08T12:00:00.000Z", until: ALL_TIME.until });
-		const overview = payload.rows.find((r) => r.analyzer === "session-overview");
-		assert.equal(overview?.runs ?? 0, 0);
+		const overview = payload.rows.find((r) => r.dimensions.analyzer === "session-overview");
+		assert.equal(overview?.counts.runs ?? 0, 0);
 	});
 });
 
@@ -134,7 +133,7 @@ describe("sendDailyReport", () => {
 		};
 		assert.equal(await sendDailyReport({ db: async () => db, env, now, fetch }), "sent");
 		assert.equal(bodies.length, 1);
-		assert.ok(Check(UsagePayload, bodies[0]));
+		assert.ok(Check(UsageReport, bodies[0]));
 		const state = readState(env["PROSPECTOR_TELEMETRY_FILE"]);
 		assert.equal(state.lastSentDay, "2026-10-09");
 		assert.equal(state.sentThrough, now.toISOString());
@@ -172,7 +171,7 @@ describe("sendDailyReport", () => {
 		});
 		assert.equal(result, "debug");
 		assert.equal(called, false);
-		assert.ok(Check(UsagePayload, JSON.parse(printed.join("\n"))));
+		assert.ok(Check(UsageReport, JSON.parse(printed.join("\n"))));
 	});
 
 	it("sends nothing under DO_NOT_TRACK, even with consent", async () => {

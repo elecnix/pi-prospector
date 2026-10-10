@@ -1,0 +1,77 @@
+{
+  "apps": {
+    "pi-prospector": {
+      "dimensions": {
+        "analyzer": [
+          "turn-pair-core",
+          "lexicon-candidates",
+          "frustration-lexicon",
+          "turn-frustration",
+          "turn-pair-llm",
+          "assistant-cognition",
+          "tool-trajectory",
+          "phase-trajectory",
+          "plan-compliance",
+          "task-tool-mismatch",
+          "failure-modes",
+          "grounded-claims",
+          "revive-chains",
+          "uncompleted-leads",
+          "compression-checklist",
+          "language-mismatch",
+          "decode-collapse",
+          "repetition-collapse",
+          "session-ending",
+          "time-economy",
+          "files-in-play",
+          "navigation-efficiency",
+          "similarity-cluster",
+          "friction-accumulation",
+          "tool-inventory-tax",
+          "context-economy",
+          "cache-economy",
+          "routing-opportunity",
+          "secret-leak",
+          "gitleaks",
+          "nosey-parker",
+          "detect-secrets",
+          "trufflehog",
+          "secret-scanner",
+          "presidio",
+          "piicatcher",
+          "dataprofiler",
+          "token-units",
+          "request-classes",
+          "session-overview",
+          "rule-restatement",
+          "proposal-validate",
+          "custom"
+        ],
+        "harness": [
+          "pi",
+          "claude"
+        ]
+      },
+      "counts": [
+        "runs",
+        "runsFailed",
+        "sessions",
+        "nodes",
+        "durationSec",
+        "proposals",
+        "friction",
+        "correction",
+        "waste",
+        "suggestion",
+        "reinforcement",
+        "accepted",
+        "rejected",
+        "acceptedModified"
+      ],
+      "maxRows": 100,
+      "maxCount": 10000000
+    }
+  },
+  "dailyRowCap": 20000,
+  "maxBodyBytes": 8192
+}
