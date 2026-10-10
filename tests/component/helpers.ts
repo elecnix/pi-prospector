@@ -88,6 +88,8 @@ export interface TestMessage {
 	errorMessage?: string | null;
 	/** The raw usage JSON stored in messages.usage (token buckets + per-bucket cost). */
 	usage?: Record<string, unknown>;
+	/** The message's ISO timestamp; defaults to a synthetic one derived from the helper's insert counter. */
+	timestamp?: string;
 }
 
 /** Insert messages for a session in order, returning the inserted ids. */
@@ -104,7 +106,7 @@ export async function insertMessages(db: AsyncDatabase, sessionId: string, messa
 			id,
 			sessionId,
 			parent,
-			new Date(1_700_000_000_000 + messageSeq * 1000).toISOString(),
+			m.timestamp ?? new Date(1_700_000_000_000 + messageSeq * 1000).toISOString(),
 			m.role,
 			m.text ?? null,
 			m.thinking ?? null,

@@ -39,6 +39,7 @@ import { repetitionCollapseAnalyzer } from "./analyzers/repetition-collapse/inde
 import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js";
 import { decodeCollapseAnalyzer } from "./analyzers/decode-collapse/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
+import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
 import { navigationEfficiencyAnalyzer } from "./analyzers/navigation-efficiency/index.js";
 import { similarityClusterAnalyzer } from "./analyzers/similarity-cluster/index.js";
@@ -197,6 +198,13 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// session-level deterministic graders, before the synthesizer, so a future
 	// consumer can declare it as a dependency without reordering.
 	sessionEndingAnalyzer,
+	// Where each session's wall-clock time went (#306): seconds per command
+	// family, active versus idle time, waits that block inside one tool call,
+	// and wait loops whose pgrep -f / ps | grep pattern matches the loop itself.
+	// Session-level, standalone, deterministic (no LLM); reads the shared action
+	// stream plus the host's message timestamps. Placed with the other
+	// session-level deterministic graders, before the synthesizer.
+	timeEconomyAnalyzer,
 	// Which files each session had in play, and how much it churned over that
 	// set — repeated read→edit→read cycling where the agent keeps reopening
 	// files it already holds. The waste twin of the file-touch consumers:
