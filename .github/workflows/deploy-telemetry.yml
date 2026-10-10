@@ -1,0 +1,66 @@
+name: Deploy usage tracker
+
+# Deploys the usage-tracker release pinned in telemetry/tracker-version, with
+# telemetry/tracker.config.json built in, to the Cloudflare account that stores
+# pi-prospector's anonymous usage reports (#290). It runs when main changes the
+# pin or the config, so a new analyzer id reaches the tracker once it merges.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - telemetry/tracker-version
+      - telemetry/tracker.config.json
+  workflow_dispatch:
+
+# Deploys run one at a time, in order. A later deploy never cancels one that
+# is applying migrations.
+concurrency:
+  group: deploy-telemetry
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - name: Read the pinned tracker release
+        id: pin
+        run: |
+          ref=$(tr -d '[:space:]' < telemetry/tracker-version)
+          if ! [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "telemetry/tracker-version must be a release tag like v0.1.0, not: $ref" >&2
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          repository: elecnix/usage-tracker
+          ref: ${{ steps.pin.outputs.ref }}
+          path: tracker
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          node-version: 22
+      - name: Deploy
+        working-directory: tracker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npm ci
+          npm run deploy -- --config ../telemetry/tracker.config.json --name prospector-telemetry
+      - name: Check the deployed version
+        run: |
+          expected="${{ steps.pin.outputs.ref }}"
+          for attempt in 1 2 3 4 5 6; do
+            health=$(curl -fsS https://prospector-telemetry.pi-prospector.workers.dev/v1/health || true)
+            echo "$health"
+            [ "$(echo "$health" | jq -r .tracker)" = "${expected#v}" ] && exit 0
+            sleep 10
+          done
+          echo "The tracker does not report version ${expected#v}." >&2
+          exit 1

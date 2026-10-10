@@ -480,6 +480,19 @@ Replay-validate open proposals to ground their confidence empirically instead of
 
 The result is a content-addressed `validation` node (covered by `/prospect-verify`) plus a grounded `validated_score` and a status of `supported`, `unsupported`, or `unvalidated` written back onto the proposal. This is **advisory only** — it never edits anything — and it deliberately inherits the text-only classifier's blind spots, so the score is labelled *replay-validated*, not treated as ground truth. `--model` pins every tier to one model for the run (the resolved model is part of node identity); `--revise config` re-validates after a validator-model change.
 
+### `/prospect-telemetry [status|on|off|show|reset-id]`
+
+Anonymous usage reports are off until you say yes. The first time pi or `prospect` starts on a terminal, it asks once whether to share them. Pressing Enter accepts, and any other way out of the question counts as no. Neither CI nor headless runs ask.
+
+With reports on, pi-prospector sends one report a day to a [usage-tracker](https://github.com/elecnix/usage-tracker) Worker that the maintainers run on Cloudflare. The report holds per-analyzer counts for each harness: runs, failed runs, sessions, nodes, run time, proposals by severity, and how many proposals you accepted, rejected, or accepted with changes. Every value is a number or comes from a fixed list. Analyzers you wrote yourself are counted as `custom`, never by name. The report never contains conversation text, file paths, proposal titles, or session ids. The Worker stores the day, a random install id, the version, and those counts. It doesn't store your IP address.
+
+- `telemetry show` prints the next report without sending it.
+- `telemetry on` and `telemetry off` change the setting. `telemetry reset-id` replaces the install id.
+- `DO_NOT_TRACK=1` or `PROSPECTOR_TELEMETRY_DISABLED=1` turns reports off whatever the setting says.
+- `PROSPECTOR_TELEMETRY_DEBUG=1` prints each report to stderr instead of sending it.
+
+The setting lives in `~/.pi/agent/prospector-telemetry.json`. [`telemetry/tracker.config.json`](telemetry/tracker.config.json) lists every value the tracker accepts from pi-prospector.
+
 ## Pi tool: `prospect`
 
 When installed, pi-prospector registers a `prospect` tool the Pi coding agent can call during a session:

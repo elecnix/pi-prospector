@@ -246,6 +246,13 @@ export const COMMANDS: ProspectCommand[] = [
 		handler: (module) => module.prospectMutes,
 	}),
 	spec({
+		name: "prospect-telemetry",
+		description:
+			"Anonymous usage reports (opt-in): once a day, per-analyzer counts of runs, sessions, proposals by severity, and your accept/reject decisions. Never conversation text, paths, or session ids. Subcommands: status (default), on, off, show (print the next report without sending it), reset-id. DO_NOT_TRACK=1 or PROSPECTOR_TELEMETRY_DISABLED=1 turns it off; PROSPECTOR_TELEMETRY_DEBUG=1 prints each report instead of sending it.",
+		load: () => import("./telemetry.js"),
+		handler: (module) => module.prospectTelemetry,
+	}),
+	spec({
 		name: "prospect-models",
 		description: "Show the per-model quality/cost efficiency frontier over the analyzed routing corpus",
 		load: () => import("./models.js"),

@@ -20,6 +20,10 @@ const BY_NAME = new Map<string, ProspectCommand>(COMMANDS.map((command) => [comm
 export interface CliOptions {
 	/** The model registry LLM analyzers resolve models through. Defaults to pi's, loaded on first lookup. */
 	modelRegistry?: ModelRegistry;
+	/** Ask the usage-report question (#290). Defaults to asking on the terminal when stdin and stderr are both one. */
+	askConsent?: () => Promise<unknown>;
+	/** Send today's usage report if one is due. */
+	sendReport?: () => Promise<unknown>;
 }
 
 /** Run `prospect <command> [args]` and return the process exit code. */
@@ -36,6 +40,9 @@ export async function main(argv: string[], options: CliOptions = {}): Promise<nu
 		return 2;
 	}
 	if (rest.includes("--help") || rest.includes("-h")) return printCommandHelp(first);
+	// The telemetry command is how the user answers, so it never asks first.
+	const isTelemetry = command.name === "prospect-telemetry";
+	if (!isTelemetry) await (options.askConsent ?? askOnTerminal)();
 
 	let failed = false;
 	const ctx: ExtensionCommandContext = {
@@ -54,7 +61,19 @@ export async function main(argv: string[], options: CliOptions = {}): Promise<nu
 		console.error(`prospect ${first}: ${err instanceof Error ? err.message : String(err)}`);
 		return 1;
 	}
+	if (!isTelemetry) await (options.sendReport ?? sendReport)();
 	return failed ? 1 : 0;
+}
+
+async function askOnTerminal(): Promise<void> {
+	if (!process.stdin.isTTY || !process.stderr.isTTY) return;
+	const consent = await import("./telemetry/consent.js");
+	await consent.askInTerminal(consent.terminalQuestion);
+}
+
+async function sendReport(): Promise<void> {
+	const startup = await import("./telemetry/startup.js");
+	await startup.sendWithOwnDb();
 }
 
 function printCommandHelp(name: string): number {
