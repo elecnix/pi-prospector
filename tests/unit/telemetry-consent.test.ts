@@ -91,3 +91,27 @@ describe("the pi question", () => {
 		assert.equal(await askInPi(async () => undefined, env), "denied");
 	});
 });
+
+describe("telemetry on", () => {
+	it("says that an environment switch still blocks sending", async () => {
+		const { prospectTelemetry } = await import("../../src/commands/telemetry.js");
+		const saved = { file: process.env["PROSPECTOR_TELEMETRY_FILE"], dnt: process.env["DO_NOT_TRACK"], off: process.env["PROSPECTOR_TELEMETRY_DISABLED"] };
+		process.env["PROSPECTOR_TELEMETRY_FILE"] = env["PROSPECTOR_TELEMETRY_FILE"];
+		process.env["DO_NOT_TRACK"] = "1";
+		delete process.env["PROSPECTOR_TELEMETRY_DISABLED"];
+		const notes: Array<[string, string | undefined]> = [];
+		const log = console.log;
+		console.log = () => undefined;
+		try {
+			await prospectTelemetry("on", { modelRegistry: {} as never, ui: { notify: (message, level) => void notes.push([message, level]) } });
+		} finally {
+			console.log = log;
+			for (const [key, value] of [["PROSPECTOR_TELEMETRY_FILE", saved.file], ["DO_NOT_TRACK", saved.dnt], ["PROSPECTOR_TELEMETRY_DISABLED", saved.off]] as const) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+		assert.equal(readState(env["PROSPECTOR_TELEMETRY_FILE"]).consent, "granted");
+		assert.deepEqual(notes, [["Usage reports are on, but DO_NOT_TRACK is set, so nothing is sent until you unset it.", "warning"]]);
+	});
+});

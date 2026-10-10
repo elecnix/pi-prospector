@@ -18,6 +18,11 @@ export async function prospectTelemetry(args: string, ctx: ExtensionCommandConte
 
 	if (sub === "on" || sub === "off") {
 		writeState(setConsent(state, sub === "on" ? "granted" : "denied"), file);
+		const blocked = disabledByEnv();
+		if (sub === "on" && blocked) {
+			report(ctx, `Usage reports are on, but ${blocked} is set, so nothing is sent until you unset it.`, "warning");
+			return;
+		}
 		report(ctx, sub === "on" ? "Usage reports are on. Thank you." : "Usage reports are off.");
 		return;
 	}
@@ -54,7 +59,7 @@ export async function prospectTelemetry(args: string, ctx: ExtensionCommandConte
 	report(ctx, lines.join("\n"));
 }
 
-function report(ctx: ExtensionCommandContext, message: string, level: "info" | "error" = "info"): void {
+function report(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error" = "info"): void {
 	console.log(message);
 	ctx.ui.notify(message, level);
 }
