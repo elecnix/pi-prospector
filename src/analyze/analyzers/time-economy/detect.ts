@@ -22,6 +22,9 @@
  *     process it waits on ending. Syntax only nominates a candidate; the loop
  *     counts as confirmed when it ran to its own bound or to the harness
  *     timeout, because a loop that broke out early did see its target exit.
+ *     A harness timeout covers the whole call, so a loop followed by other
+ *     long work in the same call can be confirmed when the later work, not
+ *     the loop, outlived the timeout.
  */
 
 import { Type, type Static } from "typebox";
@@ -147,7 +150,7 @@ export function classifyWait(
 	for (const m of run.matchAll(STANDALONE_SLEEP)) {
 		if (Number(m[1]) >= config.minSleepSeconds) longSleep = true;
 	}
-	const watcher = config.blockingWaitPatterns.some((p) => new RegExp(p, "i").test(run));
+	const watcher = configRegExps("blockingWaitPatterns", config.blockingWaitPatterns, "i").some((re) => re.test(run));
 
 	let selfMatching = false;
 	if (sleepingLoop) {
@@ -176,6 +179,32 @@ export function loopBoundSeconds(command: string): number | null {
 	const first = seq[1] === undefined ? 1 : Number(seq[1]);
 	const iterations = Number(seq[2]) - first + 1;
 	return iterations > 0 ? iterations * Number(sleep[1]) : null;
+}
+
+const compiled = new Map<string, RegExp>();
+
+/**
+ * Compile a config pattern once. An invalid pattern is a configuration fault,
+ * so the error names the config entry rather than surfacing a bare SyntaxError.
+ */
+function configRegExp(key: string, patterns: readonly string[], index: number, flags: string): RegExp {
+	const source = patterns[index]!;
+	const cacheKey = `${flags}/${source}`;
+	let re = compiled.get(cacheKey);
+	if (!re) {
+		try {
+			re = new RegExp(source, flags);
+		} catch (err) {
+			const why = err instanceof Error ? err.message : String(err);
+			throw new Error(`time-economy config: ${key}[${index}] is not a valid regular expression: ${why}`);
+		}
+		compiled.set(cacheKey, re);
+	}
+	return re;
+}
+
+function configRegExps(key: string, patterns: readonly string[], flags: string): RegExp[] {
+	return patterns.map((_, i) => configRegExp(key, patterns, i, flags));
 }
 
 function parseTime(ts: string | null): number | null {
@@ -218,7 +247,7 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 		timeById.set(m.id, parseTime(m.timestamp));
 		if (m.role === "toolResult" && m.content_text && singleResult(m.tool_results)) textById.set(m.id, m.content_text);
 	}
-	const timeoutPatterns = config.timeoutResultPatterns.map((p) => new RegExp(p, "i"));
+	const timeoutPatterns = configRegExps("timeoutResultPatterns", config.timeoutResultPatterns, "i");
 	const timedOut: Array<{ messageId: string; seconds: number }> = [];
 
 	const shellNames = new Set(config.shellToolNames.map((n) => n.toLowerCase()));

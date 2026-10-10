@@ -14,7 +14,7 @@ import {
 	measureTime,
 	type TimeScan,
 } from "../../src/analyze/analyzers/time-economy/detect.js";
-import { buildProposals } from "../../src/analyze/analyzers/time-economy/index.js";
+import { buildProposals, resolveConfig } from "../../src/analyze/analyzers/time-economy/index.js";
 import type { MessageRow } from "../../src/analyze/types.js";
 
 const CONFIG: TimeEconomyConfig = { ...DEFAULT_TIME_ECONOMY_CONFIG };
@@ -341,5 +341,23 @@ describe("buildProposals", () => {
 		assert.ok(p, "a self-matching proposal is emitted");
 		assert.match(p!.title, /1 wait loop matched its own command line/);
 		assert.match(p!.detail, /pgrep -f/);
+	});
+});
+
+// ─────────────────────────── configuration ───────────────────────────
+
+describe("configuration", () => {
+	it("names the config entry when a pattern is not a valid regular expression", () => {
+		assert.throws(
+			() => classifyWait("gh run watch 1", { ...CONFIG, blockingWaitPatterns: ["gh run watch ("] }),
+			/time-economy config: blockingWaitPatterns\[0\] is not a valid regular expression/,
+		);
+	});
+
+	it("fills a partial stored config from the defaults", () => {
+		const config = resolveConfig({ waitProposalMinSeconds: 0 });
+		assert.equal(config.waitProposalMinSeconds, 0);
+		assert.equal(config.timeoutProposalMinCalls, DEFAULT_TIME_ECONOMY_CONFIG.timeoutProposalMinCalls);
+		assert.deepEqual(resolveConfig(undefined), DEFAULT_TIME_ECONOMY_CONFIG);
 	});
 });

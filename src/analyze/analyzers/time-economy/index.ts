@@ -93,8 +93,9 @@ export const TIME_ECONOMY_VERSION: AnalyzerVersion = {
 	codeRef: "src/analyze/analyzers/time-economy/index.ts",
 };
 
-function resolveConfig(raw: unknown): TimeEconomyConfig {
-	return (raw as TimeEconomyConfig) ?? DEFAULT_TIME_ECONOMY_CONFIG;
+/** The stored config over the defaults, so a partial config cannot leave a threshold undefined. */
+export function resolveConfig(raw: unknown): TimeEconomyConfig {
+	return { ...DEFAULT_TIME_ECONOMY_CONFIG, ...((raw as Partial<TimeEconomyConfig> | null | undefined) ?? {}) };
 }
 
 /**

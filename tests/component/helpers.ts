@@ -88,7 +88,7 @@ export interface TestMessage {
 	errorMessage?: string | null;
 	/** The raw usage JSON stored in messages.usage (token buckets + per-bucket cost). */
 	usage?: Record<string, unknown>;
-	/** The message's ISO timestamp; defaults to one second after the previous inserted message. */
+	/** The message's ISO timestamp; defaults to a synthetic one derived from the helper's insert counter. */
 	timestamp?: string;
 }
 
