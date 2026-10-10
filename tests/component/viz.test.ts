@@ -466,6 +466,7 @@ describe("prospect viz", () => {
 
 	it("works end-to-end through the registered prospect-viz command", async () => {
 		process.env["PROSPECTOR_DB_PATH"] = fx.dbPath;
+		const prevSessionsDir = process.env["PROSPECTOR_SESSIONS_DIR"];
 		process.env["PROSPECTOR_SESSIONS_DIR"] = FIXTURES;
 		try {
 			const mod = await import("../../src/index.js");
@@ -496,7 +497,8 @@ describe("prospect viz", () => {
 			assert.equal(((data["session"] as Record<string, unknown>)["id"]), SESS);
 		} finally {
 			delete process.env["PROSPECTOR_DB_PATH"];
-			delete process.env["PROSPECTOR_SESSIONS_DIR"];
+			if (prevSessionsDir === undefined) delete process.env["PROSPECTOR_SESSIONS_DIR"];
+			else process.env["PROSPECTOR_SESSIONS_DIR"] = prevSessionsDir;
 		}
 	});
 });
