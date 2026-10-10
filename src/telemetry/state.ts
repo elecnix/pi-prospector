@@ -36,7 +36,8 @@ export function statePath(env: NodeJS.ProcessEnv = process.env): string {
  * Read the state. A missing file means the user hasn't answered yet. A file
  * that exists but can't be read or parsed counts as no: the user's answer is
  * unknown, so nothing is sent and they aren't asked again. `telemetry on`
- * rewrites the file.
+ * rewrites the file. A file that still parses keeps its install id, so turning
+ * reports back on doesn't count the install twice.
  */
 export function readState(file: string = statePath()): TelemetryState {
 	let raw: string;
@@ -46,14 +47,18 @@ export function readState(file: string = statePath()): TelemetryState {
 		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { installId: randomUUID() };
 		return { installId: randomUUID(), consent: "denied" };
 	}
+	let parsed: unknown;
 	try {
-		const parsed: unknown = JSON.parse(raw);
-		if (Check(TelemetryState, parsed)) return parsed;
+		parsed = JSON.parse(raw);
 	} catch {
-		// Falls through to the unreadable case.
+		return { installId: randomUUID(), consent: "denied" };
 	}
-	return { installId: randomUUID(), consent: "denied" };
+	if (Check(TelemetryState, parsed)) return parsed;
+	const savedId = typeof parsed === "object" && parsed !== null && "installId" in parsed ? parsed.installId : undefined;
+	return { installId: typeof savedId === "string" && UUID.test(savedId) ? savedId : randomUUID(), consent: "denied" };
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function writeState(state: TelemetryState, file: string = statePath()): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true });

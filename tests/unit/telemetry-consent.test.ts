@@ -53,6 +53,12 @@ describe("telemetry switches", () => {
 		assert.equal(readState(file).consent, "denied");
 		assert.equal(shouldAsk(readState(file), {}), false);
 	});
+
+	it("keeps the install id of a file that parses but doesn't match the schema", () => {
+		const file = env["PROSPECTOR_TELEMETRY_FILE"]!;
+		fs.writeFileSync(file, JSON.stringify({ installId: "0b5e8c1e-6f0a-4d43-9a7e-3f1d2c4b5a69", consent: "maybe" }));
+		assert.deepEqual(readState(file), { installId: "0b5e8c1e-6f0a-4d43-9a7e-3f1d2c4b5a69", consent: "denied" });
+	});
 });
 
 describe("the terminal question", () => {

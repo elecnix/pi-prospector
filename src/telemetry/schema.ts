@@ -102,8 +102,8 @@ const HarnessDimension = Type.Unsafe<Harness>(Type.Union(HARNESSES.map((h) => Ty
 /** One analyzer's totals for one harness over the reporting window. */
 export const UsageRow = Type.Object(
 	{
-		analyzer: Type.String(),
-		harness: Type.String(),
+		analyzer: AnalyzerDimension,
+		harness: HarnessDimension,
 		runs: Count,
 		runsFailed: Count,
 		sessions: Count,
@@ -171,7 +171,7 @@ export function toReport(installId: string, version: string, rows: UsageRow[]): 
 		installId,
 		version,
 		rows: rows.slice(0, MAX_ROWS).map((row) => ({
-			dimensions: { analyzer: reportedAnalyzer(row.analyzer), harness: reportedHarness(row.harness) },
+			dimensions: { analyzer: row.analyzer, harness: row.harness },
 			counts: Object.fromEntries(COUNT_FIELDS.map((field) => [field, row[field]])) as Record<(typeof COUNT_FIELDS)[number], number>,
 		})),
 	};

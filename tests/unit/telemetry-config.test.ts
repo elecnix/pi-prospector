@@ -47,13 +47,12 @@ describe("telemetry/tracker.config.json", () => {
 	});
 });
 
-describe("toReport", () => {
+describe("reported dimensions", () => {
 	it("reports an unlisted analyzer as custom and an unlisted source as other", async () => {
-		const { toReport } = await import("../../src/telemetry/schema.js");
-		const zero = { runs: 1, runsFailed: 0, sessions: 1, nodes: 0, durationSec: 0, proposals: 0, friction: 0, correction: 0, waste: 0, suggestion: 0, reinforcement: 0, accepted: 0, rejected: 0, acceptedModified: 0 };
-		const report = toReport("0b5e8c1e-6f0a-4d43-9a7e-3f1d2c4b5a69", "0.3.0", [{ analyzer: "my-private-analyzer", harness: "pi", ...zero }]);
-		assert.deepEqual(report.rows[0]?.dimensions, { analyzer: "custom", harness: "pi" });
-		const custom = toReport("0b5e8c1e-6f0a-4d43-9a7e-3f1d2c4b5a69", "0.3.0", [{ analyzer: "turn-pair-core", harness: "my-source", ...zero }]);
-		assert.deepEqual(custom.rows[0]?.dimensions, { analyzer: "turn-pair-core", harness: "other" });
+		const { reportedAnalyzer, reportedHarness } = await import("../../src/telemetry/schema.js");
+		assert.equal(reportedAnalyzer("my-private-analyzer"), "custom");
+		assert.equal(reportedAnalyzer("turn-pair-core"), "turn-pair-core");
+		assert.equal(reportedHarness("my-source"), "other");
+		assert.equal(reportedHarness("claude"), "claude");
 	});
 });
