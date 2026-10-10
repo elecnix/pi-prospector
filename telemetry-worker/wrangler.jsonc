@@ -1,0 +1,19 @@
+{
+	// Anonymous usage reports for pi-prospector (#290). Deploy from this directory
+	// with `npx wrangler deploy`; apply migrations with
+	// `npx wrangler d1 migrations apply prospector-telemetry --remote`.
+	"name": "prospector-telemetry",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-01",
+	"account_id": "1d1fb19a40ab5bda8181eaee2f845b47",
+	"workers_dev": true,
+	"observability": { "enabled": false },
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "prospector-telemetry",
+			"database_id": "c2db67c1-89bf-41fa-b9dc-ca17fe019c6d",
+			"migrations_dir": "migrations"
+		}
+	]
+}

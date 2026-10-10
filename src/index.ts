@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "./pi-stubs.js";
 import { registerProspector } from "./commands/registry.js";
 import { registerHeadlessFlag } from "./commands/headless.js";
+import { registerTelemetry } from "./telemetry/register.js";
 
 /**
  * pi-prospector's entry point, loaded on every `pi` start.
@@ -13,4 +14,5 @@ import { registerHeadlessFlag } from "./commands/headless.js";
 export default function (pi: ExtensionAPI): void {
 	registerProspector(pi);
 	registerHeadlessFlag(pi);
+	registerTelemetry(pi);
 }

@@ -32,7 +32,8 @@ export interface ModelRegistry {
 
 export interface ExtensionUIContext {
 	notify: (message: string, level?: string) => void;
-	select?: (options: unknown) => Promise<unknown>;
+	/** Show a list and resolve with the chosen option, or undefined when dismissed. The first option starts selected. */
+	select?: (title: string, options: string[]) => Promise<string | undefined>;
 	confirm?: (options: unknown) => Promise<boolean>;
 	input?: (options: unknown) => Promise<string | undefined>;
 	setStatus?: (text: string) => void;

@@ -30,6 +30,8 @@ const STARTUP_SURFACE = [
 	"commands/headless.ts",
 	"commands/registry.ts",
 	"commands/tool-schema.ts",
+	// Registers the usage-report listener (#290); its work loads on session_start.
+	"telemetry/register.ts",
 ];
 
 /** Relative specifiers a file imports for its value (never `import type`). */

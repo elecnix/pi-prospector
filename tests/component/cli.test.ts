@@ -101,6 +101,27 @@ describe("prospect CLI", () => {
 		assert.match(out, /session-ending .*off by default/);
 	});
 
+	it("asks the usage-report question before a command and sends the report after it (#290)", async () => {
+		const calls: string[] = [];
+		const log = console.log;
+		console.log = () => undefined;
+		try {
+			await main(["stats"], {
+				modelRegistry: noModels,
+				askConsent: async () => void calls.push("ask"),
+				sendReport: async () => void calls.push("send"),
+			});
+			await main(["telemetry", "status"], {
+				modelRegistry: noModels,
+				askConsent: async () => void calls.push("ask telemetry"),
+				sendReport: async () => void calls.push("send telemetry"),
+			});
+		} finally {
+			console.log = log;
+		}
+		assert.deepEqual(calls, ["ask", "send"]);
+	});
+
 	it("runs as an executable and exits when the command finishes", async () => {
 		const { stdout } = await promisify(execFile)(process.execPath, [BIN, "stats"], { env: process.env, timeout: 60_000 });
 		assert.match(stdout, /Sessions/i);
