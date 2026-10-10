@@ -30,7 +30,13 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - name: Read the pinned tracker release
         id: pin
-        run: echo "ref=$(tr -d '[:space:]' < telemetry/tracker-version)" >> "$GITHUB_OUTPUT"
+        run: |
+          ref=$(tr -d '[:space:]' < telemetry/tracker-version)
+          if ! [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "telemetry/tracker-version must be a release tag like v0.1.0, not: $ref" >&2
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
           repository: elecnix/usage-tracker

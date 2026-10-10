@@ -41,11 +41,17 @@ describe("telemetry switches", () => {
 		assert.equal(sendDue({ installId: "x", consent: "granted" }, now, { PROSPECTOR_TELEMETRY_DISABLED: "1" }), false);
 	});
 
-	it("reads a missing or corrupt file as undecided, with a fresh install id", () => {
+	it("reads a missing file as undecided, with a fresh install id", () => {
+		const state = readState(env["PROSPECTOR_TELEMETRY_FILE"]!);
+		assert.equal(state.consent, undefined);
+		assert.match(state.installId, /^[0-9a-f-]{36}$/);
+	});
+
+	it("reads a corrupt file as no, so a lost answer never sends and never asks again", () => {
 		const file = env["PROSPECTOR_TELEMETRY_FILE"]!;
-		assert.equal(readState(file).consent, undefined);
 		fs.writeFileSync(file, "{oops");
-		assert.match(readState(file).installId, /^[0-9a-f-]{36}$/);
+		assert.equal(readState(file).consent, "denied");
+		assert.equal(shouldAsk(readState(file), {}), false);
 	});
 });
 

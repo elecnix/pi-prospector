@@ -32,15 +32,27 @@ export function statePath(env: NodeJS.ProcessEnv = process.env): string {
 	return env["PROSPECTOR_TELEMETRY_FILE"] || DEFAULT_STATE_PATH;
 }
 
-/** Read the state, or a fresh undecided one when the file is missing or unreadable. */
+/**
+ * Read the state. A missing file means the user hasn't answered yet. A file
+ * that exists but can't be read or parsed counts as no: the user's answer is
+ * unknown, so nothing is sent and they aren't asked again. `telemetry on`
+ * rewrites the file.
+ */
 export function readState(file: string = statePath()): TelemetryState {
+	let raw: string;
 	try {
-		const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
+		raw = fs.readFileSync(file, "utf-8");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { installId: randomUUID() };
+		return { installId: randomUUID(), consent: "denied" };
+	}
+	try {
+		const parsed: unknown = JSON.parse(raw);
 		if (Check(TelemetryState, parsed)) return parsed;
 	} catch {
-		// A missing or corrupt file means the user hasn't answered yet.
+		// Falls through to the unreadable case.
 	}
-	return { installId: randomUUID() };
+	return { installId: randomUUID(), consent: "denied" };
 }
 
 export function writeState(state: TelemetryState, file: string = statePath()): void {

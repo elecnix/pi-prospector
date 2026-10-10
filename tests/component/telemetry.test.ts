@@ -174,6 +174,12 @@ describe("sendDailyReport", () => {
 		assert.ok(Check(UsageReport, JSON.parse(printed.join("\n"))));
 	});
 
+	it("names PROSPECTOR_TELEMETRY_URL when it isn't an absolute URL", async () => {
+		grant();
+		const result = await sendDailyReport({ db: async () => db, env: { ...env, PROSPECTOR_TELEMETRY_URL: "tracker.local" }, now, fetch: async () => assert.fail("sent") });
+		assert.deepEqual(result, { failed: "PROSPECTOR_TELEMETRY_URL is not an absolute URL: tracker.local" });
+	});
+
 	it("sends nothing under DO_NOT_TRACK, even with consent", async () => {
 		grant();
 		const result = await sendDailyReport({ db: async () => db, env: { ...env, DO_NOT_TRACK: "1" }, now, fetch: async () => assert.fail("sent") });

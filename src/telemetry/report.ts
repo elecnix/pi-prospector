@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Check } from "typebox/value";
 import type { AsyncDatabase } from "../db/async-db.js";
 import { collectUsageCounts } from "../db/telemetry-queries.js";
-import { UsageReport, COUNT_FIELDS, reportedAnalyzer, toReport, type UsageRow } from "./schema.js";
+import { UsageReport, COUNT_FIELDS, reportedAnalyzer, reportedHarness, toReport, type UsageRow } from "./schema.js";
 import { readState, sendDue, statePath, utcDay, writeState, type TelemetryState } from "./state.js";
 
 /**
@@ -31,7 +31,7 @@ export async function buildPayload(db: AsyncDatabase, state: TelemetryState, win
 	const merged = new Map<string, UsageRow>();
 	for (const counts of await collectUsageCounts(db, window.since, window.until)) {
 		const analyzer = reportedAnalyzer(counts.analyzer);
-		const harness = counts.harness === "claude" ? "claude" : "pi";
+		const harness = reportedHarness(counts.harness);
 		const key = `${analyzer}\u0000${harness}`;
 		const existing = merged.get(key);
 		if (!existing) {
@@ -77,7 +77,9 @@ export async function sendDailyReport(options: SendOptions): Promise<SendResult>
 		// run an analysis, and its totals belong in today's report.
 		if (payload.rows.length === 0) return "empty";
 		const done = { ...state, lastSentDay: utcDay(now), sentThrough: window.until };
-		const response = await (options.fetch ?? fetch)(new URL("/v1/report", env["PROSPECTOR_TELEMETRY_URL"] || DEFAULT_TRACKER_URL), {
+		const base = env["PROSPECTOR_TELEMETRY_URL"] || DEFAULT_TRACKER_URL;
+		if (!URL.canParse(base)) return { failed: `PROSPECTOR_TELEMETRY_URL is not an absolute URL: ${base}` };
+		const response = await (options.fetch ?? fetch)(new URL("/v1/report", base), {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(payload),

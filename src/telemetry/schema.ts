@@ -66,10 +66,11 @@ export const KNOWN_ANALYZER_IDS = [
 	"custom",
 ] as const;
 
-export const HARNESSES = ["pi", "claude"] as const;
+/** Harnesses a report may name. A session from a custom source reports as `other`. */
+export const HARNESSES = ["pi", "claude", "other"] as const;
 
 /** Most rows one report may carry. */
-export const MAX_ROWS = 100;
+export const MAX_ROWS = 150;
 /** Largest value any count may take. */
 export const MAX_COUNT = 10_000_000;
 
@@ -158,6 +159,11 @@ export function reportedAnalyzer(id: string): KnownAnalyzer {
 	return KNOWN.has(id) ? (id as KnownAnalyzer) : "custom";
 }
 
+/** The harness a report may carry for a session source. */
+export function reportedHarness(source: string): Harness {
+	return (HARNESSES as readonly string[]).includes(source) ? (source as Harness) : "other";
+}
+
 /** Turn flat rows into the tracker's dimensions-and-counts shape. */
 export function toReport(installId: string, version: string, rows: UsageRow[]): UsageReport {
 	return {
@@ -165,7 +171,7 @@ export function toReport(installId: string, version: string, rows: UsageRow[]): 
 		installId,
 		version,
 		rows: rows.slice(0, MAX_ROWS).map((row) => ({
-			dimensions: { analyzer: reportedAnalyzer(row.analyzer), harness: row.harness === "claude" ? "claude" : "pi" },
+			dimensions: { analyzer: reportedAnalyzer(row.analyzer), harness: reportedHarness(row.harness) },
 			counts: Object.fromEntries(COUNT_FIELDS.map((field) => [field, row[field]])) as Record<(typeof COUNT_FIELDS)[number], number>,
 		})),
 	};
