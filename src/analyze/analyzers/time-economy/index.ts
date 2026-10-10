@@ -6,8 +6,9 @@
  * coding agent, and the transcript already records when each tool call was
  * issued and when its result arrived. This analyzer turns those timestamps into
  * one session-anchored node: time per command family, active versus idle time,
- * waits that block inside a single call, and wait loops that cannot end
- * because their `pgrep -f` / `ps | grep` pattern matches the loop itself.
+ * waits that block inside a single call, calls that ran until the harness
+ * timed them out, and wait loops that cannot end because their `pgrep -f` /
+ * `ps | grep` pattern matches the loop itself.
  *
  * Deterministic, no LLM. Timing rules are documented in `detect.ts`. A call
  * that cannot be timed is counted as untimed, never as zero seconds.
@@ -37,6 +38,7 @@ import {
 	FamilyTimeSchema,
 	InCallWaitsSchema,
 	SelfMatchingWaitSchema,
+	TimedOutCallsSchema,
 	measureTime,
 	type TimeScan,
 } from "./detect.js";
@@ -66,6 +68,7 @@ export const TIME_ECONOMY_PROPERTIES = Type.Object({
 	families: Type.Array(FamilyTimeSchema),
 	in_call_waits: InCallWaitsSchema,
 	self_matching_waits: Type.Array(SelfMatchingWaitSchema),
+	timed_out_calls: TimedOutCallsSchema,
 	improvement_proposals: Type.Array(TimeEconomyRawProposal),
 });
 export type TimeEconomyProperties = Static<typeof TIME_ECONOMY_PROPERTIES>;
@@ -74,7 +77,7 @@ export const TIME_ECONOMY_DEF: AnalyzerDef = {
 	id: "time-economy",
 	label: "Time Economy (deterministic)",
 	description:
-		"Measures where a session's wall-clock time went from the host's own timestamps: seconds per command family, active versus idle time, waits that block inside one tool call, and pgrep -f / ps | grep wait loops that match their own command line and cannot end. Deterministic, no LLM. Proposes a change when in-call waiting or a self-matching loop passes its threshold.",
+		"Measures where a session's wall-clock time went from the host's own timestamps: seconds per command family, active versus idle time, waits that block inside one tool call, calls that ran until the harness timed them out, and pgrep -f / ps | grep wait loops that match their own command line. Deterministic, no LLM. Proposes a change when in-call waiting, harness timeouts, or a self-matching loop passes its threshold.",
 	anchorSpan: "full_session",
 	dependencies: [],
 	outputSchema: TIME_ECONOMY_PROPERTIES,
@@ -83,7 +86,7 @@ export const TIME_ECONOMY_DEF: AnalyzerDef = {
 export const TIME_ECONOMY_VERSION: AnalyzerVersion = {
 	analyzerId: TIME_ECONOMY_DEF.id,
 	// 1.0 (issue #306): synchronous tool-call timing, command families, in-call
-	// waits, and self-matching wait loops.
+	// waits, harness timeouts, and self-matching wait loops.
 	major: 1,
 	minor: 0,
 	implementationKind: "deterministic",
@@ -134,7 +137,26 @@ export function buildProposals(scan: TimeScan, config: TimeEconomyConfig): TimeE
 		});
 	}
 
-	const stuck = scan.self_matching_waits.filter((w) => w.seconds >= config.selfMatchProposalMinSeconds);
+	const timeouts = scan.timed_out_calls;
+	if (timeouts.call_count >= config.timeoutProposalMinCalls) {
+		proposals.push({
+			target_type: "agents_md",
+			title: `${timeouts.call_count} tool calls ran until the harness timed them out`,
+			summary:
+				`The agent waited out the harness's tool timeout ${timeouts.call_count} times, ${minutes(timeouts.seconds)} min in total, ` +
+				"before it learned that each command was still running.",
+			detail:
+				"Run a command that can outlast the tool timeout (a full test or gate run, a build, a container start) in the background from the start, and act on its completion notice. " +
+				"When it has to run in the foreground, set the call's timeout above the command's expected duration.",
+			evidence: `Issuing messages, in session order: ${timeouts.message_ids.join(", ")}`,
+			confidence: 0.85,
+			severity: "waste",
+		});
+	}
+
+	// Only a loop that ran until something outside it stopped it is evidence:
+	// a loop that broke out early saw its target exit, whatever its syntax.
+	const stuck = scan.self_matching_waits.filter((w) => w.ran_to_limit && w.seconds >= config.selfMatchProposalMinSeconds);
 	if (stuck.length > 0) {
 		const total = stuck.reduce((s, w) => s + w.seconds, 0);
 		proposals.push({

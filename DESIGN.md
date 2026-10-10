@@ -425,6 +425,40 @@ not intervene live — see *Boundaries*).
   one viewed region. SB > 1 means the agent explored more than one sibling before
   converging.
 
+### Time analysis (deterministic, session-level)
+
+Every other lens counts turns, tokens, or friction. Time analysis reads the
+clock: the host records when each tool call was issued and when its result
+arrived, and those two timestamps are the call's duration. Nothing is
+estimated.
+
+- **Timed call** — a tool call whose issuing message and result both carry a
+  timestamp, with the result not earlier than the call. Any other call is
+  **untimed** and is counted as such, never as zero seconds, because a silent
+  zero reads as "this was instant".
+- **Command family** — the group a call's seconds are summed under: a shell
+  call's leading command words (after a leading `cd`, environment
+  assignments, and a `timeout` wrapper), or a non-shell tool's name.
+- **Active time** — the union of every timed call's span and every gap
+  between messages up to an idle cap. A longer gap is the operator away, so
+  only the cap counts; a gap a call spans stays active, because the call was
+  running.
+- **In-call wait** — a shell call that blocks inside one invocation: a loop
+  that sleeps, a long `sleep`, or a blocking watcher. A polling-loop is the
+  same wait spread over repeated calls; an in-call wait is invisible to it.
+- **Harness timeout** — a call whose result says the harness stopped waiting
+  for it. The agent sat out the whole tool timeout before learning the command
+  was still running.
+- **Self-matching wait** — a wait loop whose `pgrep -f` or `ps | grep`
+  pattern also matches the shell running the loop, so the loop cannot see the
+  process it waits on exit. Syntax only nominates a candidate. The loop counts
+  as confirmed when it ran to its own bound or to a harness timeout, since a
+  loop that broke out early did see its target exit.
+
+Background work is out of scope for now: a call the harness runs in the
+background returns at once, and the record of its completion is not yet
+ingested, so it times as near-instant.
+
 ### Failure analysis (deterministic, session-level)
 
 A trajectory signal is a pattern in what the agent *did*. This is the other

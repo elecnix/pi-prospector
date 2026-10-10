@@ -80,6 +80,7 @@ flowchart TD
     SL[secret-leak<br/>credential detection]
     TU[token-units<br/>MITE per request segment]
     RCL[repetition-collapse<br/>looping steps]
+    TE[time-economy<br/>wall-clock time]
   end
 
   subgraph deterministic [Deterministic layers]
@@ -184,6 +185,12 @@ Source: [`context-economy/index.ts`](./src/analyze/analyzers/context-economy/ind
 Finds the step that fell into a loop: the model repeats a phrase, or a fragment like `CustomCustomCustom…` or `-_-_-_…`, until the generation ends, and the transcript records an ordinary step that happens to be very long. Each step's reasoning and answer get two scores, because each one misses what the other catches: the share of words inside a repeated word n-gram, and the longest run of one short character motif. Length only sets a floor for judging a step. The score is what triggers. A looping step that returned no answer and no tool call was billed in full for nothing. That earns a proposal against model configuration, and routing-opportunity labels the turn *escalate*. The node keeps the repeating motif, never the looping text. No LLM.
 
 Source: [`repetition-collapse/index.ts`](./src/analyze/analyzers/repetition-collapse/index.ts) · measures in [`detect.ts`](./src/analyze/analyzers/repetition-collapse/detect.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/repetition-collapse/config.ts).
+
+### time-economy — where a session's wall-clock time went (deterministic)
+
+Tells you why a session was slow. It times every tool call from the message that issued it to the message that carried its result, then sums the seconds by command family, so one slow test runner or one polling habit shows up as one row. It separates active time from idle time and flags three kinds of waiting: waits inside one call (a loop that sleeps, a long `sleep`, a blocking watcher), calls that ran until the harness timed them out, and `pgrep -f` / `ps | grep` wait loops whose pattern matches the loop itself. Each kind earns a proposal once it passes its threshold. A call it cannot time is reported as untimed, never as zero seconds. No LLM.
+
+Source: [`time-economy/index.ts`](./src/analyze/analyzers/time-economy/index.ts) · timing and wait detection in [`detect.ts`](./src/analyze/analyzers/time-economy/detect.ts) · thresholds and patterns in [`config.ts`](./src/analyze/analyzers/time-economy/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 

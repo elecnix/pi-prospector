@@ -56,12 +56,13 @@ function shell(id: string, command: string, s: number | null): MessageRow {
 }
 
 /** The tool-result row answering call `id` at second `s`. */
-function result(id: string, s: number | null, isError = false): MessageRow {
+function result(id: string, s: number | null, isError = false, text: string | null = null): MessageRow {
 	return row({
 		id: `res-${id}`,
 		role: "toolResult",
 		timestamp: s === null ? null : at(s),
-		tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError, textLength: 10 }]),
+		content_text: text,
+		tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError, textLength: text?.length ?? 10 }]),
 	});
 }
 
@@ -216,7 +217,47 @@ describe("measureTime", () => {
 		assert.equal(scan.in_call_waits.call_count, 2);
 		assert.equal(scan.in_call_waits.seconds, 900);
 		assert.equal(scan.in_call_waits.longest_seconds, 600);
-		assert.deepEqual(scan.self_matching_waits, [{ message_id: "call-b", seconds: 600, family: "until !" }]);
+		assert.deepEqual(scan.self_matching_waits, [{ message_id: "call-b", seconds: 600, family: "until !", ran_to_limit: false }]);
+	});
+
+	it("confirms a self-matching loop that the harness timed out", () => {
+		const scan = measureTime(
+			[
+				shell("b", "until ! pgrep -f run-smoke; do sleep 5; done", 0),
+				result("b", 600, false, "Command did not complete within its 600s timeout and was moved to the background (ID: x)."),
+			],
+			CONFIG,
+		);
+		assert.equal(scan.self_matching_waits[0]!.ran_to_limit, true);
+		assert.equal(scan.timed_out_calls.call_count, 1);
+		assert.equal(scan.timed_out_calls.seconds, 600);
+	});
+
+	it("does not read a timeout phrase inside a command's own output as a harness timeout", () => {
+		const scan = measureTime(
+			[
+				shell("l", "grep -n timeout app.log", 0),
+				result("l", 1, false, "12: request timed out after 30s\n40: Command did not complete within its 600s timeout"),
+			],
+			CONFIG,
+		);
+		assert.equal(scan.timed_out_calls.call_count, 0);
+	});
+
+	it("confirms a bounded self-matching loop that ran to its own bound", () => {
+		const scan = measureTime(
+			[
+				shell("f", "for i in $(seq 1 30); do pgrep -f runner >/dev/null || break; sleep 10; done", 0),
+				result("f", 295),
+				shell("g", "for i in $(seq 1 30); do pgrep -f runner >/dev/null || break; sleep 10; done", 300),
+				result("g", 340), // broke out early: pgrep stopped matching, so it was not matching itself
+			],
+			CONFIG,
+		);
+		assert.deepEqual(
+			scan.self_matching_waits.map((w) => w.ran_to_limit),
+			[true, false],
+		);
 	});
 
 	it("measures a session with no tool calls without inventing any", () => {
@@ -245,6 +286,7 @@ function scanWith(partial: Partial<TimeScan>): TimeScan {
 		families: [],
 		in_call_waits: { call_count: 0, seconds: 0, longest_seconds: 0, message_ids: [] },
 		self_matching_waits: [],
+		timed_out_calls: { call_count: 0, seconds: 0, message_ids: [] },
 		...partial,
 	};
 }
@@ -271,13 +313,26 @@ describe("buildProposals", () => {
 		assert.match(p.summary, /50% of the session's 50 active minutes/);
 	});
 
+	it("proposes running long commands in the background once calls keep hitting the tool timeout", () => {
+		const two = buildProposals(scanWith({ timed_out_calls: { call_count: 2, seconds: 240, message_ids: ["a", "b"] } }), CONFIG);
+		assert.deepEqual(two, [], "below the call threshold, nothing is proposed");
+		const proposals = buildProposals(
+			scanWith({ timed_out_calls: { call_count: 3, seconds: 1320, message_ids: ["a", "b", "c"] } }),
+			CONFIG,
+		);
+		assert.equal(proposals.length, 1);
+		assert.match(proposals[0]!.title, /3 tool calls ran until the harness timed them out/);
+		assert.match(proposals[0]!.summary, /22 min/);
+	});
+
 	it("proposes a fix for a self-matching wait loop that ran past its threshold", () => {
 		const proposals = buildProposals(
 			scanWith({
 				in_call_waits: { call_count: 1, seconds: 600, longest_seconds: 600, message_ids: ["m9"] },
 				self_matching_waits: [
-					{ message_id: "m9", seconds: 600, family: "until !" },
-					{ message_id: "m10", seconds: 20, family: "until !" },
+					{ message_id: "m9", seconds: 600, family: "until !", ran_to_limit: true },
+					{ message_id: "m10", seconds: 20, family: "until !", ran_to_limit: true },
+					{ message_id: "m11", seconds: 300, family: "until !", ran_to_limit: false },
 				],
 			}),
 			CONFIG,

@@ -7,7 +7,7 @@
  * **untimed**, never as zero seconds, because a silent zero reads as "this was
  * instant" to every consumer.
  *
- * Three findings come out of the same pass:
+ * Four findings come out of the same pass:
  *
  *   - **families** — total seconds per command family (a shell call's leading
  *     words, or a non-shell tool's name), so one slow test runner or one
@@ -15,9 +15,13 @@
  *   - **in-call waits** — calls that block inside a single invocation (a loop
  *     that sleeps, a long `sleep`, a blocking watcher). The trajectory
  *     analyzer's polling-loop sees only waits spread over repeated calls;
+ *   - **harness timeouts** — calls whose result says the harness stopped
+ *     waiting for them, so the agent sat out the whole tool timeout;
  *   - **self-matching waits** — `pgrep -f` or `ps | grep` loops whose pattern
  *     also matches the shell running the loop, so the loop cannot observe the
- *     process it waits on ending, and runs until its own timeout.
+ *     process it waits on ending. Syntax only nominates a candidate; the loop
+ *     counts as confirmed when it ran to its own bound or to the harness
+ *     timeout, because a loop that broke out early did see its target exit.
  */
 
 import { Type, type Static } from "typebox";
@@ -47,8 +51,23 @@ export const SelfMatchingWaitSchema = Type.Object({
 	message_id: Type.String(),
 	seconds: Type.Number(),
 	family: Type.String(),
+	/**
+	 * Whether the loop ran until something outside it stopped it: the harness
+	 * timed the call out, or a bounded loop used up its own bound. A loop that
+	 * matched itself can only end that way; one that broke out early saw its
+	 * target exit, so its pattern did not match the loop after all.
+	 */
+	ran_to_limit: Type.Boolean(),
 });
 export type SelfMatchingWait = Static<typeof SelfMatchingWaitSchema>;
+
+export const TimedOutCallsSchema = Type.Object({
+	call_count: Type.Number(),
+	seconds: Type.Number(),
+	/** The issuing messages, in session order, capped. */
+	message_ids: Type.Array(Type.String()),
+});
+export type TimedOutCalls = Static<typeof TimedOutCallsSchema>;
 
 export const TimeScanSchema = Type.Object({
 	timed_call_count: Type.Number(),
@@ -59,6 +78,8 @@ export const TimeScanSchema = Type.Object({
 	families: Type.Array(FamilyTimeSchema),
 	in_call_waits: InCallWaitsSchema,
 	self_matching_waits: Type.Array(SelfMatchingWaitSchema),
+	/** Calls whose result says the harness stopped waiting for them. */
+	timed_out_calls: TimedOutCallsSchema,
 });
 export type TimeScan = Static<typeof TimeScanSchema>;
 
@@ -143,6 +164,20 @@ export function classifyWait(
 	return { inCallWait: sleepingLoop || longSleep || watcher, selfMatching };
 }
 
+const SEQ_LOOP = /\bfor\s+\w+\s+in\s+\$\(seq\s+(?:(\d+)\s+)?(\d+)\)/;
+const FIRST_SLEEP = /\bsleep\s+(\d+(?:\.\d+)?)/;
+
+/** The seconds a `for i in $(seq a b); do …; sleep S; done` loop can run, or null when it has no such bound. */
+export function loopBoundSeconds(command: string): number | null {
+	const run = command.replace(HEREDOC, "<<HEREDOC");
+	const seq = SEQ_LOOP.exec(run);
+	const sleep = FIRST_SLEEP.exec(run);
+	if (!seq || !sleep) return null;
+	const first = seq[1] === undefined ? 1 : Number(seq[1]);
+	const iterations = Number(seq[2]) - first + 1;
+	return iterations > 0 ? iterations * Number(sleep[1]) : null;
+}
+
 function parseTime(ts: string | null): number | null {
 	if (!ts) return null;
 	const ms = Date.parse(ts);
@@ -176,7 +211,15 @@ function unionLength(intervals: Array<[number, number]>): number {
 /** Measure where a session's time went. */
 export function measureTime(messages: readonly MessageRow[], config: TimeEconomyConfig): TimeScan {
 	const timeById = new Map<string, number | null>();
-	for (const m of messages) timeById.set(m.id, parseTime(m.timestamp));
+	// A result row's text belongs to its call only when the row carries one
+	// result; the transcript joins several results' texts into one field.
+	const textById = new Map<string, string>();
+	for (const m of messages) {
+		timeById.set(m.id, parseTime(m.timestamp));
+		if (m.role === "toolResult" && m.content_text && singleResult(m.tool_results)) textById.set(m.id, m.content_text);
+	}
+	const timeoutPatterns = config.timeoutResultPatterns.map((p) => new RegExp(p, "i"));
+	const timedOut: Array<{ messageId: string; seconds: number }> = [];
 
 	const shellNames = new Set(config.shellToolNames.map((n) => n.toLowerCase()));
 	const families = new Map<string, FamilyTime>();
@@ -209,10 +252,18 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 		if (inv.outcome?.isError) f.error_count++;
 		families.set(family, f);
 
+		const resultText = inv.outcome ? (textById.get(inv.outcome.messageId) ?? "") : "";
+		const harnessTimedOut = timeoutPatterns.some((p) => p.test(resultText));
+		if (harnessTimedOut) timedOut.push({ messageId: inv.messageId, seconds });
+
 		if (isShell) {
 			const w = classifyWait(command, config);
 			if (w.inCallWait) waits.push({ messageId: inv.messageId, seconds });
-			if (w.selfMatching) selfMatching.push({ message_id: inv.messageId, seconds: r(seconds), family });
+			if (w.selfMatching) {
+				const bound = loopBoundSeconds(command);
+				const ranToBound = bound !== null && seconds >= config.boundedLoopTolerance * bound;
+				selfMatching.push({ message_id: inv.messageId, seconds: r(seconds), family, ran_to_limit: harnessTimedOut || ranToBound });
+			}
 		}
 	}
 
@@ -251,5 +302,20 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 			message_ids: longestFirst.slice(0, config.evidenceCap).map((w) => w.messageId),
 		},
 		self_matching_waits: selfMatching,
+		timed_out_calls: {
+			call_count: timedOut.length,
+			seconds: r(timedOut.reduce((s, t) => s + t.seconds, 0)),
+			message_ids: timedOut.slice(0, config.evidenceCap).map((t) => t.messageId),
+		},
 	};
+}
+
+function singleResult(json: string | null): boolean {
+	if (!json) return false;
+	try {
+		const parsed: unknown = JSON.parse(json);
+		return Array.isArray(parsed) && parsed.length === 1;
+	} catch {
+		return false;
+	}
 }

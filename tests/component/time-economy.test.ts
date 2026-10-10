@@ -32,26 +32,27 @@ function call(id: string, command: string, s: number): TestMessage {
 	};
 }
 
-function done(id: string, s: number, isError = false): TestMessage {
+function done(id: string, s: number, text?: string): TestMessage {
 	return {
 		id: `res-${id}`,
 		role: "toolResult",
 		timestamp: at(s),
-		toolResults: [{ toolCallId: id, toolName: "bash", isError, textLength: 12 }],
+		...(text === undefined ? {} : { text }),
+		toolResults: [{ toolCallId: id, toolName: "bash", isError: false, textLength: text?.length ?? 12 }],
 	};
 }
 
-/** A session that spends 20 minutes in one self-matching wait loop, then runs the tests. */
+/** A session that spends 10 minutes in one self-matching wait loop until the harness times it out, then runs the tests. */
 function waitingSession(): TestMessage[] {
 	return [
 		{ role: "user", text: "Start the smoke run and tell me when it finishes.", timestamp: at(0) },
 		call("w1", "./smoke.sh > smoke.log 2>&1 &", 5),
 		done("w1", 6),
 		call("w2", "until ! pgrep -f smoke.sh; do sleep 10; done; tail -5 smoke.log", 10),
-		done("w2", 1210),
-		call("t1", "npm test", 1220),
-		done("t1", 1280),
-		{ role: "assistant", text: "The smoke run finished and the tests pass.", timestamp: at(1290) },
+		done("w2", 610, "Command did not complete within its 600s timeout and was moved to the background (ID: b1)."),
+		call("t1", "npm test", 620),
+		done("t1", 680),
+		{ role: "assistant", text: "The smoke run finished and the tests pass.", timestamp: at(690) },
 	];
 }
 
@@ -75,8 +76,10 @@ describe("time-economy component test", () => {
 			assert.equal(node.node_kind, "proposal");
 			const content = JSON.parse(node.content_json) as Record<string, any>;
 			assert.equal(content["timed_call_count"], 3);
-			assert.equal(content["in_call_waits"].seconds, 1200);
+			assert.equal(content["in_call_waits"].seconds, 600);
 			assert.equal(content["self_matching_waits"].length, 1);
+			assert.equal(content["self_matching_waits"][0].ran_to_limit, true);
+			assert.equal(content["timed_out_calls"].call_count, 1);
 			assert.equal(content["families"][0].family, "until !");
 
 			const proposals = (await db
