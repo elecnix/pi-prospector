@@ -52,6 +52,13 @@ before(async () => {
 			`key-${id}`,
 		);
 	}
+	// A v1-migrated proposal has no analyzer, and belongs to none in the report.
+	await run(
+		`INSERT INTO proposals (id, created_at, updated_at, session_id, analyzer_id, target_type, title, severity, summary, input_key)
+		 VALUES ('p0', '2026-10-08T10:00:31.000Z', '2026-10-08T10:00:31.000Z', ?, NULL, 'agents_md', 'legacy', 'friction', 'summary', 'key-p0')`,
+		SESSION_ID,
+	);
+	await acceptProposal(db, "p0");
 	await acceptProposal(db, "p1");
 	await rejectProposal(db, "p2");
 });

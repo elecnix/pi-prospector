@@ -5,7 +5,8 @@ import { prep } from "./prepared.js";
  * Raw per-analyzer totals over a time window, for the anonymous usage report
  * (#290). The window is half-open, `(since, until]`, so consecutive windows
  * never count a row twice. Rows come back keyed by the analyzer id as stored;
- * the caller decides which ids it may report.
+ * the caller decides which ids it may report. Proposals with no analyzer id,
+ * which only the v1 migration produces, belong to no analyzer and aren't counted.
  */
 
 export interface UsageCounts {
@@ -44,9 +45,10 @@ export async function collectUsageCounts(db: AsyncDatabase, since: string, until
 
 	const proposals = (await prep(
 		db,
-		`SELECT COALESCE(p.analyzer_id, 'custom') AS analyzer, COALESCE(s.source, 'pi') AS harness, p.severity AS severity, COUNT(*) AS n
+		`SELECT p.analyzer_id AS analyzer, COALESCE(s.source, 'pi') AS harness, p.severity AS severity, COUNT(*) AS n
 		   FROM proposals p LEFT JOIN sessions s ON s.id = p.session_id
-		  WHERE p.created_at > ? AND p.created_at <= ?
+		  WHERE p.analyzer_id IS NOT NULL
+		    AND p.created_at > ? AND p.created_at <= ?
 		  GROUP BY 1, 2, 3`,
 	).all(since, until)) as Array<{ analyzer: string; harness: string; severity: string; n: number }>;
 
@@ -57,11 +59,12 @@ export async function collectUsageCounts(db: AsyncDatabase, since: string, until
 	// MIN(id) only keeps the join to one row if that rule ever loosens.
 	const decisions = (await prep(
 		db,
-		`SELECT COALESCE(p.analyzer_id, 'custom') AS analyzer, COALESCE(s.source, 'pi') AS harness, a.verdict AS verdict, COUNT(*) AS n
+		`SELECT p.analyzer_id AS analyzer, COALESCE(s.source, 'pi') AS harness, a.verdict AS verdict, COUNT(*) AS n
 		   FROM assertions a
 		   JOIN proposals p ON p.id = (SELECT MIN(id) FROM proposals WHERE input_key = a.subject_key)
 		   LEFT JOIN sessions s ON s.id = p.session_id
 		  WHERE a.subject_kind = 'proposal'
+		    AND p.analyzer_id IS NOT NULL
 		    AND a.verdict IN ('accepted', 'rejected', 'accepted_modified')
 		    AND a.asserted_at > ? AND a.asserted_at <= ?
 		  GROUP BY 1, 2, 3`,
