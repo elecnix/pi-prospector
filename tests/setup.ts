@@ -13,5 +13,7 @@
  * Tests that exercise these paths point them at temp directories of their own.
  */
 process.env["PROSPECTOR_INSTRUCTIONS_HOME"] = "/nonexistent/prospector-test-home";
-process.env["PROSPECTOR_SESSIONS_DIR"] ??= "/nonexistent/prospector-test-sessions";
-process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] ??= "/nonexistent/prospector-test-claude-sessions";
+// An empty value counts as unset: config reads it with `??`, so "" would be
+// used as a path relative to the working directory.
+process.env["PROSPECTOR_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-sessions";
+process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-claude-sessions";
