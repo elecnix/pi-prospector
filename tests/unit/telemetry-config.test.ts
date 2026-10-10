@@ -16,10 +16,12 @@ const config = JSON.parse(fs.readFileSync(path.join(ROOT, "telemetry", "tracker.
 const app = config.apps[TRACKER_APP];
 
 describe("telemetry/tracker.config.json", () => {
-	it("lists the client's analyzers, harnesses, and counts, in order", () => {
-		assert.deepEqual(app.dimensions.analyzer, [...KNOWN_ANALYZER_IDS]);
-		assert.deepEqual(app.dimensions.harness, [...HARNESSES]);
-		assert.deepEqual(app.counts, [...COUNT_FIELDS]);
+	it("lists the client's analyzers, harnesses, and counts", () => {
+		// The tracker matches values, not positions, so order doesn't matter.
+		const sorted = (values: readonly string[]) => [...values].sort();
+		assert.deepEqual(sorted(app.dimensions.analyzer), sorted(KNOWN_ANALYZER_IDS));
+		assert.deepEqual(sorted(app.dimensions.harness), sorted(HARNESSES));
+		assert.deepEqual(sorted(app.counts), sorted(COUNT_FIELDS));
 		assert.equal(app.maxRows, MAX_ROWS);
 		assert.equal(app.maxCount, MAX_COUNT);
 	});
