@@ -41,6 +41,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"repetition-collapse",
 	"session-ending",
 	"time-economy",
+	"stale-verification",
 	"files-in-play",
 	"navigation-efficiency",
 	"similarity-cluster",
