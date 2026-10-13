@@ -81,6 +81,7 @@ flowchart TD
     TU[token-units<br/>MITE per request segment]
     RCL[repetition-collapse<br/>looping steps]
     TE[time-economy<br/>wall-clock time]
+    SV[stale-verification<br/>verification thrown away]
   end
 
   subgraph deterministic [Deterministic layers]
@@ -191,6 +192,18 @@ Source: [`repetition-collapse/index.ts`](./src/analyze/analyzers/repetition-coll
 Tells you why a session was slow. It times every tool call from the message that issued it to the message that carried its result, then sums the seconds by command family, so one slow test runner or one polling habit shows up as one row. It separates active time from idle time and flags three kinds of waiting: waits inside one call (a loop that sleeps, a long `sleep`, a blocking watcher), calls that ran until the harness timed them out, and `pgrep -f` / `ps | grep` wait loops whose pattern matches the loop itself. Each kind earns a proposal once it passes its threshold. A call it cannot time is reported as untimed, never as zero seconds. No LLM.
 
 Source: [`time-economy/index.ts`](./src/analyze/analyzers/time-economy/index.ts) · timing and wait detection in [`detect.ts`](./src/analyze/analyzers/time-economy/detect.ts) · thresholds and patterns in [`config.ts`](./src/analyze/analyzers/time-economy/config.ts).
+
+### stale-verification — verification runs a later edit threw away (deterministic)
+
+Tells you how much test, lint, build, and gate time the session threw away. A passing run describes the tree as it was when it ran. When the agent edits a file after it and before committing, the result no longer describes the committed tree: the agent either runs the check again or commits an edit that nothing checked. The analyzer finds each such run and records what came between the run and the edit (the agent's own decision, a human prompt, or a subagent such as a reviewer) and what came after (a rerun, or a commit with no rerun). It makes three kinds of proposal:
+
+- Run the slow checks after the last edit, when the agent's own edits threw away more than five minutes of runs.
+- Run reviews before the slow checks, when edits after a subagent threw away more than five minutes.
+- Rerun before committing, when two or more commits took an edit made after the last passing run.
+
+A run counts as passing only when its result isn't an error, the harness didn't time it out, and its output has no failure line such as `--- FAIL` or `2 failed`. The output test catches `cmd | tail`, which exits with `tail`'s status, so a failure there still reads as one, and runs shorter than a minute don't count, since a quick test between edits is the normal edit-test loop. When a run changes into a directory first (`cd /repo/admin && pnpm test`), only edits inside that directory count against it. Background runs return at once, so this version can't time them. It reads gate scripts named like `run-gates.sh` or `lint.sh`, and you can add your own to `verificationPatterns`. It's deterministic and doesn't call a model.
+
+Source: [`stale-verification/index.ts`](./src/analyze/analyzers/stale-verification/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/stale-verification/detect.ts) · patterns and thresholds in [`config.ts`](./src/analyze/analyzers/stale-verification/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 
