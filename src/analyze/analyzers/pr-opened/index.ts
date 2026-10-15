@@ -48,8 +48,8 @@ export const PULL_REQUEST_PROPERTIES = Type.Object({
 	number: Type.Number(),
 	/** The title the session gave it, or null when the creation call did not state one. */
 	title: Type.Union([Type.String(), Type.Null()]),
-	/** Which kind of call opened it: a shell `gh pr create`, or a forge tool. */
-	via: Type.Union([Type.Literal("gh_pr_create"), Type.Literal("tool")]),
+	/** Which kind of call opened it: `gh pr create`, a stacked-PR command, or a forge tool. */
+	via: Type.Union([Type.Literal("gh_pr_create"), Type.Literal("stacked"), Type.Literal("tool")]),
 	call_message_id: Type.String(),
 	result_message_id: Type.String(),
 });
@@ -65,7 +65,7 @@ export const PR_OPENED_DEF: AnalyzerDef = {
 	id: "pr-opened",
 	label: "Pull Request Opened (deterministic)",
 	description:
-		"Records the pull request a session opened, as the URL and title the transcript carries: the creation call's own arguments for the title, the forge's answer for the URL. One session-anchored metric node per pull request, anchored to the call and the result it was read from. Deterministic, no LLM; it proposes nothing.",
+		"Records the pull request a session opened, as the URL and title the transcript carries: the creation call's own arguments for the title, the forge's answer for the URL. Reads `gh pr create`, a stacked-PR command such as `gh stack link --open`, and a hosted-forge creation tool. One session-anchored metric node per pull request, anchored to the call and the result it was read from. Deterministic, no LLM; it proposes nothing.",
 	anchorSpan: "full_session",
 	dependencies: [],
 	outputSchema: PR_OPENED_PROPERTIES,
@@ -73,10 +73,12 @@ export const PR_OPENED_DEF: AnalyzerDef = {
 
 export const PR_OPENED_VERSION: AnalyzerVersion = {
 	analyzerId: PR_OPENED_DEF.id,
+	// 1.1: the `gh stack` extension's verbs, which open a pull request without
+	// being `gh pr create` and print the URL inside a `Created PR` line.
 	// 1.0: shell `gh pr create` and hosted-forge creation tools, with the URL
 	// taken from the forge's own answer.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/pr-opened/index.ts",
 };
