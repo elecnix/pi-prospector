@@ -23,6 +23,7 @@ import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi-file.js";
 import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
 import { makeTempRoot, messageLine, piSessionFileName, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
+import { MAX_DISCOVERY_DEPTH } from "../../src/sync/scanner.js";
 
 const PARENT_ID = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
@@ -190,18 +191,25 @@ describe("nested subagent session recursion (#157)", () => {
 		}
 	});
 
-	it("the depth bound holds through sync: a too-deep tree yields nothing and terminates", async () => {
+	it("the depth bound holds through sync: a session past it is never reached", async () => {
 		const { db, close } = await tempDb();
 		const fx = makeTempRoot("prospect-nested-ingest-");
 		try {
-			let deep = path.join(fx.root, "--Users-test--proj");
-			for (let i = 0; i < 20; i++) deep = path.join(deep, `level-${i}`);
-			writeSession(deep, "too-deep");
+			const project = path.join(fx.root, "--Users-test--proj");
+			let deep = project;
+			for (let i = 0; i <= MAX_DISCOVERY_DEPTH + 3; i++) deep = path.join(deep, `level-${i}`);
+
+			// Both files are pi sessions by name: the shallow one a session file, the
+			// deep one a run-N session.jsonl. A name-based claim accepts either at any
+			// depth, so the depth bound is the only thing that can separate them, and
+			// the assertion on the shallow one is what fails if it is not enforced.
+			writeSession(project, PARENT_ID);
+			writeSession(path.join(deep, "run-0"), "too-deep");
 
 			const result = await runSync(db, [new PiFileSource(fx.root)]);
-			assert.equal(result.sessionsProcessed, 0);
-			const total = (await db.prepare("SELECT count(*) AS n FROM sessions").get()) as { n: number };
-			assert.equal(total.n, 0);
+			assert.equal(result.sessionsProcessed, 1, "the within-bound session syncs, the deep one is not reached");
+			const rows = (await db.prepare("SELECT id FROM sessions").all()) as Array<{ id: string }>;
+			assert.deepEqual(rows.map((r) => r.id), [PARENT_ID]);
 		} finally {
 			fx.cleanup();
 			await close();
