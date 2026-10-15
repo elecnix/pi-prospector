@@ -50,6 +50,15 @@ describe("end-to-end sync", () => {
 			const stats = await getStats(db);
 			assert.ok(stats.totalSessions >= 1);
 			assert.ok(stats.totalMessages >= 1);
+
+			// Pinned to the fixture the name points at: the loose counts above pass
+			// on any session, so without this the test survives the simple fixture
+			// going unclaimed or unparsed.
+			const simple = (await db
+				.prepare("SELECT message_count FROM sessions WHERE id = ?")
+				.get("aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee")) as { message_count: number } | undefined;
+			assert.ok(simple, "the simple fixture is indexed");
+			assert.equal(simple.message_count, 4, "its four messages all landed");
 		} finally {
 			await close();
 		}

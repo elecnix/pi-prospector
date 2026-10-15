@@ -142,10 +142,16 @@ describe("walkSessionDir", () => {
 		const tmpDir = tempRoot("leaf");
 		try {
 			const leaf = path.join(tmpDir, "--Users-test--proj", "run-0");
+			const below = path.join(leaf, "deeper", "session-below.jsonl");
 			fs.mkdirSync(path.join(leaf, "deeper"), { recursive: true });
 			fs.writeFileSync(path.join(leaf, "session-inside.jsonl"), '{"type":"session"}\n');
-			fs.writeFileSync(path.join(leaf, "deeper", "session-below.jsonl"), '{"type":"session"}\n');
+			fs.writeFileSync(below, '{"type":"session"}\n');
 
+			// The matcher claims every name, so the file below the leaf is excluded by
+			// the leaf rule and nothing else. The assertion on its existence is what
+			// keeps that reason explicit: drop `leafDirPattern` and this test fails
+			// with two results instead of one.
+			assert.ok(fs.existsSync(below), "the deeper file exists and would otherwise be claimed");
 			const sessions = await walkSessionDir(tmpDir, "pi", {
 				matchFile: CLAIMS_EVERYTHING,
 				leafDirPattern: /^run-\d+$/,

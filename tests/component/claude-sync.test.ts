@@ -172,7 +172,7 @@ describe("Claude session sync", () => {
 				assert.equal(r1.sessionsProcessed, 1);
 
 				const r2 = await runSync(db, adps(piRoot, claudeRoot));
-				assert.equal(r1.sessionsProcessed, 1);
+				assert.equal(r2.sessionsProcessed, 0, "a re-sync processes nothing new");
 
 				assert.equal(r2.sessionsSkipped, 1);
 				assert.equal(r2.messagesInserted, 0);
@@ -228,9 +228,12 @@ describe("Claude session sync", () => {
 		try {
 			// Claude Code names every child agent's transcript `agent-<id>.jsonl` and
 			// writes it under its parent session's `subagents/` directory, which is
-			// how the parent is recovered: the enclosing directory holds the session id.
+			// how the parent is recovered: the enclosing directory holds the session
+			// id. A workflow child sits two directories deeper, behind `workflows`
+			// and `wf-<id>`, and answers to the same session.
 			const parent = claudeSessionId("child-agent-parent");
 			const childAgent = "a9d08af694d4f7bd7";
+			const workflowChildAgent = "a8670a845f713d1f0";
 			const { piRoot, claudeRoot } = createMixedFixture(
 				[],
 				[
@@ -249,18 +252,26 @@ describe("Claude session sync", () => {
 							JSON.stringify({ type: "assistant", uuid: "ca1", parentUuid: "cu1", isSidechain: true, timestamp: "2026-01-15T10:31:05Z", message: { role: "assistant", model: "claude-sonnet", content: [{ type: "text", text: "done" }] } }),
 						],
 					},
+					{
+						projectDir: "-Users-testuser",
+						fileName: path.join(parent, "subagents", "workflows", "wf_a8e717b7-548", `agent-${workflowChildAgent}.jsonl`),
+						lines: [
+							JSON.stringify({ type: "user", uuid: "wu1", isSidechain: true, timestamp: "2026-01-15T10:32:00Z", message: { role: "user", content: "the workflow stage" } }),
+						],
+					},
 				],
 			);
 			try {
 				const result = await runSync(db, adps(piRoot, claudeRoot));
 				assert.deepEqual(result.errors, []);
-				assert.equal(result.sessionsProcessed, 2, "the session and its child agent each index once");
+				assert.equal(result.sessionsProcessed, 3, "the session and its two child agents each index once");
 
 				const rows = (await db
-					.prepare("SELECT id, source, parent_session FROM sessions ORDER BY parent_session")
+					.prepare("SELECT id, source, parent_session FROM sessions ORDER BY parent_session, id")
 					.all()) as Array<{ id: string; source: string; parent_session: string | null }>;
 				assert.deepEqual(rows, [
 					{ id: parent, source: "claude", parent_session: null },
+					{ id: `agent-${workflowChildAgent}`, source: "claude", parent_session: parent },
 					{ id: `agent-${childAgent}`, source: "claude", parent_session: parent },
 				]);
 

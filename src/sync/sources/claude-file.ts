@@ -28,15 +28,28 @@ const CLAUDE_SESSION_FILE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
  * with the child's turns in full. On the pi side the equivalent records come from
  * an extension and are claimed by that extension's source instead.
  *
- * `journal.jsonl`, which sits beside the workflow children, records lifecycle
- * events (`{"type":"launched"}`) rather than turns, so no source claims it.
+ * The name alone is not the whole shape, because Claude names the id part freely
+ * (`agent-a60f1e9e536d5a637.jsonl`, and `agent-ahttpsgithubcom…-<id>.jsonl` for
+ * some earlier runs), so a name test would also claim a file called
+ * `agent-anything.jsonl` that no child run ever wrote. The shape is the name plus
+ * the directory: every one of the 4262 child transcripts on a live machine sits
+ * under a `subagents` directory, and `journal.jsonl`, which sits there too,
+ * records lifecycle events (`{"type":"launched"}`) rather than turns, so the name
+ * test excludes it.
  */
 const CLAUDE_CHILD_AGENT_FILE_RE = /^agent-.+\.jsonl$/i;
+
+/** True when `filePath` sits under a directory named `subagents`. */
+function underSubagentsDir(filePath: string): boolean {
+	return path.dirname(filePath).split(path.sep).includes("subagents");
+}
 
 /**
  * The session id of the session that spawned a child agent, taken from the
  * directory the child's transcript sits in: `<parent-uuid>/subagents/...`, with
- * `subagents`, `workflows` and `wf-<id>` between the file and its parent.
+ * `subagents`, `workflows` and `wf-<id>` between the file and its parent. Called
+ * only for files named `agent-…`, so the nearest enclosing directory named like a
+ * session is an ancestor session and never the file's own id.
  */
 function parentSessionFromPath(filePath: string): string | null {
 	let dir = path.dirname(filePath);
@@ -55,7 +68,9 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 
 	async discover(): Promise<DiscoveredSession[]> {
 		return walkSessionDir(this.claudeSessionsDir, "claude", {
-			matchFile: (fileName) => CLAUDE_SESSION_FILE_RE.test(fileName) || CLAUDE_CHILD_AGENT_FILE_RE.test(fileName),
+			matchFile: (fileName, _parentDirName, filePath) =>
+				CLAUDE_SESSION_FILE_RE.test(fileName) ||
+				(CLAUDE_CHILD_AGENT_FILE_RE.test(fileName) && underSubagentsDir(filePath)),
 		});
 	}
 

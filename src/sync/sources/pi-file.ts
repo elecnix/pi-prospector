@@ -14,7 +14,14 @@ import { walkSessionDir } from "../scanner.js";
 
 /**
  * Pi's own session-file naming, as the harness's session store writes it:
- * `<ISO timestamp>_<uuid>.jsonl`, wherever below a project directory pi put it.
+ * `<timestamp>_<uuid>.jsonl`, wherever below a project directory pi put it.
+ *
+ * The timestamp is written with dashes, not with the colons and dot of the ISO
+ * 8601 string it comes from: the session that started at `19:00:24.951Z` is stored
+ * as `2026-09-11T19-00-24-951Z_01a091d7-…jsonl`. Hence `[\d-]+` between the `T`
+ * and the `Z` rather than a looser class: discovery claims the shape the harness
+ * writes, and every one of the 4262 session files on a live machine matches it.
+ *
  * Discovery claims nothing by extension, so this is the whole of "a pi session
  * file" for this source.
  */

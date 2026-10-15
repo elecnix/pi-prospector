@@ -46,10 +46,11 @@ export interface DiscoverOptions {
  */
 export interface WalkOptions {
 	/**
-	 * The file names this source owns. Receives the file's basename and its
-	 * immediate parent directory's name.
+	 * The file names this source owns. Receives the file's basename, its immediate
+	 * parent directory's name, and its full path — a shape may depend on where the
+	 * file sits, not only on what it is called.
 	 */
-	matchFile: (fileName: string, parentDirName: string) => boolean;
+	matchFile: (fileName: string, parentDirName: string, filePath: string) => boolean;
 	/**
 	 * Directories matching this hold discoverable files directly, but are never
 	 * descended beyond — e.g. PiSubagentSource's run-N leaves, where a deeper
@@ -149,7 +150,7 @@ async function collectJsonlFiles(
 			continue;
 		}
 
-		if (!opts.matchFile(entry, path.basename(dir))) continue;
+		if (!opts.matchFile(entry, path.basename(dir), fullPath)) continue;
 		results.push({
 			filePath: fullPath,
 			project,

@@ -67,6 +67,9 @@ function writeFullTree(root: string): void {
 			path.join(claudeProject, CLAUDE_SESSION_UUID, "subagents", "workflows", "wf_1", "journal.jsonl"),
 			'{"type":"launched"}\n',
 		],
+		// A name that starts with `agent-` outside any `subagents` directory is not
+		// a child transcript: the shape is the harness's name *and* its directory.
+		[path.join(claudeProject, "not-a-subagent-run", "agent-journal.jsonl"), '{"type":"launched"}\n'],
 	];
 
 	for (const [filePath, content] of files) {
@@ -135,6 +138,11 @@ describe("source shapes", () => {
 					`${foreign} is not a session and must be claimed by nothing`,
 				);
 			}
+			assert.equal(
+				everything.some((p) => p.includes("agent-journal.jsonl")),
+				false,
+				"an `agent-` name outside a subagents directory is not a child transcript",
+			);
 			// The harness's own child agents are claimed, by the harness source.
 			for (const child of [`agent-${CLAUDE_CHILD_ID}.jsonl`, `agent-${CLAUDE_WORKFLOW_CHILD_ID}.jsonl`]) {
 				const owner = [
