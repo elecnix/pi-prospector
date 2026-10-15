@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import registerExtension from "../../src/index.js";
+import { piSessionFileName } from "./helpers.js";
 import { insertProposalRow, insertSession } from "./helpers.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
@@ -362,12 +363,19 @@ describe("prospect tool", () => {
 		process.env["PROSPECTOR_DB_PATH"] = dbPath;
 		process.env["PROSPECTOR_SESSIONS_DIR"] = syncRoot;
 		try {
+			// Each project's session carries the id pi writes in the header and the
+			// file name pi derives from it.
+			const sessionIds: Record<string, string> = {
+				projA: "aaaa2001-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+				projB: "aaaa2002-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+			};
 			for (const proj of ["projA", "projB"]) {
 				const d = path.join(syncRoot, `--Users-test--${proj}`);
+				const sessionId = sessionIds[proj]!;
 				fs.mkdirSync(d, { recursive: true });
 				fs.writeFileSync(
-					path.join(d, `${proj}.jsonl`),
-					`{"type":"session","version":3,"id":"${proj}-001","timestamp":"2026-06-01T10:00:00.000Z"}\n`,
+					path.join(d, piSessionFileName(sessionId, "2026-06-01T10-00-00")),
+					`{"type":"session","version":3,"id":"${sessionId}","timestamp":"2026-06-01T10:00:00.000Z"}\n`,
 				);
 			}
 
@@ -378,7 +386,7 @@ describe("prospect tool", () => {
 			const db = await openAsyncDatabase(dbPath);
 			const rows = await db.prepare("SELECT id FROM sessions").all() as Array<{ id: string }>;
 			await db.close();
-			assert.deepEqual(rows.map((r) => r.id), ["projA-001"]);
+			assert.deepEqual(rows.map((r) => r.id), [sessionIds["projA"]]);
 		} finally {
 			process.env.USER = prevUser;
 			if (prevDb !== undefined) process.env["PROSPECTOR_DB_PATH"] = prevDb;

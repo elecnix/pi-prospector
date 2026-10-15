@@ -12,13 +12,29 @@ import type { SessionInsert, MessageInsert } from "../../db/queries.js";
 import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../parser.js";
 import { walkSessionDir } from "../scanner.js";
 
+/**
+ * Claude Code's session-file naming: `<session-uuid>.jsonl`, directly under a
+ * project directory.
+ *
+ * The tree holds two other kinds of `.jsonl` that this name does not match, and
+ * that no source claims: the child-agent transcripts Claude Code writes at
+ * `<session-uuid>/subagents/agent-<id>.jsonl`, and its `journal.jsonl` workflow
+ * logs. The wildcard-discovery default used to ingest both as sessions, giving
+ * them ids from their own file names — 4582 files that are not sessions of this
+ * harness. If that child-agent work belongs in the corpus, it wants a source of
+ * its own, the way child runs have one on the pi side.
+ */
+const CLAUDE_SESSION_FILE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
+
 export class ClaudeFileSource implements SessionSourceAdapter {
 	readonly source = "claude";
 
 	constructor(private claudeSessionsDir: string) {}
 
 	async discover(): Promise<DiscoveredSession[]> {
-		return walkSessionDir(this.claudeSessionsDir, "claude");
+		return walkSessionDir(this.claudeSessionsDir, "claude", {
+			matchFile: (fileName) => CLAUDE_SESSION_FILE_RE.test(fileName),
+		});
 	}
 
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {

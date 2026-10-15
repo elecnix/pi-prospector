@@ -9,6 +9,7 @@ import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { getStats } from "../../src/db/queries.js";
+import { claudeSessionFileName, claudeSessionId, piSessionFileName } from "./helpers.js";
 
 function adps(piDir: string, claudeDir: string) {
 	return [new PiFileSource(piDir), new ClaudeFileSource(claudeDir)];
@@ -68,10 +69,10 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "-Users-testuser",
-						fileName: "claude-sess-001.jsonl",
+						fileName: claudeSessionFileName("claude-sess-001"),
 						lines: [
-							JSON.stringify({ type: "last-prompt", leafUuid: "lp1", sessionId: "claude-sess-001" }),
-							JSON.stringify({ type: "ai-title", aiTitle: "Test Claude Session", sessionId: "claude-sess-001" }),
+							JSON.stringify({ type: "last-prompt", leafUuid: "lp1", sessionId: claudeSessionId("claude-sess-001") }),
+							JSON.stringify({ type: "ai-title", aiTitle: "Test Claude Session", sessionId: claudeSessionId("claude-sess-001") }),
 							JSON.stringify({ type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "Hello" } }),
 							JSON.stringify({ type: "assistant", uuid: "a1", parentUuid: "u1", timestamp: "2026-01-15T10:30:05Z", message: { role: "assistant", model: "claude-sonnet", content: [{ type: "text", text: "Hi there!" }] } }),
 						],
@@ -85,11 +86,11 @@ describe("Claude session sync", () => {
 				// Verify session row
 				const session = (await db.prepare("SELECT * FROM sessions WHERE source = 'claude'").get()) as Record<string, unknown>;
 				assert.ok(session);
-				assert.equal(session.id, "claude-sess-001");
+				assert.equal(session.id, claudeSessionId("claude-sess-001"));
 				assert.equal(session.source, "claude");
 
 				// Verify messages: ai-title is not inserted as a message
-				const messages = (await db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all("claude-sess-001")) as Array<{ role: string; source: string }>;
+				const messages = (await db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all(claudeSessionId("claude-sess-001"))) as Array<{ role: string; source: string }>;
 				assert.equal(messages.length, 2);
 				assert.equal(messages[0]!.role, "user");
 				assert.equal(messages[1]!.role, "assistant");
@@ -113,7 +114,7 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "-Users-testuser",
-						fileName: "claude-cost.jsonl",
+						fileName: claudeSessionFileName("claude-cost"),
 						lines: [
 							JSON.stringify({ type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "Hello" } }),
 							JSON.stringify({
@@ -158,7 +159,7 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "-Users-testuser",
-						fileName: "claude-incr.jsonl",
+						fileName: claudeSessionFileName("claude-incr"),
 						lines: [
 							JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "test" } }),
 						],
@@ -189,7 +190,7 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "--Users-testuser--myproject",
-						fileName: "session-pi.jsonl",
+						fileName: piSessionFileName("aaaa0012-bbbb-4ccc-8ddd-eeeeeeeeeeee", "2026-01-15T10-00-00"),
 						lines: [
 							JSON.stringify({ type: "session", version: 3, id: "pi-sess-1", timestamp: "2026-01-15T10:00:00Z", cwd: "/home/user" }),
 							JSON.stringify({ type: "message", id: "m1", timestamp: "2026-01-15T10:01:00Z", message: { role: "user", content: "pi message" } }),
@@ -199,7 +200,7 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "-Users-testuser",
-						fileName: "claude-sess.jsonl",
+						fileName: claudeSessionFileName("claude-sess"),
 						lines: [
 							JSON.stringify({ type: "user", uuid: "cu1", timestamp: "2026-01-15T11:00:00Z", message: { role: "user", content: "claude message" } }),
 						],
