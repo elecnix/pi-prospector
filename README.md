@@ -192,6 +192,12 @@ Tells you why a session was slow. It times every tool call from the message that
 
 Source: [`time-economy/index.ts`](./src/analyze/analyzers/time-economy/index.ts) · timing and wait detection in [`detect.ts`](./src/analyze/analyzers/time-economy/detect.ts) · thresholds and patterns in [`config.ts`](./src/analyze/analyzers/time-economy/config.ts).
 
+### pr-opened — the pull request a session opened (deterministic)
+
+Records what a session produced, when what it produced was a pull request. A session opened one when it ran the creation call **and** the forge answered with the pull request's URL. The call states the title (`gh pr create --title`, or a hosted-forge tool's own arguments), and the result states the URL. Both halves must hold, and the second one is what separates opening a pull request from reading or monitoring one. `gh pr create` prints the URL alone on a line, so a URL sharing its line with other text came from a grep hit or a document the session read. The analyzer stores one session-anchored metric node per pull request, with the URL, repository, number, and title, and edges to the call and the result behind it. It uses no model, and it proposes nothing.
+
+Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · creation detection in [`detect.ts`](./src/analyze/analyzers/pr-opened/detect.ts) · tool names and caps in [`config.ts`](./src/analyze/analyzers/pr-opened/config.ts).
+
 ### routing-opportunity — model routing labels (deterministic)
 
 Labels each turn as downshiftable (a cheaper model could have handled it) or escalation-worthy (a better model was needed), based on existing friction, trajectory, and repetition-collapse signals. Attaches the serving model and billed cost so the corpus-level efficiency frontier can be computed honestly — a turn labeled "downshiftable" that cost $0.03 on an expensive model is a concrete saving opportunity. No LLM.
