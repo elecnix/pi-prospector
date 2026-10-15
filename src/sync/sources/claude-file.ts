@@ -15,16 +15,38 @@ import { walkSessionDir } from "../scanner.js";
 /**
  * Claude Code's session-file naming: `<session-uuid>.jsonl`, directly under a
  * project directory.
- *
- * The tree holds two other kinds of `.jsonl` that this name does not match, and
- * that no source claims: the child-agent transcripts Claude Code writes at
- * `<session-uuid>/subagents/agent-<id>.jsonl`, and its `journal.jsonl` workflow
- * logs. The wildcard-discovery default used to ingest both as sessions, giving
- * them ids from their own file names — 4582 files that are not sessions of this
- * harness. If that child-agent work belongs in the corpus, it wants a source of
- * its own, the way child runs have one on the pi side.
  */
 const CLAUDE_SESSION_FILE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
+
+/**
+ * Claude Code's child-agent transcripts: `agent-<id>.jsonl`, written under the
+ * spawning session's `subagents/` directory, and one level deeper again under
+ * `subagents/workflows/wf-<id>/` when the child belongs to a workflow.
+ *
+ * This harness records its own child agents, so they are part of this source
+ * rather than an extension's data: the same host writes them, in the same format,
+ * with the child's turns in full. On the pi side the equivalent records come from
+ * an extension and are claimed by that extension's source instead.
+ *
+ * `journal.jsonl`, which sits beside the workflow children, records lifecycle
+ * events (`{"type":"launched"}`) rather than turns, so no source claims it.
+ */
+const CLAUDE_CHILD_AGENT_FILE_RE = /^agent-.+\.jsonl$/i;
+
+/**
+ * The session id of the session that spawned a child agent, taken from the
+ * directory the child's transcript sits in: `<parent-uuid>/subagents/...`, with
+ * `subagents`, `workflows` and `wf-<id>` between the file and its parent.
+ */
+function parentSessionFromPath(filePath: string): string | null {
+	let dir = path.dirname(filePath);
+	while (dir !== path.dirname(dir)) {
+		const name = path.basename(dir);
+		if (CLAUDE_SESSION_FILE_RE.test(`${name}.jsonl`)) return name;
+		dir = path.dirname(dir);
+	}
+	return null;
+}
 
 export class ClaudeFileSource implements SessionSourceAdapter {
 	readonly source = "claude";
@@ -33,7 +55,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 
 	async discover(): Promise<DiscoveredSession[]> {
 		return walkSessionDir(this.claudeSessionsDir, "claude", {
-			matchFile: (fileName) => CLAUDE_SESSION_FILE_RE.test(fileName),
+			matchFile: (fileName) => CLAUDE_SESSION_FILE_RE.test(fileName) || CLAUDE_CHILD_AGENT_FILE_RE.test(fileName),
 		});
 	}
 
@@ -41,12 +63,19 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 		const content = await fs.readFile(disc.filePath, "utf-8");
 		const lines = content.split("\n");
 
-		// Derive session ID from file name (UUID)
+		// Derive session ID from file name (UUID, or `agent-<id>` for a child agent)
 		const sessionId = path.basename(disc.filePath, ".jsonl");
 
 		const meta = parseClaudeSessionMeta(lines);
 		const startedAt = meta?.timestamp ?? null;
 		const cwd = (meta?.cwd ?? disc.project) || "";
+
+		// A child agent is attached to the session whose directory holds it. The
+		// session itself is not: Claude Code records no parent for a top-level
+		// session, and the enclosing directory of one is the project.
+		const parentSession = CLAUDE_CHILD_AGENT_FILE_RE.test(path.basename(disc.filePath))
+			? parentSessionFromPath(disc.filePath)
+			: null;
 
 		// Claude tool_result blocks carry only a tool_use_id; resolve the tool
 		// name from the matching tool_use in the preceding assistant message
@@ -61,7 +90,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 			project: disc.project,
 			source: disc.source,
 			cwd,
-			parent_session: null,
+			parent_session: parentSession,
 			started_at: startedAt ?? "",
 			last_line: resumeLine,
 			last_modified: disc.mtime,

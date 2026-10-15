@@ -37,18 +37,19 @@ function createMixedFixture(
 	const piRoot = path.join(home, ".pi", "agent", "sessions");
 	const claudeRoot = path.join(home, ".claude", "projects");
 
-	// Create Pi session directories and files
+	// Create Pi session directories and files. A file name may carry a subpath,
+	// which is how a nested layout (a child run's own directory) is expressed.
 	for (const sess of piSessions) {
-		const projectDir = path.join(piRoot, sess.projectDir);
-		fs.mkdirSync(projectDir, { recursive: true });
-		fs.writeFileSync(path.join(projectDir, sess.fileName), sess.lines.join("\n") + "\n");
+		const filePath = path.join(piRoot, sess.projectDir, sess.fileName);
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, sess.lines.join("\n") + "\n");
 	}
 
 	// Create Claude directories
 	for (const sess of claudeSessions) {
-		const projectDir = path.join(claudeRoot, sess.projectDir);
-		fs.mkdirSync(projectDir, { recursive: true });
-		fs.writeFileSync(path.join(projectDir, sess.fileName), sess.lines.join("\n") + "\n");
+		const filePath = path.join(claudeRoot, sess.projectDir, sess.fileName);
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, sess.lines.join("\n") + "\n");
 	}
 
 	return { piRoot, claudeRoot };
@@ -214,6 +215,63 @@ describe("Claude session sync", () => {
 				const stats = await getStats(db);
 				assert.ok(stats.piSessions >= 1);
 				assert.ok(stats.claudeSessions >= 1);
+			} finally {
+				cleanupFixture(piRoot);
+			}
+		} finally {
+			await close();
+		}
+	});
+
+	it("indexes a child agent as its own session, attached to the session that spawned it", async () => {
+		const { db, close } = await tempDb();
+		try {
+			// Claude Code names every child agent's transcript `agent-<id>.jsonl` and
+			// writes it under its parent session's `subagents/` directory, which is
+			// how the parent is recovered: the enclosing directory holds the session id.
+			const parent = claudeSessionId("child-agent-parent");
+			const childAgent = "a9d08af694d4f7bd7";
+			const { piRoot, claudeRoot } = createMixedFixture(
+				[],
+				[
+					{
+						projectDir: "-Users-testuser",
+						fileName: claudeSessionFileName("child-agent-parent"),
+						lines: [
+							JSON.stringify({ type: "user", uuid: "pu1", timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "delegate this" } }),
+						],
+					},
+					{
+						projectDir: "-Users-testuser",
+						fileName: path.join(parent, "subagents", `agent-${childAgent}.jsonl`),
+						lines: [
+							JSON.stringify({ type: "user", uuid: "cu1", isSidechain: true, timestamp: "2026-01-15T10:31:00Z", message: { role: "user", content: "the delegated task" } }),
+							JSON.stringify({ type: "assistant", uuid: "ca1", parentUuid: "cu1", isSidechain: true, timestamp: "2026-01-15T10:31:05Z", message: { role: "assistant", model: "claude-sonnet", content: [{ type: "text", text: "done" }] } }),
+						],
+					},
+				],
+			);
+			try {
+				const result = await runSync(db, adps(piRoot, claudeRoot));
+				assert.deepEqual(result.errors, []);
+				assert.equal(result.sessionsProcessed, 2, "the session and its child agent each index once");
+
+				const rows = (await db
+					.prepare("SELECT id, source, parent_session FROM sessions ORDER BY parent_session")
+					.all()) as Array<{ id: string; source: string; parent_session: string | null }>;
+				assert.deepEqual(rows, [
+					{ id: parent, source: "claude", parent_session: null },
+					{ id: `agent-${childAgent}`, source: "claude", parent_session: parent },
+				]);
+
+				// The child's own turns are indexed under its own id, not merged into
+				// the parent's.
+				const childMessages = (await db
+					.prepare("SELECT role FROM messages WHERE session_id = ? ORDER BY rowid")
+					.all(`agent-${childAgent}`)) as Array<{ role: string }>;
+				assert.deepEqual(childMessages.map((m) => m.role), ["user", "assistant"]);
+				const parentMessages = (await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get(parent)) as { c: number };
+				assert.equal(parentMessages.c, 1, "the parent keeps only its own message");
 			} finally {
 				cleanupFixture(piRoot);
 			}

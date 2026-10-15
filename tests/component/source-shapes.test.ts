@@ -26,6 +26,7 @@ const PI_SESSION_UUID = "aaaa0001-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const CHILD_RUN_ID = "2b83bd26-cccc-4ddd-8eee-ffffffffffff";
 const CLAUDE_SESSION_UUID = "dddd0001-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const CLAUDE_CHILD_ID = "a60f1e9e536d5a637";
+const CLAUDE_WORKFLOW_CHILD_ID = "a8670a845f713d1f0";
 
 /** Every file shape a real sessions tree was found to contain. */
 function writeFullTree(root: string): void {
@@ -50,14 +51,21 @@ function writeFullTree(root: string): void {
 		[path.join(piProject, "subagent-artifacts", `${CHILD_RUN_ID}_worker_0_meta.json`), '{"runId":"2b83bd26","agent":"worker"}\n'],
 		// Claude Code's session file.
 		[path.join(claudeProject, `${CLAUDE_SESSION_UUID}.jsonl`), '{"type":"user","uuid":"u1"}\n'],
-		// Claude Code's own child transcripts and workflow journals.
+		// Claude Code's child agents: the harness writes one transcript per child,
+		// under the parent session's `subagents/`, one directory deeper again when
+		// the child belongs to a workflow.
 		[
 			path.join(claudeProject, CLAUDE_SESSION_UUID, "subagents", `agent-${CLAUDE_CHILD_ID}.jsonl`),
-			'{"type":"user","uuid":"c1"}\n',
+			'{"type":"user","uuid":"c1","isSidechain":true}\n',
 		],
 		[
+			path.join(claudeProject, CLAUDE_SESSION_UUID, "subagents", "workflows", "wf_1", `agent-${CLAUDE_WORKFLOW_CHILD_ID}.jsonl`),
+			'{"type":"user","uuid":"c2","isSidechain":true}\n',
+		],
+		// The workflow journal beside them records lifecycle events, not turns.
+		[
 			path.join(claudeProject, CLAUDE_SESSION_UUID, "subagents", "workflows", "wf_1", "journal.jsonl"),
-			'{"type":"event","key":"k","agentId":"a"}\n',
+			'{"type":"launched"}\n',
 		],
 	];
 
@@ -86,11 +94,15 @@ describe("source shapes", () => {
 		}
 	});
 
-	it("the Claude source claims only Claude session files", async () => {
+	it("the Claude source claims its session files and its child agents, and nothing else", async () => {
 		const fx = makeTempRoot("prospect-shapes-");
 		try {
 			writeFullTree(fx.root);
-			assert.deepEqual(await claimed(new ClaudeFileSource(fx.root)), [`${CLAUDE_SESSION_UUID}.jsonl`]);
+			assert.deepEqual(await claimed(new ClaudeFileSource(fx.root)), [
+				`agent-${CLAUDE_CHILD_ID}.jsonl`,
+				`agent-${CLAUDE_WORKFLOW_CHILD_ID}.jsonl`,
+				`${CLAUDE_SESSION_UUID}.jsonl`,
+			]);
 		} finally {
 			fx.cleanup();
 		}
@@ -123,11 +135,14 @@ describe("source shapes", () => {
 					`${foreign} is not a session and must be claimed by nothing`,
 				);
 			}
-			assert.equal(
-				everything.some((p) => p.includes(`agent-${CLAUDE_CHILD_ID}`)),
-				false,
-				"a Claude child transcript is not a Claude session",
-			);
+			// The harness's own child agents are claimed, by the harness source.
+			for (const child of [`agent-${CLAUDE_CHILD_ID}.jsonl`, `agent-${CLAUDE_WORKFLOW_CHILD_ID}.jsonl`]) {
+				const owner = [
+					...(await new ClaudeFileSource(fx.root).discover()),
+				].find((d) => d.filePath.endsWith(child));
+				assert.ok(owner, `${child} is a Claude child agent and must be claimed`);
+				assert.equal(owner.source, "claude");
+			}
 		} finally {
 			fx.cleanup();
 		}
