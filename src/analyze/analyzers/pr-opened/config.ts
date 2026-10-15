@@ -18,6 +18,25 @@ export const PrOpenedConfig = Type.Object({
 	 */
 	shellToolNames: Type.Array(Type.String()),
 	/**
+	 * Shell command families able to open a pull request without being `gh pr
+	 * create` — the `gh stack` extension's verbs, which push a branch and open the
+	 * pull request on top of a stack. Matched against the command's leading words
+	 * (after a leading `cd`, environment assignments, and a `timeout` wrapper), so
+	 * `gh stack link --open 2350 feat/x` is recognised in a chained command. Kept
+	 * as config so another stacked-PR tool is a config change, not a version bump.
+	 *
+	 * A family listed here opens a pull request only when the result carries the
+	 * `Created PR` confirmation (see `stackedCreatedPattern`), because the same
+	 * verb links a pull request that already exists.
+	 */
+	stackedCreateCommands: Type.Array(Type.String()),
+	/**
+	 * Regex source for the line a stacked-PR tool prints when it opened a pull
+	 * request, and whose first capture group is the URL. `gh stack` writes
+	 * `✓ Created PR #2351 (https://…) for feat/x (base: feat/y)` on its own line.
+	 */
+	stackedCreatedPattern: Type.String(),
+	/**
 	 * Tool names whose own arguments create a pull request — the hosted-forge
 	 * tools an MCP server exposes, such as GitHub's `create_pull_request`. A tool
 	 * matches an entry when its name is the entry or ends with `_` plus it, so the
@@ -49,6 +68,8 @@ export type PrOpenedConfig = Static<typeof PrOpenedConfig>;
 
 export const DEFAULT_PR_OPENED_CONFIG: PrOpenedConfig = {
 	shellToolNames: ["bash"],
+	stackedCreateCommands: ["gh stack create", "gh stack link", "gh stack submit", "gh stack push"],
+	stackedCreatedPattern: "\\bCreated PR #\\d+ \\(([^)\\s]+)\\)",
 	createToolNames: ["create_pull_request"],
 	alreadyExistsPatterns: ["already exists"],
 	maxResultChars: 200_000,

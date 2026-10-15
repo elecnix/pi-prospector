@@ -468,13 +468,16 @@ title a person can open.
 - **Opened pull request**, a pull request a session created, recorded on that
   session as the URL, the repository, and the number the forge answered with,
   plus the title the creation call stated. A session opened one when both halves
-  hold: the call was a creation call (`gh pr create`, or a hosted-forge tool
-  whose own arguments state the pull request), it succeeded, and the URL came
-  from the forge's own answer and not from text the session happened to read. A
+  hold: the call was a creation call (`gh pr create`, a hosted-forge tool whose
+  own arguments state the pull request, or a stacked-PR command such as
+  `gh stack link --open`), it succeeded, and the URL came from the forge's own
+  answer and not from text the session happened to read. A
   URL that shares its line with other text came from somewhere else, because
   `gh pr create` prints the URL alone on a line, and the URL of a pull request
   that already existed follows the forge's own "already exists" message, so it
-  proves nothing about what this session created. The title is **unknown**, not
+  proves nothing about what this session created. A stacked-PR tool prints the
+  URL inside its own `Created PR` confirmation instead, which is what marks the
+  pull request as opened, because the same verb links one that already exists. The title is **unknown**, not
   guessed, when the command did not state one: a `--fill` run, or a title the
   shell built from a variable the transcript does not record. The record is a
   metric node that anchors on the session and on the two rows behind it, it

@@ -10,6 +10,7 @@ import {
 	findOpenedPullRequests,
 	ghPrCreateTitles,
 	parsePullRequestUrl,
+	stackedCreatedUrls,
 } from "../../src/analyze/analyzers/pr-opened/detect.js";
 import type { MessageRow } from "../../src/analyze/types.js";
 
@@ -89,6 +90,36 @@ describe("ghPrCreateTitles", () => {
 	});
 });
 
+describe("stackedCreatedUrls", () => {
+	const STACK_OUTPUT = [
+		"Checking existing stacks...",
+		"Pushing 1 branch to origin...",
+		"Looking up PRs for 1 branch...",
+		"Creating 1 PR...",
+		`\u2713 Created PR #2351 (${URL}) for feat/ghcr-images (base: feat/sha-groups)`,
+		"\u2713 Added 1 PR to stack #2350",
+	].join("\n");
+
+	it("reads the URL from the Created PR line", () => {
+		assert.deepEqual(stackedCreatedUrls(STACK_OUTPUT), [URL]);
+	});
+
+	it("reads nothing when the run only linked an existing pull request", () => {
+		const linked = "Checking existing stacks...\n\u2713 Added 1 PR to stack #2350";
+		assert.deepEqual(stackedCreatedUrls(linked), []);
+	});
+
+	it("reads nothing from output that mentions creating a pull request without a URL", () => {
+		assert.deepEqual(stackedCreatedUrls("Creating 1 PR...\nCreated PR #2351"), []);
+	});
+
+	it("reads every pull request a run created, in order", () => {
+		const second = "https://github.com/acme/widgets/pull/43";
+		const two = `${STACK_OUTPUT}\n\u2713 Created PR #43 (${second}) for two (base: one)`;
+		assert.deepEqual(stackedCreatedUrls(two), [URL, second]);
+	});
+});
+
 describe("findOpenedPullRequests", () => {
 	it("records the URL gh printed and the title the command passed", () => {
 		const messages = exchange(
@@ -164,6 +195,40 @@ describe("findOpenedPullRequests", () => {
 			[URL, "one"],
 			[second, "two"],
 		]);
+	});
+
+	it("records a pull request the gh stack extension opened, leaving the title unknown", () => {
+		const command = "cd /repo && gh stack link --open 2350 feat/ghcr-images < /dev/null 2>&1 | tail -15";
+		const output = [
+			"Checking existing stacks...",
+			"Creating 1 PR...",
+			`\u2713 Created PR #2351 (${URL}) for feat/ghcr-images (base: feat/sha-groups)`,
+		].join("\n");
+		const found = findOpenedPullRequests(exchange("s1", "bash", { command }, output), DEFAULT_PR_OPENED_CONFIG);
+		assert.equal(found.length, 1);
+		assert.equal(found[0]!.pull_request.url, URL);
+		assert.equal(found[0]!.pull_request.via, "stacked");
+		assert.equal(found[0]!.pull_request.title, null, "gh stack derives the title, so the command does not state one");
+	});
+
+	it("ignores a gh stack run that only linked an existing pull request", () => {
+		const messages = exchange(
+			"l1",
+			"bash",
+			{ command: "gh stack link 2270 feat/x" },
+			"Checking existing stacks...\n\u2713 Added 1 PR to stack #2270\n" + URL,
+		);
+		assert.deepEqual(findOpenedPullRequests(messages, DEFAULT_PR_OPENED_CONFIG), []);
+	});
+
+	it("ignores a gh stack listing the agent only read", () => {
+		const messages = exchange(
+			"L1",
+			"bash",
+			{ command: "gh stack view 2350 --json pull_requests" },
+			JSON.stringify({ pull_requests: [{ number: 42, url: URL }] }),
+		);
+		assert.deepEqual(findOpenedPullRequests(messages, DEFAULT_PR_OPENED_CONFIG), []);
 	});
 
 	it("changes the evidence hash when the result text changes", () => {

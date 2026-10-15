@@ -32,6 +32,7 @@ import type { MessageRow } from "../../types.js";
 import { buildToolStream, type ToolInvocation } from "../../tool-stream.js";
 import { splitShellSegments } from "../navigation-efficiency/detect.js";
 import { shortHash } from "../../input-hash.js";
+import { commandFamily } from "../time-economy/detect.js";
 import { DEFAULT_PR_OPENED_CONFIG, type PrOpenedConfig } from "./config.js";
 
 /** A pull request URL, taken apart. */
@@ -53,7 +54,7 @@ export interface OpenedPullRequest {
 	/** The title the session gave it, or null when the call did not state one. */
 	title: string | null;
 	/** Which kind of call opened it. */
-	via: "gh_pr_create" | "tool";
+	via: "gh_pr_create" | "stacked" | "tool";
 	/** The assistant message that issued the call. */
 	call_message_id: string;
 	/** The message that carried the result. */
@@ -249,6 +250,35 @@ export function ghPrCreateTitles(
 	return titles;
 }
 
+/**
+ * The pull request URLs a stacked-PR tool's result is evidence of having opened.
+ *
+ * Unlike `gh pr create`, these tools do not print the URL alone: `gh stack` writes
+ * a labelled line (`✓ Created PR #2351 (https://…) for feat/x (base: feat/y)`), and
+ * the same verb prints only `✓ Added 1 PR to stack #N` when it linked a pull
+ * request that already existed. The confirmation is therefore what the URL is read
+ * from, and a run that linked an existing pull request produces nothing.
+ */
+export function stackedCreatedUrls(text: string, config: PrOpenedConfig = DEFAULT_PR_OPENED_CONFIG): string[] {
+	const re = new RegExp(config.stackedCreatedPattern, "g");
+	const out: string[] = [];
+	for (const line of text.split("\n")) {
+		if (!/\bCreated PR\b/.test(line)) continue;
+		for (const m of line.matchAll(re)) {
+			const url = m[1];
+			if (url !== undefined) out.push(url);
+		}
+	}
+	return out;
+}
+
+/** Whether a command's leading words are one of the configured stacked-PR families. */
+function isStackedCreate(command: string, config: PrOpenedConfig): boolean {
+	const words = commandFamily(command, 3).toLowerCase().split(/\s+/).filter(Boolean);
+	const family = words.slice(0, 3).join(" ");
+	return config.stackedCreateCommands.some((c) => c.toLowerCase() === family);
+}
+
 /** The lines a `gh pr create` result printed that are nothing but a pull request URL. */
 function bareUrlLines(text: string): string[] {
 	const out: string[] = [];
@@ -352,19 +382,21 @@ export function findOpenedPullRequests(
 		const capped = resultText.length > config.maxResultChars ? resultText.slice(0, config.maxResultChars) : resultText;
 
 		const candidates: Array<{ url: string; title: string | null; via: OpenedPullRequest["via"] }> = [];
-		if (shellNames.has(inv.name.toLowerCase())) {
-			const command = typeof inv.args["command"] === "string" ? (inv.args["command"] as string) : null;
-			if (command !== null) {
-				const titles = ghPrCreateTitles(command, config);
-				if (titles.length > 0) {
-					const urls = createdUrls(capped, config);
-					// A command that creates several pull requests prints their URLs in
-					// creation order; pairing by position keeps each title with its own.
-					for (let i = 0; i < urls.length; i++) {
-						candidates.push({ url: urls[i]!, title: titles[Math.min(i, titles.length - 1)] ?? null, via: "gh_pr_create" });
-					}
-				}
+		const command = shellNames.has(inv.name.toLowerCase()) && typeof inv.args["command"] === "string"
+			? (inv.args["command"] as string)
+			: null;
+		if (command !== null && ghPrCreateTitles(command, config).length > 0) {
+			const titles = ghPrCreateTitles(command, config);
+			const urls = createdUrls(capped, config);
+			// A command that creates several pull requests prints their URLs in
+			// creation order; pairing by position keeps each title with its own.
+			for (let i = 0; i < urls.length; i++) {
+				candidates.push({ url: urls[i]!, title: titles[Math.min(i, titles.length - 1)] ?? null, via: "gh_pr_create" });
 			}
+		} else if (command !== null && isStackedCreate(command, config)) {
+			// A stacked-PR tool states no title on the command line: it derives one from
+			// the title its own arguments carry, so the title is unknown here.
+			for (const url of stackedCreatedUrls(capped, config)) candidates.push({ url, title: null, via: "stacked" });
 		} else if (isCreateTool(inv.name, config)) {
 			const title = toolTitle(inv, config);
 			for (const url of toolResultUrls(capped, inv)) candidates.push({ url, title, via: "tool" });

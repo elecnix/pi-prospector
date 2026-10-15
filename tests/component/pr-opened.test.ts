@@ -49,6 +49,29 @@ function openedOne(): TestMessage[] {
 	];
 }
 
+/** A session that opened a pull request through the gh stack extension. */
+function openedOnAStack(): TestMessage[] {
+	return [
+		{ role: "user", text: "Put this on top of the stack and open the pull request." },
+		{
+			role: "assistant",
+			stopReason: "toolUse",
+			toolCalls: [
+				{
+					id: "k1",
+					name: "bash",
+					arguments: { command: "cd /repo && gh stack link --open 2350 feat/ghcr-images < /dev/null 2>&1 | tail -15" },
+				},
+			],
+		},
+		{
+			role: "toolResult",
+			text: `Checking existing stacks...\nCreating 1 PR...\n\u2713 Created PR #2351 (${URL}) for feat/ghcr-images (base: feat/sha-groups)\n`,
+			toolResults: [{ toolCallId: "k1", toolName: "bash", isError: false, textLength: 150 }],
+		},
+	];
+}
+
 /** A session whose only pull request URL came from reading a document. */
 function readOnly(): TestMessage[] {
 	return [
@@ -125,6 +148,20 @@ describe("pr-opened component test", () => {
 				.prepare("SELECT COUNT(*) AS c FROM proposals WHERE analyzer_id = 'pr-opened'")
 				.get()) as unknown as { c: number };
 			assert.equal(proposals.c, 0, "pr-opened never materialises proposals");
+		} finally {
+			await close();
+		}
+	});
+
+	it("records a pull request the gh stack extension opened, with the title unknown", async () => {
+		const { db, close } = await tempDb();
+		try {
+			const { nodes } = await runAndRead(db, "pr-stacked", openedOnAStack());
+			assert.equal(nodes.length, 1);
+			const content = JSON.parse(nodes[0]!.content_json) as NodeContent;
+			assert.equal(content.pull_request.url, URL);
+			assert.equal(content.pull_request.via, "stacked");
+			assert.equal(content.pull_request.title, null, "the extension derives the title, so the command states none");
 		} finally {
 			await close();
 		}
