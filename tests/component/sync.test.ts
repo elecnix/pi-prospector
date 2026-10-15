@@ -8,7 +8,7 @@ import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { getStats } from "../../src/db/queries.js";
-import { tempDb, NO_CLAUDE_DIR } from "./helpers.js";
+import { tempDb, NO_CLAUDE_DIR, piSessionFileName } from "./helpers.js";
 
 const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 
@@ -41,7 +41,7 @@ async function assertMessageRow(
 }
 
 describe("end-to-end sync", () => {
-	it("syncs simple.jsonl into database", async () => {
+	it("syncs the simple session into the database", async () => {
 		const { db, close } = await tempDb();
 		try {
 			const result = await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
@@ -50,6 +50,15 @@ describe("end-to-end sync", () => {
 			const stats = await getStats(db);
 			assert.ok(stats.totalSessions >= 1);
 			assert.ok(stats.totalMessages >= 1);
+
+			// Pinned to the fixture the name points at: the loose counts above pass
+			// on any session, so without this the test survives the simple fixture
+			// going unclaimed or unparsed.
+			const simple = (await db
+				.prepare("SELECT message_count FROM sessions WHERE id = ?")
+				.get("aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee")) as { message_count: number } | undefined;
+			assert.ok(simple, "the simple fixture is indexed");
+			assert.equal(simple.message_count, 4, "its four messages all landed");
 		} finally {
 			await close();
 		}
@@ -80,7 +89,7 @@ describe("end-to-end sync", () => {
 
 			// The canonical compactionSummary-typed fixture keeps its role and summary text.
 			const canonical = ((await db
-				.prepare("SELECT role, content_text FROM messages WHERE session_id = 'compacted-001' AND id = 'c1'")
+				.prepare("SELECT role, content_text FROM messages WHERE session_id = 'aaaa0008-bbbb-cccc-dddd-eeeeeeeeeeee' AND id = 'c1'")
 				.all()) as Array<{ role: string; content_text: string | null }>)[0];
 			assert.ok(canonical, "compactionSummary row is indexed");
 			assert.equal(canonical.role, "compactionSummary");
@@ -95,11 +104,11 @@ describe("end-to-end sync", () => {
 		try {
 			// compaction-alias.jsonl carries `type: "compaction"` entries; they must land
 			// in-union as compactionSummary — with summary prose as content_text when present.
-			await assertMessageRow(db, "compaction-alias-001", "c9", "compactionSummary", "User asked for a repo summary; agent answered briefly.");
+			await assertMessageRow(db, "aaaa0009-bbbb-cccc-dddd-eeeeeeeeeeee", "c9", "compactionSummary", "User asked for a repo summary; agent answered briefly.");
 
 			// A compaction entry with no summary and no message.content keeps
 			// content_text NULL but still lands on the canonical role.
-			await assertMessageRow(db, "compaction-alias-001", "c10", "compactionSummary", null);
+			await assertMessageRow(db, "aaaa0009-bbbb-cccc-dddd-eeeeeeeeeeee", "c10", "compactionSummary", null);
 		} finally {
 			await close();
 		}
@@ -111,12 +120,17 @@ describe("end-to-end sync", () => {
 		const origUser = process.env.USER;
 		process.env.USER = "test";
 		try {
+			const sessionIds: Record<string, string> = {
+				projA: "aaaa2003-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+				projB: "aaaa2004-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+			};
 			for (const proj of ["projA", "projB"]) {
 				const d = path.join(home, `--Users-test--${proj}`);
+				const sessionId = sessionIds[proj]!;
 				fs.mkdirSync(d, { recursive: true });
 				fs.writeFileSync(
-					path.join(d, `${proj}.jsonl`),
-					`{"type":"session","version":3,"id":"${proj}-001","timestamp":"2026-06-01T10:00:00.000Z","cwd":"/home/user/${proj}"}\n` +
+					path.join(d, piSessionFileName(sessionId, "2026-06-01T10-00-00")),
+					`{"type":"session","version":3,"id":"${sessionId}","timestamp":"2026-06-01T10:00:00.000Z","cwd":"/home/user/${proj}"}\n` +
 						'{"type":"message","id":"m1","message":{"role":"user","content":"hi"}}\n',
 				);
 			}
@@ -128,7 +142,7 @@ describe("end-to-end sync", () => {
 			// Only the scoped project's session is indexed — projB is untouched,
 			// which is exactly the fresh-install win (skip the other projects).
 			const rows = (await db.prepare("SELECT id, project FROM sessions ORDER BY id").all()) as Array<{ id: string; project: string }>;
-			assert.deepEqual(rows, [{ id: "projA-001", project: "projA" }]);
+			assert.deepEqual(rows, [{ id: sessionIds["projA"], project: "projA" }]);
 		} finally {
 			await close();
 			process.env.USER = origUser;
@@ -145,7 +159,7 @@ describe("end-to-end sync", () => {
 		try {
 			await runSync(db, adps(FIXTURES, NO_CLAUDE_DIR));
 
-			// simple.jsonl's Pi assistant messages record a model and a cost total.
+			// The simple session's Pi assistant messages record a model and a cost total.
 			const assistant = (await db
 				.prepare("SELECT model, cost_usd FROM messages WHERE session_id = 'aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee' AND role = 'assistant' ORDER BY rowid")
 				.all()) as Array<{ model: string | null; cost_usd: number | null }>;
@@ -174,16 +188,20 @@ describe("end-to-end sync", () => {
 			fs.writeFileSync(path.join(sessDir, sessionFile), lines.join("\n") + "\n");
 		}
 
+	// A fixture session id is a uuid: that is what pi writes in the header, and
+	// what it names the session file after.
+	const TOOLS_SESSION = "aaaa0010-bbbb-cccc-dddd-eeeeeeeeeeee";
+
 		const header = (extra: string) =>
-			JSON.stringify({ type: "session", version: 3, id: "sess-tools", timestamp: "2026-01-15T10:00:00Z", cwd: "/home/user/proj", ...(extra ? JSON.parse(extra) : {}) });
+			JSON.stringify({ type: "session", version: 3, id: TOOLS_SESSION, timestamp: "2026-01-15T10:00:00Z", cwd: "/home/user/proj", ...(extra ? JSON.parse(extra) : {}) });
 
 		async function syncOne(db: AsyncDatabase, root: string, lines: string[]): Promise<void> {
-			writePiFixture(root, "t.jsonl", lines);
+			writePiFixture(root, piSessionFileName(TOOLS_SESSION), lines);
 			await runSync(db, [new PiFileSource(root)]);
 		}
 
 		async function getInventory(db: AsyncDatabase): Promise<{ tool_inventory: string | null }> {
-			const row = (await db.prepare("SELECT tool_inventory FROM sessions WHERE id = 'sess-tools'").get()) as { tool_inventory: string | null };
+			const row = (await db.prepare(`SELECT tool_inventory FROM sessions WHERE id = '${TOOLS_SESSION}'`).get()) as { tool_inventory: string | null };
 			assert.ok(row);
 			return row;
 		}
@@ -249,12 +267,13 @@ describe("end-to-end sync", () => {
 		it("persists the cost breakdown inside the usage JSON for Pi assistant turns", async () => {
 			const { db, close } = await tempDb();
 			try {
+					const COST_SESSION = "aaaa0011-bbbb-cccc-dddd-eeeeeeeeeeee";
 				const root = fs.mkdtempSync(path.join(os.tmpdir(), "ppd-cost-"));
 				try {
 					const sessDir = path.join(root, "--Users-testuser--proj");
 					fs.mkdirSync(sessDir, { recursive: true });
 					const lines = [
-						JSON.stringify({ type: "session", version: 3, id: "sess-cost", timestamp: "2026-01-15T10:00:00Z", cwd: "/x" }),
+						JSON.stringify({ type: "session", version: 3, id: COST_SESSION, timestamp: "2026-01-15T10:00:00Z", cwd: "/x" }),
 						JSON.stringify({
 							type: "message",
 							id: "m1",
@@ -265,9 +284,9 @@ describe("end-to-end sync", () => {
 							},
 						}),
 					];
-					fs.writeFileSync(path.join(sessDir, "c.jsonl"), lines.join("\n") + "\n");
+					fs.writeFileSync(path.join(sessDir, piSessionFileName(COST_SESSION)), lines.join("\n") + "\n");
 					await runSync(db, [new PiFileSource(root)]);
-					const usage = (await db.prepare("SELECT usage FROM messages WHERE session_id = 'sess-cost'").get()) as { usage: string };
+					const usage = (await db.prepare(`SELECT usage FROM messages WHERE session_id = '${COST_SESSION}'`).get()) as { usage: string };
 					assert.ok(usage);
 					const parsed = JSON.parse(usage.usage);
 					assert.deepEqual(parsed.cost, { input: 0.01, output: 0.005, cacheRead: 0.09, cacheWrite: 0, total: 0.105 });

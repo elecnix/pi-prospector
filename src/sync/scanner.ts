@@ -26,59 +26,31 @@ export interface DiscoverOptions {
 }
 
 /**
- * Walk both session directories (Pi: `~/.pi/agent/sessions/`, Claude:
- * `~/.claude/projects/`) and discover all .jsonl files, grouped by project
- * directory name.
+ * What a source claims inside the session tree it walks.
  *
- * **Both directories are required parameters, and nothing here reads ambient
- * config.** They used to be asymmetric — the Pi dir was passed in while the
- * Claude dir was resolved from the environment — so a caller that supplied an
- * explicit fixture path still ingested the developer's real session history. The
- * damage was quiet: with no `~/.claude/projects` present (CI) everything looked
- * fine, while locally two suites failed for reasons unrelated to the change under
- * test, and two others had independently discovered the hazard and were juggling
- * `PROSPECTOR_CLAUDE_SESSIONS_DIR` around every call to defend themselves.
+ * **Discovery claims nothing by extension.** Every source names the file shapes
+ * it owns, and a `.jsonl` file no source names is not a session and is never
+ * read. The default used to be `fileName.endsWith(".jsonl")`, which is a wildcard:
+ * a session root is not a directory of sessions, and the other `.jsonl` files
+ * living in it belong to whoever wrote them. That default quietly ingested things
+ * no parser could read — pi-subagents' `<runId>_<agent>_<index>_transcript.jsonl`
+ * artifacts and the RPC daemon's `out.jsonl` streams, which threw "No session
+ * header" 3032 times per sync and re-read ~59 GB on every run; and Claude Code's
+ * `agent-*.jsonl` child transcripts and `journal.jsonl` workflow logs, which threw
+ * nothing at all and became 4582 sessions with ids taken from their file names.
  *
- * Required rather than defaulted is the whole point: a caller can no longer
- * *forget* the Claude directory, so the failure mode cannot quietly return.
- * Resolving defaults belongs to the composition root — `getSessionsDir()` and
- * `getClaudeSessionsDir()` in `src/config.ts`, called from the command layer.
- */
-export async function discoverSessions(
-	sessionsDir: string,
-	claudeSessionsDir: string,
-	opts?: DiscoverOptions,
-): Promise<DiscoveredSession[]> {
-	const pi: DiscoveredSession[] = opts?.source && opts.source !== "pi" ? [] : await discoverPiSessions(sessionsDir);
-	const claude: DiscoveredSession[] =
-		opts?.source && opts.source !== "claude" ? [] : await discoverClaudeSessions(claudeSessionsDir);
-	const all = [...pi, ...claude];
-	if (opts?.project) return all.filter((s) => s.project === opts.project);
-	return all;
-}
-
-async function discoverPiSessions(sessionsDir: string): Promise<DiscoveredSession[]> {
-	return walkSessionDir(sessionsDir, "pi");
-}
-
-async function discoverClaudeSessions(sessionsDir: string): Promise<DiscoveredSession[]> {
-	return walkSessionDir(sessionsDir, "claude");
-}
-
-/**
- * Optional narrowing of what {@link walkSessionDir} discovers. The shared walker
- * owns everything about the traversal itself (error handling, depth bound,
- * project naming); an adapter whose source only occupies part of that tree —
- * e.g. PiSubagentSource's <parent-uuid>/run-N/session.jsonl leaves (#140) —
- * narrows the match instead of re-implementing the walk.
+ * So `matchFile` is required rather than optional: an adapter that has not said
+ * which names it owns does not compile. Each shape belongs to the origin that
+ * writes it — the pi harness, the Claude harness, the pi-subagents extension — and
+ * a new origin means a new source, never a wider wildcard.
  */
 export interface WalkOptions {
 	/**
-	 * Accept only files for which this returns true; when omitted every `.jsonl`
-	 * file is discovered. Receives the file's basename and its immediate parent
-	 * directory's name.
+	 * The file names this source owns. Receives the file's basename, its immediate
+	 * parent directory's name, and its full path — a shape may depend on where the
+	 * file sits, not only on what it is called.
 	 */
-	matchFile?: (fileName: string, parentDirName: string) => boolean;
+	matchFile: (fileName: string, parentDirName: string, filePath: string) => boolean;
 	/**
 	 * Directories matching this hold discoverable files directly, but are never
 	 * descended beyond — e.g. PiSubagentSource's run-N leaves, where a deeper
@@ -87,25 +59,24 @@ export interface WalkOptions {
 	leafDirPattern?: RegExp;
 }
 
-const DEFAULT_MATCH_FILE = (fileName: string) => fileName.endsWith(".jsonl");
-
 /**
- * Walk one session root for session files, tagged with the given source.
- * Exported for SessionSourceAdapter implementations, which own discovery for
- * their source and reuse this walker for the shared directory layout — passing
- * {@link WalkOptions} where their tree shape is narrower than the full walk.
+ * Walk one session root for the files one source claims, tagged with the given
+ * source. Exported for SessionSourceAdapter implementations, which own discovery
+ * for their source and reuse this walker for the shared directory layout —
+ * passing the shapes they claim and, where their tree shape is narrower than the
+ * full walk, a leaf-directory rule.
  *
  * Discovery recurses below each project directory up to {@link MAX_DISCOVERY_DEPTH}
  * levels, so nested async-subagent session files (<project-dir>/<timestamp>_<uuid>
  * /<runhash>/run-N/session.jsonl) are discovered alongside top-level ones (#157).
- * Each file found — wherever it sits in that bounded tree — is discovered as
- * its own session; which session each file *is* remains the parser's job (the
- * header's own id), never a function of the path.
+ * Each claimed file — wherever it sits in that bounded tree — is discovered as its
+ * own session; which session each file *is* remains the parser's job (the header's
+ * own id), never a function of the path.
  */
 export async function walkSessionDir(
 	sessionsDir: string,
 	source: SessionSource,
-	opts?: WalkOptions,
+	opts: WalkOptions,
 ): Promise<DiscoveredSession[]> {
 	const results: DiscoveredSession[] = [];
 
@@ -139,10 +110,10 @@ export async function walkSessionDir(
 }
 
 /**
- * Recursively gather every .jsonl file under `dir`, descending at most to
- * `depth === MAX_DISCOVERY_DEPTH`. Files at any visited level count; unreadable
- * subdirectories are skipped quietly (they may vanish mid-walk), while deeper
- * levels beyond the bound are simply not visited.
+ * Recursively gather the files under `dir` that the source claims, descending at
+ * most to `depth === MAX_DISCOVERY_DEPTH`. Files at any visited level count;
+ * unreadable subdirectories are skipped quietly (they may vanish mid-walk), while
+ * deeper levels beyond the bound are simply not visited.
  */
 async function collectJsonlFiles(
 	dir: string,
@@ -150,7 +121,7 @@ async function collectJsonlFiles(
 	depth: number,
 	source: SessionSource,
 	results: DiscoveredSession[],
-	opts?: WalkOptions,
+	opts: WalkOptions,
 ): Promise<void> {
 	let entries: string[];
 	try {
@@ -174,13 +145,12 @@ async function collectJsonlFiles(
 			if (depth >= MAX_DISCOVERY_DEPTH) continue;
 			// Entering a leaf directory at the bound blocks any descent past it
 			// while its own direct entries stay visible to the match above.
-			const childDepth = opts?.leafDirPattern?.test(entry) ? MAX_DISCOVERY_DEPTH : depth + 1;
+			const childDepth = opts.leafDirPattern?.test(entry) ? MAX_DISCOVERY_DEPTH : depth + 1;
 			await collectJsonlFiles(fullPath, project, childDepth, source, results, opts);
 			continue;
 		}
 
-		const matchFile = opts?.matchFile ?? DEFAULT_MATCH_FILE;
-		if (!matchFile(entry, path.basename(dir))) continue;
+		if (!opts.matchFile(entry, path.basename(dir), fullPath)) continue;
 		results.push({
 			filePath: fullPath,
 			project,

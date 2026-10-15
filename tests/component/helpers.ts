@@ -29,9 +29,56 @@ export function writeJsonl(dir: string, fileName: string, lines: string[]): void
 }
 
 /**
+ * The name a Pi session file has on disk: `<timestamp>_<uuid>.jsonl`, which is
+ * how the harness's session store names its own files.
+ *
+ * Discovery claims files by name — no source claims `.jsonl` by extension — so a
+ * fixture that is meant to be a Pi session has to be named like one. The uuid is
+ * the session id the fixture's header carries: pi derives the file name from the
+ * session it is writing, so a fixture whose name and header disagree would be
+ * modelling something pi never writes.
+ */
+export function piSessionFileName(sessionId: string, timestamp = "2026-08-19T01-00-00"): string {
+	return `${timestamp}Z_${sessionId}.jsonl`;
+}
+
+/**
+ * The name a Claude Code session file has on disk: `<session-uuid>.jsonl` at the
+ * top level of a project directory. `claudeSessionId` is the same value without
+ * the extension — Claude Code records no session id inside the file, so the file
+ * name *is* the session's identity.
+ */
+export function claudeSessionFileName(label: string): string {
+	return `${claudeSessionId(label)}.jsonl`;
+}
+
+/** The session id Claude Code's file name gives a fixture (see {@link claudeSessionFileName}). */
+export function claudeSessionId(label: string): string {
+	return fixtureUuid(label);
+}
+
+/**
+ * A uuid-shaped token derived from a readable label, so a fixture can be named by
+ * its scenario instead of carrying a literal uuid. Stable across runs, which is
+ * what the cursor keys on.
+ */
+function fixtureUuid(label: string): string {
+	const hash = (seed: number): string => {
+		let x = seed >>> 0;
+		for (const ch of label) {
+			x ^= ch.charCodeAt(0);
+			x = Math.imul(x, 0x01000193) >>> 0;
+		}
+		return x.toString(16).padStart(8, "0");
+	};
+	const hex = hash(0x811c9dc5) + hash(0x7f4a7c15) + hash(0x94d049bb) + hash(0x27220a95);
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
  * The Claude sessions root to pass when a test has no Claude fixtures of its own.
  *
- * `discoverSessions`/`runSync` require both roots precisely so a test cannot fall
+ * `runSync` takes both roots precisely so a test cannot fall
  * back to the developer's real `~/.claude/projects`. Naming the absent directory
  * makes that intent explicit at each call site, rather than leaving a bare
  * `"/nonexistent"` to be misread as an accident.

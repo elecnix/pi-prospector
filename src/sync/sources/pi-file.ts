@@ -12,6 +12,29 @@ import { parseLine, extractSessionName } from "../parser.js";
 import { resolveFork } from "../forks.js";
 import { walkSessionDir } from "../scanner.js";
 
+/**
+ * Pi's own session-file naming, as the harness's session store writes it:
+ * `<timestamp>_<uuid>.jsonl`, wherever below a project directory pi put it.
+ *
+ * The timestamp is written with dashes, not with the colons and dot of the ISO
+ * 8601 string it comes from: the session that started at `19:00:24.951Z` is stored
+ * as `2026-09-11T19-00-24-951Z_01a091d7-…jsonl`. Hence `[\d-]+` between the `T`
+ * and the `Z` rather than a looser class: discovery claims the shape the harness
+ * writes, and every one of the 4262 session files on a live machine matches it.
+ *
+ * Discovery claims nothing by extension, so this is the whole of "a pi session
+ * file" for this source.
+ */
+const PI_SESSION_FILE_RE = /^\d{4}-\d{2}-\d{2}T[\d-]+Z_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
+
+/**
+ * A child run's session directory, named `run-N` by the pi-subagents extension.
+ * The file inside it is a pi session — pi's format, pi's header — so this source
+ * claims it; the extension's own artifacts (`*_transcript.jsonl`, `*_meta.json`)
+ * are its data and are claimed by its own source instead.
+ */
+const RUN_DIR_RE = /^run-\d+$/;
+
 export class PiFileSource implements SessionSourceAdapter {
 	readonly source = "pi";
 	/** Child-run artifacts live under the same root as the sessions themselves. */
@@ -22,7 +45,10 @@ export class PiFileSource implements SessionSourceAdapter {
 	}
 
 	async discover(): Promise<DiscoveredSession[]> {
-		return walkSessionDir(this.artifactsRoot, "pi");
+		return walkSessionDir(this.artifactsRoot, "pi", {
+			matchFile: (fileName, parentDirName) =>
+				PI_SESSION_FILE_RE.test(fileName) || (fileName === "session.jsonl" && RUN_DIR_RE.test(parentDirName)),
+		});
 	}
 
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {

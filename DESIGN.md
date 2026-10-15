@@ -62,6 +62,20 @@ roughly the order concepts build on one another.
   **unknown** — never a silent default to one host name, because assigning a
   missing measurement a value it never had is the same lie as pricing an
   unpriced message at zero.
+- **Data source** — an origin of session data. A harness is one. So is an
+  extension that adds data of its own: `pi-subagents` writes a child run's
+  session into a `run-N` directory and drops an artifact set beside the parent
+  session, and those files belong to that extension, not to the harness.
+  **Each source claims the file shapes it owns, and discovery claims nothing by
+  extension.** Pi's session files are `<timestamp>_<uuid>.jsonl`; Claude Code's
+  are `<uuid>.jsonl`; a child run's session is the `session.jsonl` the extension
+  names inside its run directory. Every other `.jsonl` in those trees belongs to
+  whoever wrote it and is not a session: the RPC daemon's `out.jsonl` protocol
+  stream, the extension's `*_transcript.jsonl` artifacts, Claude Code's
+  `subagents/agent-*.jsonl` child transcripts and its `journal.jsonl` workflow
+  logs. A file no source names is never read, never becomes a session, and is
+  never reported as a broken one. A new origin means a new source with its own
+  shapes, never a wider match on the existing ones.
 - **Message** — a single entry within a session: something the user said, one of
   the agent's replies, the agent's private reasoning, or the result of a tool the
   agent ran. Messages carry metadata (timing, model, token usage, error flags).
@@ -458,30 +472,6 @@ estimated.
 Background work is out of scope for now: a call the harness runs in the
 background returns at once, and the record of its completion is not yet
 ingested, so it times as near-instant.
-
-### Session output (deterministic, session-level)
-
-A session's ending says how it finished; a session's output is a separate
-question. For a session that opened a pull request, the output is a URL and a
-title a person can open.
-
-- **Opened pull request**, a pull request a session created, recorded on that
-  session as the URL, the repository, and the number the forge answered with,
-  plus the title the creation call stated. A session opened one when both halves
-  hold: the call was a creation call (`gh pr create`, a hosted-forge tool whose
-  own arguments state the pull request, or a stacked-PR command such as
-  `gh stack link --open`), it succeeded, and the URL came from the forge's own
-  answer and not from text the session happened to read. A
-  URL that shares its line with other text came from somewhere else, because
-  `gh pr create` prints the URL alone on a line, and the URL of a pull request
-  that already existed follows the forge's own "already exists" message, so it
-  proves nothing about what this session created. A stacked-PR tool prints the
-  URL inside its own `Created PR` confirmation instead, which is what marks the
-  pull request as opened, because the same verb links one that already exists. The title is **unknown**, not
-  guessed, when the command did not state one: a `--fill` run, or a title the
-  shell built from a variable the transcript does not record. The record is a
-  metric node that anchors on the session and on the two rows behind it, it
-  proposes nothing, and nothing in detection depends on it.
 
 ### Failure analysis (deterministic, session-level)
 
