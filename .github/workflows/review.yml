@@ -18,7 +18,7 @@ jobs:
         # v0.11.3 moved Cite's own upload-artifact off the Node 20 action
         # GitHub is retiring; v0.11.4 resolves the pull request from the
         # event payload, which a pull_request_target trigger needs.
-        uses: elecnix/cite@534087b12205e442d971bddd7c157354a0c31da1  # v0.14.0
+        uses: elecnix/cite@f5707676437aacf2d3566d0e831c5c558717f994 # v0.15.0
         with:
           model_api_key: ${{ secrets.OLLAMA_API_KEY }}
           model_base_url: https://ollama.com/v1
