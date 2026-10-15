@@ -60,7 +60,7 @@ The analysis graph is **append-only and incremental**. Each node records the exa
 pi install git:github.com/elecnix/pi-prospector
 ```
 
-Requires Pi with an LLM API key configured for at least one provider. You choose which models analysis uses (see [Configuration](#configuration)); the deterministic layer needs no model at all.
+The deterministic analyzers don't call a model, so they work without an API key. The LLM analyzers need an API key for one provider, which you set up through Pi (see [Choosing a provider](#choosing-a-provider)). A Claude Code subscription doesn't cover this, because it can't serve API calls from another program.
 
 > **Back up your sessions first.** pi-prospector treats `~/.pi/agent/sessions/` as read-only and never writes to it, but it does not make a backup for you. Run something like `tar czf ~/prospector-backup/sessions-$(date +%Y%m%d).tgz ~/.pi/agent/sessions/` before your first sync.
 
@@ -552,7 +552,30 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 | `defaultAnalyzers` | every registered analyzer | The analyzers `/prospect-analyze` runs when you don't pass `--analyzer`. |
 | `disabledAnalyzers` | `[]` | Analyzers to take out of that default set, for example one you want to try on a few sessions before running it everywhere. |
 
-Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. All model access goes through Pi's own provider system. You can pick any model Pi supports (configured via `/login` or API keys). The deterministic `turn-pair-core` layer needs no model.
+Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. Any model Pi supports works. The deterministic `turn-pair-core` layer needs no model.
+
+### Choosing a provider
+
+LLM analyzers call models through Pi's provider system, so provider setup is Pi's, not pi-prospector's. This holds when you run `prospect` from the shell too: it borrows the model catalogue and credentials from the `pi` on your PATH, so install Pi even if you never start it. You don't need to use Pi as your coding agent.
+
+Give Pi a key for one provider in either way:
+
+- Run `pi`, then `/login` and pick a provider. Pi stores the key in `~/.pi/agent/auth.json`.
+- Export the provider's variable before running `prospect`, such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY`. Pi's [provider list](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/providers.md) has the variable for each provider.
+
+Then point the tiers at models from that provider. The defaults name Anthropic models, so with any other provider every LLM analyzer fails with `No credentials for anthropic/...` until you set `modelTiers` in `~/.pi/agent/prospector.json`. For OpenRouter:
+
+```json
+{
+  "modelTiers": {
+    "cheap": "openrouter/anthropic/claude-haiku-4.5",
+    "mid": "openrouter/anthropic/claude-sonnet-4.5",
+    "expensive": "openrouter/anthropic/claude-opus-4.1"
+  }
+}
+```
+
+Each value is `provider/model`, and the model id may contain slashes. To try one model for a run, pass `--model provider/model` to `analyze`.
 
 ### Choosing which analyzers run by default
 
