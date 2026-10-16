@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { makePiLLMCaller, toLLMResponse } from "../../src/analyze/pi-llm.js";
-import type { ExtensionContext, PiAssistantMessage, PiModel, ResolvedRequestAuth } from "../../src/pi-stubs.js";
+import type { ExtensionContext, PiAssistantMessage, PiCompleteOptions, PiContext, PiModel, ResolvedRequestAuth } from "../../src/pi-stubs.js";
 
 const TIERS = { cheap: "anthropic/c", mid: "anthropic/m", expensive: "anthropic/e" };
 
@@ -131,5 +131,65 @@ describe("makePiLLMCaller", () => {
 			{ modelTiers: TIERS },
 		);
 		await assert.rejects(() => caller({ model: "cheap", user: "hi" }), /No credentials/);
+	});
+});
+
+describe("makePiLLMCaller with a registry that streams requests itself", () => {
+	const model: PiModel = { id: "m", provider: "anthropic" };
+
+	function registryCtx(calls: { options?: PiCompleteOptions; context?: PiContext }[]): ExtensionContext {
+		return {
+			modelRegistry: {
+				find: () => model,
+				getAll: () => [],
+				getAvailable: () => [],
+				getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "key", headers: { "x-extra": "1" } }),
+				streamSimple: (_model, context, options) => {
+					calls.push({ options, context });
+					return { result: async () => assistantMessage({ content: [{ type: "text", text: "ok" }] }) };
+				},
+			},
+		};
+	}
+
+	it("completes through the registry, so a pi-ai without a module-level complete still works", async () => {
+		const calls: { options?: PiCompleteOptions; context?: PiContext }[] = [];
+		const caller = makePiLLMCaller(registryCtx(calls), { modelTiers: TIERS });
+		const response = await caller({ model: "cheap", user: "hi", temperature: 0.2, maxTokens: 50 });
+		assert.equal(response.text, "ok");
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0]?.options?.temperature, 0.2);
+		assert.equal(calls[0]?.options?.maxTokens, 50);
+		assert.equal(calls[0]?.options?.maxRetries, 0);
+	});
+
+	it("leaves credentials to the registry instead of passing a key and headers", async () => {
+		const calls: { options?: PiCompleteOptions; context?: PiContext }[] = [];
+		const caller = makePiLLMCaller(registryCtx(calls), { modelTiers: TIERS });
+		await caller({ model: "cheap", user: "hi" });
+		assert.equal(calls[0]?.options?.apiKey, undefined);
+		assert.equal(calls[0]?.options?.headers, undefined);
+	});
+
+	it("forces the tool call and forwards reasoning", async () => {
+		const calls: { options?: PiCompleteOptions; context?: PiContext }[] = [];
+		const caller = makePiLLMCaller(registryCtx(calls), { modelTiers: TIERS });
+		await caller({
+			model: "cheap",
+			user: "hi",
+			reasoning: "low",
+			tool: { name: "verdict", description: "d", parameters: { type: "object", properties: {} } },
+		});
+		assert.equal(calls[0]?.options?.toolChoice, "required");
+		assert.equal(calls[0]?.options?.reasoning, "low");
+		assert.equal(calls[0]?.context?.tools?.[0]?.name, "verdict");
+	});
+
+	it("still reports missing credentials before the request", async () => {
+		const calls: { options?: PiCompleteOptions; context?: PiContext }[] = [];
+		const ctx = registryCtx(calls);
+		ctx.modelRegistry.getApiKeyAndHeaders = async () => ({ ok: false, error: "no key" });
+		await assert.rejects(() => makePiLLMCaller(ctx, { modelTiers: TIERS })({ model: "cheap", user: "hi" }), /No credentials/);
+		assert.equal(calls.length, 0);
 	});
 });

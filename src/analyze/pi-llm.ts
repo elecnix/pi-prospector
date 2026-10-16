@@ -8,33 +8,26 @@
  *   2. `ctx.modelRegistry.find(provider, modelId)` → the Pi `Model`.
  *   3. `ctx.modelRegistry.getApiKeyAndHeaders(model)` → credentials Pi has
  *      configured for that provider (env, models.json, OAuth, …).
- *   4. `complete(model, context, { apiKey, headers, … })` from
- *      `@earendil-works/pi-ai` runs the request through Pi's provider adapters.
+ *   4. `ctx.modelRegistry.streamSimple(model, context, options).result()` runs the
+ *      request through Pi's provider adapters with the registry's own
+ *      credentials (pi-ai 1.x). A registry without it is an older pi, whose
+ *      `complete(model, context, { apiKey, headers, … })` comes from
+ *      `@earendil-works/pi-ai`.
  *
- * `@earendil-works/pi-ai` is an optional peer dependency, so it is loaded with a
- * runtime dynamic import, from the pi on PATH when the standalone `prospect`
- * command runs outside pi. Tests never reach this path (they use the mock caller).
+ * `@earendil-works/pi-ai` is an optional peer dependency, so the older path loads
+ * it with a runtime dynamic import (`completeWithPiAi`), from the pi on PATH when
+ * the standalone `prospect` command runs outside pi.
  */
 
 import type { LLMCaller, LLMRequest, LLMResponse, ModelTierConfig } from "./types.js";
 import { resolveModelSpec, splitModelSpec } from "./model-tiers.js";
-import { importPiPackage } from "../pi-host.js";
+import { completeWithPiAi } from "../pi-host.js";
 import type {
 	ExtensionContext,
-	PiAiModule,
 	PiAssistantMessage,
 	PiContext,
+	PiRegistryCompleteOptions,
 } from "../pi-stubs.js";
-
-let cachedModule: Promise<PiAiModule> | null = null;
-
-/** Lazily load pi-ai: from the host inside pi, from the pi on PATH outside it. */
-function loadPiAi(): Promise<PiAiModule> {
-	if (!cachedModule) {
-		cachedModule = importPiPackage<PiAiModule>("@earendil-works/pi-ai");
-	}
-	return cachedModule;
-}
 
 export interface PiLLMCallerOptions {
 	modelTiers: ModelTierConfig;
@@ -62,7 +55,6 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			throw new Error(`No credentials for ${provider}/${modelId}: ${auth.error}`);
 		}
 
-		const piAi = await loadPiAi();
 		const context: PiContext = {
 			systemPrompt: request.system,
 			messages: [{ role: "user", content: request.user, timestamp: Date.now() }],
@@ -92,9 +84,7 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			samplingParams.plugins = [{ id: "response-healing" }];
 		}
 
-		const message = await piAi.complete(model, context, {
-			apiKey: auth.apiKey,
-			headers: auth.headers,
+		const options: PiRegistryCompleteOptions = {
 			temperature: request.temperature,
 			maxTokens: request.maxTokens,
 			// Force the model to call the provided tool. Without this, models like
@@ -113,7 +103,13 @@ export function makePiLLMCaller(ctx: ExtensionContext, opts: PiLLMCallerOptions)
 			// fixed retry count cannot.
 			maxRetries: 0,
 			signal: ctx.signal,
-		});
+		};
+
+		const registry = ctx.modelRegistry;
+		const message = registry.streamSimple
+			? await registry.streamSimple(model, context, options).result()
+			: await completeWithPiAi(model, context, { ...options, apiKey: auth.apiKey, headers: auth.headers });
+
 
 		return toLLMResponse(message, spec, Date.now() - start, request.responseSchema !== undefined);
 	};

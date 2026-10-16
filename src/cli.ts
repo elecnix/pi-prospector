@@ -1,6 +1,6 @@
 import { COMMANDS, type ProspectCommand } from "./commands/registry.js";
 import { loadOnce } from "./lazy.js";
-import { importPiPackage } from "./pi-host.js";
+import { completeWithPiAi, importPiPackage } from "./pi-host.js";
 import type { ExtensionCommandContext, ModelRegistry, PiModel, ResolvedRequestAuth } from "./pi-stubs.js";
 
 /**
@@ -135,13 +135,33 @@ export async function buildPiModelRegistry(pi: PiCodingAgent, cwd: string) {
  * pay for it.
  */
 function piModelRegistry(): ModelRegistry {
-	const load = loadOnce(async () =>
+	return lazyModelRegistry(async () =>
 		buildPiModelRegistry(await importPiPackage<PiCodingAgent>("@earendil-works/pi-coding-agent"), process.cwd()),
 	);
+}
+
+/**
+ * A registry that loads the real one on its first call. It completes requests
+ * through the real registry's `streamSimple` (pi-ai 1.x), and through pi-ai's
+ * module-level `complete` for an older pi whose registry has none.
+ */
+export function lazyModelRegistry(
+	build: () => Promise<ModelRegistry>,
+): ModelRegistry & { streamSimple: NonNullable<ModelRegistry["streamSimple"]> } {
+	const load = loadOnce(build);
 	return {
 		find: async (provider, modelId) => (await load()).find(provider, modelId),
 		getAll: async () => (await load()).getAll(),
 		getAvailable: async () => (await load()).getAvailable(),
 		getApiKeyAndHeaders: async (model): Promise<ResolvedRequestAuth> => (await load()).getApiKeyAndHeaders(model),
+		streamSimple: (model, context, options) => ({
+			result: async () => {
+				const registry = await load();
+				if (registry.streamSimple) return registry.streamSimple(model, context, options).result();
+				const auth = await registry.getApiKeyAndHeaders(model);
+				if (!auth.ok) throw new Error(`No credentials for ${model.provider}/${model.id}: ${auth.error}`);
+				return completeWithPiAi(model, context, { ...options, apiKey: auth.apiKey, headers: auth.headers });
+			},
+		}),
 	};
 }
