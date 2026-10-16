@@ -32,9 +32,19 @@ import { walkSessionDir } from "../scanner.js";
  */
 const PI_SESSION_STEM_RE = /^\d{4}-\d{2}-\d{2}T[\d-]+Z_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
+/**
+ * The session id pi's own file name carries, or null when the name is not one pi
+ * gives its session files. Pi names a session file after the session it holds, so
+ * the name is a record of the id wherever the file itself has gone.
+ */
+export function piSessionIdFromFileName(fileName: string): string | null {
+	if (!fileName.endsWith(".jsonl")) return null;
+	return PI_SESSION_STEM_RE.exec(fileName.slice(0, -".jsonl".length))?.[1] ?? null;
+}
+
 /** True when a file name is one pi gives its own session files. */
 export function isPiSessionFileName(fileName: string): boolean {
-	return fileName.endsWith(".jsonl") && PI_SESSION_STEM_RE.test(fileName.slice(0, -".jsonl".length));
+	return piSessionIdFromFileName(fileName) !== null;
 }
 
 /**
@@ -45,16 +55,12 @@ export function isPiSessionFileName(fileName: string): boolean {
  * nearest ancestor directory carrying that naming holds the parent's session id,
  * while everything between it and the file (the `run-N` directory, the run's own
  * hash) belongs to the run and names no session.
- *
- * Exported because two callers need the same answer: the pi-subagents source, and
- * `scripts/backfill-parent-session.ts`, which attaches rows indexed before that
- * source read the path this way.
  */
 export function parentSessionFromRunPath(filePath: string): string | null {
 	let dir = path.dirname(filePath);
 	while (dir !== path.dirname(dir)) {
-		const m = path.basename(dir).match(PI_SESSION_STEM_RE);
-		if (m?.[1]) return m[1];
+		const id = piSessionIdFromFileName(`${path.basename(dir)}.jsonl`);
+		if (id) return id;
 		dir = path.dirname(dir);
 	}
 	return null;
@@ -113,14 +119,21 @@ export class PiFileSource implements SessionSourceAdapter {
 			throw new Error(`No session header: ${disc.filePath}`);
 		}
 
-		// Resolve fork
+		// Resolve fork. The header names the parent as a *path*, and this column holds a
+		// session id everywhere else, so the resolved id is what gets stored. Reading
+		// the parent's own header is authoritative; when that file is gone, pi's naming
+		// still records the id in the file name (#327).
 		let branchCount = 0;
 		let forksResolved = 0;
+		let parentSessionId: string | null = null;
 		if (parentSession) {
 			const forkInfo = await resolveFork(parentSession, this.artifactsRoot);
 			if (forkInfo) {
 				branchCount = 1;
 				forksResolved = 1;
+				parentSessionId = forkInfo.parentSessionId;
+			} else {
+				parentSessionId = piSessionIdFromFileName(path.basename(parentSession));
 			}
 		}
 
@@ -134,7 +147,7 @@ export class PiFileSource implements SessionSourceAdapter {
 			project: disc.project,
 			source: disc.source,
 			cwd,
-			parent_session: parentSession,
+			parent_session: parentSessionId,
 			started_at: startedAt,
 			last_line: resumeLine,
 			last_modified: disc.mtime,
