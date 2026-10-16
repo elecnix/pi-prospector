@@ -5,6 +5,7 @@
  * SessionSourceAdapter behind the interface introduced in #138.
  */
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
 import type { DiscoveredSession } from "../../types.js";
 import type { SessionInsert, MessageInsert } from "../../db/queries.js";
@@ -22,10 +23,42 @@ import { walkSessionDir } from "../scanner.js";
  * and the `Z` rather than a looser class: discovery claims the shape the harness
  * writes, and every one of the 4262 session files on a live machine matches it.
  *
+ * The stem is also the name pi gives the directory holding a session's child runs,
+ * which is how those attach to their parent: see
+ * {@link parentSessionFromRunPath}.
+ *
  * Discovery claims nothing by extension, so this is the whole of "a pi session
  * file" for this source.
  */
-const PI_SESSION_FILE_RE = /^\d{4}-\d{2}-\d{2}T[\d-]+Z_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
+const PI_SESSION_STEM_RE = /^\d{4}-\d{2}-\d{2}T[\d-]+Z_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/** True when a file name is one pi gives its own session files. */
+export function isPiSessionFileName(fileName: string): boolean {
+	return fileName.endsWith(".jsonl") && PI_SESSION_STEM_RE.test(fileName.slice(0, -".jsonl".length));
+}
+
+/**
+ * The session that spawned a child run, from the run's path.
+ *
+ * Pi keeps a session's child runs inside a directory named after the session file
+ * itself: `<project>/<timestamp>_<uuid>/<runhash>/run-N/session.jsonl`. So the
+ * nearest ancestor directory carrying that naming holds the parent's session id,
+ * while everything between it and the file (the `run-N` directory, the run's own
+ * hash) belongs to the run and names no session.
+ *
+ * Exported because two callers need the same answer: the pi-subagents source, and
+ * `scripts/backfill-parent-session.ts`, which attaches rows indexed before that
+ * source read the path this way.
+ */
+export function parentSessionFromRunPath(filePath: string): string | null {
+	let dir = path.dirname(filePath);
+	while (dir !== path.dirname(dir)) {
+		const m = path.basename(dir).match(PI_SESSION_STEM_RE);
+		if (m?.[1]) return m[1];
+		dir = path.dirname(dir);
+	}
+	return null;
+}
 
 /**
  * A child run's session directory, named `run-N` by the pi-subagents extension.
@@ -47,7 +80,7 @@ export class PiFileSource implements SessionSourceAdapter {
 	async discover(): Promise<DiscoveredSession[]> {
 		return walkSessionDir(this.artifactsRoot, "pi", {
 			matchFile: (fileName, parentDirName) =>
-				PI_SESSION_FILE_RE.test(fileName) || (fileName === "session.jsonl" && RUN_DIR_RE.test(parentDirName)),
+				isPiSessionFileName(fileName) || (fileName === "session.jsonl" && RUN_DIR_RE.test(parentDirName)),
 		});
 	}
 

@@ -17,14 +17,19 @@ import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
 import { makeTempRoot, messageLine, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
 
-/** <root>/--Users-test--proj/<parent-uuid>/<run-N>/session.jsonl */
+/**
+ * The tree pi writes for a child run:
+ * <root>/--Users-test--proj/<timestamp>_<parent-uuid>/<runhash>/<run-N>/session.jsonl.
+ * The directory above the run hash carries the parent session file's own name, which
+ * is where the parent id comes from.
+ */
 function writeSubagentSession(
 	root: string,
 	parentUuid: string,
 	runDir: string,
 	sessionId: string,
 ): string {
-	const dir = path.join(root, "--Users-test--proj", parentUuid, runDir);
+	const dir = path.join(root, "--Users-test--proj", `2026-03-01T09-59-00Z_${parentUuid}`, "2b83bd26", runDir);
 	writeJsonl(dir, "session.jsonl", [
 		sessionHeaderLine(sessionId, { timestamp: "2026-03-01T10:00:00Z" }),
 		messageLine(sessionId, 1, "user", "child turn", "2026-03-01T10:00:05Z"),
