@@ -107,24 +107,37 @@ function firstSentence(text: string): string {
 	return end === -1 ? text : text.slice(0, end + 1);
 }
 
+/** The slice of `@earendil-works/pi-coding-agent` that builds a model registry. */
+export interface PiCodingAgent {
+	ModelRuntime: { create(options: { allowModelNetwork: boolean }): Promise<unknown> };
+	ModelRegistry: new (runtime: unknown) => ModelRegistry & {
+		find(provider: string, modelId: string): PiModel | undefined;
+		getAll(): PiModel[];
+		getAvailable(): PiModel[];
+	};
+	/** Loads the installed extensions and registers the providers they declare on `modelRuntime`. */
+	createAgentSessionServices(options: { cwd: string; modelRuntime: unknown }): Promise<unknown>;
+}
+
+/**
+ * A registry over pi's built-in providers, `models.json`, and the providers that
+ * installed pi extensions register (an extension supplies, say, `ollama-cloud`).
+ */
+export async function buildPiModelRegistry(pi: PiCodingAgent, cwd: string) {
+	const modelRuntime = await pi.ModelRuntime.create({ allowModelNetwork: false });
+	await pi.createAgentSessionServices({ cwd, modelRuntime });
+	return new pi.ModelRegistry(modelRuntime);
+}
+
 /**
  * pi's model registry, from the pi on PATH. Importing pi takes about a second,
  * so it happens on the first lookup: commands that never call a model never
  * pay for it.
  */
 function piModelRegistry(): ModelRegistry {
-	interface PiCodingAgent {
-		ModelRuntime: { create(options: { allowModelNetwork: boolean }): Promise<unknown> };
-		ModelRegistry: new (runtime: unknown) => ModelRegistry & {
-			find(provider: string, modelId: string): PiModel | undefined;
-			getAll(): PiModel[];
-			getAvailable(): PiModel[];
-		};
-	}
-	const load = loadOnce(async () => {
-		const pi = await importPiPackage<PiCodingAgent>("@earendil-works/pi-coding-agent");
-		return new pi.ModelRegistry(await pi.ModelRuntime.create({ allowModelNetwork: false }));
-	});
+	const load = loadOnce(async () =>
+		buildPiModelRegistry(await importPiPackage<PiCodingAgent>("@earendil-works/pi-coding-agent"), process.cwd()),
+	);
 	return {
 		find: async (provider, modelId) => (await load()).find(provider, modelId),
 		getAll: async () => (await load()).getAll(),

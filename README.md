@@ -605,7 +605,7 @@ prospect proposals --full
 prospect help analyze     # a command's flags
 ```
 
-`prospect` with no arguments lists the commands. Since it doesn't start Pi, it reads Pi and Claude Code sessions alike. LLM analyzers still need a model, so on the first model lookup `prospect` loads the model catalogue and credentials of the `pi` on your PATH. Commands that call no model never load Pi. Without `pi` on PATH, the deterministic analyzers still run, and each LLM analyzer fails with a message that says to install Pi.
+`prospect` with no arguments lists the commands. Since it doesn't start Pi, it reads Pi and Claude Code sessions alike. LLM analyzers still need a model, so on the first model lookup `prospect` loads the model catalogue and credentials of the `pi` on your PATH, along with the providers your installed Pi extensions register. Before an `analyze` run that includes an LLM analyzer, `prospect` resolves every model the run will use and stops at once, naming the model, if one is missing. Commands that call no model never load Pi. Without `pi` on PATH, the deterministic analyzers still run, and each LLM analyzer fails with a message that says to install Pi.
 
 The exit code is 0 on success, 1 when the command reports an error, and 2 for an unknown command.
 
