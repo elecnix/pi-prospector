@@ -15,6 +15,7 @@ import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerAll } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
+import { assertModelsResolve } from "../analyze/model-preflight.js";
 import { parseReviseArg, reachLabel } from "../analyze/version.js";
 import { parseHarnessSource } from "../harness.js";
 import { createAnalyzeRun, finalizeAnalyzeRun, getAnalyzerCoverage } from "../db/analysis-queries.js";
@@ -222,6 +223,19 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const selected = framework.list().filter((a) => effectiveIds.has(a.def.id));
 		const runHasLLM = selected.some((a) => a.version.implementationKind !== "deterministic");
 		const sessionConcurrency = runHasLLM ? llmConcurrency : analyzerConcurrency;
+		// Resolve every model the run will call before it touches a session, so a
+		// model this registry cannot see stops the run here, not once per session.
+		if (runHasLLM) {
+			const overrides = getAnalyzerConfigOverrides(config);
+			const models = selected.flatMap(
+				(a) =>
+					a.modelsForIdentity?.(
+						{ ...a.defaultConfig.configJson, ...overrides?.[a.def.id] },
+						modelTiers,
+					) ?? [],
+			);
+			await assertModelsResolve(ctx.modelRegistry, models);
+		}
 
 		out(
 			ctx,
