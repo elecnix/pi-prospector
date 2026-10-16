@@ -9,10 +9,9 @@ import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
 import type { DiscoveredSession } from "../../types.js";
 import type { SessionInsert, MessageInsert } from "../../db/queries.js";
 import { parseLine, extractSessionName } from "../parser.js";
-import { buildToolInventory } from "./pi-file.js";
+import { buildToolInventory, parentSessionFromRunPath } from "./pi-file.js";
 import { walkSessionDir } from "../scanner.js";
 
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RUN_DIR_RE = /^run-\d+$/;
 
 export class PiSubagentSource implements SessionSourceAdapter {
@@ -53,7 +52,8 @@ export class PiSubagentSource implements SessionSourceAdapter {
 		}
 		if (!sessionId) throw new Error(`No session header: ${disc.filePath}`);
 
-		const parentSession = extractParent(disc.filePath, this.sessionsDir);
+		// The session whose directory holds this run's tree, read from the path.
+		const parentSession = parentSessionFromRunPath(disc.filePath);
 		const session: SessionInsert = {
 			id: sessionId,
 			file_path: disc.filePath,
@@ -105,15 +105,4 @@ export class PiSubagentSource implements SessionSourceAdapter {
 			forksResolved: 0,
 		};
 	}
-}
-
-/** The nearest enclosing session-directory UUID above the run dir is the parent. */
-function extractParent(fp: string, root: string): string | null {
-	let cur = path.dirname(path.dirname(fp));
-	while (cur.length > root.length && cur !== path.dirname(cur)) {
-		const m = path.basename(cur).match(UUID_RE);
-		if (m?.[0]) return m[0];
-		cur = path.dirname(cur);
-	}
-	return null;
 }

@@ -27,24 +27,39 @@ import { MAX_DISCOVERY_DEPTH } from "../../src/sync/scanner.js";
 
 const PARENT_ID = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
-/**
- * Synthetic JSONL for one session: header + two messages unique to it. The parent
- * is a Pi session file, named as the harness names its own; a child run's session
- * is the `session.jsonl` the pi-subagents extension writes inside a run directory.
- */
-function writeSession(dir: string, sessionId: string): void {
-	writeJsonl(dir, sessionId === PARENT_ID ? piSessionFileName(sessionId) : "session.jsonl", [
+/** The parent session's file stem, which is also the directory pi keeps its runs in. */
+const PARENT_STEM = `2026-08-19T01-00-00Z_${PARENT_ID}`;
+
+/** A Pi session file: two messages unique to the session whose header names it. */
+function writeParentSession(projectDir: string, sessionId: string): void {
+	writeJsonl(projectDir, piSessionFileName(sessionId, "2026-08-19T01-00-00"), [
 		sessionHeaderLine(sessionId),
 		messageLine(sessionId, 1, "user", `hello from ${sessionId}`, "2026-08-19T01:02:20Z"),
 		messageLine(sessionId, 2, "assistant", `done (${sessionId})`, "2026-08-19T01:02:25Z"),
 	]);
 }
 
-/** <root>/--Users-test--proj/<parent>/<parent-session-file> and <runhash>/run-N/session.jsonl */
+/** A child run's session: the `session.jsonl` the pi-subagents extension writes in a run directory. */
+function writeChildRun(runDir: string, sessionId: string): void {
+	writeJsonl(runDir, "session.jsonl", [
+		sessionHeaderLine(sessionId),
+		messageLine(sessionId, 1, "user", `hello from ${sessionId}`, "2026-08-19T01:02:20Z"),
+		messageLine(sessionId, 2, "assistant", `done (${sessionId})`, "2026-08-19T01:02:25Z"),
+	]);
+}
+
+/**
+ * The tree pi actually writes: the parent session file at the project level, and its
+ * child runs under a directory named after that file, one level of run hash down.
+ *
+ *   <root>/--Users-test--proj/<stem>.jsonl
+ *   <root>/--Users-test--proj/<stem>/<runhash>/run-N/session.jsonl
+ */
 function writeNestedTree(root: string, runHashes: string[]): void {
-	writeSession(path.join(root, "--Users-test--proj", PARENT_ID), PARENT_ID);
+	const projectDir = path.join(root, "--Users-test--proj");
+	writeParentSession(projectDir, PARENT_ID);
 	for (const [i, runHash] of runHashes.entries()) {
-		writeSession(path.join(root, "--Users-test--proj", PARENT_ID, runHash, `run-${i}`), `child-${i}`);
+		writeChildRun(path.join(projectDir, PARENT_STEM, runHash, `run-${i}`), `child-${i}`);
 	}
 }
 
@@ -203,8 +218,8 @@ describe("nested subagent session recursion (#157)", () => {
 			// deep one a run-N session.jsonl. A name-based claim accepts either at any
 			// depth, so the depth bound is the only thing that can separate them, and
 			// the assertion on the shallow one is what fails if it is not enforced.
-			writeSession(project, PARENT_ID);
-			writeSession(path.join(deep, "run-0"), "too-deep");
+			writeParentSession(project, PARENT_ID);
+			writeChildRun(path.join(deep, "run-0"), "too-deep");
 
 			const result = await runSync(db, [new PiFileSource(fx.root)]);
 			assert.equal(result.sessionsProcessed, 1, "the within-bound session syncs, the deep one is not reached");
