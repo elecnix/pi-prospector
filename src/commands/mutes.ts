@@ -30,19 +30,39 @@ function output(ctx: ExtensionCommandContext, text: string, level: "info" | "war
 	console.log(text);
 }
 
+/**
+ * Split a leading term from the rest of the arguments. A term in single or
+ * double quotes is read whole, so a multi-word term survives; an unquoted term
+ * runs up to the first `--` flag. An unterminated quote gives no term.
+ */
+function splitTerm(args: string): { term: string | undefined; rest: string } {
+	const text = (args ?? "").trim();
+	const quote = text[0];
+	if (quote === '"' || quote === "'") {
+		const end = text.indexOf(quote, 1);
+		if (end === -1) return { term: undefined, rest: "" };
+		const term = text.slice(1, end).trim();
+		return { term: term.length > 0 ? term : undefined, rest: text.slice(end + 1).trim() };
+	}
+	const flag = text.search(/(^|\s)--/);
+	const head = (flag === -1 ? text : text.slice(0, flag)).trim();
+	const rest = flag === -1 ? "" : text.slice(flag).trim();
+	return { term: head.length > 0 ? head : undefined, rest };
+}
+
 /** Parse `mute <term> [--reason …] [--by agent|operator]`. The reason is everything after `--reason` (up to `--by`). */
 export function parseMuteArgs(args: string): { term?: string; reason: string | null; by: string | null } {
-	const toks = (args ?? "").trim().split(/\s+/).filter(Boolean);
-	const term = toks.shift();
+	const { term, rest } = splitTerm(args);
+	const toks = rest.split(/\s+/).filter(Boolean);
 	let reason: string | null = null;
 	let by: string | null = null;
 	for (let i = 0; i < toks.length; i++) {
 		const t = toks[i]!.toLowerCase();
 		if (t === "--reason") {
-			const rest: string[] = [];
+			const words: string[] = [];
 			i++;
-			while (i < toks.length && toks[i]!.toLowerCase() !== "--by") rest.push(toks[i++]!);
-			const joined = rest.join(" ").trim();
+			while (i < toks.length && toks[i]!.toLowerCase() !== "--by") words.push(toks[i++]!);
+			const joined = words.join(" ").trim();
 			if (joined.length > 0) reason = joined;
 			i--;
 		} else if (t === "--by" && toks[i + 1]) {
@@ -52,9 +72,15 @@ export function parseMuteArgs(args: string): { term?: string; reason: string | n
 	return { term, reason, by };
 }
 
+/** Parse `unmute <term>` with the same term rules as `mute`. */
+export function parseUnmuteArgs(args: string): string | undefined {
+	return splitTerm(args).term;
+}
+
 /** Normalise a term the way the tokeniser would, so mute keys match lexicon keys. */
 export function normaliseTerm(raw: string): string {
-	return raw.trim().toLowerCase();
+	const unquoted = raw.trim().replace(/^(["'])(.*)\1$/s, "$2");
+	return unquoted.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 /**
@@ -99,7 +125,7 @@ export function formatAssertion(a: AssertionRow): string {
 export async function prospectMute(args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const { term, reason, by } = parseMuteArgs(args);
 	if (!term) {
-		output(ctx, 'Usage: /prospect-mute <term> [--reason "why"] [--by operator|agent]', "warning");
+		output(ctx, 'Usage: /prospect-mute <term> [--reason "why"] [--by operator|agent] (quote a multi-word term)', "warning");
 		return;
 	}
 	const db = openAsyncDatabase(getDbPath());
@@ -119,9 +145,10 @@ export async function prospectMute(args: string, ctx: ExtensionCommandContext): 
 }
 
 export async function prospectUnmute(args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const term = normaliseTerm((args ?? "").trim());
+	const parsed = parseUnmuteArgs(args);
+	const term = parsed === undefined ? "" : normaliseTerm(parsed);
 	if (!term) {
-		output(ctx, "Usage: /prospect-unmute <term>", "warning");
+		output(ctx, 'Usage: /prospect-unmute <term> (quote a multi-word term)', "warning");
 		return;
 	}
 	const db = openAsyncDatabase(getDbPath());

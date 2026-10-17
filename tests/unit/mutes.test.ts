@@ -4,7 +4,7 @@ import {
 	assertionId,
 	computeAssertionFingerprint,
 } from "../../src/db/assertions.js";
-import { parseMuteArgs, normaliseTerm } from "../../src/commands/mutes.js";
+import { parseMuteArgs, parseUnmuteArgs, normaliseTerm } from "../../src/commands/mutes.js";
 
 function row(subjectKind: string, subjectKey: string, verdict: string, superseded_at: string | null = null) {
 	return { id: "", subject_kind: subjectKind, subject_key: subjectKey, verdict, reason: null, asserted_at: "", asserted_by: null, superseded_at };
@@ -46,7 +46,36 @@ describe("mute argument parsing", () => {
 		assert.deepEqual(parseMuteArgs(""), { term: undefined, reason: null, by: null });
 	});
 
+	it("reads a quoted term without its quote marks", () => {
+		assert.deepEqual(parseMuteArgs('"do"'), { term: "do", reason: null, by: null });
+		assert.deepEqual(parseMuteArgs("'never' --by agent"), { term: "never", reason: null, by: "agent" });
+	});
+
+	it("reads a quoted multi-word term whole", () => {
+		assert.deepEqual(parseMuteArgs('"do not" --reason an instruction word'), {
+			term: "do not",
+			reason: "an instruction word",
+			by: null,
+		});
+	});
+
+	it("reads an unquoted multi-word term up to the first flag", () => {
+		assert.deepEqual(parseMuteArgs("you need --by operator"), { term: "you need", reason: null, by: "operator" });
+	});
+
+	it("leaves the term empty for an unterminated quote", () => {
+		assert.deepEqual(parseMuteArgs('"do not --reason x'), { term: undefined, reason: null, by: null });
+	});
+
+	it("parses unmute arguments the same way", () => {
+		assert.equal(parseUnmuteArgs('"do not"'), "do not");
+		assert.equal(parseUnmuteArgs("never"), "never");
+		assert.equal(parseUnmuteArgs(""), undefined);
+	});
+
 	it("normalises a term for keying", () => {
+		assert.equal(normaliseTerm('"Do Not"'), "do not");
+		assert.equal(normaliseTerm("  do   not "), "do not");
 		assert.equal(normaliseTerm("Wrong"), "wrong");
 		assert.equal(normaliseTerm("  PUTAIN  "), "putain");
 		assert.equal(normaliseTerm(""), "");
