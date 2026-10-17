@@ -7,7 +7,7 @@ import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposal
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
 import { collectSupportMap, nestProposals, renderGroupedProposals, serialiseGrouped } from "./grouping.js";
-import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
+import { muteTerm, unmuteTerm, formatAssertion, normaliseTerm } from "./mutes.js";
 import { prospectAnalyze } from "./analyze.js";
 import { getLatestAnalyzeRuns } from "../db/analysis-queries.js";
 import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
@@ -195,9 +195,9 @@ export async function executeProspectTool(
 					by: "agent",
 				});
 				return text(
-					`Muted '${term.toLowerCase()}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage. ` +
+					`Muted '${normaliseTerm(term)}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage. ` +
 						`Run analyze with revise=config to recompute nodes that consulted it. Assertion ${assertionId}.`,
-					{ assertionId, term: term.toLowerCase() },
+					{ assertionId, term: normaliseTerm(term) },
 				);
 			}
 			case "unmute": {
@@ -205,8 +205,8 @@ export async function executeProspectTool(
 				const term = params.term as string;
 				const n = await unmuteTerm(db, term);
 				return text(
-					n > 0 ? `Unmuted '${term.toLowerCase()}'.` : `'${term.toLowerCase()}' was not muted.`,
-					{ superseded: n, term: term.toLowerCase() },
+					n > 0 ? `Unmuted '${normaliseTerm(term)}'.` : `'${normaliseTerm(term)}' was not muted.`,
+					{ superseded: n, term: normaliseTerm(term) },
 				);
 			}
 			case "mutes": {
