@@ -396,10 +396,11 @@ describe("a muted term's existing hits (#325)", () => {
 			await framework.run("s1");
 
 			const readAccumulation = async () => {
-				// The newest accumulation node: a revise adds a version beside its
-				// predecessor, and the newest one is the current conclusion.
+				// The *current* accumulation node — the head of its lineage, which is
+				// what a reader sees. `listAnalysisNodes` reads the current
+				// generation, so this is the conclusion, not merely the newest one.
 				const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
-				assert.ok(nodes.length >= 1, "one accumulation node per session");
+				assert.equal(nodes.length, 1, "exactly one current accumulation node");
 				return JSON.parse(nodes[0]!.content_json) as {
 					accumulated_friction: number;
 					turn_contributions: Array<{ frustration_weight: number }>;

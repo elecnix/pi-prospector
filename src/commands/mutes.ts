@@ -169,11 +169,11 @@ export async function prospectMute(args: string, ctx: ExtensionCommandContext): 
 		const note = reason ? ` — ${reason}` : "";
 		const hitNote =
 			liveHits > 0
-				? ` Its ${liveHits} existing hit node(s) are marked muted and will be retracted by the next '/prospect-analyze --revise config'.`
+				? ` Its ${liveHits} existing hit node(s) are silenced: they stay in the graph as lineage, but they no longer count towards friction, digests or reports.`
 				: "";
 		output(
 			ctx,
-			`Muted '${normaliseTerm(term)}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage until that revise retracts them.${hitNote}` +
+			`Muted '${normaliseTerm(term)}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage.${hitNote}` +
 				`\n  Run '/prospect-analyze --revise config' to recompute the nodes that consulted it.` +
 				`\n  Assertion ${assertionId}${note}`,
 		);

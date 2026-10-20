@@ -134,10 +134,11 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		// and would never otherwise reach the classifier that can name its friction type.
 		const frustrationBoost = new Map<string, number>();
 		const frustrationIds: string[][] = [];
-		// A muted term's hits are silenced (#325): they must not escalate a turn
-		// nor mark an evidence-slice boundary. They stay *inputs* — the source
-		// set is unchanged, so the unit keeps its identity — but a silenced hit
-		// contributes no boost.
+		// A muted term's hits are silenced (#325): a silenced hit must not
+		// escalate a turn. It stays an *input* — the source set is unchanged, so
+		// the unit keeps its identity — and it still marks a slice boundary: the
+		// turn happened, and shrinking an unrelated turn's evidence slice because
+		// a word was muted would be a change the operator never asked for.
 		const muted = await getMutedNodeIds(ctx.db);
 		for (const node of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
 			let hit: TurnFrustrationProperties;
@@ -147,8 +148,8 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				continue;
 			}
 			if (!hit.user_message_id) continue;
-			if (muted.has(node.id)) continue;
 			frustrationIds.push([hit.user_message_id]);
+			if (muted.has(node.id)) continue;
 			if (hit.polarity !== "frustration") continue;
 			frustrationBoost.set(hit.user_message_id, (frustrationBoost.get(hit.user_message_id) ?? 0) + hit.weight);
 		}

@@ -195,8 +195,9 @@ export async function executeProspectTool(
 					by: "agent",
 				});
 				return text(
-					`Muted '${normaliseTerm(term)}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage until a revise=config run retracts them. ` +
-						`Run analyze with revise=config to recompute nodes that consulted it. ` +
+					`Muted '${normaliseTerm(term)}'. It will stop matching new turns, and its existing hit nodes are silenced: ` +
+						`they stay in the graph as lineage but no longer count towards friction, digests or reports. ` +
+						`Run analyze with revise=config to recompute the readers that consulted it. ` +
 						`${liveHits} live hit node(s) are marked muted. Assertion ${assertionId}.`,
 					{ assertionId, term: normaliseTerm(term), liveHits },
 				);
