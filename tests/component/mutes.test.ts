@@ -358,8 +358,30 @@ describe("a muted term's existing hits (#325)", () => {
 		}
 	});
 
-	it("does not report a muted node as a superseded generation", async () => {
+	it("reads the mute set as of the render's instant, not today's", async () => {
 		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+
+			// A moment before the mute: the hit is live and counted.
+			const before = new Date(Date.now() - 60_000).toISOString();
+			assert.equal((await getMutedNodeIds(db, before)).size, 0, "nothing was muted a minute ago");
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			assert.equal((await getMutedNodeIds(db, before)).size, 0, "the later mute does not reach back into the past");
+			// Two nodes carry the mark: the term's lexicon verdict and the hit
+			// node it produced.
+			assert.equal((await getMutedNodeIds(db)).size, 2, "and it silences the hit now");
+		} finally {
+			await close();
+		}
+	});
+
+	it("does not report a muted node as a superseded generation", async () => {		const { db, close } = await tempDb();
 		try {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);

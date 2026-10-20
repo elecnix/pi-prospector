@@ -545,8 +545,27 @@ async function findLiveLexiconHitNodes(
  * An unmute supersedes the assertion (append-only via `superseded_at`), which
  * makes the edge inert again: the node is no longer muted, so it counts once
  * more. The edge is never deleted, so the mark's history stays inspectable.
+ *
+ * With `asOf`, the mute set is read as it stood at that instant: a mute that was
+ * asserted later does not silence anything yet, and a mute that was superseded
+ * later had not stopped counting yet. Reading the *current* set for a
+ * historical view would rewrite the past.
  */
-export async function getMutedNodeIds(db: AsyncDatabase): Promise<Set<string>> {
+export async function getMutedNodeIds(db: AsyncDatabase, asOf?: string): Promise<Set<string>> {
+	if (asOf) {
+		const rows = (await prep(db, `
+			SELECT DISTINCT e.from_node_id AS id
+			FROM analysis_edges e
+			JOIN assertions a ON a.id = e.to_ref_id
+			WHERE e.edge_kind = ?
+			  AND e.to_ref_kind = ?
+			  AND a.subject_kind = 'term'
+			  AND a.verdict = 'muted'
+			  AND a.asserted_at <= ?
+			  AND (a.superseded_at IS NULL OR a.superseded_at > ?)
+		`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION, asOf, asOf)) as Array<{ id: string }>;
+		return new Set(rows.map((r) => r.id));
+	}
 	const rows = (await prep(db, `
 		SELECT DISTINCT e.from_node_id AS id
 		FROM analysis_edges e

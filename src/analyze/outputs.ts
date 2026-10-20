@@ -116,9 +116,12 @@ export async function renderOutputs(
 	//
 	// Lazy: an output that reads no nodes pays no query, and a caller whose
 	// database has no assertion table yet is not broken by it.
+	//
+	// The mute set is read as of the same instant as the nodes: a historical
+	// render must not apply today's mutes to a past graph.
 	let mutedPromise: Promise<Set<string>> | undefined;
 	const mutedIds = (): Promise<Set<string>> => {
-		mutedPromise ??= getMutedNodeIds(opts.db);
+		mutedPromise ??= getMutedNodeIds(opts.db, opts.asOf);
 		return mutedPromise;
 	};
 	const getNodes = async (analyzerId: string, asOf?: string): Promise<AnalysisNodeRow[]> => {
