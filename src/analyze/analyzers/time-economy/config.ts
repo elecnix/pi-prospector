@@ -125,10 +125,19 @@ export const DEFAULT_TIME_ECONOMY_CONFIG: TimeEconomyConfig = {
 		"\\b[1-9][0-9]* failed\\b.*\\b(passed|passing|total)\\b",
 		// mocha's own shape, on its own line: "  3 failing".
 		"^\\s*[1-9][0-9]* failing\\b",
-		// A type-checker's diagnostic, which names its own error code.
-		"\\berror TS[0-9]+\\b",
-		// Python's own failure shapes.
-		"\\bAssertionError\\b",
+		// A type-checker's diagnostic, which names its own error code. tsc
+		// prints it with a file and position prefix — "src/x.ts(3,5): error
+		// TS2322: …" — so a grep hit that merely mentions the code is not a
+		// diagnostic.
+		"^\\S+\\.\\w+\\(\\d+,\\d+\\): error TS[0-9]+\\b",
+		"^\\S+\\.\\w+:\\d+:\\d+: error TS[0-9]+\\b",
+		"^error TS[0-9]+\\b",
+		// Python's own failure shapes. pytest prints the exception on its own
+		// line, indented under the "E" marker; a bare traceback prints it at
+		// the start of a line. Both are anchored, so a grep over the source
+		// that happens to print the class name is not a failure.
+		"^E\\s+AssertionError\\b",
+		"^AssertionError\\b",
 		"^Traceback \\(most recent call last\\):",
 		// The shell's own errors. They reach the output only when a pipe has
 		// hidden the exit code, which is the very thing this detector looks

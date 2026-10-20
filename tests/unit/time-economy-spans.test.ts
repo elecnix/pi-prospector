@@ -168,6 +168,23 @@ describe("findFailureMarkers", () => {
 		);
 	});
 
+	it("does not fire on a grep hit that names an exception class or an error code", () => {
+		// The class name and the diagnostic code appear in the source, so a
+		// grep over it prints them without anything having failed.
+		assert.deepEqual(findFailureMarkers("src/a.test.ts:12: ...toThrow(AssertionError)", CONFIG.failureMarkers), []);
+		assert.deepEqual(findFailureMarkers("src/x.ts:1: // error TS1234", CONFIG.failureMarkers), []);
+		assert.deepEqual(findFailureMarkers("src/x.py:3: # Traceback (most recent call last)", CONFIG.failureMarkers), []);
+	});
+
+	it("recognises the shape a runner or a compiler prints", () => {
+		assert.deepEqual(findFailureMarkers("E       AssertionError: boom", CONFIG.failureMarkers), ["^E\\s+AssertionError\\b"]);
+		assert.deepEqual(findFailureMarkers("AssertionError: boom", CONFIG.failureMarkers), ["^AssertionError\\b"]);
+		assert.deepEqual(
+			findFailureMarkers("src/x.ts(3,5): error TS2322: Type mismatch", CONFIG.failureMarkers),
+			["^\\S+\\.\\w+\\(\\d+,\\d+\\): error TS[0-9]+\\b"],
+		);
+	});
+
 	it("does not fire on a grep hit that prints the shell's own diagnostic shape", () => {
 		// The shape the shell prints is "prog: operand: message". A grep hit
 		// that happens to contain that text is still the grep's output, and
