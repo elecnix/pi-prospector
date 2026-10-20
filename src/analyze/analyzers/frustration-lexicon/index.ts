@@ -38,7 +38,7 @@ import {
 	CLASSIFY_TERM_PROMPT_HASH,
 	CLASSIFY_TERM_TOOL,
 	buildClassifyTermPrompt,
-	parseClassifyTermObject,
+	parseClassifyTermVerdict,
 	extractVerdict,
 } from "./prompt.js";
 import { TERM_DECISION_QUESTIONS, TERM_DECISION_QUESTIONS_HASH, parseTermDecision } from "./decision.js";
@@ -90,7 +90,17 @@ export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	// ordinary grammar and reporting verbs. The prompt now separates instructions
 	// from reports ("stop" vs "stopped") and approval from outcome ("thanks" vs
 	// "successfully"), which the earlier tool-name rule did not reach.
-	minor: 4,
+	// 1.5: a deterministic function-word guard (issue #321). The prompt wording
+	// above did not hold: a cheap model asked about a bare `no` still answered
+	// "frustration" / "negation", and since a verdict is cached corpus-wide and
+	// permanently, the top-ranked frustration terms on a real corpus became `do`
+	// (254 hits), `no` (191), `do not` (172), `never` (152), `cannot` (129) and
+	// `still` (90) — ordinary instruction words that appear in nearly every
+	// prompt. They dominated the ranking and buried the real signal. A single-token
+	// term in the stoplist is now forced to neutral/none whatever the model
+	// answered; a multi-word term is not covered, because a phrase is judged as a
+	// unit and can be a pointed complaint.
+	minor: 5,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };
@@ -242,7 +252,7 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			);
 		}
 
-		const properties: FrustrationLexiconProperties = { ...parseClassifyTermObject(verdict), term };
+		const properties: FrustrationLexiconProperties = { ...parseClassifyTermVerdict(term, verdict), term };
 
 		return {
 			nodeKind: "classification",

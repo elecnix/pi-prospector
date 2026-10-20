@@ -24,6 +24,7 @@ import {
 	sliceStartIndex,
 } from "../../evidence-slices.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
+import { unmutedHits } from "../../../db/muted-terms.js";
 
 /** Properties stored in a user-reply-acts classification node. */
 interface ReplyActProperties {

@@ -155,7 +155,7 @@ Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.t
 The correction patterns in `turn-pair-core` are English regexes. Write `putain, c'est encore faux` or `не то` and they see nothing. Instead of shipping more languages — an unbounded list that is always partial — these three analyzers **learn the vocabulary from your own corpus**.
 
 1. **lexicon-candidates** (deterministic) tokenises your messages and nominates the distinct terms worth judging, ranked by frequency and capped per session. It is language-blind on purpose: no stopwords, no stemming, just a shape filter that drops code, paths, and identifiers.
-2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it.
+2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it. A **function-word guard** runs after the model answers: a single-token term on the stoplist (`do`, `no`, `never`, `cannot`, `still`, …) comes back neutral whatever the model said, so the instruction words that appear in nearly every prompt can never top the ranking. A multi-word term is not covered — a phrase is judged as a unit and can be a pointed complaint.
 3. **turn-frustration** (deterministic) matches each turn against the learned lexicon, emitting one node per (turn, signal). A hit promotes the turn into `turn-pair-llm` enrichment even when the deterministic score missed it, and lands in the `session-overview` digest as `frustration=[term:category/lang]`.
 
 Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
@@ -528,15 +528,23 @@ wipe-and-recompute.
 Mute a lexicon term: pick the tail vocabulary that *looks* like a signal but is
 not for your corpus (`cannot`, `do`, `must`, …) and say "not that one". A mute
 is recorded as a generic, content-addressed **assertion** keyed on the term (not
-on a row), so it survives a wipe and recompute. The term stops matching new
-turns; its previous hit nodes stay in place as stale/config lineage. Because a
-mute is `config`, muting folds a hash of the active mute set into
-`turn-frustration`'s config fingerprint — muting marks the affected nodes
-`stale/config`, a plain `/prospect-analyze` never silently recomputes them, and
-`--revise config` cleanly recomputes them with the old nodes preserved.
+on a row), so it survives a wipe and recompute. A multi-word term is read whole
+(`/prospect-mute "do not"`), so the phrase is muted as the lexicon keys it; the
+command never reports a mute it did not record.
+
+A muted term stops matching new turns, and its **existing hits stop counting**:
+they are excluded from the frustration rankings and from the accumulated friction
+a session reports. The hit nodes themselves stay in the graph as append-only
+lineage — the graph is never mutated. Because a mute is `config`, muting folds
+a hash of the mute set into the config fingerprint of every analyzer that
+consults it — `turn-frustration`, `friction-accumulation`, `session-overview` —
+so muting marks the affected nodes `stale/config`, a plain `/prospect-analyze`
+never silently recomputes them, and `--revise config` cleanly recomputes them
+with the old nodes preserved.
 
 `/prospect-unmute <term>` reverses a mute append-only (via `superseded_at` — the
-original row stays inspectable with its reason and time). `/prospect-mutes`
+original row stays inspectable with its reason and time) and restores the term's
+contribution. `/prospect-mutes`
 lists the mute corpus — what is muted, by whom, when, and why. The same three
 operations are available as tool actions (`prospect mute|unmute|mutes`) and as
 `--prospect "mute|unmute|mutes"`, so the reviewing agent can perform the mute

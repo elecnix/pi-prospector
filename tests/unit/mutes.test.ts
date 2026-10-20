@@ -25,11 +25,17 @@ describe("assertion identity", () => {
 		assert.equal(computeAssertionFingerprint(r1), computeAssertionFingerprint(r2));
 		// Adding a mute changes the fingerprint (the whole point: it marks nodes stale/config).
 		assert.notEqual(computeAssertionFingerprint(r1), computeAssertionFingerprint([...r1, row("term", "c", "muted")]));
-		// A superseded (unmuted) row no longer counts as active.
-		assert.notEqual(
-			computeAssertionFingerprint(r1),
-			computeAssertionFingerprint([row("term", "a", "muted", "2024-01-01T00:00:00Z"), row("term", "b", "muted")]),
-		);
+	});
+
+	it("fingerprint distinguishes an active mute from a superseded one", () => {
+		// An unmute must be its own recipe. If the superseded state hashed the same
+		// as the active one, unmuting would restore the fingerprint of the state
+		// *before* the mute — a recipe whose node the mute's own revision had
+		// already replaced — and the framework would classify it `current` and skip
+		// the recomputation, leaving the muted version as the answer.
+		const active = [row("term", "a", "muted")];
+		const superseded = [row("term", "a", "muted", "2024-01-01T00:00:00Z")];
+		assert.notEqual(computeAssertionFingerprint(active), computeAssertionFingerprint(superseded));
 	});
 });
 
@@ -79,5 +85,16 @@ describe("mute argument parsing", () => {
 		assert.equal(normaliseTerm("Wrong"), "wrong");
 		assert.equal(normaliseTerm("  PUTAIN  "), "putain");
 		assert.equal(normaliseTerm(""), "");
+	});
+
+	it("leaves an empty term empty, so the caller can refuse it", () => {
+		// A term of only quote marks, or only whitespace, is no term at all. The
+		// command must refuse it rather than record an assertion with an empty key.
+		assert.equal(parseMuteArgs('""').term, undefined);
+		assert.equal(parseMuteArgs("''").term, undefined);
+		assert.equal(parseMuteArgs("   ").term, undefined);
+		assert.equal(parseUnmuteArgs('""'), undefined);
+		assert.equal(normaliseTerm('""'), "");
+		assert.equal(normaliseTerm("   "), "");
 	});
 });

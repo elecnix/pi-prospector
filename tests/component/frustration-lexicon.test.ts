@@ -19,6 +19,8 @@ import {
 	type FrustrationLexiconProperties,
 } from "../../src/analyze/analyzers/frustration-lexicon/index.js";
 import { getNodesByAnalyzer } from "../../src/db/analysis-queries.js";
+import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import type { LLMRequest } from "../../src/analyze/types.js";
 
 /** Terms our stub model calls frustration; everything else comes back neutral. */
 const FRUSTRATED_TERMS = new Set(["putain", "faux", "wrong", "🤬"]);
@@ -60,6 +62,48 @@ describe("lexicon-candidates", () => {
 });
 
 describe("frustration-lexicon", () => {
+	it("never lets a function word into the lexicon, whatever the model says (issue #321)", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			// The instruction words that dominated a real corpus's ranking.
+			await insertMessages(db, "s1", [
+				{ role: "user", text: "do not mock the database, never push to main, and no, do not touch the schema" },
+			]);
+
+			// A model that calls every bare negator a frustration signal — the exact
+			// failure the guard exists to stop.
+			const llm = createMockLLM({
+				responder: (req: LLMRequest) => ({
+					text: "x",
+					structured: {
+						polarity: "frustration",
+						category: "negation",
+						language: "en",
+						confidence: 0.9,
+						rationale: "r",
+					},
+				}),
+			});
+			const framework = await frameworkFor(db, llm);
+			await framework.run("s1");
+
+			const verdicts = new Map(
+				(await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).map((n) => {
+					const p = JSON.parse(n.content_json) as FrustrationLexiconProperties;
+					return [p.term, p];
+				}),
+			);
+
+			for (const term of ["do", "not", "never", "no"]) {
+				assert.equal(verdicts.get(term)?.polarity, "neutral", `'${term}' is a function word, never a signal`);
+				assert.equal(verdicts.get(term)?.category, "none", `'${term}' carries no signal category`);
+			}
+		} finally {
+			await close();
+		}
+	});
+
 	it("adjudicates each term once and stores the verdict as a node", async () => {
 		const { db, close } = await tempDb();
 		try {

@@ -241,6 +241,15 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 	consultsAssertions: ["term"],
 
 	/**
+	 * The accumulated friction depends on which terms the operator has muted, so
+	 * the active mute set folds into this analyzer's config fingerprint: muting
+	 * marks its nodes stale for the `config` reason, and `--revise config`
+	 * recomputes them with the muted term's weight gone. Without this the
+	 * accumulation would keep counting a term the operator rejected.
+	 */
+	consultsAssertions: ["term"],
+
+	/**
 	 * One unit per session, planned from the upstream nodes' OUTPUT KEYS alone
 	 * (cheap fingerprint work — the math happens in analyze()). Because the
 	 * source set references upstream conclusions by output key, any recomputed

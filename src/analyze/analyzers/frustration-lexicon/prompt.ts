@@ -16,6 +16,7 @@
 
 import { shortHash } from "../../input-hash.js";
 import { extractJsonObject } from "../turn-pair-llm/prompt.js";
+import { isStoplistedTerm } from "./stoplist.js";
 import { Type, type Static } from "typebox";
 
 export const CLASSIFY_TERM_PROMPT = `You judge single words for a multilingual lexicon used to detect
@@ -58,6 +59,11 @@ Guidance:
 - Ordinary grammar is NEVER a signal. Conjunctions, prepositions, quantifiers and
   comparatives — "but", "without", "already", "same", "over", "non", "re" — carry
   no feeling on their own, however often they appear near friction.
+- A bare negator is NOT a signal. "do", "no", "not", "none", "never", "cannot",
+  "nor", "neither" and their contractions are ordinary instruction words: "do
+  not mock the database", "never push to main". As single words they are
+  "neutral" with category "none". A negator inside a *pointed phrase* is
+  different — a two-word entry is judged as a unit, and can carry frustration.
 - A verb that merely reports what happened is NOT frustration. "pushed",
   "stopped", "cancels", "interrupted", "retracting", "buried", "canned" describe
   an action or a state; they say nothing about how the person feels about it.
@@ -144,6 +150,27 @@ export function parseClassifyTermObject(obj: Record<string, unknown>): ClassifyT
 		confidence: Math.max(0, Math.min(1, rawConfidence)),
 		rationale: typeof obj["rationale"] === "string" ? (obj["rationale"] as string).slice(0, 300) : "",
 	};
+}
+
+/**
+ * The verdict for one term, with the function-word guard applied.
+ *
+ * The guard is **deterministic and unconditional**: a single-token term in the
+ * stoplist comes back `neutral` / `none` whatever the model answered. Prompt
+ * wording alone did not hold — the prompt already said "ordinary grammar is
+ * NEVER a signal", and a cheap model asked about a bare `no` still answered
+ * "frustration" / "negation", because a bare negator *is* a negation marker in
+ * isolation. Since a verdict is cached corpus-wide and permanently, one such
+ * reply put `do`, `no`, `never` and `cannot` at the top of the ranking and
+ * buried the real signal.
+ *
+ * A multi-word term is not covered: a phrase is judged as a unit and can be a
+ * pointed complaint even when its words are individually ordinary.
+ */
+export function parseClassifyTermVerdict(term: string, obj: Record<string, unknown>): ClassifyTermResult {
+	const parsed = parseClassifyTermObject(obj);
+	if (!isStoplistedTerm(term)) return parsed;
+	return { ...parsed, polarity: "neutral", category: "none" };
 }
 
 function pickString(value: unknown, allowed: Set<string>, fallback: string): string {

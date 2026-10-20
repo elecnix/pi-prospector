@@ -756,6 +756,30 @@ list — the system **learns the vocabulary from the corpus**.
   list, no stemming, since either would quietly privilege the languages we
   happened to think of. Only *shape* is filtered: code, paths, URLs, and
   identifiers are not vocabulary.
+- **Function-word stoplist** — the set of single-token entries that can never
+  be a frustration signal: bare auxiliaries and modals (`do`, `will`, `must`),
+  bare negations and their contractions (`no`, `never`, `cannot`, `don't`),
+  conjunctions, and ordinary pronouns. It is enforced by a **deterministic
+  guard** applied to the parsed verdict, not by prompt wording alone: asked
+  about a bare `no` in isolation, a cheap model genuinely does see a negation
+  marker, and a verdict is cached corpus-wide and permanently, so the top-ranked
+  frustration terms on a real corpus became `do`, `no`, `do not`, `never`,
+  `cannot` and `still` — ordinary instruction words that appear in nearly every
+  prompt — and buried the real signal. The guard forces a stoplisted term's
+  polarity to *neutral* and its category to *none*, whatever the model
+  answered. A **multi-word** term is never covered: a phrase is judged as a
+  unit and can be a pointed complaint even when each of its words is
+  individually ordinary. The list is English because the failure it fixes was
+  measured on an English-dominant corpus; it is a stoplist of a known failure
+  mode, not a general stopword list, and nomination stays language-blind.
+- **Mute** — the operator's content-addressed judgement that a term is not a
+  signal. It is external human input, never an analysis node, and it has two
+  halves: a muted term stops *matching* new turns, and its existing hits stop
+  *counting*. The hit nodes themselves stay in the graph as append-only
+  lineage — the graph is never mutated — so the count is filtered at the point
+  the number is computed, which makes unmuting symmetric: the term returns to
+  the counts with nothing recomputed. Retracting the hit nodes themselves is a
+  separate, deliberate act.
 - **Hit** — one (turn, signal) pair: a node recording that a turn's user text
   carried a particular signal. Identity is the turn plus that one signal, which
   makes growth **purely additive** — learning a new word adds nodes to the turns
