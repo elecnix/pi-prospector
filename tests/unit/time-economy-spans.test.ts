@@ -405,6 +405,32 @@ describe("measurePhaseSpans", () => {
 		assert.equal(preparation.seconds, 100);
 	});
 
+	it("keeps the last placed commit as the next commit's lower bound", () => {
+		// The first commit carries no timestamp, so it cannot bound the
+		// second commit's preparation. The bound stays at the last *placed*
+		// commit, so a preparation from before the unplaceable one is not
+		// admitted as the second's start.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			// A preparation before the first commit.
+			spanRow({ id: "c0", role: "assistant", timestamp: at(20), tool_calls: JSON.stringify([{ id: "t0", name: "bash", arguments: { command: "npm test" } }]) }),
+			// A commit with no timestamp.
+			spanRow({ id: "c1", role: "assistant", timestamp: null, tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "git commit -m 'one'" } }]) }),
+			// A preparation after it, and the next commit.
+			spanRow({ id: "c2", role: "assistant", timestamp: at(300), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "npm test" } }]) }),
+			spanRow({ id: "r2", role: "toolResult", timestamp: at(320) }),
+			spanRow({ id: "c3", role: "assistant", timestamp: at(400), tool_calls: JSON.stringify([{ id: "t3", name: "bash", arguments: { command: "git commit -m 'two'" } }]) }),
+		];
+		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand, commitSubject: commitSubjectOf });
+		const preparations = spans.filter((s) => s.kind === "commit_preparation");
+		// The second commit's preparation is measured from the run at 300,
+		// and does not reach back across the commit that had no timestamp.
+		const second = preparations.find((s) => s.commit_subject === "two");
+		assert.ok(second);
+		assert.equal(second.start_message_id, "c2");
+		assert.equal(second.seconds, 100);
+	});
+
 	it("does not claim a preparation marker for a commit with no usable timestamp", () => {
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
@@ -542,7 +568,22 @@ describe("measureSkillSpans", () => {
 		assert.notEqual(spans[0]?.end_reason, "pr_created");
 	});
 
-	it("ends a skill span at the end of the turn it ran in, in any turn", () => {
+	it("ends a skill in the harness's opening turn at that turn's end", () => {
+		// A skill the harness invoked before any user message. The opening
+		// turn ends at the first user message, so the span must not stretch
+		// past it.
+		const rows = [
+			spanRow({ id: "s0", role: "assistant", timestamp: at(0), tool_calls: JSON.stringify([{ id: "sk0", name: "Skill", arguments: { skill: "review" } }]) }),
+			spanRow({ id: "r0", role: "toolResult", timestamp: at(30) }),
+			spanRow({ id: "u1", role: "user", timestamp: at(100) }),
+		];
+		const spans = measureSkillSpans(rows);
+		assert.equal(spans.length, 1);
+		assert.equal(spans[0]?.end_reason, "turn_end");
+		assert.equal(spans[0]?.seconds, 30);
+	});
+
+	it("does not end a skill span at the turn after the one it ran in", () => {
 		// The skill is in the second turn, so the turn it belongs to is not
 		// the first: a lookup that keyed the turn's end by anything but the
 		// turn's own ordinal would miss it and stretch the span to the

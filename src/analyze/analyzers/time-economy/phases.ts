@@ -261,6 +261,11 @@ export function measurePhaseSpans(
 	// say "this commit took no preparation time", which is not what was
 	// observed; what was observed is that no marker was seen, and the work
 	// between the two commits is the honest lower bound of the span.
+	//
+	// The lower bound is the previous commit's *place in the stream*, not its
+	// time: a commit whose timestamp cannot be placed still has a place, and
+	// a preparation from before it does not belong to the commit after it.
+	let previousCommitPosition = -1;
 	let previousCommitMs: number | null = null;
 	let previousCommitId: string | null = null;
 	for (const commit of commands.filter((c) => opts.isCommit(c.command))) {
@@ -273,11 +278,12 @@ export function measurePhaseSpans(
 				// work to do before the commit. Only a run that passed marks
 				// the start of the preparation.
 				!isFailed(c.command, c.isError, c.markers) &&
-				// The preparation precedes the commit in the stream. A command
-				// that both stages and commits is the commit itself, and
-				// cannot be its own preparation start.
+				// The preparation precedes the commit in the stream, and comes
+				// after the previous commit. A command that both stages and
+				// commits is the commit itself, and cannot be its own
+				// preparation start.
 				c.position < commit.position &&
-				(previousCommitMs === null || (c.ms !== null && c.ms > previousCommitMs)) &&
+				c.position > previousCommitPosition &&
 				// A commit whose own time cannot be placed cannot bound its
 				// preparation: a marker from a later turn is not a start for
 				// it. The same rule the pull-request end follows — a bound
@@ -301,8 +307,16 @@ export function measurePhaseSpans(
 			end_reason: "commit",
 			commit_subject: opts.commitSubject?.(commit.command) ?? null,
 		});
-		previousCommitMs = commitMs;
-		previousCommitId = commit.messageId;
+		// The previous commit's *place in the stream* is the next commit's
+		// lower bound. A commit whose time cannot be placed still has a
+		// place, so it must not reset that bound: making it unbounded would
+		// admit a preparation from before the previous commit, and the span
+		// would run across a commit it should not cross.
+		previousCommitPosition = commit.position;
+		if (commitMs !== null) {
+			previousCommitMs = commitMs;
+			previousCommitId = commit.messageId;
+		}
 	}
 
 	return spans;
@@ -333,6 +347,17 @@ export function measureSkillSpans(
 	const turnEndMs = new Map<number, number | null>();
 	{
 		let turn = -1;
+		// The harness's opening turn: everything before the first user
+		// message. It gets its own ordinal, -1, and its own end.
+		{
+			let end: number | null = null;
+			for (let j = 0; j < rows.length; j++) {
+				if (rows[j]!.role === "user") break;
+				const ms = parseTime(rows[j]!.timestamp);
+				if (ms !== null) end = ms;
+			}
+			turnEndMs.set(-1, end);
+		}
 		for (let i = 0; i < rows.length; i++) {
 			if (rows[i]!.role !== "user") continue;
 			turn++;
@@ -345,13 +370,21 @@ export function measureSkillSpans(
 			turnEndMs.set(turn, end);
 		}
 	}
-	/** The turn index a message belongs to. */
+	/**
+	 * The turn index a message belongs to.
+	 *
+	 * Work before the first user message is the harness's opening turn, and
+	 * it gets its own ordinal — negative, so it can never collide with a
+	 * user turn's. Indexing it as turn 0 would give it the first user
+	 * turn's end, and a skill that ran in the opening turn would stretch
+	 * past the user message that actually ended it.
+	 */
 	const turnIndexByMessage = new Map<string, number>();
 	{
 		let index = -1;
 		for (const row of rows) {
 			if (row.role === "user") index++;
-			turnIndexByMessage.set(row.id, Math.max(index, 0));
+			turnIndexByMessage.set(row.id, index);
 		}
 	}
 
@@ -365,7 +398,7 @@ export function measureSkillSpans(
 			messageId: inv.messageId,
 			skill,
 			ms: timeById.get(inv.messageId) ?? null,
-			turn: turnIndexByMessage.get(inv.messageId) ?? 0,
+			turn: turnIndexByMessage.get(inv.messageId) ?? -1,
 		});
 	}
 
