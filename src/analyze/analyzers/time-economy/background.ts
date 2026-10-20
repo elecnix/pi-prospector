@@ -1,0 +1,67 @@
+/**
+ * Background task completions, joined to the calls that were backgrounded
+ * (issue #306).
+ *
+ * A call the harness runs in the background — `run_in_background` Bash, a
+ * `Workflow`, an `Agent` — returns at once. The transcript's tool result for
+ * it is an acknowledgement, not the end of the work, so pairing the call with
+ * that result would measure the acknowledgement. The real end is a separate
+ * record: a `queue-operation` the harness writes when the task finishes,
+ * naming the backgrounded call's tool-use id. Sync ingests those into
+ * `background_tasks`; this module joins them back onto the calls.
+ *
+ * The join is by tool-use id — the provider's own id for the call — so it is
+ * exact, never positional. A call with no completion record is **untimed
+ * background**: the work's end was never recorded, and reading it as
+ * near-instant would be the same lie as reading a missing timestamp as zero.
+ */
+
+import type { BackgroundTaskRow } from "../../types.js";
+
+/**
+ * A backgrounded call whose real end is known.
+ */
+export interface BackgroundCall {
+	/** The call's tool-use id — the join key. */
+	toolUseId: string;
+	/** The message that issued the call. */
+	messageId: string;
+	/** The tool's name, as normalised by the parser. */
+	name: string;
+	/** When the call was issued. */
+	startedAt: number;
+	/** When the background task really finished. */
+	completedAt: number;
+	/** How long the work took, in seconds. */
+	seconds: number;
+	/** The harness's verdict, verbatim: completed | failed | killed | … */
+	status: string | null;
+	/** The harness's task id, when it recorded one. */
+	taskId: string | null;
+}
+
+/**
+ * Index a session's background-task completions by the tool-use id they name.
+ *
+ * A tool-use id appears at most once per session — the table's key is
+ * (session, tool_use_id) — so the map is one-to-one. A completion for a call
+ * this session never made is kept in the map but never joins to anything: it
+ * is a record of a call the session does not contain, and the caller's lookup
+ * by id simply will not find it.
+ */
+export function indexBackgroundTasks(rows: readonly BackgroundTaskRow[]): Map<string, BackgroundTaskRow> {
+	const byToolUseId = new Map<string, BackgroundTaskRow>();
+	for (const row of rows) {
+		if (!byToolUseId.has(row.tool_use_id)) byToolUseId.set(row.tool_use_id, row);
+	}
+	return byToolUseId;
+}
+
+/**
+ * The instant a completion record was written, or null when it carries none.
+ * An unparseable timestamp is a missing timestamp, not the epoch.
+ */
+export function completionTime(row: BackgroundTaskRow): number | null {
+	const ms = Date.parse(row.completed_at);
+	return Number.isNaN(ms) ? null : ms;
+}

@@ -87,7 +87,7 @@ import {
 	upsertAnalyzerVersion,
 } from "../db/analysis-queries.js";
 import { prep } from "../db/prepared.js";
-import { getSubagentRunsForSession } from "../db/queries.js";
+import { getSubagentRunsForSession, getBackgroundTasksForSession } from "../db/queries.js";
 import { materializeProposalsFromNode, applyValidationFromNode, applyRestatementFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import type { DecisionCaller } from "./decision-model.js";
@@ -729,6 +729,7 @@ export class AnalyzerFramework {
 			getGlobalDependencyNodes: (depId) => this.globalDependencyNodes(analyzer, depId),
 			getSessionMessages: (sid) => this.loadMessagesCached(cache, sid),
 			getSubagentRuns: (sid) => getSubagentRunsForSession(db, sid),
+			getBackgroundTasks: (sid) => getBackgroundTasksForSession(db, sid),
 			getTurnPairs: (sid) => this.turnPairsCached(cache, sid),
 			llm: this.deps.llm,
 			decide: this.deps.decide,

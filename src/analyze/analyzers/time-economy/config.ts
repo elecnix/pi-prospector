@@ -53,6 +53,27 @@ export const TimeEconomyConfig = Type.Object({
 	timeoutProposalMinCalls: Type.Integer({ minimum: 1 }),
 	/** A self-matching wait loop that ran at least this long earns a proposal. */
 	selfMatchProposalMinSeconds: Type.Number({ minimum: 0 }),
+	/**
+	 * Regex sources matched against a *successful* call's output to find a
+	 * failure the exit code hid. A pipe (`cmd 2>&1 | tail -40`) returns the
+	 * pipe's status, so a failing command reads as a pass; only the output
+	 * shows it failed. Each pattern is a test runner's own way of saying it
+	 * failed, because a generic "error" matches every log line ever printed.
+	 */
+	failureMarkers: Type.Array(Type.String()),
+	/**
+	 * How many calls whose exit code hid a failure earn a proposal. One is a
+	 * slip; a run of them is a habit the agent should be told about.
+	 */
+	hiddenExitProposalMinCalls: Type.Integer({ minimum: 1 }),
+	/**
+	 * A commit whose preparation took at least this long earns a proposal.
+	 */
+	phaseSpanProposalMinSeconds: Type.Number({ minimum: 0 }),
+	/**
+	 * A skill span that took at least this long earns a proposal.
+	 */
+	skillSpanProposalMinSeconds: Type.Number({ minimum: 0 }),
 	/** How many message ids a node keeps as evidence for one finding. */
 	evidenceCap: Type.Integer({ minimum: 1 }),
 });
@@ -79,5 +100,38 @@ export const DEFAULT_TIME_ECONOMY_CONFIG: TimeEconomyConfig = {
 	waitProposalMinSeconds: 600,
 	timeoutProposalMinCalls: 3,
 	selfMatchProposalMinSeconds: 60,
+	failureMarkers: [
+		// A runner's own failure line, at the start of a line: pytest and
+		// unittest print "--- FAIL: test_x (0.01s)".
+		"^--- (FAIL|ERROR):",
+		// go test and jest name the file or suite that failed, at the start of
+		// a line: "FAIL src/thing.test.ts".
+		"^(FAIL|FAILED)\\b",
+		// A summary shape: a count of failures next to the count that passed.
+		// pytest prints "3 failed, 12 passed", jest "1 failed, 2 passed, 3
+		// total". A bare "3 errors" in prose is not a summary and does not
+		// match.
+		"\\b[1-9][0-9]* failed\\b.*\\b(passed|passing|total)\\b",
+		// mocha's own shape, on its own line: "  3 failing".
+		"^\\s*[1-9][0-9]* failing\\b",
+		// A type-checker's diagnostic, which names its own error code.
+		"\\berror TS[0-9]+\\b",
+		// Python's own failure shapes.
+		"\\bAssertionError\\b",
+		"^Traceback \\(most recent call last\\):",
+		// The shell's own errors. They reach the output only when a pipe has
+		// hidden the exit code, which is the very thing this detector looks
+		// for — and only a shell call's output is examined at all. Anchored to
+		// the start of a line, because that is how the shell prints them: a
+		// line that merely quotes "Permission denied" (a source comment, a
+		// document) is not the shell reporting an error.
+		"^.*: command not found$",
+		"^.*: No such file or directory$",
+		"^.*: Permission denied$",
+		"^Segmentation fault\\b",
+	],
+	hiddenExitProposalMinCalls: 3,
+	phaseSpanProposalMinSeconds: 1800,
+	skillSpanProposalMinSeconds: 600,
 	evidenceCap: 10,
 };

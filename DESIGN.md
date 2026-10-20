@@ -520,10 +520,41 @@ estimated.
   process it waits on exit. Syntax only nominates a candidate. The loop counts
   as confirmed when it ran to its own bound or to a harness timeout, since a
   loop that broke out early did see its target exit.
+- **Background call** — a call the host ran away from: it returns at once, so
+  the transcript's tool result for it is an acknowledgement, not the end of the
+  work. The real end is a separate record the host writes when the task
+  finishes, naming the backgrounded call's tool-use id. The two are joined on
+  that id, which is the host's own id for the call, so the join is exact
+  rather than positional. A background call with no completion record is
+  **untimed background**: its duration is unknown, never zero.
+- **Hidden exit code** — a call the host reported as successful whose output
+  says the work failed. A command behind a pipe returns the pipe's status, so
+  `cmd 2>&1 | tail -40` exits 0 when `cmd` fails; only the output shows it.
+  The detector matches a *failure marker* in the output of a call whose result
+  is not an error — a call the host already flagged is the failure analysis's
+  finding, not this one's. Each marker is a test runner's own way of saying it
+  failed; a generic "error" would match every log line ever printed.
+- **Phase span** — the stretch between two markers in the work. **Start to
+  first commit** is everything the agent did before it first committed; a
+  **commit preparation** is from the moment it began assembling a commit (its
+  first full test run, `git add`, a review, or a PR skill, whichever came
+  first after the previous commit) to the commit itself. A session that never
+  committed has a start-to-first-commit span that ends at the session's end,
+  and says so.
+- **Skill span** — the stretch a skill occupied the agent. It opens at the
+  `Skill` call and closes at the next `Skill` call or at the end of the turn,
+  whichever comes first; a pull-request skill closes at its successful
+  `gh pr create` instead, because that is where the skill's work ended.
+  Nested skills do not double-count: a `Skill` call inside an open span closes
+  the outer span rather than opening an overlapping one.
 
-Background work is out of scope for now: a call the harness runs in the
-background returns at once, and the record of its completion is not yet
-ingested, so it times as near-instant.
+Every span reports the same three things, so spans can be compared: minutes,
+turns, and tokens. Tokens are unknown, never zero, when the transcript
+recorded no usage for the window.
+
+Background work is measured, not skipped: a call the host ran in the background
+is joined to the record of its completion, so it times as the work it actually
+was rather than as the acknowledgement it returned.
 
 ### Failure analysis (deterministic, session-level)
 
