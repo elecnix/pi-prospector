@@ -619,14 +619,39 @@ export interface UserReplyActsProperties {
 	attempt: 1 | 2;
 }
 
-/** Parse and validate the structured reply. Returns null if no usable verdict. */
-export function parseReply(raw: Record<string, unknown>, replyText?: string): Omit<UserReplyActsProperties, "user_message_id" | "prior_user_message_id" | "prior_core_output_key" | "pair_index" | "attempt"> | null {
-	if (!Array.isArray(raw["acceptances"]) || !Array.isArray(raw["refusals"]) || !Array.isArray(raw["questions"]) || !Array.isArray(raw["answers"]) || !Array.isArray(raw["commands"]) || !Array.isArray(raw["information_provisions"]) || !Array.isArray(raw["memories"])) {
-		return null;
+const ACT_ARRAYS = ["acceptances", "refusals", "questions", "answers", "commands", "information_provisions", "memories"] as const;
+const VERDICT_FIELDS = [...ACT_ARRAYS, "continuation", "other"] as const;
+
+/**
+ * Parse and validate the structured reply. Returns null if no usable verdict.
+ *
+ * An act array the model left out means it found no act of that kind: models
+ * answering through a tool call routinely drop the empty arrays even when the
+ * schema lists them as required. An array field holding something other than an
+ * array, or an object with none of the verdict's fields, is still unusable.
+ *
+ * A verdict with no act at all (every array empty, `continuation` and `other`
+ * false) is what the prompt asks for when a reply carries no classifiable
+ * content. The first attempt rejects it so the retry gets a second look;
+ * `allowEmpty` lets the final attempt keep it as the answer.
+ */
+export function parseReply(
+	input: Record<string, unknown>,
+	replyText?: string,
+	opts: { allowEmpty?: boolean } = {},
+): Omit<UserReplyActsProperties, "user_message_id" | "prior_user_message_id" | "prior_core_output_key" | "pair_index" | "attempt"> | null {
+	if (!VERDICT_FIELDS.some((k) => k in input)) return null;
+	const raw: Record<string, unknown> = { ...input };
+	for (const k of ACT_ARRAYS) {
+		if (raw[k] === undefined || raw[k] === null) raw[k] = [];
+		else if (!Array.isArray(raw[k])) return null;
 	}
+	// The narrowing above is not visible through the record type, so the loops
+	// below read each array through this accessor.
+	const acts = (k: (typeof ACT_ARRAYS)[number]): unknown[] => raw[k] as unknown[];
 
 	const acceptances: AcceptanceAct[] = [];
-	for (const a of raw["acceptances"]) {
+	for (const a of acts("acceptances")) {
 		if (!a || typeof a !== "object" || Array.isArray(a)) return null;
 		const o = a as Record<string, unknown>;
 		const level = typeof o["level"] === "string" && VALID_LEVELS.has(o["level"]) ? (o["level"] as AcceptanceAct["level"]) : null;
@@ -638,7 +663,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 	}
 
 	const refusals: RefusalAct[] = [];
-	for (const r of raw["refusals"]) {
+	for (const r of acts("refusals")) {
 		if (!r || typeof r !== "object" || Array.isArray(r)) return null;
 		const o = r as Record<string, unknown>;
 		const level = typeof o["level"] === "string" && VALID_LEVELS.has(o["level"]) ? (o["level"] as RefusalAct["level"]) : null;
@@ -650,7 +675,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 	}
 
 	const questions: QuestionAct[] = [];
-	for (const q of raw["questions"]) {
+	for (const q of acts("questions")) {
 		if (!q || typeof q !== "object" || Array.isArray(q)) return null;
 		const o = q as Record<string, unknown>;
 		const purpose = typeof o["purpose"] === "string" && VALID_PURPOSES.has(o["purpose"]) ? (o["purpose"] as QuestionAct["purpose"]) : null;
@@ -662,7 +687,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 	}
 
 	const answers: AnswerAct[] = [];
-	for (const a of raw["answers"]) {
+	for (const a of acts("answers")) {
 		if (!a || typeof a !== "object" || Array.isArray(a)) return null;
 		const o = a as Record<string, unknown>;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
@@ -672,7 +697,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 	}
 
 	const commands: CommandAct[] = [];
-	for (const cmd of raw["commands"]) {
+	for (const cmd of acts("commands")) {
 		if (!cmd || typeof cmd !== "object" || Array.isArray(cmd)) return null;
 		const o = cmd as Record<string, unknown>;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
@@ -682,7 +707,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 	}
 
 	const informationProvisions: InformationProvisionAct[] = [];
-	for (const ip of raw["information_provisions"]) {
+	for (const ip of acts("information_provisions")) {
 		if (!ip || typeof ip !== "object" || Array.isArray(ip)) return null;
 		const o = ip as Record<string, unknown>;
 		const quote = typeof o["quote"] === "string" ? o["quote"].slice(0, 300) : "";
@@ -692,7 +717,7 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 	}
 
 	const memories: MemoryAct[] = [];
-	for (const mem of raw["memories"]) {
+	for (const mem of acts("memories")) {
 		if (!mem || typeof mem !== "object" || Array.isArray(mem)) return null;
 		const o = mem as Record<string, unknown>;
 		const scope = typeof o["scope"] === "string" && VALID_SCOPES.has(o["scope"]) ? (o["scope"] as MemoryAct["scope"]) : null;
@@ -720,9 +745,14 @@ export function parseReply(raw: Record<string, unknown>, replyText?: string): Om
 	// present, the continuation flag is noise — the reply is a command or
 	// question that also happens to shift topic. Override to false.
 	if (continuation && hasActs) continuation = false;
-	// An all-empty verdict (no acts, no continuation, no other) is a model
-	// giving up. Reject so the agentic retry forces a real answer.
-	if (!hasActs && !continuation && !other) return null;
+	// An all-empty verdict (no acts, no continuation, no other) on the first
+	// attempt is rejected so the agentic retry takes a second look. On the final
+	// attempt it is the answer: the prompt prescribes exactly this verdict for a
+	// reply with no classifiable content.
+	// An all-empty result that came from dropping misquoted acts is a failure,
+	// though: the model claimed an act it could not quote.
+	const claimedActs = ACT_ARRAYS.some((k) => acts(k).length > 0);
+	if (!hasActs && !continuation && !other && (!opts.allowEmpty || claimedActs)) return null;
 
 	return {
 		acceptances,
@@ -773,14 +803,14 @@ function extractJsonObject(text: string): Record<string, unknown> | null {
 	return null;
 }
 
-function extractVerdict(structured: unknown, text: string, replyText?: string) {
+function extractVerdict(structured: unknown, text: string, replyText?: string, opts: { allowEmpty?: boolean } = {}) {
 	if (structured && typeof structured === "object" && !Array.isArray(structured)) {
-		const v = parseReply(structured as Record<string, unknown>, replyText);
+		const v = parseReply(structured as Record<string, unknown>, replyText, opts);
 		if (v) return v;
 	}
 	const fromText = extractJsonObject(text);
 	if (fromText) {
-		const v = parseReply(fromText, replyText);
+		const v = parseReply(fromText, replyText, opts);
 		if (v) return v;
 	}
 	return null;
@@ -923,7 +953,9 @@ const analyzer: Analyzer = {
 	version: {
 		analyzerId: "user-reply-acts",
 		major: 1,
-		minor: 0,
+		// 1.1: an omitted act array reads as empty, and the retry may conclude a
+		// reply carries no act instead of failing the unit.
+		minor: 1,
 		implementationKind: "in_process_llm",
 		codeRef: ".prospector/analyzers/user-reply-acts.analyzer.ts",
 	},
@@ -1106,8 +1138,10 @@ const analyzer: Analyzer = {
 			};
 		}
 
-		// Check for a valid classification on the retry.
-		const verdict2 = extractVerdict(r2.structured, r2.text, visibleReplyText);
+		// Check for a valid classification on the retry. This is the last attempt,
+		// so a verdict with no act is accepted: the model has now said twice that
+		// the reply carries no act, which is a conclusion, not a failure.
+		const verdict2 = extractVerdict(r2.structured, r2.text, visibleReplyText, { allowEmpty: true });
 		if (verdict2) {
 			return buildResult(unit, meta, verdict2, 2, { ...r2, costUsd: totalCost, tokensUsed: totalTokens, durationMs: totalDuration, model: modelUsed }, ctx);
 		}

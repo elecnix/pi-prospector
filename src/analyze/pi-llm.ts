@@ -134,7 +134,13 @@ export function toLLMResponse(message: PiAssistantMessage, modelSpec: string, du
 	}
 
 	if (message.stopReason === "error") {
-		throw new Error(`LLM error from ${modelSpec}: ${message.errorMessage ?? "unknown error"}`);
+		const detail = message.errorMessage ?? "unknown error";
+		const err = new Error(`LLM error from ${modelSpec}: ${detail}`);
+		// pi-ai reports a provider's HTTP failure as an error stop reason whose
+		// message starts with the status ("500: {...}"). Carry that status on the
+		// error so the retry layer classifies it by status, not by guessing at text.
+		const status = /^(?:[^:(]*\()?([45]\d\d)\)?:/.exec(detail)?.[1];
+		throw status ? Object.assign(err, { status: Number(status) }) : err;
 	}
 
 	// When responseSchema was used, the provider returns JSON as text content.

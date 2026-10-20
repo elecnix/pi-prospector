@@ -33,6 +33,7 @@
  * converges with no special handling.
  */
 
+import { Type, type Static } from "typebox";
 import { type AsyncDatabase } from "../db/async-db.js";
 import type {
 	Analyzer,
@@ -321,6 +322,7 @@ export class AnalyzerFramework {
 		// Defaults to 1 so behaviour is unchanged unless a caller opts in.
 		let stopDispatching = false;
 		let abandoned = 0;
+		const unitFailures: UnitFailure[] = [];
 		await mapWithConcurrency(todo, this.deps.unitConcurrency ?? 1, async (item) => {
 			// A configuration fault has already been seen: every remaining unit would
 			// fail the same way, so skip without calling the analyzer. Units already
@@ -358,9 +360,11 @@ export class AnalyzerFramework {
 				summary.proposalsCreated += created.proposalsCreated;
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
+				const errorClass = errorClassOf(err);
 				result.status = "partial";
 				summary.errors.push(`${analyzer.def.id}: ${message}`);
-				await this.persistErrorNode(resolved, runId, sessionId, item, message, Date.now() - analyzeStart, cache);
+				unitFailures.push({ anchorRef: item.unit.anchorRef, errorClass, message });
+				await this.persistErrorNode(resolved, runId, sessionId, item, errorClass, message, Date.now() - analyzeStart, cache);
 				// A misconfiguration is not a per-unit failure. Every remaining unit will
 				// fail identically for one root cause that was knowable before the first
 				// one ran, so continuing turns a single typo into an error node per unit —
@@ -384,7 +388,7 @@ export class AnalyzerFramework {
 			nodesSkipped: result.nodesSkipped,
 			costUsd: result.costUsd,
 			tokensUsed: result.tokensUsed,
-			errorMessage: result.status === "partial" ? "one or more units failed" : null,
+			errorMessage: result.status === "partial" ? describeUnitFailures(unitFailures, todo.length) : null,
 		});
 
 		summary.nodesProduced += result.nodesProduced;
@@ -585,6 +589,7 @@ export class AnalyzerFramework {
 		runId: string,
 		sessionId: string,
 		item: ClassifiedUnit,
+		errorClass: string,
 		message: string,
 		durationMs: number | undefined,
 		cache: SessionInputCache,
@@ -598,7 +603,7 @@ export class AnalyzerFramework {
 		// stays `missing` and is recomputed on the next scan that reaches it — error
 		// nodes are an append-only record of failures, not a completion marker.
 		const errorInputKey = shortHash(`error(${item.inputKey}|${message}|${now}|${nodeId})`);
-		const content = { error: message, anchor: item.unit.anchorRef, timestamp: now };
+		const content = { error: message, error_class: errorClass, anchor: item.unit.anchorRef, timestamp: now };
 		try {
 			await insertNode(this.deps.db, {
 				id: nodeId,
@@ -841,6 +846,43 @@ export class AnalyzerFramework {
 		}
 		return out;
 	}
+}
+
+/** One unit that failed in a run, as the run record reports it. */
+const UnitFailure = Type.Object({
+	anchorRef: Type.String(),
+	errorClass: Type.String(),
+	message: Type.String(),
+});
+type UnitFailure = Static<typeof UnitFailure>;
+
+/** How many failed units a run record lists before it summarises the rest. */
+const MAX_LISTED_FAILURES = 5;
+/** Longest message a run record keeps per failed unit. */
+const MAX_FAILURE_MESSAGE = 300;
+
+/**
+ * The class of a thrown value: the constructor name of an `Error`, or the
+ * `typeof` of anything else that was thrown.
+ */
+function errorClassOf(err: unknown): string {
+	if (err instanceof Error) return err.constructor.name || err.name || "Error";
+	return typeof err;
+}
+
+/**
+ * A partial run's `error_message`: how many of the units it attempted failed,
+ * then each failed unit's anchor, error class, and message. The error nodes keep
+ * the full messages; this is the record a reader of `analysis_runs` sees first.
+ */
+function describeUnitFailures(failures: readonly UnitFailure[], attempted: number): string {
+	const listed = failures.slice(0, MAX_LISTED_FAILURES).map((f) => {
+		const message = f.message.length > MAX_FAILURE_MESSAGE ? `${f.message.slice(0, MAX_FAILURE_MESSAGE)}…` : f.message;
+		return `${f.anchorRef}: ${f.errorClass}: ${message}`;
+	});
+	const more = failures.length - listed.length;
+	if (more > 0) listed.push(`and ${more} more`);
+	return `${failures.length} of ${attempted} units failed: ${listed.join("; ")}`;
 }
 
 /**
