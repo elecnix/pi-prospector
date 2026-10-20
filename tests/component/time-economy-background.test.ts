@@ -298,6 +298,57 @@ describe("time-economy: background calls, hidden exit codes, phase and skill spa
 		}
 	});
 
+	it("refuses to analyse a unit that carries no measured snapshot", async () => {
+		// The spans and the background completions are measured in plan(),
+		// because that is where the usage column can be read, and they are
+		// the same inputs the unit's fingerprint covers. Analysing without
+		// them would write a node whose content and identity describe
+		// different inputs, so the analyzer refuses rather than guessing.
+		const { db, close } = await tempDb();
+		const fixture = writeFixture();
+		try {
+			const claudeDir = path.join(fixture.root, ".claude", "projects");
+			await runSync(db, [new ClaudeFileSource(claudeDir)], {});
+
+			const fw = new AnalyzerFramework({
+				db,
+				llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
+				modelTiers: DEFAULT_MODEL_TIERS,
+			});
+			await fw.register(timeEconomyAnalyzer);
+			const planCtx = {
+				sessionId: fixture.sessionId,
+				messages: (await db
+					.prepare("SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, model, cost_usd, stop_reason, error_message FROM messages WHERE session_id = ? ORDER BY rowid ASC")
+					.all(fixture.sessionId)) as never,
+				allNodes: [],
+				ownNodes: [],
+				dependencyNodes: {},
+				getGlobalDependencyNodes: async () => [],
+				getTurnPairs: async () => [],
+				config: {},
+				db,
+			};
+			const units = await timeEconomyAnalyzer.plan(planCtx as never);
+			assert.equal(units.length, 1);
+			// A unit whose snapshot was dropped.
+			const stripped = { ...units[0]!, meta: {} };
+			await assert.rejects(
+				() =>
+					timeEconomyAnalyzer.analyze(stripped, {
+						sessionId: fixture.sessionId,
+						getSessionMessages: async () => [],
+						getBackgroundTasks: async () => [],
+						config: { configJson: {} },
+					} as never),
+				/carries no measured snapshot/,
+			);
+		} finally {
+			await close();
+			fixture.cleanup();
+		}
+	});
+
 	it("re-running the same recipe is idempotent", async () => {
 		const { db, close } = await tempDb();
 		const fixture = writeFixture();

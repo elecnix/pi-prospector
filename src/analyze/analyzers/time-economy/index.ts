@@ -368,13 +368,30 @@ export const timeEconomyAnalyzer: Analyzer = {
 	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = resolveConfig(ctx.config.configJson);
 		const messages = await ctx.getSessionMessages(ctx.sessionId);
-		// The same snapshot the fingerprint was computed over, so the node's
-		// content and its recipe identity always describe the same inputs.
-		const backgroundTasks = (unit.meta?.["backgroundTasks"] as BackgroundTaskRow[] | undefined) ?? (await ctx.getBackgroundTasks(ctx.sessionId));
-		const scan = measureTime(messages, config, backgroundTasks);
 
-		const phaseSpans = (unit.meta?.["phaseSpans"] as PhaseSpan[] | undefined) ?? [];
-		const skillSpans = (unit.meta?.["skillSpans"] as SkillSpan[] | undefined) ?? [];
+		// The spans and the background completions come from the same snapshot
+		// the fingerprint was computed over, so the node's content and its
+		// recipe identity always describe the same inputs. A unit without that
+		// snapshot cannot be analysed honestly: re-reading the completions
+		// here could describe a set the fingerprint never covered, and
+		// defaulting the spans to empty would report a session that has no
+		// spans rather than one whose spans were not measured. The framework
+		// always analyses the units this plan() produced, so this is a
+		// guard against a caller that does not — and it fails loudly rather
+		// than writing a node whose content and identity disagree.
+		const phaseSpans = unit.meta?.["phaseSpans"] as PhaseSpan[] | undefined;
+		const skillSpans = unit.meta?.["skillSpans"] as SkillSpan[] | undefined;
+		const backgroundTasks = unit.meta?.["backgroundTasks"] as BackgroundTaskRow[] | undefined;
+		if (!phaseSpans || !skillSpans || !backgroundTasks) {
+			throw new Error(
+				"time-economy: the unit carries no measured snapshot. The spans and the background " +
+					"completions are measured in plan(), because that is where the usage column can be read, " +
+					"and they are the same inputs the unit's fingerprint covers. Analysing without them " +
+					"would write a node whose content and identity describe different inputs.",
+			);
+		}
+
+		const scan = measureTime(messages, config, backgroundTasks);
 
 		const proposals = buildProposals(scan, config, phaseSpans, skillSpans);
 		const properties: TimeEconomyProperties = {
