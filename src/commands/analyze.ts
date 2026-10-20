@@ -14,6 +14,7 @@ import {
 import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerAll } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
+import { makeDecisionCaller, type DecisionCaller } from "../analyze/decision-model.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
 import { assertModelsResolve } from "../analyze/model-preflight.js";
 import { parseReviseArg, reachLabel } from "../analyze/version.js";
@@ -105,6 +106,13 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 					retryStats,
 				),
 			);
+		// Decision-model requests (#338) share the LLM gate and retry policy: they are
+		// provider calls too, and a 429 from either should slow the run the same way.
+		const baseDecide = makeDecisionCaller({ providers: config.decisionProviders, signal: ctx.signal });
+		const decide: DecisionCaller = (request) =>
+			llmGate(() => callWithRetry(() => withTimeout(baseDecide(request), llmTimeoutMs, () => new Error(
+				`Decision model ${request.model} exceeded ${llmTimeoutMs}ms and was aborted.`,
+			)), retryPolicy, retryStats));
 		// Let one session reach the LLM gate on its own. Without this, fan-out is
 		// bounded by how many sessions happen to be issuing calls at the same moment,
 		// and a single-session run can never exceed concurrency 1. The semaphore above
@@ -112,6 +120,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const framework = new AnalyzerFramework({
 			db,
 			llm,
+			decide,
 			modelTiers,
 			configOverrides: getAnalyzerConfigOverrides(config),
 			unitConcurrency: llmConcurrency,

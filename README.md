@@ -567,6 +567,22 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 
 Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. Any model Pi supports works. The deterministic `turn-pair-core` layer needs no model.
 
+### Decision models
+
+`turn-pair-llm`, `assistant-cognition`, `frustration-lexicon`, and `user-reply-acts` fill fixed-choice forms, so each can send its questions to a decision model such as [Jev](https://docs.typesafe.ai/introduction) instead of a generative model. A decision model answers every question for one input in one request, with a probability for each option, and generates no text. Set `decisionModel` on the analyzer:
+
+```json
+{
+  "analyzers": {
+    "turn-pair-llm": { "decisionModel": "jev/jev-1.13.0" }
+  }
+}
+```
+
+The `jev` provider reads its key from `JEV_API_KEY` or `TYPESAFE_API_KEY`. `decisionProviders` adds other endpoints that serve the System One API, each with a `baseUrl`, the `apiKeyEnv` variables to read, and `inputUsdPerMtok` for the node's cost. The decision model and the question set are part of a node's identity, so switching marks earlier nodes stale for `config`. `assistant-cognition` still calls its `tier` model to copy the verbatim quote for a turn that shows surprise. The generative path stays the default.
+
+`scripts/measure-decision-model.ts` compares the two paths on up to 20 sessions already analysed, read-only, and prints agreement per field, time, and cost.
+
 ### Choosing a provider
 
 LLM analyzers call models through Pi's provider system, so provider setup is Pi's, not pi-prospector's. This holds when you run `prospect` from the shell too: it borrows the model catalogue and credentials from the `pi` on your PATH, so install Pi even if you never start it. You don't need to use Pi as your coding agent.

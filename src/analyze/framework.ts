@@ -89,12 +89,15 @@ import { prep } from "../db/prepared.js";
 import { getSubagentRunsForSession } from "../db/queries.js";
 import { materializeProposalsFromNode, applyValidationFromNode, applyRestatementFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import type { DecisionCaller } from "./decision-model.js";
 import { buildTurnPairs, type TurnPair } from "./analyzers/turn-pair-core/build.js";
 import { scanCwdSmoothness, type CwdSmoothnessCache } from "./analyzers/session-overview/cross-session.js";
 
 export interface FrameworkDeps {
 	db: AsyncDatabase;
 	llm: LLMCaller;
+	/** The decision-model seam (#338). Absent when the run has none. */
+	decide?: DecisionCaller;
 	modelTiers: ModelTierConfig;
 	/**
 	 * Per-analyzer config overrides keyed by analyzer id, merged over each
@@ -727,6 +730,7 @@ export class AnalyzerFramework {
 			getSubagentRuns: (sid) => getSubagentRunsForSession(db, sid),
 			getTurnPairs: (sid) => this.turnPairsCached(cache, sid),
 			llm: this.deps.llm,
+			decide: this.deps.decide,
 			config,
 			prompts,
 			modelTiers: this.deps.modelTiers,

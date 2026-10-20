@@ -49,6 +49,13 @@ export interface ProspectorConfig {
 	 */
 	analyzers?: Record<string, Record<string, unknown>>;
 	/**
+	 * Decision-model endpoints (#338) by provider id, merged over the built-in
+	 * `jev`. An analyzer whose config sets `decisionModel: "<provider>/<model>"`
+	 * posts its questions to `<baseUrl>/v1/systemone` with the key from the first
+	 * set variable in `apiKeyEnv`.
+	 */
+	decisionProviders?: Record<string, { baseUrl: string; apiKeyEnv: string[]; inputUsdPerMtok: number; outputUsdPerMtok?: number }>;
+	/**
 	 * The analyzers a run selects when `--analyzer` names none (#291). Absent
 	 * means every registered analyzer. `disabledAnalyzers` is then removed from
 	 * that set. `--analyzer <id>` still runs any analyzer, and a selected
