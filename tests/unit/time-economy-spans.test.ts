@@ -375,6 +375,37 @@ describe("measureSkillSpans", () => {
 		assert.equal(spans[0]?.end_reason, "turn_end");
 	});
 
+	it("does not end a non-pull-request skill at an unrelated gh pr create", () => {
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "s1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "code-review" } }]) }),
+			// A pull request created later, by other work.
+			spanRow({ id: "c1", role: "assistant", timestamp: at(300), tool_calls: JSON.stringify([{ id: "gh1", name: "bash", arguments: { command: "gh pr create" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(310), tool_results: JSON.stringify([{ toolCallId: "gh1", toolName: "bash", isError: false, textLength: 20 }]) }),
+			spanRow({ id: "u2", role: "user", timestamp: at(500) }),
+		];
+		const spans = measureSkillSpans(rows);
+		assert.equal(spans.length, 1);
+		assert.equal(spans[0]?.skill, "code-review");
+		// The review skill ends at its turn, not at the later PR.
+		assert.equal(spans[0]?.end_reason, "turn_end");
+		assert.equal(spans[0]?.seconds, 300);
+	});
+
+	it("does not claim a gh pr create for a skill with no usable timestamp", () => {
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			// The skill call carries no timestamp, so its span has no lower
+			// bound and cannot claim any creation.
+			spanRow({ id: "s1", role: "assistant", timestamp: null, tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "pr" } }]) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(100), tool_calls: JSON.stringify([{ id: "gh1", name: "bash", arguments: { command: "gh pr create" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(110), tool_results: JSON.stringify([{ toolCallId: "gh1", toolName: "bash", isError: false, textLength: 20 }]) }),
+		];
+		const spans = measureSkillSpans(rows);
+		assert.equal(spans.length, 1);
+		assert.notEqual(spans[0]?.end_reason, "pr_created");
+	});
+
 	it("does not double-count a nested skill", () => {
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),

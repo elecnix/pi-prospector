@@ -261,3 +261,17 @@ const PR_CREATE = /\bgh\s+pr\s+create\b/;
 export function isPrCreateCommand(command: string): boolean {
 	return PR_CREATE.test(command);
 }
+
+/**
+ * Whether a skill is one that opens a pull request.
+ *
+ * Only such a skill ends at its `gh pr create`. A review skill, a lint skill
+ * or any other skill must end at the next skill or at the end of its turn: a
+ * pull request created later, by other work, is not that skill's end, and
+ * stretching the span across the gap would report a duration the skill never
+ * occupied.
+ */
+export function isPullRequestSkill(skill: string): boolean {
+	const name = skill.toLowerCase();
+	return name === "pr" || name === "pull-request" || name === "pull_request" || name === "prs" || name === "open-pr";
+}

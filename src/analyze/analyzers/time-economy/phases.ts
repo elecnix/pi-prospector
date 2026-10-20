@@ -33,6 +33,7 @@ import { parseTime } from "../stale-verification/command-vocabulary.js";
 import {
 	isPreparationCommand,
 	isPrCreateCommand,
+	isPullRequestSkill,
 	roundSeconds as r,
 	skillNameOf,
 	SKILL_TOOL,
@@ -305,7 +306,10 @@ export function measureSkillSpans(
 		const next = skillCalls[i + 1];
 
 		// A skill that creates a pull request ends at its successful creation.
-		const prEnd = findPrCreateEnd(stream, call, next, timeById);
+		// Only a pull-request skill is a candidate: a `code-review` skill
+		// followed later by an unrelated `gh pr create` must end at its turn,
+		// not stretch across the gap to the PR.
+		const prEnd = isPullRequestSkill(call.skill) ? findPrCreateEnd(stream, call, next, timeById) : null;
 
 		let endMs: number | null;
 		let endReason: SkillSpan["end_reason"];
@@ -371,9 +375,11 @@ function findPrCreateEnd(
 		const command = typeof inv.args["command"] === "string" ? (inv.args["command"] as string) : "";
 		if (!isPrCreateCommand(command)) continue;
 		const ms = timeById.get(inv.messageId) ?? null;
-		// Inside the skill's own span.
-		if (call.ms !== null && ms !== null && ms < call.ms) continue;
-		if (next && next.ms !== null && ms !== null && ms > next.ms) continue;
+		// Inside the skill's own span. A bound that cannot be placed excludes
+		// the candidate rather than skipping the check: an unbounded span
+		// cannot claim a creation it is not known to contain.
+		if (call.ms === null || ms === null || ms < call.ms) continue;
+		if (next && (next.ms === null || ms > next.ms)) continue;
 		// A failed creation is a retry, not the end of the skill's work.
 		if (!inv.outcome || inv.outcome.isError) continue;
 		return { messageId: inv.outcome.messageId, ms: timeById.get(inv.outcome.messageId) ?? ms };
