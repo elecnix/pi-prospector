@@ -338,18 +338,37 @@ describe("measurePhaseSpans", () => {
 		assert.equal(preparations[1]?.commit_subject, "two");
 	});
 
-	it("does not start a preparation at a test run that failed", () => {
-		const rows = [
+	/**
+	 * A session whose first test run failed, followed by a passing one and a
+	 * commit. The failed run is described by `firstRun`, so each caller can
+	 * show the failure it is about and the shared shape stays in one place.
+	 */
+	function failedThenPassingRun(firstRun: {
+		command: string;
+		isError: boolean;
+		output?: string;
+	}): SpanRow[] {
+		return [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
-			// A test run the host reported as an error: it left work to do, so
-			// it did not prepare the commit.
-			spanRow({ id: "c1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "npm test" } }]) }),
-			spanRow({ id: "r1", role: "toolResult", timestamp: at(100), tool_results: JSON.stringify([{ toolCallId: "t1", toolName: "bash", isError: true, textLength: 20 }]) }),
-			// The passing run that did prepare it.
+			spanRow({ id: "c1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: firstRun.command } }]) }),
+			spanRow({
+				id: "r1",
+				role: "toolResult",
+				timestamp: at(100),
+				content_text: firstRun.output ?? null,
+				tool_results: JSON.stringify([{ toolCallId: "t1", toolName: "bash", isError: firstRun.isError, textLength: (firstRun.output ?? "").length || 20 }]),
+			}),
+			// The passing run that did prepare the commit.
 			spanRow({ id: "c2", role: "assistant", timestamp: at(200), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "npm test" } }]) }),
 			spanRow({ id: "r2", role: "toolResult", timestamp: at(300) }),
 			spanRow({ id: "c3", role: "assistant", timestamp: at(400), tool_calls: JSON.stringify([{ id: "t3", name: "bash", arguments: { command: "git commit -m 'one'" } }]) }),
 		];
+	}
+
+	it("does not start a preparation at a test run that failed", () => {
+		// The host reported the run as an error: it left work to do, so it did
+		// not prepare the commit.
+		const rows = failedThenPassingRun({ command: "npm test", isError: true });
 		const spans = measurePhaseSpans(rows, {
 			isCommit: isCommitCommand,
 			isPreparation: isPreparationCommand,
@@ -365,16 +384,13 @@ describe("measurePhaseSpans", () => {
 	});
 
 	it("does not start a preparation at a test run whose failure a pipe hid", () => {
-		const rows = [
-			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
-			// The host reports this run as a success; only its output says it
-			// failed.
-			spanRow({ id: "c1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "npm test 2>&1 | tail -40" } }]) }),
-			spanRow({ id: "r1", role: "toolResult", timestamp: at(100), content_text: "--- FAIL: test_x (0.02s)\n1 failed, 12 passed", tool_results: JSON.stringify([{ toolCallId: "t1", toolName: "bash", isError: false, textLength: 40 }]) }),
-			spanRow({ id: "c2", role: "assistant", timestamp: at(200), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "npm test" } }]) }),
-			spanRow({ id: "r2", role: "toolResult", timestamp: at(300) }),
-			spanRow({ id: "c3", role: "assistant", timestamp: at(400), tool_calls: JSON.stringify([{ id: "t3", name: "bash", arguments: { command: "git commit -m 'one'" } }]) }),
-		];
+		// The host reports this run as a success; only its output says it
+		// failed.
+		const rows = failedThenPassingRun({
+			command: "npm test 2>&1 | tail -40",
+			isError: false,
+			output: "--- FAIL: test_x (0.02s)\n1 failed, 12 passed",
+		});
 		const spans = measurePhaseSpans(rows, {
 			isCommit: isCommitCommand,
 			isPreparation: isPreparationCommand,
