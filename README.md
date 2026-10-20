@@ -4,7 +4,7 @@
 
 Incremental session analysis and proposal generation for the [Pi coding agent](https://github.com/earendil-works/pi).
 
-pi-prospector reads your Pi, Claude Code and Codex session transcripts, indexes them into a local SQLite database, and builds an **append-only analysis graph** over them — measuring every turn deterministically and using an LLM only where the signal warrants it. From that graph it surfaces concrete, ranked proposals to improve your prompts, skills, and configuration. It never applies them. You decide what to develop.
+pi-prospector reads your Pi, Claude Code, Codex, OpenCode and Cline session transcripts, indexes them into a local SQLite database, and builds an **append-only analysis graph** over them — measuring every turn deterministically and using an LLM only where the signal warrants it. From that graph it surfaces concrete, ranked proposals to improve your prompts, skills, and configuration. It never applies them. You decide what to develop.
 
 pi-prospector is a Pi **extension**: it adds slash commands and a `prospect` tool to a Pi session. The same commands also run from the shell as `prospect <command>`, without starting Pi (see [Running from the shell](#running-from-the-shell)).
 
@@ -14,6 +14,8 @@ pi-prospector is a Pi **extension**: it adds slash commands and a `prospect` too
 Pi sessions (~/.pi/agent/sessions/)
 Claude sessions (~/.claude/projects/)
 Codex rollouts (~/.codex/sessions/YYYY/MM/DD/)
+OpenCode sessions (~/.local/share/opencode/opencode.db)
+Cline sessions (~/.cline/data/sessions/)
         │
         ▼
 ┌──────────────────────┐
@@ -295,11 +297,11 @@ Loader and discovery: [`src/analyze/loader.ts`](./src/analyze/loader.ts) · opti
 
 ## Commands
 
-### `/prospect-sync [--project NAME] [--source pi|claude|codex]`
+### `/prospect-sync [--project NAME] [--source pi|claude|codex|opencode|cline]`
 
 Index session files into the database. No LLM is called. Fast and cheap.
 
-- Scans `~/.pi/agent/sessions/`, `~/.claude/projects/` and `~/.codex/sessions/` for new or modified `.jsonl` files
+- Scans `~/.pi/agent/sessions/`, `~/.claude/projects/` and `~/.codex/sessions/` for new or modified `.jsonl` files, OpenCode's `opencode.db` for changed sessions, and `~/.cline/data/sessions/` for changed Cline sessions
 - Parses each file line-by-line, starting from the last line previously processed (incremental)
 - Detects sessions that forked from another via the `parentSession` header — shared message trees are stored once, not duplicated
 - Tracks a cursor per session file (`{session_id, last_line, last_modified}`) and re-indexes a file only when its modification time changes
@@ -307,7 +309,7 @@ Index session files into the database. No LLM is called. Fast and cheap.
 Run it as often as you like. It's idempotent and incremental.
 
 - `--project NAME` — scope the sync to one **project** (derived from the session directory name). On a fresh install with hundreds of sessions across many repos, this is the escape hatch that syncs only the project you care about instead of paying for every session on disk.
-- `--source pi|claude|codex` — restrict the sync to one coding harness.
+- `--source pi|claude|codex|opencode|cline` — restrict the sync to one coding harness.
 
 The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.
 
@@ -344,13 +346,15 @@ Built-in sources you can enable without authoring anything:
 | `pi` | always on | Pi agent session `.jsonl` files under `~/.pi/agent/sessions/` |
 | `claude` | always on | Claude Code session `.jsonl` files under `~/.claude/projects/` |
 | `codex` | always on | Codex rollout files under `~/.codex/sessions/YYYY/MM/DD/` |
+| `opencode` | always on | OpenCode sessions in `opencode.db` under `$XDG_DATA_HOME/opencode/` (`~/.local/share/opencode/`) |
+| `cline` | always on | Cline sessions under `~/.cline/data/sessions/<id>/` |
 | `pi-subagent` | `"pi-subagent"` | Nested subagent sessions at `<sessions>/<project>/<parent-uuid>/run-*/session.jsonl` |
 
-The built-in `PiFileSource`, `ClaudeFileSource` and `CodexFileSource` are always active and don't appear in the `sources` array. Every source type gets its own `source` tag on every session and message row, so you can segment stats by source.
+The built-in `PiFileSource`, `ClaudeFileSource`, `CodexFileSource`, `OpenCodeDbSource` and `ClineFileSource` are always active and don't appear in the `sources` array. Every source type gets its own `source` tag on every session and message row, so you can segment stats by source.
 
 Reference implementations: [`src/sync/sources/pi-file.ts`](./src/sync/sources/pi-file.ts) (file-based), [`src/sync/sources/codex-file.ts`](./src/sync/sources/codex-file.ts) (a date-organised tree) and [`src/sync/sources/pi-subagent.ts`](./src/sync/sources/pi-subagent.ts) (nested discovery). The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
 
-### `/prospect-analyze [--revise <reasons>] [--source pi|claude|codex] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
+### `/prospect-analyze [--revise <reasons>] [--source pi|claude|codex|opencode|cline] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
 
 Build the analysis graph over synced sessions and materialise proposals. By default it does the cheapest useful thing: it **fills only missing work**. Nodes that are already current are skipped; nodes that are out of date are left alone unless you ask for them with `--revise`.
 
@@ -380,7 +384,7 @@ This reads the graph and never writes to it: it renders what analysis has alread
 
 Print a summary of the database: sessions indexed, messages and tool results, sessions analysed, proposals by status (`open`/`applied`/`rejected`/`duplicate`), and analysis-graph totals (nodes, edges, runs, and a breakdown of nodes by kind).
 
-### `/prospect-proposals [status] [--source pi|claude|codex] [--session <id>]`
+### `/prospect-proposals [status] [--source pi|claude|codex|opencode|cline] [--session <id>]`
 
 List proposals, optionally filtered by status (`open`, `applied`, `rejected`, `duplicate`), by the coding harness that produced the session (`--source pi`, `--source claude` or `--source codex`), and/or scoped to a single session (`--session <id>`). Each group header shows the harness as `[Pi]`, `[Claude]` or `[Codex]`. Each row shows its status, a score label, target, title, summary, and full id — together with a ready-to-paste `prospect show <id>` hint (proposal ids are time-ordered, so short prefixes can collide; the full id is always unambiguous). If you have decided a proposal, the row also shows your latest **decision** (verdict, disposition, and rationale).
 
@@ -519,7 +523,7 @@ This lets you say things like "show me open proposals" or "sync my sessions and 
 
 ## What gets analyzed
 
-pi-prospector reads **only what is inside Pi, Claude Code and Codex session files**. The sync layer reads no other artifact: not a configuration file, not a skill file, not an instruction file. One analyzer reads instruction files, and only to check whether a proposed rule is already stated: the restatement check reads the harness's global file and the project instruction files the harness loads, and quotes from them appear in its verdict. Claude and Codex sessions are synced and indexed, but the analysis pipeline runs as a Pi extension — you need Pi to run `/prospect-analyze`. A Pi session file contains:
+pi-prospector reads **only what is inside Pi, Claude Code, Codex, OpenCode and Cline session files**. The sync layer reads no other artifact: not a configuration file, not a skill file, not an instruction file. One analyzer reads instruction files, and only to check whether a proposed rule is already stated: the restatement check reads the harness's global file and the project instruction files the harness loads, and quotes from them appear in its verdict. Claude, Codex, OpenCode and Cline sessions are synced and indexed, but the analysis pipeline runs as a Pi extension — you need Pi to run `/prospect-analyze`. A Pi session file contains:
 
 - User messages (what you said)
 - Assistant messages (what the agent said, including thinking)
@@ -538,6 +542,18 @@ Codex has written two shapes of rollout file, and both are on disk. The current 
 The host writes its own context into the transcript as `user` messages: the repository's `AGENTS.md` body, the environment block, the permission instructions. pi-prospector recognises those and leaves them out, so a turn begins where a person actually spoke.
 
 Codex records no per-message dollar cost, so a Codex message's cost stays null rather than reading as zero.
+
+## OpenCode sessions
+
+OpenCode 1.x keeps every session in one SQLite database, `opencode.db`, in its data directory (`$XDG_DATA_HOME/opencode/`, `~/.local/share/opencode/` by default; set `PROSPECTOR_OPENCODE_DATA_DIR` to read another). pi-prospector opens it read-only and reads the `session`, `message` and `part` tables that OpenCode v1.19.3 writes. A session's project comes from the directory it ran in, and a session started as a subtask is attached to the session that started it.
+
+One OpenCode assistant message is one model step: its text, its reasoning, its tool calls and their results are parts of it. pi-prospector writes the step as one assistant row and the results of its tool calls as one tool-result row after it. A step still streaming is read once it settles. Synthetic text OpenCode adds to a prompt is left out, and a compaction request with its summary becomes one compaction entry. OpenCode records a dollar cost per step, and that is the step's billed cost.
+
+## Cline sessions
+
+Cline 4.x keeps each session in a directory of its own under `~/.cline/data/sessions/` (moved by `CLINE_DIR`, `CLINE_DATA_DIR` or `CLINE_SESSION_DATA_DIR`, as Cline itself resolves it; set `PROSPECTOR_CLINE_SESSIONS_DIR` to read another). The conversation is `<id>.messages.json`, which Cline rewrites whole after every agent step, beside a `<id>.json` manifest that records the directory the session ran in and its title. A child agent's conversation sits in the same directory, named after the agent, and is attached to the session that spawned it.
+
+Cline's tool names are mapped onto the names the rest of the index uses, so `run_commands` reads as a `bash` call and `editor` as an `edit`. Text the runtime injects for the model, such as hook output, is kept but never starts a turn, and the runtime's notice of a failed run is recorded as that turn's failure. The pre-4.0 `tasks/<id>/` store is not read.
 
 ## Fork deduplication
 

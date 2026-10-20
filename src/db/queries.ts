@@ -115,7 +115,7 @@ export interface SessionLabel {
 	project: string;
 	cwd: string;
 	message_count: number;
-	/** The coding harness this session came from: "pi" | "claude" | "codex". */
+	/** The coding harness this session came from: "pi" | "claude" | "codex" | "opencode" | "cline". */
 	source: string;
 	/** Human-readable session name, or null when the transcript recorded none. */
 	name: string | null;
@@ -127,7 +127,7 @@ export async function getSessionLabels(db: AsyncDatabase): Promise<SessionLabel[
 }
 
 export const SessionScope = Type.Object({
-	/** The coding harness: "pi" | "claude" | "codex"; anything else is unknown. */
+	/** The coding harness: "pi" | "claude" | "codex" | "opencode" | "cline"; anything else is unknown. */
 	source: Type.String(),
 	cwd: Type.String(),
 });

@@ -57,7 +57,7 @@ export type LeakReportEntry = Static<typeof LeakReportEntry>;
 /** Findings grouped by the session that contains them. */
 export const LeakSessionGroup = Type.Object({
 	session_id: Type.String(),
-	/** Harness source of the session (`pi` | `claude`), when the session row is present. */
+	/** Harness source of the session (`pi` | `claude` | `codex` | `opencode` | `cline`), when the session row is present. */
 	source: Type.Optional(Type.String()),
 	entries: Type.Array(LeakReportEntry),
 });
