@@ -533,7 +533,7 @@ The unit of analysis is a **turn** — one round of work, segmented at the same 
 
 Codex writes one rollout file per session under `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`, and organises them by date rather than by project. Each session records the directory it ran in, and that directory is where pi-prospector reads the session's project from.
 
-Codex has written two shapes of rollout file, and both are on disk. The current one records a tool call beside the result it answers, and stamps every item with the turn it belongs to. The older one records the conversation in `item_completed` events, and never records a tool *call* — only the result. pi-prospector reads each format from its own stream, so a message is indexed once rather than twice, and the older format's tool results are indexed as results with no recorded caller.
+Codex has written two shapes of rollout file, and both are on disk. The current one records a tool call beside the result it answers, and stamps every item with the turn it belongs to. The older one records the conversation in `item_completed` events, and never records a tool *call* — only the result. pi-prospector reads each format from its own stream, so a message is indexed once rather than twice. A result with no recorded caller is not a tool call, so the older format's tool results are left out rather than attributed to a tool the session never named.
 
 The host writes its own context into the transcript as `user` messages: the repository's `AGENTS.md` body, the environment block, the permission instructions. pi-prospector recognises those and leaves them out, so a turn begins where a person actually spoke.
 

@@ -621,7 +621,14 @@ export class CodexFileSource implements SessionSourceAdapter {
       if (!call && !command) continue;
       state.pendingResults.delete(callId);
 
-      const toolName = call ?? "bash";
+      // The tool's name, when the host recorded the call. A result whose
+      // call was never recorded keeps an empty name: a real thing the tool
+      // did, with no recorded caller. Naming it "bash" would invent a
+      // command the session never ran, and every downstream analyzer reads
+      // that field as the tool that produced the result.
+      //
+      // A command event names a shell command, so it names the tool.
+      const toolName = call ?? (command ? codexToolName("exec_command") : "");
       const text = result.text || command?.output || "";
       // Codex does not say whether a result failed. A shell result
       // carries its exit code in the text, and the host's own command

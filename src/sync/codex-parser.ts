@@ -258,8 +258,9 @@ export function parseCodexLine(
 		case "response_item":
 			// In the older format the response items are a sample of the
 			// conversation the events already carry, so they are not read as
-			// messages there. The tool calls and their results are read in
-			// both formats: the older format records the results.
+			// messages there. Its tool results are read too, but the format
+			// records no call for them, so they never reach a message row:
+			// a result with no recorded caller is not a tool call.
 			if (format === "older" && (payload["type"] === "message" || payload["type"] === "reasoning")) {
 				return null;
 			}
@@ -311,7 +312,7 @@ function parseResponseItem(
 		case "message":
 			return parseMessage(payload, timestamp, turnId, sessionId);
 		case "reasoning":
-			return parseReasoning(payload, timestamp, turnId);
+			return parseReasoning(payload, timestamp, turnId, sessionId);
 		case "function_call":
 		case "custom_tool_call":
 			return parseToolCall(payload, timestamp, turnId, kind === "custom_tool_call");
@@ -487,6 +488,7 @@ function parseReasoning(
 	payload: Record<string, unknown>,
 	timestamp: string | null,
 	turnId: string | null,
+	sessionId: string | null,
 ): CodexLine | null {
 	const content = contentText(payload["content"], "\n");
 	const summary = contentText(payload["summary"], "\n");
@@ -494,7 +496,7 @@ function parseReasoning(
 	if (thinking === null) return null;
 	return {
 		kind: "message",
-		entry: { id: idOf(payload), role: "assistant", text: null, thinking, timestamp, turnId },
+		entry: { id: scopedId(idOf(payload), sessionId), role: "assistant", text: null, thinking, timestamp, turnId },
 	};
 }
 

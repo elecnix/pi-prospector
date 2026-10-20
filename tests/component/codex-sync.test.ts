@@ -446,9 +446,44 @@ describe("Codex session sync", () => {
 			const results = (await db
 				.prepare("SELECT tool_results FROM messages WHERE role = 'toolResult'")
 				.all()) as Array<{ tool_results: string }>;
+			// The command event names the command, so the result is a shell
+			// result.
 			assert.deepEqual(JSON.parse(results[0]!.tool_results), [
 				{ toolCallId: "cmd-1", toolName: "bash", isError: false, textLength: 15 },
 			]);
+		} finally {
+			cleanup();
+			await close();
+		}
+	});
+
+	it("leaves out a tool result whose call was never recorded", async () => {
+		// The older rollout format records a tool result without the call that
+		// produced it. A result with no recorded caller is not a tool call, so
+		// it is left out rather than attributed to a tool the session never
+		// named.
+		const { db, close } = await tempDb();
+		const label = "codex-orphan";
+		const turn = "turn-old";
+		const { root, cleanup } = codexRoot([
+			{
+				label,
+				lines: [
+					codexMetaLine(label),
+					codexTaskStartedLine(turn),
+					codexTurnContextLine(turn, "gpt-5-codex"),
+					codexItemCompletedLine(turn, "UserMessage", "do the thing", "item-1"),
+					// A result with no call and no command event behind it.
+					codexFunctionCallOutputLine("call-orphan", "some output\n"),
+				],
+			},
+		]);
+		try {
+			await runSync(db, [new CodexFileSource(root)]);
+			const results = (await db
+				.prepare("SELECT COUNT(*) as c FROM messages WHERE role = 'toolResult'")
+				.get()) as { c: number };
+			assert.equal(results.c, 0, "a result with no recorded caller is left out");
 		} finally {
 			cleanup();
 			await close();
