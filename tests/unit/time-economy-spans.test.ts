@@ -388,6 +388,23 @@ describe("measurePhaseSpans", () => {
 		assert.equal(preparation.seconds, 200);
 	});
 
+	it("does not start a preparation at a commit that stages and commits at once", () => {
+		// `git add -A && git commit` is both a preparation command and the
+		// commit, so it cannot be its own preparation start.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(100), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "git add -A && git commit -m 'one'" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(110) }),
+		];
+		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand, commitSubject: commitSubjectOf });
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		// No separate preparation was seen, so the span starts at the
+		// session's start rather than reporting zero.
+		assert.equal(preparation.start_message_id, "u1");
+		assert.equal(preparation.seconds, 100);
+	});
+
 	it("does not claim a preparation marker for a commit with no usable timestamp", () => {
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
@@ -504,7 +521,9 @@ describe("measureSkillSpans", () => {
 		const spans = measureSkillSpans(rows);
 		assert.equal(spans.length, 1);
 		assert.equal(spans[0]?.skill, "code-review");
-		// The review skill ends at its turn, not at the later PR.
+		// The review skill ends at its turn, not at the later PR. The turn
+		// runs to the last message before the next user turn — the PR's
+		// result at 310 — so the span is 300 seconds.
 		assert.equal(spans[0]?.end_reason, "turn_end");
 		assert.equal(spans[0]?.seconds, 300);
 	});

@@ -193,13 +193,17 @@ export function measurePhaseSpans(
 
 	// The commands the session ran, in order, with the instant each started,
 	// whether the host reported it as an error, and the failure markers its
-	// output carried.
+	// output carried. The position is the command's own place in the stream,
+	// which is what separates a preparation from the commit it precedes: a
+	// combined \`git add -A && git commit\` is both a preparation command and
+	// the commit, and it cannot be its own preparation start.
 	const commands: Array<{
 		messageId: string;
 		command: string;
 		ms: number | null;
 		isError: boolean;
 		markers: readonly string[];
+		position: number;
 	}> = [];
 	for (const inv of stream.invocations) {
 		const command = typeof inv.args["command"] === "string" ? (inv.args["command"] as string) : "";
@@ -212,6 +216,7 @@ export function measurePhaseSpans(
 			ms: timeById.get(inv.messageId) ?? null,
 			isError: inv.outcome?.isError ?? false,
 			markers,
+			position: inv.ordinal,
 		});
 	}
 
@@ -268,6 +273,10 @@ export function measurePhaseSpans(
 				// work to do before the commit. Only a run that passed marks
 				// the start of the preparation.
 				!isFailed(c.command, c.isError, c.markers) &&
+				// The preparation precedes the commit in the stream. A command
+				// that both stages and commits is the commit itself, and
+				// cannot be its own preparation start.
+				c.position < commit.position &&
 				(previousCommitMs === null || (c.ms !== null && c.ms > previousCommitMs)) &&
 				// A commit whose own time cannot be placed cannot bound its
 				// preparation: a marker from a later turn is not a start for
