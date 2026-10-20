@@ -55,6 +55,11 @@ const sessions = (db
 	.all(analyzerId, sessionLimit) as Array<{ id: string }>).map((r) => r.id);
 
 const nodesOf = db.prepare("SELECT * FROM current_nodes WHERE session_id = ? AND analyzer_id = ?");
+// Matched by source set alone, on purpose. A turn or reply unit's source set
+// holds per-session ids (message ids, or output keys of nodes anchored to one
+// session's messages), so two sessions never share one. A lexicon term's source
+// set is the term itself, and its single corpus-wide verdict is the one to
+// compare; `seen` keeps that term from being sent once per session.
 const generativeBySource = db.prepare(
 	`SELECT * FROM current_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND node_kind = 'classification'
 	 AND model_used IS NOT NULL AND model_used NOT LIKE 'jev%' ORDER BY created_at DESC LIMIT 1`,
