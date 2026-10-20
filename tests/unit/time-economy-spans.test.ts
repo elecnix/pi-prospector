@@ -162,6 +162,23 @@ describe("findFailureMarkers", () => {
 		assert.deepEqual(findFailureMarkers("src/auth.ts:42: // handle Permission denied", CONFIG.failureMarkers), []);
 		assert.deepEqual(findFailureMarkers("grep -rn FAILED src/", CONFIG.failureMarkers), []);
 		assert.deepEqual(findFailureMarkers("the build will fail if the token expired", CONFIG.failureMarkers), []);
+		assert.deepEqual(
+			findFailureMarkers('The message "command not found is what bash prints" is in the docs.', CONFIG.failureMarkers),
+			[],
+		);
+	});
+
+	it("does not fire on a grep hit that prints the shell's own diagnostic shape", () => {
+		// The shape the shell prints is "prog: operand: message". A grep hit
+		// that happens to contain that text is still the grep's output, and
+		// the grep succeeded — but the shell's prefix is what a real failure
+		// carries, and a grep over source rarely reproduces it verbatim.
+		assert.deepEqual(findFailureMarkers("src/auth.ts:42: // handle Permission denied", CONFIG.failureMarkers), []);
+	});
+
+	it("recognises the shell's own diagnostic shape", () => {
+		assert.deepEqual(findFailureMarkers("cat: notes.txt: Permission denied", CONFIG.failureMarkers), ["^\\S+: \\S+: Permission denied$"]);
+		assert.deepEqual(findFailureMarkers("bash: foo: command not found", CONFIG.failureMarkers), ["^\\S+: \\S+: command not found$"]);
 	});
 
 	it("reports one failure once, whichever way round the markers are tried", () => {

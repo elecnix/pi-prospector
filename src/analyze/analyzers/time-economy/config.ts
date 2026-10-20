@@ -54,11 +54,22 @@ export const TimeEconomyConfig = Type.Object({
 	/** A self-matching wait loop that ran at least this long earns a proposal. */
 	selfMatchProposalMinSeconds: Type.Number({ minimum: 0 }),
 	/**
-	 * Regex sources matched against a *successful* call's output to find a
-	 * failure the exit code hid. A pipe (`cmd 2>&1 | tail -40`) returns the
+	 * Regex sources matched against a *successful* shell call's output to find
+	 * a failure the exit code hid. A pipe (`cmd 2>&1 | tail -40`) returns the
 	 * pipe's status, so a failing command reads as a pass; only the output
-	 * shows it failed. Each pattern is a test runner's own way of saying it
-	 * failed, because a generic "error" matches every log line ever printed.
+	 * shows it failed.
+	 *
+	 * Each pattern is either a test runner's own way of saying it failed, or
+	 * the shell's own diagnostic shape. A generic "error" would match every
+	 * log line ever printed, and a detector that fires on ordinary output is
+	 * worse than no detector — so a pattern is anchored to the start of a line
+	 * and to a shape the runner or the shell actually prints. A grep hit that
+	 * happens to contain the phrase, and a document that quotes it, do not
+	 * match.
+	 *
+	 * The patterns are compiled with the `m` flag, so `^` means the start of
+	 * a line: a runner prints its failure line in the middle of a long
+	 * output.
 	 */
 	failureMarkers: Type.Array(Type.String()),
 	/**
@@ -121,13 +132,18 @@ export const DEFAULT_TIME_ECONOMY_CONFIG: TimeEconomyConfig = {
 		"^Traceback \\(most recent call last\\):",
 		// The shell's own errors. They reach the output only when a pipe has
 		// hidden the exit code, which is the very thing this detector looks
-		// for — and only a shell call's output is examined at all. Anchored to
-		// the start of a line, because that is how the shell prints them: a
-		// line that merely quotes "Permission denied" (a source comment, a
-		// document) is not the shell reporting an error.
-		"^.*: command not found$",
-		"^.*: No such file or directory$",
-		"^.*: Permission denied$",
+		// for — and only a shell call's output is examined at all.
+		//
+		// Anchored to the shell's own diagnostic shape: a program name, a
+		// colon, the operand, a colon, and the message — "cat: notes.txt:
+		// Permission denied". A grep hit that happens to print the phrase, or
+		// a file that quotes it, has no such prefix, so it does not match.
+		// The program's own name may be a path, so it is matched loosely.
+		"^\\S+: \\S+: command not found$",
+		"^\\S+: \\S+: No such file or directory$",
+		"^\\S+: \\S+: Permission denied$",
+		"^\\S+: command not found$",
+		"^\\S+: Permission denied$",
 		"^Segmentation fault\\b",
 	],
 	hiddenExitProposalMinCalls: 3,

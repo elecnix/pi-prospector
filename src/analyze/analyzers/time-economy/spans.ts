@@ -42,30 +42,6 @@ export const HiddenExitCodeSchema = Type.Object({
 });
 export type HiddenExitCode = Static<typeof HiddenExitCodeSchema>;
 
-/**
- * The failure markers a detector looks for in a successful call's output.
- *
- * Deliberately specific: each pattern is a *test runner's own* way of saying
- * it failed. A generic "error" would match every log line ever printed, and a
- * detector that fires on ordinary output is worse than no detector.
- */
-export const FAILURE_MARKERS: readonly string[] = [
-	"--- FAIL:",
-	"--- ERROR:",
-	"\\bFAIL\\b",
-	"\\bFAILED\\b",
-	"\\b[1-9][0-9]* failing\\b",
-	"\\b[1-9][0-9]* failed\\b",
-	"\\b[1-9][0-9]* error(s)?\\b",
-	"\\berror TS[0-9]+\\b",
-	"\\bAssertionError\\b",
-	"\\bTraceback \\(most recent call last\\)",
-	"\\bSegmentation fault\\b",
-	"\\bcommand not found\\b",
-	"\\bNo such file or directory\\b",
-	"\\bPermission denied\\b",
-];
-
 /** A compiled marker, kept with the source it came from so a finding can name it. */
 interface CompiledMarker {
 	source: string;
