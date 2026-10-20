@@ -19,6 +19,21 @@ export interface MeasuredAnalyzer {
 	distributions?: (pairs: Array<[Record<string, unknown>, Record<string, unknown>]>) => Record<string, unknown>;
 	/** Whether the decision path may call the generative model (quote extraction). */
 	allowsLLM?: boolean;
+	/** Generative label → decision label → count, per categorical field. */
+	confusion?: (pairs: Array<[Record<string, unknown>, Record<string, unknown>]>) => Record<string, Record<string, Record<string, number>>>;
+}
+
+function matrix(pairs: Array<[Record<string, unknown>, Record<string, unknown>]>, names: string[]) {
+	const out: Record<string, Record<string, Record<string, number>>> = {};
+	for (const name of names) {
+		const m: Record<string, Record<string, number>> = {};
+		for (const [g, d] of pairs) {
+			const row = (m[String(g[name])] ??= {});
+			row[String(d[name])] = (row[String(d[name])] ?? 0) + 1;
+		}
+		out[name] = m;
+	}
+	return out;
 }
 
 /**
@@ -100,6 +115,25 @@ export const MEASURED_ANALYZERS: Record<string, MeasuredAnalyzer> = {
 			is_genuine_correction: counts(pairs, "is_genuine_correction"),
 			severity: counts(pairs, "severity"),
 		}),
+		confusion: (pairs) => matrix(pairs, ["sentiment", "friction_type", "is_genuine_correction", "severity"]),
+	},
+	"frustration-lexicon": {
+		load: async () => (await import("../src/analyze/analyzers/frustration-lexicon/index.js")).frustrationLexiconAnalyzer,
+		fields: [
+			same("polarity"),
+			same("category"),
+			same("language"),
+			// What turn-frustration actually uses: a non-neutral verdict at or above minConfidence (0.5).
+			{
+				name: "usable_signal",
+				equal: (g, d) => {
+					const usable = (v: Record<string, unknown>) => v["polarity"] !== "neutral" && Number(v["confidence"]) >= 0.5 ? String(v["polarity"]) : "none";
+					return usable(g) === usable(d);
+				},
+			},
+		],
+		distributions: (pairs) => ({ polarity: counts(pairs, "polarity"), category: counts(pairs, "category") }),
+		confusion: (pairs) => matrix(pairs, ["polarity"]),
 	},
 	"assistant-cognition": {
 		load: async () => (await import("../src/analyze/analyzers/assistant-cognition/index.js")).assistantCognitionAnalyzer,

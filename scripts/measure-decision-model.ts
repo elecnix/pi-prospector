@@ -181,6 +181,9 @@ console.log(
 					{ rate: a.total ? +(a.agree / a.total).toFixed(3) : null, n: a.total, ...(a.near !== undefined ? { within_one_level: +(a.near / a.total).toFixed(3) } : {}) },
 				]),
 			),
+			// Rows: the generative label; columns: the decision label. Rare classes are
+			// where agreement matters, and an overall rate hides them.
+			confusion: measured.confusion?.(ok.map((r) => [JSON.parse(r.generative.content_json) as Record<string, unknown>, r.result.contentJson])),
 			distributions: measured.distributions?.(ok.map((r) => [JSON.parse(r.generative.content_json) as Record<string, unknown>, r.result.contentJson])),
 		},
 		null,

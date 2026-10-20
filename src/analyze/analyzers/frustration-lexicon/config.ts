@@ -44,6 +44,11 @@ export const FrustrationLexiconConfig = Type.Object({
 		Type.Literal("medium"),
 		Type.Literal("high"),
 	]),
+	/**
+	 * A decision model (`provider/model`, e.g. `jev/jev-1.13.0`) that judges the
+	 * term as three Choices in one request (#338). Absent by default.
+	 */
+	decisionModel: Type.Optional(Type.String()),
 });
 export type FrustrationLexiconConfig = Static<typeof FrustrationLexiconConfig>;
 
