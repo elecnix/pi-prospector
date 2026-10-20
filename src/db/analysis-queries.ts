@@ -25,7 +25,7 @@ import type {
 import { computeConfigHash, uuidv7 } from "../analyze/input-hash.js";
 import { versionIdOf } from "../analyze/version.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
-import { NOT_REVISED_AS_OF, NOT_MUTED_AS_OF } from "./current-generation.js";
+import { NOT_REVISED_AS_OF, NOT_MUTED_AS_OF, NOT_MUTED_LIVE } from "./current-generation.js";
 
 // ───────────────────────── analyzer registry ─────────────────────────
 
@@ -778,9 +778,19 @@ export async function getAnalysisStats(db: AsyncDatabase, asOf?: string): Promis
 	};
 
 	const nodes = await count(`SELECT COUNT(*) AS c FROM ${current.from}`, current.params);
+	// The live count excludes the nodes an active mute silences, exactly as the
+	// current-generation count does (#325). Otherwise a muted node would be
+	// counted as a *superseded generation* — a node some live node revises —
+	// which it is not: nothing revised it, the operator silenced it. The
+	// difference is the number of superseded generations, and it must be
+	// computed between two populations that agree on what "current" means.
 	const liveNodes = asOf
-		? await count("SELECT COUNT(*) AS c FROM analysis_nodes WHERE created_at <= ? AND (retracted_at IS NULL OR retracted_at > ?)", [asOf, asOf])
-		: await count("SELECT COUNT(*) AS c FROM live_nodes", []);
+		? await count(
+				`SELECT COUNT(*) AS c FROM analysis_nodes n
+				 WHERE n.created_at <= ? AND (n.retracted_at IS NULL OR n.retracted_at > ?) AND ${NOT_MUTED_AS_OF}`,
+				[asOf, asOf, asOf, asOf],
+			)
+		: await count(`SELECT COUNT(*) AS c FROM live_nodes n WHERE ${NOT_MUTED_LIVE}`, []);
 	const edges = await count(`SELECT COUNT(*) AS c FROM analysis_edges e WHERE e.from_node_id IN (SELECT n.id FROM ${current.from})`, current.params);
 	const runs = await count("SELECT COUNT(*) AS c FROM analysis_runs", []);
 	return {

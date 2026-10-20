@@ -31,7 +31,7 @@ import {
 	TURN_FRUSTRATION_DEF,
 	type TurnFrustrationProperties,
 } from "../../src/analyze/analyzers/turn-frustration/index.js";
-import { getNodesByAnalyzer, getEdgesFrom, listAnalysisNodes, countAnalysisNodes } from "../../src/db/analysis-queries.js";
+import { getNodesByAnalyzer, getEdgesFrom, listAnalysisNodes, countAnalysisNodes, getAnalysisStats } from "../../src/db/analysis-queries.js";
 import {
 	muteTerm,
 	unmuteTerm,
@@ -353,6 +353,34 @@ describe("a muted term's existing hits (#325)", () => {
 			await unmuteTerm(db, "wrong");
 			assert.equal(await countAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id }), 2);
 			assert.equal((await getMutedNodeIds(db)).size, 0, "no node is muted any more");
+		} finally {
+			await close();
+		}
+	});
+
+	it("does not report a muted node as a superseded generation", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			const before = await getAnalysisStats(db);
+			// The one `turn-frustration` node is current; the other three are the
+			// lexicon chain's, which the mute does not touch.
+			const beforeTf = before.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0;
+			assert.equal(beforeTf, 1, "one current turn-frustration node");
+			assert.equal(before.supersededNodes, 0, "nothing supersedes anything");
+
+			// The mute silences the hit. Nothing *revises* it — the operator said
+			// it does not count — so it must not be reported as a superseded
+			// generation either: the two populations the difference is computed
+			// between have to agree on what "current" means.
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			const after = await getAnalysisStats(db);
+			assert.equal(after.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0, 0, "the muted hit is not a current node");
+			assert.equal(after.supersededNodes, 0, "and it is not a superseded generation either");
 		} finally {
 			await close();
 		}
