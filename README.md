@@ -129,13 +129,17 @@ flowchart TD
 
 ### turn-pair-core — per-turn friction metrics (deterministic)
 
-Scores every user→assistant **turn pair**: did the user correct the agent, did tools fail, was the reply empty, was tool output wasted? It also extracts a compact **tool-action trace** — each call's name, truncated arguments, and the first line of any failed result — which later analyzers rely on to blame the command actually at fault. No model; high-scoring pairs are flagged *high-signal*.
+Scores every user→assistant **turn pair**: did the user correct the agent, did the user dispute something the agent *said* (a **rebuttal**), did tools fail, was the reply empty, was tool output wasted? It also extracts a compact **tool-action trace** — each call's name, truncated arguments, and the first line of any failed result — which later analyzers rely on to blame the command actually at fault. No model; high-scoring pairs are flagged *high-signal*.
 
-Source: [`turn-pair-core/index.ts`](./src/analyze/analyzers/turn-pair-core/index.ts) · correction/repetition patterns in [`patterns.ts`](./src/analyze/analyzers/turn-pair-core/patterns.ts) · turn assembly + trace extraction in [`build.ts`](./src/analyze/analyzers/turn-pair-core/build.ts) · weights/thresholds in [`config.ts`](./src/analyze/analyzers/turn-pair-core/config.ts).
+The rebuttal candidate is a *candidate*, not a finding: the wording is matched deterministically and the model layer confirms or rejects it. A user who merely gives an instruction ("I told you to use X") is a **correction**, never a rebuttal — the two are distinguished on purpose, and the correction detection itself is untouched.
+
+Source: [`turn-pair-core/index.ts`](./src/analyze/analyzers/turn-pair-core/index.ts) · correction/repetition patterns in [`patterns.ts`](./src/analyze/analyzers/turn-pair-core/patterns.ts) · rebuttal/apology matchers in [`speech-acts.ts`](./src/analyze/speech-acts.ts) · turn assembly + trace extraction in [`build.ts`](./src/analyze/analyzers/turn-pair-core/build.ts) · weights/thresholds in [`config.ts`](./src/analyze/analyzers/turn-pair-core/config.ts).
 
 ### turn-pair-llm — per-turn classification (cheap LLM)
 
-For *only* the high-signal pairs, a cheap model labels the friction: sentiment, friction type (`wrong_approach`, `missed_instruction`, `tool_misuse`, `repetition`, …), whether it is a genuine correction, and a severity. The prompt includes the turn's **actual tool calls and error heads** (from turn-pair-core's trace), so the model attributes friction to the command that failed rather than paraphrasing your wording. A length-aware cap bounds how many pairs are enriched per session.
+For *only* the high-signal pairs, a cheap model labels the friction: sentiment, friction type (`wrong_approach`, `missed_instruction`, `tool_misuse`, `repetition`, `rebuttal`, …), whether it is a genuine correction, and a severity. The prompt includes the turn's **actual tool calls and error heads** (from turn-pair-core's trace), so the model attributes friction to the command that failed rather than paraphrasing your wording. A length-aware cap bounds how many pairs are enriched per session.
+
+The `rebuttal` type is the one the deterministic layer cannot settle on its own: a turn whose wording disputes a claim the assistant stated is offered to the model as a candidate, and the model decides whether the text really disputes a stated fact.
 
 Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.ts) · classifier prompt + evidence formatting in [`prompt.ts`](./src/analyze/analyzers/turn-pair-llm/prompt.ts) · tier + enrichment cap in [`config.ts`](./src/analyze/analyzers/turn-pair-llm/config.ts).
 

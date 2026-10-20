@@ -269,10 +269,22 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 
 	// Parse assistant-cognition classification nodes; map user_message_id → props
 	// so a turn's cognitive state lands on its pair line, exactly as enrichment does.
+	//
+	// A node written before the apology signal existed carries no `apology` array,
+	// and lineage keeps such a node reachable beside its revision. Every array is
+	// therefore read through a normaliser that treats a missing or malformed
+	// array as empty — an absent signal is "not reported", never an error.
 	const cognitionByUser = new Map<string, AssistantCognitionProperties>();
 	for (const node of input.cognitionNodes ?? []) {
 		const props = safeParse<AssistantCognitionProperties>(node.content_json);
-		if (props && props.user_message_id) cognitionByUser.set(props.user_message_id, props);
+		if (!props?.user_message_id) continue;
+		cognitionByUser.set(props.user_message_id, {
+			...props,
+			confusion: props.confusion ?? [],
+			indecision: props.indecision ?? [],
+			surprise: props.surprise ?? [],
+			apology: props.apology ?? [],
+		});
 	}
 
 	// Parse the plan-compliance metric node (issue #121): one bounded line telling
@@ -291,16 +303,17 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	// Build per-turn assistant-cognition lines. Only turns carrying at least one
 	// non-empty signal array get a line — an abstention (all arrays empty) is stored
 	// analysis but nothing to show. Each line names the class(es), their grade(s),
-	// and — for surprise only — the truncated verbatim quote that grounds it. The
-	// section is capped per session like the high-signal enrichment ceiling: pairs
-	// are ordered by index, so the earliest signalling turns win deterministically.
+	// and — for surprise and apology — the truncated verbatim quote that grounds
+	// them. The section is capped per session like the high-signal enrichment
+	// ceiling: pairs are ordered by index, so the earliest signalling turns win
+	// deterministically.
 	let cognitionTurnCount = 0;
 	const cognitionLines: string[] = [];
 	const cognitionCap = Math.max(1, input.maxCognitionEntries ?? DEFAULT_MAX_COGNITION_ENTRIES);
 	for (const p of core) {
 		const cog = cognitionByUser.get(p.user_message_id);
 		if (!cog) continue;
-		if (cog.confusion.length === 0 && cog.indecision.length === 0 && cog.surprise.length === 0) continue;
+		if (cog.confusion.length === 0 && cog.indecision.length === 0 && cog.surprise.length === 0 && cog.apology.length === 0) continue;
 		cognitionTurnCount++;
 		if (cognitionLines.length >= cognitionCap) continue;
 		const bits: string[] = [`#${p.pair_index}`];
@@ -308,6 +321,9 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		if (cog.indecision.length > 0) bits.push(`indecision=${cog.indecision.map((e) => e.level).join(",")}`);
 		for (const s of cog.surprise) {
 			bits.push(`surprise[${s.severity}]="${truncateLine(s.quote, COGNITION_QUOTE_MAX)}"`);
+		}
+		for (const a of cog.apology) {
+			bits.push(`apology[${a.severity}]="${truncateLine(a.quote, COGNITION_QUOTE_MAX)}"`);
 		}
 		cognitionLines.push(bits.join(" "));
 	}

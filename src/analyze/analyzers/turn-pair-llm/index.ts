@@ -51,7 +51,7 @@ export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 	id: "turn-pair-llm",
 	label: "Per-Turn Classification (LLM)",
 	description:
-		"Classifies sentiment and friction type for high-signal turn pairs with a cheap model, given the user/assistant text plus the turn's actual tool calls and error heads so attribution lands on the command at fault.",
+		"Classifies sentiment and friction type for high-signal turn pairs with a cheap model, given the user/assistant text plus the turn's actual tool calls and error heads so attribution lands on the command at fault. Names a rebuttal when the user disputes something the assistant said.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_FRUSTRATION_DEF.id, TOOL_TRAJECTORY_DEF.id],
 	outputSchema: TurnPairLLMProperties,
@@ -80,7 +80,14 @@ export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	// unit's source set (as do the frustration nodes that already shaped selection
 	// but never identity — an oversight this change fixes honestly). Prompt text
 	// and unit inputs changed; recomputed on the next run.
-	minor: 5,
+	// 1.6: the **rebuttal** friction type (issue #318) — a new friction_type
+	// value for a turn where the user disputes whether something the assistant
+	// SAID is true. The deterministic layer (turn-pair-core) marks the wording as
+	// a candidate; the model confirms or rejects it here, and the candidate is
+	// rendered into the prompt as a candidate, never as a conclusion. Prompt text
+	// changed, so the input_key (and hence node version) changes; recomputed on
+	// the next run.
+	minor: 6,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };
@@ -93,6 +100,8 @@ interface EnrichMeta {
 	userText: string;
 	assistantText: string;
 	correctionText: string | null;
+	/** The deterministic rebuttal candidate for this turn (issue #318), or null. */
+	rebuttalCandidate: string | null;
 	toolCalls: ToolCallEvidence[];
 	toolResults: ToolResultEvidence[];
 	/** Event-centered slice: turns since the previous trigger point (issue #118). */
@@ -223,6 +232,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				userText: pair.userText,
 				assistantText: pair.assistantText,
 				correctionText: props.correction_text,
+				rebuttalCandidate: props.rebuttal_candidate ? (props.rebuttal_text ?? null) : null,
 				toolCalls: pair.toolCalls.map((tc): ToolCallEvidence => ({
 					name: tc.name,
 					argumentsPreview: tc.argumentsPreview,
@@ -257,6 +267,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				userText: meta.userText,
 				assistantText: meta.assistantText,
 				correctionText: meta.correctionText,
+				rebuttalCandidate: meta.rebuttalCandidate,
 				toolCalls: meta.toolCalls,
 				toolResults: meta.toolResults,
 				priorTurns: meta.priorTurns,

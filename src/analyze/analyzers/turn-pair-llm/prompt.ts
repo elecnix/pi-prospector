@@ -17,7 +17,7 @@ Return your classification by calling the \`classify_turn\` tool. Do NOT reply w
 prose. The tool takes exactly these fields:
 {
   "sentiment": "positive" | "neutral" | "frustrated",
-  "friction_type": "none" | "wrong_approach" | "missed_instruction" | "tool_misuse" | "repetition" | "other",
+  "friction_type": "none" | "wrong_approach" | "missed_instruction" | "tool_misuse" | "repetition" | "rebuttal" | "other",
   "is_genuine_correction": boolean,
   "severity": "low" | "medium" | "high",
   "rationale": "one short sentence"
@@ -25,6 +25,15 @@ prose. The tool takes exactly these fields:
 
 Judge only what the text supports. If the user is simply continuing the task with
 no friction, use sentiment "neutral", friction_type "none", is_genuine_correction false.
+
+A REBUTTAL is the user disputing whether something the assistant SAID is true
+("that's wrong", "that flag doesn't exist", "the test didn't pass, it failed"). Use
+friction_type "rebuttal" for that, and only that. A user who merely asks for
+different behaviour ("use X instead", "I told you to use X") is an INSTRUCTION,
+not a rebuttal: leave those under "missed_instruction" or "wrong_approach". When a
+REBUTTAL CANDIDATE line is shown, the wording looked like a dispute of a claim —
+confirm it as "rebuttal" only if the text really disputes something the assistant
+stated; otherwise classify the turn on its own terms.
 
 When PRIOR TURNS SINCE LAST SIGNAL are shown, treat them as the run-up that
 produced this turn — what was already tried, repeated, or failing before now.
@@ -51,6 +60,7 @@ export const CLASSIFY_TOOL = {
 			Type.Literal("missed_instruction"),
 			Type.Literal("tool_misuse"),
 			Type.Literal("repetition"),
+			Type.Literal("rebuttal"),
 			Type.Literal("other"),
 		]),
 		is_genuine_correction: Type.Boolean(),
@@ -100,6 +110,13 @@ export interface ClassifyInput {
 	 * Empty when no earlier trigger exists within the ceiling window.
 	 */
 	priorTurns?: SliceTurn[];
+	/**
+	 * The deterministic **rebuttal candidate** for this turn (issue #318): the
+	 * wording of the user's message looked like a dispute of a claim the
+	 * assistant made. A candidate, never a finding — the model confirms or
+	 * rejects it. Null when the wording matched nothing.
+	 */
+	rebuttalCandidate?: string | null;
 }
 
 /**
@@ -146,6 +163,12 @@ export function buildClassifyPrompt(input: ClassifyInput): string {
 
 	if (input.correctionText) {
 		sections.push("", `HEURISTIC CORRECTION HINT: ${truncate(input.correctionText, 300)}`);
+	}
+
+	// The deterministic rebuttal candidate (issue #318). Rendered as a candidate,
+	// never as a conclusion: the model confirms or rejects it.
+	if (input.rebuttalCandidate) {
+		sections.push("", `REBUTTAL CANDIDATE: ${truncate(input.rebuttalCandidate, 300)}`);
 	}
 
 	// Event-centered evidence slice moved above — see priorTurns rendering there.
@@ -201,7 +224,15 @@ export const TurnPairLLMProperties = Type.Object({
 export type TurnPairLLMProperties = Static<typeof TurnPairLLMProperties>;
 
 const VALID_SENTIMENT = new Set(["positive", "neutral", "frustrated"]);
-const VALID_FRICTION = new Set(["none", "wrong_approach", "missed_instruction", "tool_misuse", "repetition", "other"]);
+const VALID_FRICTION = new Set([
+	"none",
+	"wrong_approach",
+	"missed_instruction",
+	"tool_misuse",
+	"repetition",
+	"rebuttal",
+	"other",
+]);
 const VALID_SEVERITY = new Set(["low", "medium", "high"]);
 
 /** Parse the model's JSON, tolerating markdown fences and extra prose. */

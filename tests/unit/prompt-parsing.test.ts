@@ -52,6 +52,11 @@ describe("parseClassifyResponse", () => {
 		assert.equal(r.is_genuine_correction, false);
 	});
 
+	it("accepts the rebuttal friction type (issue #318)", () => {
+		const r = parseClassifyResponse('{"sentiment":"frustrated","friction_type":"rebuttal","is_genuine_correction":true,"severity":"high","rationale":"the user disputed a stated fact"}');
+		assert.equal(r.friction_type, "rebuttal");
+	});
+
 	it("normalises parsed tool-call objects the same way as text JSON", () => {
 		const cases: Record<string, unknown>[] = [
 			{ sentiment: "frustrated", friction_type: "tool_misuse", is_genuine_correction: true, severity: "high", rationale: "wrong flag" },
@@ -88,6 +93,23 @@ describe("buildClassifyPrompt", () => {
 	it("omits hint when absent", () => {
 		const p = buildClassifyPrompt({ userText: "a", assistantText: "b", correctionText: null, toolCalls: [], toolResults: [] });
 		assert.ok(!p.includes("HEURISTIC"));
+	});
+
+	it("renders the rebuttal candidate as a candidate, never a conclusion (issue #318)", () => {
+		const p = buildClassifyPrompt({
+			userText: "that's wrong, the flag is --repo",
+			assistantText: "checking",
+			correctionText: null,
+			rebuttalCandidate: "that's wrong",
+			toolCalls: [],
+			toolResults: [],
+		});
+		assert.ok(p.includes("REBUTTAL CANDIDATE: that's wrong"), "the candidate reaches the prompt");
+	});
+
+	it("omits the rebuttal candidate section when there is none", () => {
+		const p = buildClassifyPrompt({ userText: "a", assistantText: "b", correctionText: null, toolCalls: [], toolResults: [] });
+		assert.ok(!p.includes("REBUTTAL CANDIDATE"));
 	});
 
 	it("includes tool calls section when tool calls have arguments", () => {

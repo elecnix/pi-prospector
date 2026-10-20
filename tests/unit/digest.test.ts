@@ -552,6 +552,7 @@ describe("buildDigest — assistant cognition", () => {
 			confusion: props.confusion ?? [],
 			indecision: props.indecision ?? [],
 			surprise: props.surprise ?? [],
+			apology: props.apology ?? [],
 		};
 		return {
 			...coreNode(id, {}),
@@ -603,6 +604,39 @@ describe("buildDigest — assistant cognition", () => {
 		assert.ok(!digest.text.includes("### Assistant cognition"), "no nodes → no section");
 		assert.equal(digest.cognitionTurnCount, 0);
 		assert.equal(digest.cognitionLines.length, 0);
+	});
+
+	it("renders an apology with its severity and verbatim quote (issue #318)", () => {
+		const digest = buildWith([
+			cognitionNode("c0", {
+				user_message_id: "u0",
+				apology: [{ quote: "Sorry, my mistake", severity: "high", rationale: "the assistant conceded" }],
+			}),
+		]);
+		assert.equal(digest.cognitionTurnCount, 1, "an apology alone is enough for a line");
+		const line = digest.cognitionLines[0]!;
+		assert.ok(line.startsWith("#0"), "line references its pair index");
+		assert.ok(line.includes("apology[high]=\"Sorry, my mistake\""), "apology carries severity and verbatim quote");
+	});
+
+	it("tolerates a cognition node written before the apology signal existed", () => {
+		// Lineage keeps a pre-bump node reachable beside its revision, and that
+		// older node carries no apology array at all.
+		const legacy: AnalysisNodeRow = {
+			...coreNode("c-legacy", {}),
+			analyzer_id: "assistant-cognition",
+			node_kind: "classification",
+			content_json: JSON.stringify({
+				user_message_id: "u0",
+				confusion: [{ level: "mild", rationale: "re-reading" }],
+				indecision: [],
+				surprise: [],
+			}),
+		};
+		const digest = buildWith([legacy]);
+		assert.equal(digest.cognitionTurnCount, 1, "the legacy node still renders its confusion");
+		assert.ok(digest.cognitionLines[0]!.includes("confusion=mild"));
+		assert.ok(!digest.cognitionLines[0]!.includes("apology="), "an absent apology array renders nothing");
 	});
 
 	it("truncates long surprise quotes to the digest budget", () => {

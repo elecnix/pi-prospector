@@ -115,6 +115,71 @@ describe("parseCognitionObject", () => {
 	});
 });
 
+describe("parseCognitionObject — apology (issue #318)", () => {
+	const APOLOGY_GROUNDS = {
+		thinkingText: "The user asked me to open a pull request. I used the wrong flag.",
+		assistantText: "Sorry, my mistake — the flag is --repo, not --repository.",
+	};
+
+	it("parses an apology whose quote is verbatim in the response text", () => {
+		const result = parseCognitionObject(
+			{
+				apology: [
+					{ quote: "Sorry, my mistake", severity: "high", rationale: "the assistant conceded the mistake" },
+				],
+			},
+			APOLOGY_GROUNDS,
+		);
+		assert.equal(result.apology.length, 1);
+		assert.equal(result.apology[0]!.quote, "Sorry, my mistake");
+		assert.equal(result.apology[0]!.severity, "high");
+	});
+
+	it("drops an apology quote that is not an exact substring of the response text", () => {
+		const result = parseCognitionObject(
+			{
+				apology: [
+					// Paraphrase — not verbatim → rejected.
+					{ quote: "the assistant apologised for the mistake", severity: "high", rationale: "paraphrased" },
+					// Verbatim → kept.
+					{ quote: "the flag is --repo, not --repository.", severity: "moderate", rationale: "verbatim in the response" },
+					// Missing quote → rejected.
+					{ severity: "high", rationale: "no quote at all" },
+				],
+			},
+			APOLOGY_GROUNDS,
+		);
+		assert.deepEqual(result.apology.map((e) => e.quote), ["the flag is --repo, not --repository."]);
+	});
+
+	it("drops an apology quote found only in the thinking trace", () => {
+		// An apology is something the assistant said to the user. A phrase that
+		// only ever appeared in its private reasoning is not evidence the user
+		// saw, so it does not enter the graph.
+		const result = parseCognitionObject(
+			{
+				apology: [{ quote: "I used the wrong flag.", severity: "mild", rationale: "only in the reasoning" }],
+			},
+			APOLOGY_GROUNDS,
+		);
+		assert.deepEqual(result.apology, []);
+	});
+
+	it("drops an apology with an invalid severity or an empty rationale", () => {
+		const result = parseCognitionObject(
+			{
+				apology: [
+					{ quote: "Sorry, my mistake", severity: "catastrophic", rationale: "bad severity" },
+					{ quote: "Sorry, my mistake", severity: "high", rationale: "" },
+					{ quote: "Sorry, my mistake", severity: "mild", rationale: "kept" },
+				],
+			},
+			APOLOGY_GROUNDS,
+		);
+		assert.deepEqual(result.apology.map((e) => e.severity), ["mild"]);
+	});
+});
+
 describe("parseCognitionResponse (text path)", () => {
 	it("parses fenced JSON", () => {
 		const text = "Here is my analysis:\n```json\n{\"confusion\":[{\"level\":\"high\",\"rationale\":\"lost\"}],\"indecision\":[],\"surprise\":[]}\n```\nDone.";

@@ -23,6 +23,7 @@ import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { type TurnPair } from "./build.js";
 import { classifyCorrection, detectRepetition, countDeliberationParagraphs } from "./patterns.js";
+import { matchRebuttalCandidates } from "../../speech-acts.js";
 import { DEFAULT_TURN_PAIR_CORE_CONFIG, type TurnPairCoreConfig } from "./config.js";
 
 export const TurnPairCoreProperties = Type.Object({
@@ -32,6 +33,23 @@ export const TurnPairCoreProperties = Type.Object({
 	correction_type: Type.Union([Type.String(), Type.Null()]),
 	correction_patterns: Type.Array(Type.String()),
 	correction_text: Type.Union([Type.String(), Type.Null()]),
+	/**
+	 * True when the user message's wording disputes a claim the assistant made
+	 * (issue #318). A **candidate**, not a finding: the model layer confirms or
+	 * rejects it. A turn that is both a correction and a rebuttal candidate
+	 * keeps its correction — the deterministic layer proposes, it does not
+	 * reclassify.
+	 */
+	rebuttal_candidate: Type.Boolean(),
+	/** The regular-expression sources whose wording marked the rebuttal candidate. */
+	rebuttal_patterns: Type.Array(Type.String()),
+	/**
+	 * The verbatim wording that marked the rebuttal candidate — the span the
+	 * pattern matched, truncated. Null when no candidate was marked. It is the
+	 * evidence the model layer reads, so the prompt shows the user's own words
+	 * rather than a paraphrase of them.
+	 */
+	rebuttal_text: Type.Union([Type.String(), Type.Null()]),
 	tool_call_count: Type.Number(),
 	/** Paragraphs in the assistant's reasoning; null when no reasoning was recorded for the turn. */
 	deliberation_paragraphs: Type.Union([Type.Number(), Type.Null()]),
@@ -48,7 +66,7 @@ export const TURN_PAIR_CORE_DEF: AnalyzerDef = {
 	id: "turn-pair-core",
 	label: "Per-Turn Friction (deterministic)",
 	description:
-		"Scores every user→assistant turn pair deterministically (corrections, tool failures, empty replies, wasted tool output) and extracts a compact tool-action trace — call names, truncated arguments, and failed-result error heads — for downstream analyzers. No LLM; flags high-signal pairs.",
+		"Scores every user→assistant turn pair deterministically (corrections, rebuttal candidates, tool failures, empty replies, wasted tool output) and extracts a compact tool-action trace — call names, truncated arguments, and failed-result error heads — for downstream analyzers. No LLM; flags high-signal pairs.",
 	anchorSpan: "pair",
 	dependencies: [],
 	outputSchema: TurnPairCoreProperties,
@@ -57,7 +75,14 @@ export const TURN_PAIR_CORE_DEF: AnalyzerDef = {
 export const TURN_PAIR_CORE_VERSION: AnalyzerVersion = {
 	analyzerId: TURN_PAIR_CORE_DEF.id,
 	major: 1,
-	minor: 1,
+	// 1.2 (issue #318): a **rebuttal candidate** — the user message's wording
+	// disputes a claim the assistant made ("that's wrong", "that flag doesn't
+	// exist"). The candidate is additive: the turn's correction detection is
+	// untouched, and an instruction ("I told you to use X") stays a correction
+	// and never becomes a rebuttal. The model layer (turn-pair-llm) reads the
+	// candidate and decides. Additive fields change the node's content, so the
+	// version moves and prior verdicts stay reachable through `revises`.
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-pair-core/index.ts",
 };
@@ -77,6 +102,13 @@ export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairC
 	// assert that no thinking happened.
 	const deliberationParagraphs = pair.thinkingText.trim().length > 0 ? countDeliberationParagraphs(pair.thinkingText) : null;
 
+	// Rebuttal candidate (issue #318): the wording of the user's message
+	// disputes a claim. Additive — the correction above is untouched, so a turn
+	// whose wording is a dispute of fact and a turn whose wording is an
+	// instruction keep their own identities. The candidate is what the model
+	// layer confirms; on its own it is a proposal, not a finding.
+	const rebuttalMatches = matchRebuttalCandidates(pair.userText);
+
 	let score = 0;
 	if (correction.detected) score += config.correctionWeight;
 	score += Math.min(toolFailureCount, 3) * config.toolFailureWeight;
@@ -91,6 +123,9 @@ export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairC
 		correction_type: correction.type,
 		correction_patterns: correction.patterns,
 		correction_text: correction.correctionText,
+		rebuttal_candidate: rebuttalMatches.length > 0,
+		rebuttal_patterns: rebuttalMatches.map((m) => m.pattern),
+		rebuttal_text: rebuttalMatches.length > 0 ? rebuttalMatches[0]!.text.slice(0, 240) : null,
 		tool_call_count: pair.toolCalls.length,
 		deliberation_paragraphs: deliberationParagraphs,
 		tool_failure_count: toolFailureCount,
