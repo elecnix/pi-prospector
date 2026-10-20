@@ -19,6 +19,7 @@ import { Type, type Static } from "typebox";
 import { migrate } from "../db/schema.js";
 import { searchCorpus, type SearchKind, type SearchOptions, type SearchResult } from "../db/search-queries.js";
 import { getDbPath } from "../config.js";
+import { HARNESS_SOURCES } from "../harness.js";
 
 // ─────────────────────────── report shapes ───────────────────────────
 
@@ -74,16 +75,18 @@ export interface SearchQuery {
 const SEARCH_FLAGS = [
 	"--kind all|messages|proposals",
 	"--limit <n>",
-	"--source pi|claude|codex",
+	`--source ${HARNESS_SOURCES.join("|")}`,
 ];
 
 /** The usage line for `prospect search`. */
 export function searchUsage(): string {
-	return "Usage: prospect search <query> [--kind <all|messages|proposals>] [--limit <n>] [--source <pi|claude|codex>]";
+	return `Usage: prospect search <query> [--kind <all|messages|proposals>] [--limit <n>] [--source <${HARNESS_SOURCES.join("|")}>]`;
 }
 
 const KINDS: readonly string[] = ["all", "messages", "proposals"];
-const SOURCES: readonly string[] = ["pi", "claude"];
+// The harness vocabulary, so the usage line and the parser cannot name
+// different sources.
+const SOURCES: readonly string[] = HARNESS_SOURCES;
 
 /**
  * Parse `prospect search` arguments. Flags are stripped; every remaining

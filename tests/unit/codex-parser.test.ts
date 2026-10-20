@@ -132,44 +132,41 @@ describe("parseCodexLine", () => {
 		assert.equal(parsed.entry.model, "gpt-5-codex");
 	});
 
-	it("reads an item_completed event as the older format's transcript", () => {
-		// The older rollout format records the conversation in events rather
-		// than in response items, and its items carry the full text.
-		const event = JSON.stringify({
-			type: "event_msg",
-			timestamp: "2026-03-04T09:15:07.000Z",
-			payload: {
-				type: "item_completed",
-				turn_id: "turn-1",
+	it("reads an item_completed event, whatever the format and whatever the item", () => {
+		// The older format's events carry the conversation; the current
+		// format's events carry the command's exit code.
+		const cases = [
+			{
+				what: "a message in the older format",
+				format: "older" as const,
 				item: { type: "AgentMessage", id: "msg-1", content: [{ type: "Text", text: "The note is written." }] },
+				kind: "message",
 			},
-		});
-		const parsed = parseCodexLine(event, "2026-03-04T09:15:07.000Z", "older");
-		assert.ok(parsed);
-		assert.equal(parsed.kind, "message");
-		assert.equal(parsed.entry.role, "assistant");
-		assert.equal(parsed.entry.text, "The note is written.");
-		assert.equal(parsed.entry.turnId, "turn-1");
-	});
-
-	it("reads an item_completed event in the current format too, for the command it records", () => {
-		// The current format's events duplicate the items, but the command
-		// execution event carries the exit code the result text may not.
-		const event = JSON.stringify({
-			type: "event_msg",
-			timestamp: "2026-03-04T09:15:07.000Z",
-			payload: {
-				type: "item_completed",
-				turn_id: "turn-1",
+			{
+				what: "a command in the current format",
+				format: "current" as const,
 				item: { type: "CommandExecution", id: "cmd-1", command: "ls", exit_code: 0, aggregated_output: "a\nb\n" },
+				kind: "command",
 			},
-		});
-		const parsed = parseCodexLine(event, "2026-03-04T09:15:07.000Z", "current");
-		assert.ok(parsed);
-		assert.equal(parsed.kind, "command");
-		assert.equal(parsed.entry.callId, "cmd-1");
-		assert.equal(parsed.entry.command, "ls");
-		assert.equal(parsed.entry.exitCode, 0);
+		];
+		for (const c of cases) {
+			const event = JSON.stringify({
+				type: "event_msg",
+				timestamp: "2026-03-04T09:15:07.000Z",
+				payload: { type: "item_completed", turn_id: "turn-1", item: c.item },
+			});
+			const parsed = parseCodexLine(event, "2026-03-04T09:15:07.000Z", c.format);
+			assert.ok(parsed, `${c.what} parses`);
+			assert.equal(parsed.kind, c.kind);
+			if (c.kind === "message") {
+				assert.equal(parsed.entry.role, "assistant");
+				assert.equal(parsed.entry.text, "The note is written.");
+			} else if (c.kind === "command") {
+				assert.equal(parsed.entry.callId, "cmd-1");
+				assert.equal(parsed.entry.command, "ls");
+				assert.equal(parsed.entry.exitCode, 0);
+			}
+		}
 	});
 
 	it("reads a turn_aborted event as the host's verdict on the turn", () => {
@@ -214,31 +211,28 @@ describe("codexToolName", () => {
 });
 
 describe("codexFormatOf", () => {
-	it("recognises the current format by the turn stamp on its items", () => {
-		const lines = [
-			JSON.stringify({ type: "session_meta", payload: { id: "s1" } }),
-			JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } }),
-			JSON.stringify({ type: "turn_context", payload: { turn_id: "t1", model: "gpt-5-codex" } }),
-			JSON.stringify({
-				type: "response_item",
-				payload: {
-					type: "message",
-					role: "user",
-					content: [{ type: "input_text", text: "hello" }],
-					internal_chat_message_metadata_passthrough: { turn_id: "t1", content_item_kinds: ["user.text"] },
-				},
-			}),
+	it("recognises the format by the turn stamp on the items", () => {
+		// The current format stamps every item with its turn; the older one
+		// stamps nothing, and records the conversation in events instead.
+		const stamp = { turn_id: "t1", content_item_kinds: ["user.text"] };
+		const cases = [
+			{
+				format: "current" as const,
+				item: { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }], internal_chat_message_metadata_passthrough: stamp },
+			},
+			{
+				format: "older" as const,
+				item: { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
+			},
 		];
-		assert.equal(codexFormatOf(lines), "current");
-	});
-
-	it("recognises the older format, whose items carry no turn stamp", () => {
-		const lines = [
-			JSON.stringify({ type: "session_meta", payload: { id: "s1" } }),
-			JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } }),
-			JSON.stringify({ type: "turn_context", payload: { turn_id: "t1", model: "gpt-5-codex" } }),
-			JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] } }),
-		];
-		assert.equal(codexFormatOf(lines), "older");
+		for (const c of cases) {
+			const lines = [
+				JSON.stringify({ type: "session_meta", payload: { id: "s1" } }),
+				JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } }),
+				JSON.stringify({ type: "turn_context", payload: { turn_id: "t1", model: "gpt-5-codex" } }),
+				JSON.stringify({ type: "response_item", payload: c.item }),
+			];
+			assert.equal(codexFormatOf(lines), c.format);
+		}
 	});
 });

@@ -146,42 +146,49 @@ export function codexReasoningLine(text: string, turnId?: string): string {
 	return JSON.stringify({ type: "response_item", timestamp: "2026-03-04T09:15:03.000Z", payload });
 }
 
+/**
+ * A `response_item` tool record: a call or its result.
+ *
+ * Codex writes three shapes of them — a `function_call` whose arguments are a
+ * JSON string, a `custom_tool_call` whose input is a plain string, and a
+ * `function_call_output` whose output is the result. They differ in one field
+ * each, so one builder covers all three.
+ */
+export function codexToolRecordLine(
+	kind: "function_call" | "custom_tool_call" | "function_call_output",
+	fields: { callId: string; name?: string; arguments?: Record<string, unknown>; input?: string; output?: string },
+	turnId?: string,
+): string {
+	const payload: Record<string, unknown> = { type: kind, call_id: fields.callId };
+	if (kind === "function_call_output") {
+		payload["id"] = `fco_${fields.callId}`;
+		payload["output"] = fields.output ?? "";
+	} else {
+		payload["id"] = `${kind === "function_call" ? "fc" : "ctc"}_${fields.callId}`;
+		payload["name"] = fields.name ?? "";
+		if (kind === "function_call") payload["arguments"] = JSON.stringify(fields.arguments ?? {});
+		else payload["input"] = fields.input ?? "";
+	}
+	if (turnId) payload["internal_chat_message_metadata_passthrough"] = { turn_id: turnId };
+	// A result is written after the call it answers, so it carries a later
+	// timestamp than one.
+	const timestamp = kind === "function_call_output" ? "2026-03-04T09:15:05.000Z" : "2026-03-04T09:15:04.000Z";
+	return JSON.stringify({ type: "response_item", timestamp, payload });
+}
+
 /** A `response_item` function_call line. `arguments` is a JSON string, as Codex writes it. */
 export function codexFunctionCallLine(name: string, callId: string, args: Record<string, unknown>, turnId?: string): string {
-	const payload: Record<string, unknown> = {
-		type: "function_call",
-		id: `fc_${callId}`,
-		call_id: callId,
-		name,
-		arguments: JSON.stringify(args),
-	};
-	if (turnId) payload["internal_chat_message_metadata_passthrough"] = { turn_id: turnId };
-	return JSON.stringify({ type: "response_item", timestamp: "2026-03-04T09:15:04.000Z", payload });
+	return codexToolRecordLine("function_call", { callId, name, arguments: args }, turnId);
 }
 
 /** A `response_item` custom_tool_call line. `input` is a plain string, as Codex writes it. */
 export function codexCustomToolCallLine(name: string, callId: string, input: string, turnId?: string): string {
-	const payload: Record<string, unknown> = {
-		type: "custom_tool_call",
-		id: `ctc_${callId}`,
-		call_id: callId,
-		name,
-		input,
-	};
-	if (turnId) payload["internal_chat_message_metadata_passthrough"] = { turn_id: turnId };
-	return JSON.stringify({ type: "response_item", timestamp: "2026-03-04T09:15:04.000Z", payload });
+	return codexToolRecordLine("custom_tool_call", { callId, name, input }, turnId);
 }
 
 /** A `response_item` function_call_output line — the result of one call. */
 export function codexFunctionCallOutputLine(callId: string, output: string, turnId?: string): string {
-	const payload: Record<string, unknown> = {
-		type: "function_call_output",
-		id: `fco_${callId}`,
-		call_id: callId,
-		output,
-	};
-	if (turnId) payload["internal_chat_message_metadata_passthrough"] = { turn_id: turnId };
-	return JSON.stringify({ type: "response_item", timestamp: "2026-03-04T09:15:05.000Z", payload });
+	return codexToolRecordLine("function_call_output", { callId, output }, turnId);
 }
 
 export interface CodexUsageOptions {

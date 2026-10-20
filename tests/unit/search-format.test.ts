@@ -14,6 +14,7 @@ import {
 	parseSearchArgs,
 	renderSearch,
 	searchSyntaxHelp,
+	searchUsage,
 	type SearchReport,
 } from "../../src/commands/search.js";
 import { SNIPPET_OPEN, SNIPPET_CLOSE } from "../../src/db/search-queries.js";
@@ -38,6 +39,19 @@ describe("parseSearchArgs", () => {
 	it("keeps quoted phrases together as part of the query", () => {
 		const q = parseSearchArgs('"standing instruction" deploy');
 		assert.equal(q.query, '"standing instruction" deploy');
+	});
+
+	it("accepts every source its usage line names", () => {
+		// The usage line and the parser are one vocabulary: a source the line
+		// names must parse, and one it does not must not.
+		const named = [...searchUsage().matchAll(/--source <([^>]+)>/g)]
+			.flatMap((m) => (m[1] ?? "").split("|"))
+			.filter(Boolean);
+		assert.ok(named.length > 0, "the usage line names its sources");
+		for (const source of named) {
+			assert.equal(parseSearchArgs(`x --source ${source}`).source, source, `${source} parses`);
+		}
+		assert.throws(() => parseSearchArgs("x --source bitbucket"), /unknown --source/);
 	});
 
 	it("rejects unknown --kind and --source values", () => {

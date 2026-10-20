@@ -27,17 +27,30 @@ function file(p: string, content: string): InstructionFile {
 }
 
 describe("instructionCandidateGroups", () => {
-	it("pi: global AGENTS.md, then one AGENTS.md-or-CLAUDE.md group per directory from the root down", () => {
-		const groups = instructionCandidateGroups({ source: "pi", cwd: "/w/proj", home: "/h", config: CONFIG });
-		assert.deepEqual(groups[0], [{ path: "/h/.pi/agent/AGENTS.md", scope: "global" }]);
-		assert.deepEqual(
-			groups.slice(1).map((g) => g.map((c) => c.path)),
-			[
-				["/AGENTS.md", "/CLAUDE.md"],
-				["/w/AGENTS.md", "/w/CLAUDE.md"],
-				["/w/proj/AGENTS.md", "/w/proj/CLAUDE.md"],
-			],
-		);
+	it("pi and codex both load AGENTS.md per directory, from the root down", () => {
+		// Pi loads one of `AGENTS.md` or `CLAUDE.md` per directory; Codex
+		// loads `AGENTS.md` and reads no `CLAUDE.md`.
+		const cases = [
+			{
+				harness: "pi",
+				global: "/h/.pi/agent/AGENTS.md",
+				perDir: ["AGENTS.md", "CLAUDE.md"],
+			},
+			{ harness: "codex", global: "/h/.codex/AGENTS.md", perDir: ["AGENTS.md"] },
+		];
+		for (const c of cases) {
+			const groups = instructionCandidateGroups({ source: c.harness, cwd: "/w/proj", home: "/h", config: CONFIG });
+			assert.deepEqual(groups[0], [{ path: c.global, scope: "global" }], `${c.harness} global`);
+			assert.deepEqual(
+				groups.slice(1).map((g) => g.map((x) => x.path)),
+				[
+					c.perDir.map((p) => `/${p}`),
+					c.perDir.map((p) => `/w/${p}`),
+					c.perDir.map((p) => `/w/proj/${p}`),
+				],
+				`${c.harness} project files`,
+			);
+		}
 	});
 
 	it("claude: global CLAUDE.md, then CLAUDE.md, .claude/CLAUDE.md and CLAUDE.local.md per directory", () => {
@@ -52,19 +65,6 @@ describe("instructionCandidateGroups", () => {
 				["/w/CLAUDE.md"],
 				["/w/.claude/CLAUDE.md"],
 				["/w/CLAUDE.local.md"],
-			],
-		);
-	});
-
-	it("codex: global AGENTS.md, then one AGENTS.md per directory from the root down", () => {
-		const groups = instructionCandidateGroups({ source: "codex", cwd: "/w/proj", home: "/h", config: CONFIG });
-		assert.deepEqual(
-			groups.map((g) => g.map((c) => c.path)),
-			[
-				["/h/.codex/AGENTS.md"],
-				["/AGENTS.md"],
-				["/w/AGENTS.md"],
-				["/w/proj/AGENTS.md"],
 			],
 		);
 	});
