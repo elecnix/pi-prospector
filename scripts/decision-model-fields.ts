@@ -135,6 +135,33 @@ export const MEASURED_ANALYZERS: Record<string, MeasuredAnalyzer> = {
 		distributions: (pairs) => ({ polarity: counts(pairs, "polarity"), category: counts(pairs, "category") }),
 		confusion: (pairs) => matrix(pairs, ["polarity"]),
 	},
+	"user-reply-acts": {
+		load: async () => (await import("../.prospector/analyzers/user-reply-acts.analyzer.js")).default,
+		fields: [
+			...["acceptances", "refusals", "questions", "answers", "commands", "information_provisions", "memories"].map(present),
+			same("continuation"),
+			same("other"),
+			{
+				name: "question_purpose",
+				equal: (g, d) => {
+					const purposes = (v: unknown) => new Set((Array.isArray(v) ? v : []).map((q) => String((q as Record<string, unknown>)["purpose"])));
+					const a = purposes(g["questions"]);
+					const b = purposes(d["questions"]);
+					return a.size === 0 ? b.size === 0 : [...b].some((x) => a.has(x));
+				},
+			},
+		],
+		confusion: (pairs) =>
+			matrix(
+				pairs.map(([g, d]) => {
+					const has = (v: Record<string, unknown>, k: string) => (Array.isArray(v[k]) && (v[k] as unknown[]).length > 0) || v[k] === true;
+					const row = (v: Record<string, unknown>) =>
+						Object.fromEntries(["acceptances", "refusals", "questions", "answers", "commands", "information_provisions", "memories", "other"].map((k) => [k, has(v, k)]));
+					return [row(g), row(d)];
+				}),
+				["acceptances", "refusals", "questions", "answers", "commands", "information_provisions", "memories", "other"],
+			),
+	},
 	"assistant-cognition": {
 		load: async () => (await import("../src/analyze/analyzers/assistant-cognition/index.js")).assistantCognitionAnalyzer,
 		fields: [

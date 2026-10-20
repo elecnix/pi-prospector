@@ -83,6 +83,8 @@ import { resolveModelSpec } from "../../src/analyze/model-tiers.js";
 import { EDGE_KINDS, REF_KINDS } from "../../src/analyze/edge-kinds.js";
 import { buildTurnPairs } from "../../src/analyze/analyzers/turn-pair-core/build.js";
 import { TURN_PAIR_CORE_DEF } from "../../src/analyze/analyzers/turn-pair-core/index.js";
+import { decisionIdentity } from "../../src/analyze/decision-model.js";
+import { REPLY_DECISION_HASH, buildReplyDecisionRequest, parseReplyDecision } from "./user-reply-acts-decision.js";
 
 // ── config ──
 
@@ -122,6 +124,12 @@ const UserReplyActsConfig = Type.Object({
 	 * Default: true. Override via `analyzers["user-reply-acts"].structuredOutput`.
 	 */
 	structuredOutput: Type.Boolean(),
+	/**
+	 * A decision model (`provider/model`, e.g. `jev/jev-1.13.0`) that answers one
+	 * Noul per act and picks each act's quote among the reply's sentences, in one
+	 * request (#338). Absent by default.
+	 */
+	decisionModel: Type.Optional(Type.String()),
 });
 type UserReplyActsConfig = Static<typeof UserReplyActsConfig>;
 
@@ -149,6 +157,7 @@ function configOf(config: Record<string, unknown>): UserReplyActsConfig {
 		maxRepliesPerSession: typeof c.maxRepliesPerSession === "number" && c.maxRepliesPerSession > 0 ? c.maxRepliesPerSession : DEFAULT_CONFIG.maxRepliesPerSession,
 		minAssistantContextChars: typeof c.minAssistantContextChars === "number" && c.minAssistantContextChars >= 0 ? c.minAssistantContextChars : DEFAULT_CONFIG.minAssistantContextChars,
 		structuredOutput: typeof c.structuredOutput === "boolean" ? c.structuredOutput : DEFAULT_CONFIG.structuredOutput,
+		...(typeof c.decisionModel === "string" && c.decisionModel.length > 0 ? { decisionModel: c.decisionModel } : {}),
 	};
 }
 
@@ -941,6 +950,7 @@ const analyzer: Analyzer = {
 
 	modelsForIdentity(config, modelTiers) {
 		const cfg = configOf(config as Record<string, unknown>);
+		if (cfg.decisionModel) return [decisionIdentity(cfg.decisionModel, REPLY_DECISION_HASH)];
 		return [resolveModelSpec(cfg.tier, modelTiers)];
 	},
 
@@ -1009,6 +1019,7 @@ const analyzer: Analyzer = {
 		// quotes against that same text, not the full reply, so quotes from
 		// the visible portion always pass.
 		const visibleReplyText = truncateHeadTail(meta.userText, 2400);
+		if (config.decisionModel) return analyzeWithDecisionModel(unit, meta, config.decisionModel, ctx);
 		const userPrompt = buildClassifyPrompt({ priorAssistantText: meta.priorAssistantText, userText: meta.userText });
 
 		// Select structured output mode: native response_format (default) or
@@ -1119,5 +1130,47 @@ const analyzer: Analyzer = {
 		);
 	},
 };
+
+/**
+ * One decision request per reply (#338). The node has the generative path's
+ * shape, so the distribution roll-up and the digest read it unchanged.
+ */
+async function analyzeWithDecisionModel(unit: AnalysisUnit, meta: ReplyMeta, model: string, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
+	if (!ctx.decide) {
+		throw new Error(`user-reply-acts is configured with decision model '${model}', but this run has no decision-model client.`);
+	}
+	// The same visible text the generative path shows its model and validates quotes against.
+	const { request, sentences } = buildReplyDecisionRequest(
+		truncateHeadTail(meta.priorAssistantText, 2400),
+		truncateHeadTail(meta.userText, 2400),
+		model,
+	);
+	const response = await ctx.decide(request);
+	const { probabilities, ...verdict } = parseReplyDecision(response, sentences);
+	const properties: UserReplyActsProperties & { probabilities: Record<string, Record<string, number>> } = {
+		...verdict,
+		abstention: null,
+		attempt: 1,
+		probabilities,
+		user_message_id: unit.anchorRef,
+		prior_user_message_id: meta.priorUserMessageId,
+		prior_core_output_key: meta.priorCoreOutputKey,
+		pair_index: meta.pairIndex,
+	};
+	return {
+		nodeKind: "classification",
+		contentJson: properties as unknown as Record<string, unknown>,
+		anchorKind: "message",
+		anchorRef: unit.anchorRef,
+		modelUsed: response.model,
+		costUsd: response.costUsd,
+		tokensUsed: response.inputTokens + response.outputTokens,
+		inputTokens: response.inputTokens,
+		cachedInputTokens: 0,
+		outputTokens: response.outputTokens,
+		durationMs: response.durationMs,
+		edges: buildEdges(unit, meta).filter((e) => e.edgeKind !== EDGE_KINDS.USES_PROMPT),
+	};
+}
 
 export default defineAnalyzer(analyzer);
