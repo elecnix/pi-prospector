@@ -287,7 +287,7 @@ export async function prospectProposals(args: string, ctx: ExtensionCommandConte
 	try {
 		const { status, severity, full } = parseProposalsArgs(args);
 		const { flags } = parseFlags(args ?? "");
-		// Optional harness filter: --source pi|claude. Unknown values throw, so a
+		// Optional harness filter: --source pi|claude|codex. Unknown values throw, so a
 		// typo fails loudly rather than silently matching nothing.
 		const source = parseHarnessSource(flags["source"]);
 		let asOfLabel: string | undefined;

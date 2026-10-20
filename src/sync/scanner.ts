@@ -21,7 +21,7 @@ export const MAX_DISCOVERY_DEPTH = 8;
 export interface DiscoverOptions {
 	/** Only sessions whose project (derived from the directory name) equals this. */
 	project?: string;
-	/** Only sessions from one coding harness ("pi" | "claude"). */
+	/** Only sessions from one coding harness ("pi" | "claude" | "codex"). */
 	source?: SessionSource;
 }
 

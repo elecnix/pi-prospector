@@ -50,7 +50,7 @@ interface AnalyzeArgs {
 	/** Get the N most-recent sessions (by started_at DESC). */
 	recent?: number;
 	session?: string;
-	/** Restrict to sessions from one coding harness ("pi" | "claude"). */
+	/** Restrict to sessions from one coding harness ("pi" | "claude" | "codex"). */
 	source?: string;
 	analyzer?: string;
 	model?: string;

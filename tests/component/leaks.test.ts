@@ -14,13 +14,14 @@ import { describe, it } from "node:test";
 import * as os from "node:os";
 import * as path from "node:path";
 import assert from "node:assert/strict";
-import { tempDb, insertSession, insertMessages } from "./helpers.js";
+import { tempDb, insertSession, insertMessages, sourcesNamedBy } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { secretLeakAnalyzer } from "../../src/analyze/analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "../../src/analyze/analyzers/gitleaks/index.js";
 import { insertNode } from "../../src/db/analysis-queries.js";
 import {
+	leaksUsage,
 	parseLeaksArgs,
 	readLeaks,
 	renderLeaks,
@@ -28,6 +29,7 @@ import {
 	type LeakReport,
 } from "../../src/commands/leaks.js";
 import type { ExtensionCommandContext } from "../../src/pi-stubs.js";
+
 
 // Shape-correct, never-live synthetic credentials (same convention as
 // secret-leak.test.ts). The two detector families have disjoint catalogues for
@@ -99,6 +101,17 @@ describe("prospect leaks (issue #196)", () => {
 		assert.throws(() => parseLeaksArgs("--limit 0"), /positive integer/);
 		assert.throws(() => parseLeaksArgs("--source bitbucket"), /unknown --source/);
 		assert.throws(() => parseLeaksArgs("--bogus"), /unknown flag or stray argument/);
+	});
+
+	it("accepts every source its usage line names", () => {
+		// The usage line and the parser are one vocabulary: a source the line
+		// names must parse, and one it does not must not.
+		const named = sourcesNamedBy(leaksUsage());
+		assert.ok(named.length > 0, "the usage line names its sources");
+		for (const source of named) {
+			assert.deepEqual(parseLeaksArgs(`--source ${source}`), { source }, `${source} parses`);
+		}
+		assert.throws(() => parseLeaksArgs("--source bitbucket"), /unknown --source/);
 	});
 
 	it("lists which sessions contain detected secrets, anchored to messages, across detectors", async () => {

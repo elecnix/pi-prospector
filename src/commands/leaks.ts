@@ -30,6 +30,7 @@ import { Check } from "typebox/value";
 import { migrate } from "../db/schema.js";
 import { listAnalysisNodes } from "../db/analysis-queries.js";
 import { getDbPath } from "../config.js";
+import { HARNESS_SOURCES } from "../harness.js";
 import {
 	DETECTOR_ANALYZER_IDS,
 	SEVERITY_RANK,
@@ -88,16 +89,18 @@ export interface LeaksQuery {
 const LEAKS_FLAGS = [
 	"--severity critical|high|medium (floor: report this severity and above)",
 	"--limit <n>",
-	"--source pi|claude",
+	`--source ${HARNESS_SOURCES.join("|")}`,
 ];
 
 /** The usage line for `prospect leaks`. */
 export function leaksUsage(): string {
-	return `Usage: prospect leaks [--severity <critical|high|medium>] [--limit <n>] [--source <pi|claude>]`;
+	return `Usage: prospect leaks [--severity <critical|high|medium>] [--limit <n>] [--source <${HARNESS_SOURCES.join("|")}>]`;
 }
 
 const SEVERITIES: readonly string[] = ["medium", "high", "critical"];
-const SOURCES: readonly string[] = ["pi", "claude"];
+// The harness vocabulary, so the usage line and the parser cannot name
+// different sources.
+const SOURCES: readonly string[] = HARNESS_SOURCES;
 
 /**
  * Parse `prospect leaks` arguments. Throws an Error with a user-facing
