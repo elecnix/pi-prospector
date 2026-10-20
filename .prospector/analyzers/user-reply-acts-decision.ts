@@ -62,7 +62,7 @@ const ACTS = {
 	},
 	answer: {
 		instructions: "Does `reply` answer a question that `assistant_previous` asked the user?",
-		true: { what: "The assistant asked the user something and the user gives the answer", examples: ["A", "the first one", "yes, the staging bucket"] },
+		true: { what: "The assistant asked the user something and the user gives the answer", examples: ["A", "the first one", "yes, the blue one"] },
 		false: { what: "The assistant asked nothing, or the user does not answer it" },
 	},
 	command: {
@@ -72,7 +72,7 @@ const ACTS = {
 	},
 	information_provision: {
 		instructions: "Does `reply` give the assistant facts, context, or a status update without asking or ordering anything?",
-		true: { what: "The user drops information into the conversation", examples: ["369 merged", "the key used to come from a secret", "staging is red"] },
+		true: { what: "The user drops information into the conversation", examples: ["369 merged", "the old parser was written last spring", "staging is red"] },
 		false: { what: "The user only asks, orders, or reacts" },
 	},
 	memory: {
