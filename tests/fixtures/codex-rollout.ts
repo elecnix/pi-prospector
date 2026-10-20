@@ -15,29 +15,16 @@
  *   - the host's own context (AGENTS.md, environment block) is written into the
  *     transcript as a `user` message, distinguished by its content kind.
  */
-
-/** A uuid-shaped id derived from a readable label, so a fixture reads by scenario. */
-function fixtureId(label: string): string {
-	const hash = (seed: number): string => {
-		let x = seed >>> 0;
-		for (const ch of label) {
-			x ^= ch.charCodeAt(0);
-			x = Math.imul(x, 0x01000193) >>> 0;
-		}
-		return x.toString(16).padStart(8, "0");
-	};
-	const hex = hash(0x811c9dc5) + hash(0x7f4a7c15) + hash(0x94d049bb) + hash(0x27220a95);
-	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-}
+import { fixtureUuid } from "../component/helpers.js";
 
 /** The file name Codex gives a rollout file: `rollout-<timestamp>-<uuid>.jsonl`. */
 export function codexRolloutFileName(label: string, timestamp = "2026-03-04T09-15-00"): string {
-	return `rollout-${timestamp}-${fixtureId(label)}.jsonl`;
+	return `rollout-${timestamp}-${fixtureUuid(label)}.jsonl`;
 }
 
 /** The session id a fixture's `session_meta` carries. */
 export function codexSessionId(label: string): string {
-	return fixtureId(label);
+	return fixtureUuid(label);
 }
 
 export interface CodexMetaOptions {
@@ -90,22 +77,33 @@ export function codexTaskStartedLine(turnId: string): string {
 	});
 }
 
-/** A `task_complete` event line. */
-export function codexTaskCompleteLine(turnId: string, lastAgentMessage = ""): string {
+/**
+ * A `task_complete` or `turn_aborted` event line.
+ *
+ * The two differ in one field, and the host writes them the same way apart
+ * from that, so one builder covers both: `task_complete` carries the agent's
+ * last message, `turn_aborted` the reason the turn was abandoned.
+ */
+export function codexTaskEventLine(
+	turnId: string,
+	kind: "task_complete" | "turn_aborted",
+	detail: { lastAgentMessage?: string; reason?: string } = {},
+): string {
 	return JSON.stringify({
 		type: "event_msg",
 		timestamp: "2026-03-04T09:16:00.000Z",
-		payload: { type: "task_complete", turn_id: turnId, last_agent_message: lastAgentMessage },
+		payload: { type: kind, turn_id: turnId, ...detail },
 	});
+}
+
+/** A `task_complete` event line. */
+export function codexTaskCompleteLine(turnId: string, lastAgentMessage = ""): string {
+	return codexTaskEventLine(turnId, "task_complete", { lastAgentMessage });
 }
 
 /** A `turn_aborted` event line — the host's record of an abandoned turn. */
 export function codexTurnAbortedLine(turnId: string, reason = "interrupted"): string {
-	return JSON.stringify({
-		type: "event_msg",
-		timestamp: "2026-03-04T09:16:30.000Z",
-		payload: { type: "turn_aborted", turn_id: turnId, reason },
-	});
+	return codexTaskEventLine(turnId, "turn_aborted", { reason });
 }
 
 export interface CodexMessageOptions {

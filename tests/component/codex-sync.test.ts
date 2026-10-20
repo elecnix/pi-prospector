@@ -302,6 +302,44 @@ describe("Codex session sync", () => {
 		}
 	});
 
+	it("advances the cursor past the file's last record, not past its trailing newline", async () => {
+		// A rollout file always ends with a newline, so `split("\n")` leaves a
+		// trailing empty element that holds no record. Counting it would put
+		// the cursor one past the last record, and the next record the host
+		// appends would land exactly on that index and be skipped.
+		const { db, close } = await tempDb();
+		const label = "codex-cursor";
+		const turn = "turn-1";
+		const { root, cleanup } = codexRoot([
+			{
+				label,
+				lines: [
+					codexMetaLine(label),
+					codexTaskStartedLine(turn),
+					codexTurnContextLine(turn, "gpt-5-codex"),
+					codexMessageLine("user", "first question", { kinds: ["user.text"], turnId: turn }),
+					codexMessageLine("assistant", "first answer", { turnId: turn }),
+					codexUsageRecordLine(turn, "resp-1"),
+				],
+			},
+		]);
+		try {
+			await runSync(db, [new CodexFileSource(root)]);
+			const file = path.join(root, "2026", "03", "04", codexRolloutFileName(label));
+			const content = fs.readFileSync(file, "utf-8");
+			assert.ok(content.endsWith("\n"), "the fixture ends with a newline, as a real rollout file does");
+
+			const cursor = (await db
+				.prepare("SELECT last_line FROM sessions")
+				.get()) as { last_line: number };
+			const recordCount = content.split("\n").length - 1;
+			assert.equal(cursor.last_line, recordCount, "the cursor points at the first line that holds no record");
+		} finally {
+			cleanup();
+			await close();
+		}
+	});
+
 	it("claims only the files Codex names, and never another source's", async () => {
 		const { db, close } = await tempDb();
 		const label = "codex-discovery";

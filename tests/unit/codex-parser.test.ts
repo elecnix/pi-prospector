@@ -60,58 +60,46 @@ describe("parseCodexLine", () => {
 		}
 	});
 
-	it("reads an assistant message as an assistant turn", () => {
-		const parsed = parseCodexLine(codexMessageLine("assistant", "done", { turnId: "turn-1" }), "2026-03-04T09:15:02.000Z");
-		assert.ok(parsed);
-		assert.equal(parsed.kind, "message");
-		assert.equal(parsed.entry.role, "assistant");
-		assert.equal(parsed.entry.text, "done");
+	it("reads the agent's own words and thoughts as assistant rows", () => {
+		// The model's words and its private thinking are two kinds of assistant
+		// row: the words are the answer, the thinking is the reasoning.
+		const cases = [
+			{ what: "the answer", line: codexMessageLine("assistant", "done", { turnId: "turn-1" }), text: "done", thinking: null },
+			{ what: "the reasoning", line: codexReasoningLine("the user wants a note", "turn-1"), text: null, thinking: "the user wants a note" },
+		];
+		for (const c of cases) {
+			const parsed = parseCodexLine(c.line, "2026-03-04T09:15:02.000Z");
+			assert.ok(parsed, `${c.what} parses`);
+			assert.equal(parsed.kind, "message");
+			assert.equal(parsed.entry.role, "assistant");
+			assert.equal(parsed.entry.text, c.text);
+			assert.equal(parsed.entry.thinking, c.thinking);
+		}
 	});
 
-	it("reads reasoning as assistant thinking rather than assistant text", () => {
-		const parsed = parseCodexLine(codexReasoningLine("the user wants a note", "turn-1"), "2026-03-04T09:15:03.000Z");
-		assert.ok(parsed);
-		assert.equal(parsed.kind, "message");
-		assert.equal(parsed.entry.role, "assistant");
-		assert.equal(parsed.entry.text, null);
-		assert.equal(parsed.entry.thinking, "the user wants a note");
-	});
+	it("reads a tool call and its result, whatever kind of call it is", () => {
+		// A `function_call` writes its arguments as a JSON string; a
+		// `custom_tool_call` writes its input as a plain string. Both are tool
+		// calls, and a result is a result.
+		const calls = [
+			{ what: "a function call", line: codexFunctionCallLine("exec_command", "call-1", { cmd: "ls -la" }, "turn-1"), name: "exec_command", arguments: { cmd: "ls -la" } },
+			{ what: "a custom tool call", line: codexCustomToolCallLine("apply_patch", "call-2", "*** Begin Patch", "turn-1"), name: "apply_patch", arguments: { input: "*** Begin Patch" } },
+		];
+		for (const c of calls) {
+			const parsed = parseCodexLine(c.line, "2026-03-04T09:15:04.000Z");
+			assert.ok(parsed, `${c.what} parses`);
+			assert.equal(parsed.kind, "tool-call");
+			assert.equal(parsed.entry.name, c.name);
+			assert.deepEqual(parsed.entry.arguments, c.arguments);
+			assert.equal(parsed.entry.turnId, "turn-1");
+		}
 
-	it("reads a function call as a tool call, with its arguments parsed", () => {
-		const parsed = parseCodexLine(
-			codexFunctionCallLine("exec_command", "call-1", { cmd: "ls -la", workdir: "/tmp" }, "turn-1"),
-			"2026-03-04T09:15:04.000Z",
-		);
-		assert.ok(parsed);
-		assert.equal(parsed.kind, "tool-call");
-		assert.equal(parsed.entry.name, "exec_command");
-		assert.equal(parsed.entry.callId, "call-1");
-		assert.deepEqual(parsed.entry.arguments, { cmd: "ls -la", workdir: "/tmp" });
-		assert.equal(parsed.entry.turnId, "turn-1");
-	});
-
-	it("reads a custom tool call, whose input is a plain string", () => {
-		const parsed = parseCodexLine(
-			codexCustomToolCallLine("apply_patch", "call-2", "*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch", "turn-1"),
-			"2026-03-04T09:15:04.000Z",
-		);
-		assert.ok(parsed);
-		assert.equal(parsed.kind, "tool-call");
-		assert.equal(parsed.entry.name, "apply_patch");
-		assert.equal(parsed.entry.callId, "call-2");
-		assert.deepEqual(parsed.entry.arguments, { input: "*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch" });
-	});
-
-	it("reads a function call output as a tool result", () => {
-		const parsed = parseCodexLine(
-			codexFunctionCallOutputLine("call-1", "total 8\n", "turn-1"),
-			"2026-03-04T09:15:05.000Z",
-		);
-		assert.ok(parsed);
-		assert.equal(parsed.kind, "tool-result");
-		assert.equal(parsed.entry.callId, "call-1");
-		assert.equal(parsed.entry.text, "total 8\n");
-		assert.equal(parsed.entry.timestamp, "2026-03-04T09:15:05.000Z");
+		const result = parseCodexLine(codexFunctionCallOutputLine("call-1", "total 8\n", "turn-1"), "2026-03-04T09:15:05.000Z");
+		assert.ok(result);
+		assert.equal(result.kind, "tool-result");
+		assert.equal(result.entry.callId, "call-1");
+		assert.equal(result.entry.text, "total 8\n");
+		assert.equal(result.entry.timestamp, "2026-03-04T09:15:05.000Z");
 	});
 
 	it("reads a token usage record as the per-call usage of a generation", () => {

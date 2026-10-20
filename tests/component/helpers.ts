@@ -61,8 +61,13 @@ export function claudeSessionId(label: string): string {
  * A uuid-shaped token derived from a readable label, so a fixture can be named by
  * its scenario instead of carrying a literal uuid. Stable across runs, which is
  * what the cursor keys on.
+ *
+ * Exported so a fixture set in another file derives its ids the same way: two
+ * copies of this hash would give the same id for the same label in one file
+ * and a different one in the other, which is the kind of drift a test cannot
+ * see.
  */
-function fixtureUuid(label: string): string {
+export function fixtureUuid(label: string): string {
 	const hash = (seed: number): string => {
 		let x = seed >>> 0;
 		for (const ch of label) {
