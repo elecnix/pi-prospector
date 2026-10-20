@@ -31,13 +31,15 @@ import {
 	TURN_FRUSTRATION_DEF,
 	type TurnFrustrationProperties,
 } from "../../src/analyze/analyzers/turn-frustration/index.js";
-import { getNodesByAnalyzer, getEdgesFrom } from "../../src/db/analysis-queries.js";
+import { getNodesByAnalyzer, getEdgesFrom, listAnalysisNodes, countAnalysisNodes } from "../../src/db/analysis-queries.js";
 import {
 	muteTerm,
 	unmuteTerm,
 } from "../../src/commands/mutes.js";
-import { getActiveAssertions, getMutedTerms, isTermMuted, listAssertions, supersedeAssertion } from "../../src/db/assertions.js";
+import { getActiveAssertions, getMutedTerms, getMutedNodeIds, isTermMuted, listAssertions, supersedeAssertion } from "../../src/db/assertions.js";
 import { verifyNodes } from "../../src/commands/verify.js";
+import { frictionAccumulationAnalyzer } from "../../src/analyze/analyzers/friction-accumulation/index.js";
+import { toolTrajectoryAnalyzer } from "../../src/analyze/analyzers/tool-trajectory/index.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
 const FRUSTRATED_TERMS = new Set(["putain", "wrong", "pénible"]);
@@ -64,6 +66,14 @@ async function build(db: AsyncDatabase) {
 	await framework.register(lexiconCandidatesAnalyzer);
 	await framework.register(frustrationLexiconAnalyzer);
 	await framework.register(turnFrustrationAnalyzer);
+	return { framework, llm };
+}
+
+/** The same chain plus the readers that fold frustration hits into a session score. */
+async function buildWithReaders(db: AsyncDatabase) {
+	const { framework, llm } = await build(db);
+	await framework.register(toolTrajectoryAnalyzer);
+	await framework.register(frictionAccumulationAnalyzer);
 	return { framework, llm };
 }
 
@@ -127,7 +137,9 @@ describe("muting a lexicon term", () => {
 
 			// `--revise config` recomputes: the unmuted 'putain' gets a fresh node
 			// (a new version that revises the old), while the muted 'wrong' is not
-			// recreated and its old node stays as lineage.
+			// recreated. Its old node stays in the graph as lineage, but it is
+			// silenced: the mute marked it, so it is no longer a *current* finding
+			// and no reader counts it (#325).
 			const revise = await framework.run("s1", { revise: ["config"] });
 			assert.equal(revise.nodesRevised, 1, "only the unmuted term is revised");
 			const after = await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1");
@@ -263,6 +275,137 @@ describe("muting a lexicon term", () => {
 			const rows = await listAssertions(db, "term");
 			assert.equal(rows.length, 2, "both mutes are recorded");
 			assert.equal(rows.filter((r) => r.superseded_at === null).length, 1, "one remains active");
+		} finally {
+			await close();
+		}
+	});
+});
+
+describe("a muted term's existing hits (#325)", () => {
+	it("marks every live hit node of the term with a mutes edge", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong again" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			const hit = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!;
+
+			const result = await muteTerm(db, { term: "wrong", by: "operator" });
+			assert.equal(result.liveHits, 1, "the mute reports the live hit node it left behind");
+
+			// The hit node now carries the mute: the edge reaches the judgement
+			// from the analysed conclusion it silences.
+			const edges = await getEdgesFrom(db, hit.id);
+			const mutesEdge = edges.find((e) => e.edge_kind === "mutes");
+			assert.ok(mutesEdge, "the hit node carries a mutes edge");
+			assert.equal(mutesEdge!.to_ref_kind, "assertion");
+			assert.equal(mutesEdge!.to_ref_id, result.assertionId);
+
+			// And the reader helper agrees.
+			assert.ok((await getMutedNodeIds(db)).has(hit.id));
+
+			// The lexicon verdict node keeps its own mutes edge: judging a word is
+			// a corpus-wide conclusion, muting it is about matching.
+			const lexNodes = await getNodesByAnalyzer(db, "frustration-lexicon", "s1");
+			const lexEdges = (await Promise.all(lexNodes.flatMap((n) => getEdgesFrom(db, n.id)))).flat();
+			assert.ok(lexEdges.some((e) => e.edge_kind === "mutes"), "the lexicon verdict keeps its mutes edge");
+		} finally {
+			await close();
+		}
+	});
+
+	it("stops counting the muted term's hits in the surface and the stock outputs, and restores them on unmute", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong and putain" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			assert.equal(await countAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id }), 2);
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+
+			// The muted hit is no longer a current finding: the surface read that
+			// backs `prospect nodes` reports one hit, not two.
+			assert.equal(
+				await countAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id }),
+				1,
+				"the muted term's hit is not counted as a current finding",
+			);
+			const counted = await listAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id });
+			assert.deepEqual(
+				counted.map((n) => (JSON.parse(n.content_json) as TurnFrustrationProperties).signal),
+				["putain"],
+			);
+
+			// It is still in the graph — preserved as lineage, never deleted.
+			assert.equal(
+				(await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).length,
+				2,
+				"the muted hit is still live and inspectable",
+			);
+			assert.equal((await verifyNodes(db)).mismatches.length, 0, "the graph still verifies");
+
+			// Unmuting makes the mark inert again: the hit counts once more.
+			await unmuteTerm(db, "wrong");
+			assert.equal(await countAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id }), 2);
+			assert.equal((await getMutedNodeIds(db)).size, 0, "no node is muted any more");
+		} finally {
+			await close();
+		}
+	});
+
+	it("gives friction-accumulation a lexicon friction of 0 for a session whose only hits were the muted term", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+
+			const readAccumulation = async () => {
+				// The newest accumulation node: a revise adds a version beside its
+				// predecessor, and the newest one is the current conclusion.
+				const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
+				assert.ok(nodes.length >= 1, "one accumulation node per session");
+				return JSON.parse(nodes[0]!.content_json) as {
+					accumulated_friction: number;
+					turn_contributions: Array<{ frustration_weight: number }>;
+				};
+			};
+
+			// Before the mute, the hit's weight is part of the session's friction.
+			const before = await readAccumulation();
+			assert.ok(
+				before.turn_contributions.some((c) => c.frustration_weight > 0),
+				"the lexicon hit contributes friction before the mute",
+			);
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+
+			// A plain fill leaves the stale accumulation alone; the revise
+			// recomputes it, and the muted hit no longer contributes.
+			await framework.run("s1", { revise: ["config"] });
+			const after = await readAccumulation();
+			assert.equal(
+				after.turn_contributions.every((c) => c.frustration_weight === 0),
+				true,
+				"the muted term contributes no lexicon friction after the revise",
+			);
+
+			// Unmuting restores the count: the mute was config, so unmuting
+			// reverts the fingerprint and the next revise brings the hit back.
+			await unmuteTerm(db, "wrong");
+			await framework.run("s1", { revise: ["config"] });
+			const restored = await readAccumulation();
+			assert.ok(
+				restored.turn_contributions.some((c) => c.frustration_weight > 0),
+				"unmuting restores the term's contribution",
+			);
 		} finally {
 			await close();
 		}

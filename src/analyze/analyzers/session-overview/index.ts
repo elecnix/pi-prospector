@@ -28,6 +28,7 @@ import { TURN_PAIR_LLM_DEF } from "../turn-pair-llm/index.js";
 import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
 import { FAILURE_MODES_DEF } from "../failure-modes/index.js";
 import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
+import { getMutedNodeIds } from "../../../db/assertions.js";
 import { ASSISTANT_COGNITION_DEF } from "../assistant-cognition/index.js";
 import { PLAN_COMPLIANCE_DEF } from "../plan-compliance/index.js";
 import { PHASE_TRAJECTORY_DEF } from "../phase-trajectory/index.js";
@@ -150,6 +151,10 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		label: "default",
 	},
 
+	// Term mutes are part of this analyzer's config: a muted term's hit must not
+	// reach the digest or the synthesis (#325).
+	consultsAssertions: ["term"],
+
 	modelsForIdentity(config, modelTiers): string[] {
 		const cfg = (config as unknown as SessionOverviewConfig) ?? DEFAULT_SESSION_OVERVIEW_CONFIG;
 		return [resolveModelSpec(cfg.mapTier, modelTiers), resolveModelSpec(cfg.reduceTier, modelTiers)];
@@ -214,6 +219,9 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const trajectoryNodes = await ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id);
 		const failureNodes = await ctx.getDependencyNodes(FAILURE_MODES_DEF.id);
 		const frustrationNodes = await ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id);
+		// A muted term's hits are silenced (#325): they stay inputs — the source
+		// set is unchanged — but they do not reach the digest or the synthesis.
+		const mutedHitIds = await getMutedNodeIds(ctx.db);
 		const replyActsNodes = await ctx.getDependencyNodes("user-reply-acts");
 		const cognitionNodes = await ctx.getDependencyNodes(ASSISTANT_COGNITION_DEF.id);
 		const complianceNodes = await ctx.getDependencyNodes(PLAN_COMPLIANCE_DEF.id);
@@ -229,6 +237,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			trajectoryNodes,
 			failureNodes,
 			frustrationNodes,
+			mutedHitIds,
 			replyActsNodes,
 			cognitionNodes,
 			complianceNodes,

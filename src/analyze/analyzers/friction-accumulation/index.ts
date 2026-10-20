@@ -43,6 +43,7 @@ import type {
 import { computeConfigHash, computeSourceSetHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
+import type { AsyncDatabase } from "../../../db/async-db.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
@@ -60,6 +61,7 @@ import {
 	WindowRate,
 	DeclineVerdict,
 } from "./detect.js";
+import { getMutedNodeIds } from "../../../db/assertions.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const FrictionAccumulationRawProposal = Type.Object({
@@ -145,11 +147,25 @@ interface DependencyInputs {
 	coreNodes: AnalysisNodeRow[];
 	frustrationNodes: AnalysisNodeRow[];
 	trajectoryNodes: AnalysisNodeRow[];
+	/** The ids of the hit nodes a human mute silenced (#325). */
+	mutedHitIds: ReadonlySet<string>;
 }
 
-function gatherDependencies(
+async function gatherDependencies(
+	db: AsyncDatabase,
 	dependencyNodes: Record<string, AnalysisNodeRow[]>,
-): DependencyInputs {
+): Promise<DependencyInputs> {
+	// A muted term's hit nodes are silenced by a human assertion (#325). They
+	// stay live and inspectable, and they stay *inputs* — the source set is
+	// unchanged, so the unit keeps its identity and a recomputation is a
+	// revision of its predecessor rather than a sibling. What changes is the
+	// arithmetic: a silenced hit contributes no weight.
+	//
+	// That separation is what makes the mute reversible. The mute is `config`,
+	// so lifting it reverts the fingerprint, the unit's recipe matches the
+	// pre-mute one again, and the conclusion drawn under the mute is retracted
+	// so the pre-mute conclusion becomes current again.
+	const muted = await getMutedNodeIds(db);
 	return {
 		coreNodes: latestByKey(dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? [], (p) =>
 			typeof p["user_message_id"] === "string" ? (p["user_message_id"] as string) : null),
@@ -160,6 +176,7 @@ function gatherDependencies(
 			return `${p["user_message_id"] as string}\u0000${source}\u0000${signal}`;
 		}),
 		trajectoryNodes: latestByKey(dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? [], () => "session"),
+		mutedHitIds: muted,
 	};
 }
 
@@ -210,6 +227,13 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 		label: "default",
 	},
 
+	// Term mutes are part of this analyzer's config: a muted term's hit nodes
+	// must not keep adding to a session's accumulated friction (#325). Folding
+	// the active mute set into the fingerprint marks this analyzer's nodes stale
+	// for the `config` reason, so `--revise config` recomputes them with the
+	// muted hits excluded.
+	consultsAssertions: ["term"],
+
 	/**
 	 * One unit per session, planned from the upstream nodes' OUTPUT KEYS alone
 	 * (cheap fingerprint work — the math happens in analyze()). Because the
@@ -223,8 +247,8 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 	 * means an empty conversation, which yields no units (an empty session has
 	 * no turns to accumulate, and inventing an all-zero one would lie).
 	 */
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
-		const { coreNodes, frustrationNodes, trajectoryNodes } = gatherDependencies(ctx.dependencyNodes);
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
+		const { coreNodes, frustrationNodes, trajectoryNodes, mutedHitIds } = await gatherDependencies(ctx.db, ctx.dependencyNodes);
 		if (coreNodes.length === 0) return [];
 
 		const consumed = [...coreNodes, ...frustrationNodes, ...trajectoryNodes];
@@ -241,7 +265,7 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 
 	async analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = resolveConfig(ctx.config.configJson);
-		const { coreNodes, frustrationNodes, trajectoryNodes } = gatherDependencies({
+		const { coreNodes, frustrationNodes, trajectoryNodes, mutedHitIds } = await gatherDependencies(ctx.db, {
 			[TURN_PAIR_CORE_DEF.id]: await ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id),
 			[TURN_FRUSTRATION_DEF.id]: await ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id),
 			[TOOL_TRAJECTORY_DEF.id]: await ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id),
@@ -264,8 +288,11 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 		coreTurns.sort((a, b) => a.pair_index - b.pair_index);
 
 		// Frustration hit weights summed per turn, from the per-(turn, signal) nodes.
+		// A hit a human mute silenced contributes no weight (#325): the term is
+		// not a signal for this corpus, so its hits must not accumulate friction.
 		const frustrationWeightByTurnId = new Map<string, number>();
 		for (const node of frustrationNodes) {
+			if (mutedHitIds.has(node.id)) continue;
 			try {
 				const c = JSON.parse(node.content_json) as { user_message_id?: string; weight?: number };
 				if (typeof c.user_message_id !== "string") continue;
@@ -317,9 +344,17 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 		const edges: AnalysisResult["edges"] = [
 			{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 		];
+		// The evidence trail: the upstream nodes this score was built from. The
+		// source set already names them, but the edge table is where relationships
+		// live (DESIGN.md), and a `consumes` edge is what makes a reader walk back
+		// from a score to the hits that produced it — including to a hit a human
+		// muted (#325).
+		let ordinal = 1;
+		for (const source of [...coreNodes, ...frustrationNodes, ...trajectoryNodes]) {
+			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: source.output_key, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
+		}
 		// Anchor to the turns of the last window — where the decline concentrated —
 		// so the finding walks back to the exact moments the slope was earned.
-		let ordinal = 1;
 		for (const contribution of listed.slice(-config.windowSize)) {
 			edges.push({ toRefKind: REF_KINDS.MESSAGE, toRefId: contribution.user_message_id, edgeKind: EDGE_KINDS.ANCHORS, ordinal: ordinal++ });
 		}

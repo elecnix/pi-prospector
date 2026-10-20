@@ -1,6 +1,6 @@
 import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
-import { NOT_REVISED_LIVE } from "./current-generation.js";
+import { NOT_REVISED_LIVE, NOT_MUTED_LIVE } from "./current-generation.js";
 
 /**
  * Schema for pi-prospector.
@@ -420,8 +420,14 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	// of its lineage chain. Supersession is the `revises` edge the recomputation
 	// wrote, not an inference from analyzer version or created_at. A retracted
 	// successor supersedes nothing, so its predecessor is current again.
+	//
+	// A node an ACTIVE mute silences (#325) is also not current: the operator has
+	// said this conclusion does not count, so it must leave every aggregate read
+	// (`prospect nodes`, `prospect stats`, the outputs) while staying live and
+	// verifiable. Unmuting supersedes the assertion, which makes the mute inert
+	// and the node current again.
 	await db.exec("DROP VIEW IF EXISTS current_nodes");
-	await db.exec(`CREATE VIEW current_nodes AS SELECT * FROM live_nodes n WHERE ${NOT_REVISED_LIVE}`);
+	await db.exec(`CREATE VIEW current_nodes AS SELECT * FROM live_nodes n WHERE ${NOT_REVISED_LIVE} AND ${NOT_MUTED_LIVE}`);
 
 	// Create indexes after schema evolution (they may reference new columns)
 	await db.exec(`

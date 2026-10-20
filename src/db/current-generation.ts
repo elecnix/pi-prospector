@@ -12,12 +12,32 @@
  * served by `idx_edges_to(to_ref_id, edge_kind)`.
  */
 
-import { EDGE_KINDS } from "../analyze/edge-kinds.js";
+import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 
 /** True when no live node revises the row aliased `n`. Backs the `current_nodes` view. */
 export const NOT_REVISED_LIVE = `NOT EXISTS (
 	SELECT 1 FROM analysis_edges e JOIN live_nodes s ON s.id = e.from_node_id
 	WHERE e.edge_kind = '${EDGE_KINDS.REVISES}' AND e.to_ref_id = n.output_key)`;
+
+/**
+ * True when no ACTIVE mute silences the row aliased `n` (#325).
+ *
+ * A `mutes` edge records that a human assertion silenced a node's conclusion —
+ * "this node's conclusion is silenced by that human assertion". The assertion
+ * is append-only: unmuting supersedes it (`superseded_at`), which makes the
+ * edge inert again, so the node counts once more. The edge is never deleted, so
+ * the mark's history stays inspectable.
+ *
+ * A muted node is live (it still exists, still verifies, still carries its
+ * lineage) but it is not a *current* finding: the operator has said this
+ * conclusion does not count, so it must leave every aggregate read.
+ */
+export const NOT_MUTED_LIVE = `NOT EXISTS (
+	SELECT 1 FROM analysis_edges e JOIN assertions a ON a.id = e.to_ref_id
+	WHERE e.edge_kind = '${EDGE_KINDS.MUTES}'
+	  AND e.to_ref_kind = '${REF_KINDS.ASSERTION}'
+	  AND e.from_node_id = n.id
+	  AND a.subject_kind = 'term' AND a.verdict = 'muted' AND a.superseded_at IS NULL)`;
 
 /**
  * The as-of twin of {@link NOT_REVISED_LIVE}: true when no node that existed and
@@ -27,3 +47,16 @@ export const NOT_REVISED_AS_OF = `NOT EXISTS (
 	SELECT 1 FROM analysis_edges e JOIN analysis_nodes s ON s.id = e.from_node_id
 	WHERE e.edge_kind = '${EDGE_KINDS.REVISES}' AND e.to_ref_id = n.output_key
 	  AND s.created_at <= ? AND (s.retracted_at IS NULL OR s.retracted_at > ?))`;
+
+/**
+ * The as-of twin of {@link NOT_MUTED_LIVE}: true when no mute that was active
+ * at T silences the row aliased `n`. A mute is active at T when it was asserted
+ * by T and had not been superseded by T. Binds T twice.
+ */
+export const NOT_MUTED_AS_OF = `NOT EXISTS (
+	SELECT 1 FROM analysis_edges e JOIN assertions a ON a.id = e.to_ref_id
+	WHERE e.edge_kind = '${EDGE_KINDS.MUTES}'
+	  AND e.to_ref_kind = '${REF_KINDS.ASSERTION}'
+	  AND e.from_node_id = n.id
+	  AND a.subject_kind = 'term' AND a.verdict = 'muted'
+	  AND a.asserted_at <= ? AND (a.superseded_at IS NULL OR a.superseded_at > ?))`;

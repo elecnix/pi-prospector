@@ -723,6 +723,7 @@ export class AnalyzerFramework {
 			getTurnPairs: (sid) => this.turnPairsCached(cache, sid),
 			llm: this.deps.llm,
 			config,
+			db,
 			prompts,
 			modelTiers: this.deps.modelTiers,
 		};
@@ -841,6 +842,7 @@ export class AnalyzerFramework {
 		}
 		return out;
 	}
+
 }
 
 /**

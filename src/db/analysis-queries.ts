@@ -25,7 +25,7 @@ import type {
 import { computeConfigHash, uuidv7 } from "../analyze/input-hash.js";
 import { versionIdOf } from "../analyze/version.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
-import { NOT_REVISED_AS_OF } from "./current-generation.js";
+import { NOT_REVISED_AS_OF, NOT_MUTED_AS_OF } from "./current-generation.js";
 
 // ───────────────────────── analyzer registry ─────────────────────────
 
@@ -421,6 +421,9 @@ function nodeFilterSql(filter: NodeListFilter): { sql: string; params: Array<str
 		if (!filter.allVersions) {
 			where.push(NOT_REVISED_AS_OF);
 			params.push(asOf, asOf);
+			// A node an active mute silenced at T is not a current finding at T.
+			where.push(NOT_MUTED_AS_OF);
+			params.push(asOf, asOf);
 		}
 	}
 	return { sql: `FROM ${table} n${where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""}`, params };
@@ -760,8 +763,8 @@ export async function getAnalysisStats(db: AsyncDatabase, asOf?: string): Promis
 	// Edges have no timestamp of their own; they are bounded by their source node.
 	const current = asOf
 		? {
-				from: `analysis_nodes n WHERE n.created_at <= ? AND (n.retracted_at IS NULL OR n.retracted_at > ?) AND ${NOT_REVISED_AS_OF}`,
-				params: [asOf, asOf, asOf, asOf],
+				from: `analysis_nodes n WHERE n.created_at <= ? AND (n.retracted_at IS NULL OR n.retracted_at > ?) AND ${NOT_REVISED_AS_OF} AND ${NOT_MUTED_AS_OF}`,
+				params: [asOf, asOf, asOf, asOf, asOf, asOf],
 			}
 		: { from: "current_nodes n", params: [] };
 	const count = async (sql: string, params: readonly string[]): Promise<number> =>

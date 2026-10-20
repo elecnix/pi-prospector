@@ -510,6 +510,8 @@ export interface AnalyzerRunContext {
 	getTurnPairs: (sessionId: string) => Promise<TurnPair[]>;
 	llm: LLMCaller;
 	config: AnalyzerConfig;
+	/** The database the run writes to — for a reader that needs a corpus-wide view a dependency read cannot give. */
+	db: AsyncDatabase;
 	/** Prompt content keyed by prompt name. */
 	prompts: Record<string, string>;
 	modelTiers: ModelTierConfig;

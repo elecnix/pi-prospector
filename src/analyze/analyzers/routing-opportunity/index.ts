@@ -61,6 +61,7 @@ import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF, type ToolTrajectoryProperties } from "../tool-trajectory/index.js";
 import { REPETITION_COLLAPSE_DEF, type RepetitionCollapseProperties } from "../repetition-collapse/index.js";
 import { DEFAULT_ROUTING_CONFIG, type RoutingConfig } from "./config.js";
+import { getMutedNodeIds } from "../../../db/assertions.js";
 import { Type, type Static } from "typebox";
 
 export const RoutingVerdict = Type.Union([
@@ -246,6 +247,10 @@ export const routingOpportunityAnalyzer: Analyzer = {
 		label: "default",
 	},
 
+	// Term mutes are part of this analyzer's config: a muted term's hit must not
+	// mark a turn as frustrated for routing purposes (#325).
+	consultsAssertions: ["term"],
+
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const cfg = (ctx.config as unknown as RoutingConfig) ?? DEFAULT_ROUTING_CONFIG;
 
@@ -289,9 +294,12 @@ export const routingOpportunityAnalyzer: Analyzer = {
 			}
 		}
 
-		// Frustration by user_message_id from turn-frustration nodes.
+		// Frustration by user_message_id from turn-frustration nodes. A muted
+		// term's hits are silenced (#325) and do not mark a turn as frustrated.
 		const frustrationTurns = new Set<string>();
+		const muted = await getMutedNodeIds(ctx.db);
 		for (const n of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
+			if (muted.has(n.id)) continue;
 			try {
 				const c = JSON.parse(n.content_json) as { user_message_id?: string };
 				if (typeof c.user_message_id === "string") frustrationTurns.add(c.user_message_id);

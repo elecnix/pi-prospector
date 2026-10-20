@@ -68,6 +68,7 @@ async function idSet(db: AsyncDatabase, table: string, column: string): Promise<
  *  | `prompt_version`  | `prompt_registry.hash`              |
  *  | `config_version`  | `analyzer_configs.id`               |
  *  | `proposal`        | `proposals.id`                      |
+ *  | `assertion`       | `assertions.id`                     |
  */
 export async function checkGraphIntegrity(db: AsyncDatabase): Promise<GraphIntegrityResult> {
 	const nodeRows = (await db.prepare("SELECT id, analyzer_id, output_key FROM analysis_nodes").all()) as Array<{
@@ -89,6 +90,7 @@ export async function checkGraphIntegrity(db: AsyncDatabase): Promise<GraphInteg
 	const configIds = await idSet(db, "analyzer_configs", "id");
 	const promptHashes = await idSet(db, "prompt_registry", "hash");
 	const proposalIds = await idSet(db, "proposals", "id");
+	const assertionIds = await idSet(db, "assertions", "id");
 
 	const edges = (await db.prepare("SELECT id, from_node_id, to_ref_kind, to_ref_id, edge_kind FROM analysis_edges").all()) as Array<{
 		id: string;
@@ -141,6 +143,10 @@ export async function checkGraphIntegrity(db: AsyncDatabase): Promise<GraphInteg
 			case REF_KINDS.PROPOSAL:
 				ok = proposalIds.has(e.to_ref_id);
 				expectedIn = "proposals.id";
+				break;
+			case REF_KINDS.ASSERTION:
+				ok = assertionIds.has(e.to_ref_id);
+				expectedIn = "assertions.id";
 				break;
 			default:
 				ok = false;

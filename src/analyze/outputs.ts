@@ -10,6 +10,7 @@
 
 import { type AsyncDatabase } from "../db/async-db.js";
 import { getLatestNodesByAnalyzerAcrossSessions } from "../db/analysis-queries.js";
+import { getMutedNodeIds, withoutMutedNodes } from "../db/assertions.js";
 import type {
 	Analyzer,
 	AnalyzerOutput,
@@ -109,12 +110,24 @@ export async function renderOutputs(
 	opts: RenderOptions,
 ): Promise<RenderResult[]> {
 	const cache = new Map<string, AnalysisNodeRow[]>();
+	// A node a human mute silenced is not a finding (#325): it stays in the
+	// graph, but a report that counted it would be counting a conclusion the
+	// operator said does not count. The same filter every reader uses.
+	//
+	// Lazy: an output that reads no nodes pays no query, and a caller whose
+	// database has no assertion table yet is not broken by it.
+	let mutedPromise: Promise<Set<string>> | undefined;
+	const mutedIds = (): Promise<Set<string>> => {
+		mutedPromise ??= getMutedNodeIds(opts.db);
+		return mutedPromise;
+	};
 	const getNodes = async (analyzerId: string, asOf?: string): Promise<AnalysisNodeRow[]> => {
 		const cached = cache.get(analyzerId);
 		if (cached) return cached;
 		const rows = await getLatestNodesByAnalyzerAcrossSessions(opts.db, analyzerId, asOf);
-		cache.set(analyzerId, rows);
-		return rows;
+		const kept = withoutMutedNodes(rows, await mutedIds());
+		cache.set(analyzerId, kept);
+		return kept;
 	};
 
 	const results: RenderResult[] = [];

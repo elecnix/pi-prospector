@@ -46,6 +46,7 @@ import {
 	type ToolResultEvidence,
 } from "./prompt.js";
 import { computeEnrichCap, DEFAULT_TURN_PAIR_LLM_CONFIG, type TurnPairLLMConfig } from "./config.js";
+import { getMutedNodeIds } from "../../../db/assertions.js";
 
 export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 	id: "turn-pair-llm",
@@ -112,6 +113,10 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		label: "default",
 	},
 
+	// Term mutes are part of this analyzer's config: a muted term's hit must not
+	// escalate a turn to the classifier, nor appear in the evidence slice (#325).
+	consultsAssertions: ["term"],
+
 	modelsForIdentity(config, modelTiers): string[] {
 		const cfg = (config as unknown as TurnPairLLMConfig) ?? DEFAULT_TURN_PAIR_LLM_CONFIG;
 		return [resolveModelSpec(cfg.tier, modelTiers)];
@@ -129,6 +134,11 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		// and would never otherwise reach the classifier that can name its friction type.
 		const frustrationBoost = new Map<string, number>();
 		const frustrationIds: string[][] = [];
+		// A muted term's hits are silenced (#325): they must not escalate a turn
+		// nor mark an evidence-slice boundary. They stay *inputs* — the source
+		// set is unchanged, so the unit keeps its identity — but a silenced hit
+		// contributes no boost.
+		const muted = await getMutedNodeIds(ctx.db);
 		for (const node of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
 			let hit: TurnFrustrationProperties;
 			try {
@@ -137,6 +147,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				continue;
 			}
 			if (!hit.user_message_id) continue;
+			if (muted.has(node.id)) continue;
 			frustrationIds.push([hit.user_message_id]);
 			if (hit.polarity !== "frustration") continue;
 			frustrationBoost.set(hit.user_message_id, (frustrationBoost.get(hit.user_message_id) ?? 0) + hit.weight);
