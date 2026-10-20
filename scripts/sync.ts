@@ -7,23 +7,30 @@ import { openAsyncDatabase } from "../src/db/async-db.js";
 import { runSync } from "../src/sync/index.js";
 import { PiFileSource } from "../src/sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../src/sync/sources/claude-file.js";
-import { getClaudeSessionsDir, getDbPath, getSessionsDir, loadConfig } from "../src/config.js";
+import { CodexFileSource } from "../src/sync/sources/codex-file.js";
+import { getClaudeSessionsDir, getCodexSessionsDir, getDbPath, getSessionsDir, loadConfig } from "../src/config.js";
 
 const config = loadConfig();
 const dbPath = getDbPath(config);
 const sessionsDir = getSessionsDir();
 const claudeSessionsDir = getClaudeSessionsDir();
+const codexSessionsDir = getCodexSessionsDir();
 
 console.log(`Database: ${dbPath}`);
 console.log(`Sessions: ${sessionsDir}`);
 console.log(`Claude:   ${claudeSessionsDir}`);
+console.log(`Codex:    ${codexSessionsDir}`);
 console.log();
 
 const db = openAsyncDatabase(dbPath);
 await migrate(db);
 
 try {
-	const result = await runSync(db, [new PiFileSource(sessionsDir), new ClaudeFileSource(claudeSessionsDir)]);
+	const result = await runSync(db, [
+		new PiFileSource(sessionsDir),
+		new ClaudeFileSource(claudeSessionsDir),
+		new CodexFileSource(codexSessionsDir),
+	]);
 	const lines = [
 		"⛏️  Prospect sync complete",
 		`  Sessions processed: ${result.sessionsProcessed}`,

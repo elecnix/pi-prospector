@@ -74,12 +74,12 @@ export interface SearchQuery {
 const SEARCH_FLAGS = [
 	"--kind all|messages|proposals",
 	"--limit <n>",
-	"--source pi|claude",
+	"--source pi|claude|codex",
 ];
 
 /** The usage line for `prospect search`. */
 export function searchUsage(): string {
-	return "Usage: prospect search <query> [--kind <all|messages|proposals>] [--limit <n>] [--source <pi|claude>]";
+	return "Usage: prospect search <query> [--kind <all|messages|proposals>] [--limit <n>] [--source <pi|claude|codex>]";
 }
 
 const KINDS: readonly string[] = ["all", "messages", "proposals"];

@@ -88,12 +88,12 @@ export interface LeaksQuery {
 const LEAKS_FLAGS = [
 	"--severity critical|high|medium (floor: report this severity and above)",
 	"--limit <n>",
-	"--source pi|claude",
+	"--source pi|claude|codex",
 ];
 
 /** The usage line for `prospect leaks`. */
 export function leaksUsage(): string {
-	return `Usage: prospect leaks [--severity <critical|high|medium>] [--limit <n>] [--source <pi|claude>]`;
+	return `Usage: prospect leaks [--severity <critical|high|medium>] [--limit <n>] [--source <pi|claude|codex>]`;
 }
 
 const SEVERITIES: readonly string[] = ["medium", "high", "critical"];

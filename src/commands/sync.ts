@@ -5,12 +5,13 @@ import { runSync } from "../sync/index.js";
 import type { SessionSourceAdapter } from "../sync/adapter.js";
 import { PiFileSource } from "../sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../sync/sources/claude-file.js";
+import { CodexFileSource } from "../sync/sources/codex-file.js";
 import { PiSubagentSource } from "../sync/sources/pi-subagent.js";
 import { parseHarnessSource } from "../harness.js";
-import { loadConfig, getDbPath, getSessionsDir, getClaudeSessionsDir } from "../config.js";
+import { loadConfig, getDbPath, getSessionsDir, getClaudeSessionsDir, getCodexSessionsDir } from "../config.js";
 
 /**
- * Composition root for session sources: the two built-in file sources, plus
+ * Composition root for session sources: the three built-in file sources, plus
  * any extra source named in config `sources` (e.g. "pi-subagent").
  *
  * The pi-subagent adapter is deliberately registered *before* PiFileSource:
@@ -23,6 +24,7 @@ import { loadConfig, getDbPath, getSessionsDir, getClaudeSessionsDir } from "../
 export function buildAdapters(): SessionSourceAdapter[] {
 	const adapters: SessionSourceAdapter[] = [
 		new ClaudeFileSource(getClaudeSessionsDir()),
+		new CodexFileSource(getCodexSessionsDir()),
 	];
 
 	const sources = loadConfig().sources ?? [];
@@ -72,7 +74,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 
 interface SyncArgs {
 	project?: string;
-	source?: "pi" | "claude";
+	source?: "pi" | "claude" | "codex";
 }
 
 function parseSyncArgs(raw: string): SyncArgs {

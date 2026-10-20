@@ -56,6 +56,19 @@ describe("instructionCandidateGroups", () => {
 		);
 	});
 
+	it("codex: global AGENTS.md, then one AGENTS.md per directory from the root down", () => {
+		const groups = instructionCandidateGroups({ source: "codex", cwd: "/w/proj", home: "/h", config: CONFIG });
+		assert.deepEqual(
+			groups.map((g) => g.map((c) => c.path)),
+			[
+				["/h/.codex/AGENTS.md"],
+				["/AGENTS.md"],
+				["/w/AGENTS.md"],
+				["/w/proj/AGENTS.md"],
+			],
+		);
+	});
+
 	it("an unknown harness gets no harness files, only configured ones (with ~ expanded)", () => {
 		const groups = instructionCandidateGroups({
 			source: "",

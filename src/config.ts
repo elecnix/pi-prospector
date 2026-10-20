@@ -43,6 +43,18 @@ export function getClaudeSessionsDir(): string {
 	return process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] ?? CLAUDE_SESSIONS_DIR;
 }
 
+/** Where Codex writes its session rollouts. */
+const CODEX_SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
+
+/**
+ * The Codex sessions root. Codex organises its rollouts by date
+ * (`YYYY/MM/DD/rollout-*.jsonl`), not by project, so the tree holds no
+ * project directories — each session records the directory it ran in.
+ */
+export function getCodexSessionsDir(): string {
+	return process.env["PROSPECTOR_CODEX_SESSIONS_DIR"] ?? CODEX_SESSIONS_DIR;
+}
+
 /**
  * Per-analyzer config overrides from `~/.pi/agent/prospector.json`, keyed by
  * analyzer id. Merged over each analyzer's shipped defaults by the framework.

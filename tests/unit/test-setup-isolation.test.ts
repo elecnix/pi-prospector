@@ -11,11 +11,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
-import { getClaudeSessionsDir, getSessionsDir } from "../../src/config.js";
+import { getClaudeSessionsDir, getCodexSessionsDir, getSessionsDir } from "../../src/config.js";
 
 describe("test setup isolation", () => {
-	it("points both session directories away from the home directory by default", () => {
-		for (const dir of [getSessionsDir(), getClaudeSessionsDir()]) {
+	it("points every session directory away from the home directory by default", () => {
+		for (const dir of [getSessionsDir(), getClaudeSessionsDir(), getCodexSessionsDir()]) {
 			assert.ok(!dir.startsWith(os.homedir()), `${dir} must not be under the home directory during tests`);
 		}
 	});

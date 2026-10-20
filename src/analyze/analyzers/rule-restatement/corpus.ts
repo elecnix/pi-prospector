@@ -68,9 +68,10 @@ function ancestorsRootFirst(cwd: string): string[] {
 /**
  * Where the session's harness would have looked for instructions, in load
  * order (general first). Pi loads one of `AGENTS.md`/`CLAUDE.md` per directory;
- * Claude Code loads `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md`. A
- * session whose harness is unknown gets no harness-derived files — guessing a
- * host would put the wrong host's rules in scope.
+ * Claude Code loads `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md`;
+ * Codex loads `AGENTS.md` per directory. A session whose harness is unknown gets
+ * no harness-derived files — guessing a host would put the wrong host's rules
+ * in scope.
  *
  * Pi's per-directory choice depends on which file exists, so candidates are
  * grouped: the first existing path of a group is the one that loads.
@@ -83,10 +84,15 @@ export function instructionCandidateGroups(params: {
 }): InstructionCandidate[][] {
 	const { source, cwd, home, config } = params;
 	const groups: InstructionCandidate[][] = [];
-	const harness = source === "pi" || source === "claude" ? source : null;
+	const harness = source === "pi" || source === "claude" || source === "codex" ? source : null;
 
 	if (harness && config.includeHarnessGlobal) {
-		const global = harness === "pi" ? path.join(home, ".pi", "agent", "AGENTS.md") : path.join(home, ".claude", "CLAUDE.md");
+		const global =
+			harness === "pi"
+				? path.join(home, ".pi", "agent", "AGENTS.md")
+				: harness === "claude"
+					? path.join(home, ".claude", "CLAUDE.md")
+					: path.join(home, ".codex", "AGENTS.md");
 		groups.push([{ path: global, scope: "global" }]);
 	}
 
@@ -97,6 +103,10 @@ export function instructionCandidateGroups(params: {
 					{ path: path.join(dir, "AGENTS.md"), scope: "project" },
 					{ path: path.join(dir, "CLAUDE.md"), scope: "project" },
 				]);
+			} else if (harness === "codex") {
+				// Codex loads the same `AGENTS.md` Pi does, and reads no
+				// `CLAUDE.md`.
+				groups.push([{ path: path.join(dir, "AGENTS.md"), scope: "project" }]);
 			} else {
 				groups.push([{ path: path.join(dir, "CLAUDE.md"), scope: "project" }]);
 				groups.push([{ path: path.join(dir, ".claude", "CLAUDE.md"), scope: "project" }]);

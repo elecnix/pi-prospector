@@ -17,6 +17,7 @@ process.env["PROSPECTOR_INSTRUCTIONS_HOME"] = "/nonexistent/prospector-test-home
 // used as a path relative to the working directory.
 process.env["PROSPECTOR_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-sessions";
 process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-claude-sessions";
+process.env["PROSPECTOR_CODEX_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-codex-sessions";
 // Usage reports (#290): no test may read or write the developer's consent file
 // or send a report. Tests of the telemetry code clear these for themselves.
 process.env["PROSPECTOR_TELEMETRY_DISABLED"] = "1";
