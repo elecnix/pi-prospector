@@ -180,6 +180,33 @@ const PREPARATION_COMMAND_PATTERNS: readonly { source: string; re: RegExp }[] = 
 	{ source: "pr skill", re: /\bskill\b.*\b(pr|pull-?request)\b/i },
 ];
 
+/** The preparation markers that are a test run, and so can fail. */
+const TEST_RUN_PATTERNS: readonly RegExp[] = [
+	/\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b/,
+	/\bpytest\b|\bunittest\b|\bgo\s+test\b|\bcargo\s+test\b|\bmvn\s+test\b|\bgradle\s+test\b/,
+];
+
+/**
+ * Whether a preparation command prepared nothing, because it failed.
+ *
+ * A test run that failed left the agent with work to do, so it did not
+ * prepare the commit: the issue names "the first full test run" as the
+ * marker, and the measure beside it counts *passing* runs. Staging, a review
+ * and a skill either happened or did not, so none of them can fail this way.
+ *
+ * The failure is read from two places, because a test run can fail two ways.
+ * The host's own verdict catches the run it reported as an error. A run whose
+ * failure a pipe hid is reported as a *success* by the host, so its output is
+ * the only evidence — the same evidence the hidden-exit-code measure uses.
+ * `outputMarkers` carries that evidence: the failure markers found in the
+ * run's output, empty when there were none.
+ */
+export function isFailedPreparation(command: string, isError: boolean, outputMarkers: readonly string[] = []): boolean {
+	if (!TEST_RUN_PATTERNS.some((re) => re.test(command))) return false;
+	if (isError) return true;
+	return outputMarkers.length > 0;
+}
+
 /** Whether a command marks the start of a commit's preparation. */
 export function isPreparationCommand(command: string): boolean {
 	return PREPARATION_COMMAND_PATTERNS.some((p) => p.re.test(command));

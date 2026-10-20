@@ -44,7 +44,7 @@ import {
 } from "./detect.js";
 import { PhaseSpanSchema, SkillSpanSchema, HiddenExitCodeSchema, type PhaseSpan, type SkillSpan } from "./spans.js";
 import { measurePhaseSpans, measureSkillSpans, type SpanRow } from "./phases.js";
-import { isPreparationCommand, isCommitCommand, commitSubjectOf } from "./spans.js";
+import { isPreparationCommand, isCommitCommand, commitSubjectOf, isFailedPreparation } from "./spans.js";
 import type { AsyncDatabase } from "../../../db/async-db.js";
 import { getBackgroundTasksForSession } from "../../../db/queries.js";
 import type { BackgroundTaskRow } from "../../types.js";
@@ -340,10 +340,13 @@ export const timeEconomyAnalyzer: Analyzer = {
 		// division context-economy uses for the same reason.
 		const { rows, usageById } = await loadSpanRows(ctx.db, ctx.sessionId, ctx.messages);
 		const backgroundTasks = await getBackgroundTasksForSession(ctx.db, ctx.sessionId);
+		const config = resolveConfig(ctx.config);
 		const phaseSpans = measurePhaseSpans(rows, {
 			isCommit: isCommitCommand,
 			isPreparation: isPreparationCommand,
 			commitSubject: commitSubjectOf,
+			isFailedPreparation,
+			failureMarkers: config.failureMarkers,
 		});
 		const skillSpans = measureSkillSpans(rows);
 

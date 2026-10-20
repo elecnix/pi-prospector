@@ -14,7 +14,7 @@ import { DEFAULT_TIME_ECONOMY_CONFIG } from "../../src/analyze/analyzers/time-ec
 import type { TimeEconomyConfig } from "../../src/analyze/analyzers/time-economy/config.js";
 import { measureTime } from "../../src/analyze/analyzers/time-economy/detect.js";
 import { findFailureMarkers } from "../../src/analyze/analyzers/time-economy/spans.js";
-import { isCommitCommand, commitSubjectOf, isPreparationCommand } from "../../src/analyze/analyzers/time-economy/spans.js";
+import { isCommitCommand, commitSubjectOf, isPreparationCommand, isFailedPreparation } from "../../src/analyze/analyzers/time-economy/spans.js";
 import { measurePhaseSpans, measureSkillSpans, type SpanRow } from "../../src/analyze/analyzers/time-economy/phases.js";
 import { extractBackgroundTasks, parseTaskNotification } from "../../src/sync/background-tasks.js";
 import type { BackgroundTaskRow } from "../../src/analyze/types.js";
@@ -338,6 +338,56 @@ describe("measurePhaseSpans", () => {
 		assert.equal(preparations[1]?.commit_subject, "two");
 	});
 
+	it("does not start a preparation at a test run that failed", () => {
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			// A test run the host reported as an error: it left work to do, so
+			// it did not prepare the commit.
+			spanRow({ id: "c1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "npm test" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(100), tool_results: JSON.stringify([{ toolCallId: "t1", toolName: "bash", isError: true, textLength: 20 }]) }),
+			// The passing run that did prepare it.
+			spanRow({ id: "c2", role: "assistant", timestamp: at(200), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "npm test" } }]) }),
+			spanRow({ id: "r2", role: "toolResult", timestamp: at(300) }),
+			spanRow({ id: "c3", role: "assistant", timestamp: at(400), tool_calls: JSON.stringify([{ id: "t3", name: "bash", arguments: { command: "git commit -m 'one'" } }]) }),
+		];
+		const spans = measurePhaseSpans(rows, {
+			isCommit: isCommitCommand,
+			isPreparation: isPreparationCommand,
+			commitSubject: commitSubjectOf,
+			isFailedPreparation,
+			failureMarkers: CONFIG.failureMarkers,
+		});
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		// The preparation starts at the passing run, at 200.
+		assert.equal(preparation.start_message_id, "c2");
+		assert.equal(preparation.seconds, 200);
+	});
+
+	it("does not start a preparation at a test run whose failure a pipe hid", () => {
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			// The host reports this run as a success; only its output says it
+			// failed.
+			spanRow({ id: "c1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "npm test 2>&1 | tail -40" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(100), content_text: "--- FAIL: test_x (0.02s)\n1 failed, 12 passed", tool_results: JSON.stringify([{ toolCallId: "t1", toolName: "bash", isError: false, textLength: 40 }]) }),
+			spanRow({ id: "c2", role: "assistant", timestamp: at(200), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "npm test" } }]) }),
+			spanRow({ id: "r2", role: "toolResult", timestamp: at(300) }),
+			spanRow({ id: "c3", role: "assistant", timestamp: at(400), tool_calls: JSON.stringify([{ id: "t3", name: "bash", arguments: { command: "git commit -m 'one'" } }]) }),
+		];
+		const spans = measurePhaseSpans(rows, {
+			isCommit: isCommitCommand,
+			isPreparation: isPreparationCommand,
+			commitSubject: commitSubjectOf,
+			isFailedPreparation,
+			failureMarkers: CONFIG.failureMarkers,
+		});
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		assert.equal(preparation.start_message_id, "c2");
+		assert.equal(preparation.seconds, 200);
+	});
+
 	it("does not claim a preparation marker for a commit with no usable timestamp", () => {
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
@@ -471,6 +521,27 @@ describe("measureSkillSpans", () => {
 		const spans = measureSkillSpans(rows);
 		assert.equal(spans.length, 1);
 		assert.notEqual(spans[0]?.end_reason, "pr_created");
+	});
+
+	it("ends a skill span at the end of the turn it ran in, in any turn", () => {
+		// The skill is in the second turn, so the turn it belongs to is not
+		// the first: a lookup that keyed the turn's end by anything but the
+		// turn's own ordinal would miss it and stretch the span to the
+		// session's end.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "a1", role: "assistant", timestamp: at(10) }),
+			spanRow({ id: "u2", role: "user", timestamp: at(100) }),
+			spanRow({ id: "s1", role: "assistant", timestamp: at(110), tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "review" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(180) }),
+			spanRow({ id: "a2", role: "assistant", timestamp: at(200) }),
+			spanRow({ id: "u3", role: "user", timestamp: at(900) }),
+		];
+		const spans = measureSkillSpans(rows);
+		assert.equal(spans.length, 1);
+		assert.equal(spans[0]?.end_reason, "turn_end");
+		// The turn ended at 200, not at the session's end.
+		assert.equal(spans[0]?.seconds, 90);
 	});
 
 	it("does not double-count a nested skill", () => {

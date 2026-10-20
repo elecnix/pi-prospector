@@ -31,6 +31,7 @@ import type { MessageRow } from "../../types.js";
 import { buildToolStream } from "../../tool-stream.js";
 import { parseTime } from "../stale-verification/command-vocabulary.js";
 import {
+	findFailureMarkers,
 	isPreparationCommand,
 	isPrCreateCommand,
 	isPullRequestSkill,
@@ -159,6 +160,22 @@ export function measurePhaseSpans(
 		isPreparation: (command: string) => boolean;
 		/** The commit's subject, read from the command that made it. */
 		commitSubject?: (command: string) => string | null;
+		/**
+		 * Whether a preparation command prepared nothing, because it failed.
+		 *
+		 * The issue names "the first full test run" as the marker, and the
+		 * measure beside it counts *passing* runs: a test run that failed
+		 * left the agent with work to do, so it did not prepare the commit.
+		 * Only a test run can fail this way; staging, a review and a skill
+		 * either happened or did not.
+		 */
+		isFailedPreparation?: (command: string, isError: boolean, outputMarkers: readonly string[]) => boolean;
+		/**
+		 * The failure markers a call's output is checked for. A test run whose
+		 * failure a pipe hid is reported as a success by the host, so its
+		 * output is the only evidence that it failed.
+		 */
+		failureMarkers?: readonly string[];
 	},
 ): PhaseSpan[] {
 	const stream = buildToolStream([...rows]);
@@ -166,12 +183,36 @@ export function measurePhaseSpans(
 	for (const row of rows) timeById.set(row.id, parseTime(row.timestamp));
 	const turns = turnStarts(rows);
 
-	// The commands the session ran, in order, with the instant each started.
-	const commands: Array<{ messageId: string; command: string; ms: number | null }> = [];
+	// A result row's text belongs to its call only when the row carries one
+	// result; the transcript joins several results' texts into one field.
+	const outputTextById = new Map<string, string>();
+	for (const row of rows) {
+		if (row.role !== "toolResult" || !row.content_text) continue;
+		if (singleResult(row.tool_results)) outputTextById.set(row.id, row.content_text);
+	}
+
+	// The commands the session ran, in order, with the instant each started,
+	// whether the host reported it as an error, and the failure markers its
+	// output carried.
+	const commands: Array<{
+		messageId: string;
+		command: string;
+		ms: number | null;
+		isError: boolean;
+		markers: readonly string[];
+	}> = [];
 	for (const inv of stream.invocations) {
 		const command = typeof inv.args["command"] === "string" ? (inv.args["command"] as string) : "";
 		if (!command) continue;
-		commands.push({ messageId: inv.messageId, command, ms: timeById.get(inv.messageId) ?? null });
+		const output = inv.outcome ? (outputTextById.get(inv.outcome.messageId) ?? "") : "";
+		const markers = inv.outcome && !inv.outcome.isError && output ? findFailureMarkers(output, opts.failureMarkers ?? []) : [];
+		commands.push({
+			messageId: inv.messageId,
+			command,
+			ms: timeById.get(inv.messageId) ?? null,
+			isError: inv.outcome?.isError ?? false,
+			markers,
+		});
 	}
 
 	const spans: PhaseSpan[] = [];
@@ -219,9 +260,14 @@ export function measurePhaseSpans(
 	let previousCommitId: string | null = null;
 	for (const commit of commands.filter((c) => opts.isCommit(c.command))) {
 		const commitMs = timeById.get(commit.messageId) ?? null;
+		const isFailed = opts.isFailedPreparation ?? (() => false);
 		const preparation = commands.find(
 			(c) =>
 				opts.isPreparation(c.command) &&
+				// A test run that failed prepared nothing: the agent still had
+				// work to do before the commit. Only a run that passed marks
+				// the start of the preparation.
+				!isFailed(c.command, c.isError, c.markers) &&
 				(previousCommitMs === null || (c.ms !== null && c.ms > previousCommitMs)) &&
 				// A commit whose own time cannot be placed cannot bound its
 				// preparation: a marker from a later turn is not a start for
@@ -271,16 +317,24 @@ export function measureSkillSpans(
 	const turns = turnStarts(rows);
 
 	// The end of each turn, so a skill span can be closed at its turn's end.
+	// Keyed by the turn's ordinal, the same key the skill calls carry, so the
+	// lookup finds the turn the skill actually ran in. Keying it by the user
+	// row's index instead would coincide with the ordinal only for the first
+	// turn, and every later skill would fall through to the session's end.
 	const turnEndMs = new Map<number, number | null>();
-	for (let i = 0; i < rows.length; i++) {
-		if (rows[i]!.role !== "user") continue;
-		let end: number | null = null;
-		for (let j = i + 1; j < rows.length; j++) {
-			if (rows[j]!.role === "user") break;
-			const ms = parseTime(rows[j]!.timestamp);
-			if (ms !== null) end = ms;
+	{
+		let turn = -1;
+		for (let i = 0; i < rows.length; i++) {
+			if (rows[i]!.role !== "user") continue;
+			turn++;
+			let end: number | null = null;
+			for (let j = i + 1; j < rows.length; j++) {
+				if (rows[j]!.role === "user") break;
+				const ms = parseTime(rows[j]!.timestamp);
+				if (ms !== null) end = ms;
+			}
+			turnEndMs.set(turn, end);
 		}
-		turnEndMs.set(i, end);
 	}
 	/** The turn index a message belongs to. */
 	const turnIndexByMessage = new Map<string, number>();
@@ -391,4 +445,15 @@ function findPrCreateEnd(
 		return { messageId: inv.outcome.messageId, ms: timeById.get(inv.outcome.messageId) ?? ms };
 	}
 	return null;
+}
+
+/** Whether a tool-result row carried exactly one result, so its text is unambiguously that result's. */
+function singleResult(json: string | null): boolean {
+	if (!json) return false;
+	try {
+		const parsed: unknown = JSON.parse(json);
+		return Array.isArray(parsed) && parsed.length === 1;
+	} catch {
+		return false;
+	}
 }
