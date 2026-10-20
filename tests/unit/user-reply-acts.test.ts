@@ -101,8 +101,42 @@ describe("user-reply-acts: parseReply (array-based schema with quotes)", () => {
 		assert.deepEqual(v!.questions.map((q) => q.quote), ["add tests", "which option?", "what do you mean?", "what does X do?"]);
 	});
 
-	it("returns null when any required array is missing", () => {
-		assert.equal(parseReply({ acceptances: [], refusals: [], questions: [], information_provisions: [], continuation: false, other: false }), null, "missing answers array → null");
+	it("reads an act array the model left out as no acts of that kind", () => {
+		const v = parseReply({
+			refusals: [],
+			questions: [],
+			answers: [],
+			commands: [{ quote: "rename the file", rationale: "orders a rename" }],
+			information_provisions: [],
+			memories: [],
+			continuation: false,
+			other: false,
+		});
+		assert.ok(v, "a verdict missing only an empty array is usable");
+		assert.deepEqual(v!.acceptances, []);
+		assert.equal(v!.commands.length, 1);
+	});
+
+	it("still rejects an object with none of the verdict's fields", () => {
+		assert.equal(parseReply({}), null);
+	});
+
+	it("accepts a verdict with no act only when the caller allows it", () => {
+		const empty = { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], memories: [], continuation: false, other: false };
+		assert.equal(parseReply(empty), null, "first attempt: an empty verdict asks for a retry");
+		const v = parseReply(empty, undefined, { allowEmpty: true });
+		assert.ok(v, "final attempt: an empty verdict is the answer the prompt asks for");
+		assert.equal(v!.other, false);
+		assert.equal(v!.continuation, false);
+	});
+
+	it("does not store an empty verdict when the model's acts were dropped for bad quotes", () => {
+		const v = parseReply(
+			{ acceptances: [], refusals: [], questions: [], answers: [], commands: [{ quote: "NOT IN REPLY", rationale: "x" }], information_provisions: [], memories: [], continuation: false, other: false },
+			"the actual reply",
+			{ allowEmpty: true },
+		);
+		assert.equal(v, null, "the model claimed an act it could not quote; that is a failure, not a reply with no act");
 	});
 
 	it("returns null for an invalid acceptance level", () => {

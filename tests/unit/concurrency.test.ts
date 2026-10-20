@@ -6,6 +6,7 @@ import {
 	withTimeout,
 	callWithRetry,
 	classifyRetryable,
+	LLMTimeoutError,
 	DEFAULT_RETRY_POLICY,
 	DEFAULT_LLM_CONCURRENCY,
 	DEFAULT_DETERMINISTIC_CONCURRENCY,
@@ -236,6 +237,31 @@ describe("callWithRetry", () => {
 		// With a 50ms budget and a >=40ms first delay, it retries once then gives up
 		// rather than spending past the budget.
 		assert.ok(stats.retries <= 1, `retries ${stats.retries}`);
+	});
+});
+
+describe("transient provider failures are retried", () => {
+	it("retries a stream that ended without a finish reason", () => {
+		const err = new Error("LLM error from provider/model: Stream ended without finish_reason");
+		assert.equal(classifyRetryable(err).retryable, true);
+	});
+
+	it("does not mistake a token count of 500 for an HTTP 500", () => {
+		const err = new Error("LLM response from provider/model was truncated at the output limit (500 output tokens) before the answer was complete.");
+		assert.equal(classifyRetryable(err).retryable, false);
+	});
+
+	it("retries a stalled call once, then gives up", async () => {
+		const policy: RetryPolicy = { ...DEFAULT_RETRY_POLICY, baseDelayMs: 1, maxDelayMs: 1, isRetryable: classifyRetryable };
+		let calls = 0;
+		await assert.rejects(
+			callWithRetry(() => {
+				calls++;
+				return Promise.reject(new LLMTimeoutError("provider/model", 50));
+			}, policy),
+			LLMTimeoutError,
+		);
+		assert.equal(calls, 2, "one retry for a stalled call, not the full attempt budget");
 	});
 });
 

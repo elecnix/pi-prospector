@@ -258,6 +258,51 @@ describe("framework: dependency visibility & ordering", () => {
 		}
 	});
 
+	it("records each failed unit's error class and message on the run, not a placeholder", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seedSession(db);
+			class ProviderTimeout extends Error {}
+			const failing: Analyzer = {
+				def: { id: "failing", label: "Failing", description: "", anchorSpan: "pair", dependencies: [] },
+				version: { analyzerId: "failing", major: 1, minor: 0, implementationKind: "deterministic" },
+				prompts: {},
+				defaultConfig: { id: "", analyzerId: "failing", configHash: "h", configJson: {}, label: "default" },
+				plan: (_ctx: AnalyzerPlanContext) =>
+					["u-a", "u-b", "u-c"].map((id) => ({
+						sources: [{ kind: "message" as const, id }],
+						sourceSetHash: `failing-${id}`,
+						anchorKind: "message" as const,
+						anchorRef: id,
+					})),
+				analyze: (unit, _ctx: AnalyzerRunContext): AnalysisResult => {
+					if (unit.anchorRef === "u-a") throw new ProviderTimeout("call took too long");
+					if (unit.anchorRef === "u-b") throw new TypeError("bad shape");
+					return { nodeKind: "metric", contentJson: {}, anchorKind: "message", anchorRef: unit.anchorRef, edges: [] };
+				},
+			};
+			const fw = frameworkFor(db);
+			await fw.register(failing);
+			const summary = await fw.run("s1");
+			const run = (await db
+				.prepare("SELECT status, error_message FROM analysis_runs WHERE id = ?")
+				.get(summary.analyzerResults[0]!.runId)) as { status: string; error_message: string };
+			assert.equal(run.status, "partial");
+			assert.doesNotMatch(run.error_message, /one or more units failed/);
+			assert.match(run.error_message, /^2 of 3 units failed/);
+			assert.match(run.error_message, /u-a: ProviderTimeout: call took too long/);
+			assert.match(run.error_message, /u-b: TypeError: bad shape/);
+			// The error node carries the class too, so a later query can group by it.
+			const errs = (await db
+				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'failing' AND node_kind = 'error' ORDER BY content_json")
+				.all()) as Array<{ content_json: string }>;
+			const classes = errs.map((r) => (JSON.parse(r.content_json) as { error_class: string }).error_class).sort();
+			assert.deepEqual(classes, ["ProviderTimeout", "TypeError"]);
+		} finally {
+			await close();
+		}
+	});
+
 	it("orders analyzers by dependency and detects cycles", async () => {
 		const { db, close } = await tempDb();
 		try {

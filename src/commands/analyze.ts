@@ -31,6 +31,7 @@ import {
 	createSemaphore,
 	withTimeout,
 	callWithRetry,
+	LLMTimeoutError,
 	classifyRetryable,
 	DEFAULT_RETRY_POLICY,
 	DEFAULT_LLM_CONCURRENCY,
@@ -98,12 +99,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 						withTimeout(
 							baseLlm(request),
 							llmTimeoutMs,
-							() =>
-								new Error(
-									`LLM call to ${request.model ?? "mid"} exceeded ${llmTimeoutMs}ms and was ` +
-									`aborted so the run can keep moving. The session is marked failed; re-run it ` +
-									`once the provider recovers, or raise the timeout (PROSPECTOR_LLM_TIMEOUT_MS).`,
-								),
+							() => new LLMTimeoutError(request.model ?? "mid", llmTimeoutMs),
 						),
 					retryPolicy,
 					retryStats,

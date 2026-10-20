@@ -50,6 +50,26 @@ export async function withTimeout<T>(
 	}
 }
 
+/**
+ * An LLM call that ran past the per-call timeout and was abandoned. A stall is
+ * usually one slow response from an otherwise healthy provider, so it is worth
+ * one more attempt — but only one: each attempt can hold a concurrency slot for
+ * the whole timeout, and a provider that stalls twice in a row is not going to
+ * answer a third time within the run.
+ */
+export class LLMTimeoutError extends Error {
+	constructor(model: string, timeoutMs: number) {
+		super(
+			`LLM call to ${model} exceeded ${timeoutMs}ms and was aborted so the run can keep moving. ` +
+				`The session is marked failed; re-run it once the provider recovers, or raise the timeout (PROSPECTOR_LLM_TIMEOUT_MS).`,
+		);
+		this.name = "LLMTimeoutError";
+	}
+}
+
+/** Attempts a stalled call gets in total, including the first. */
+const TIMEOUT_ATTEMPTS = 2;
+
 /** Verdict on one failed attempt: retry it or treat it as terminal. */
 export interface RetryDecision {
 	/** True when the failure is transient and worth retrying. */
@@ -117,11 +137,14 @@ export async function callWithRetry<T>(
 ): Promise<T> {
 	const maxAttempts = Math.max(1, Math.floor(policy.maxAttempts) || 1);
 	let totalDelayMs = 0;
+	let timeouts = 0;
 	for (let attempt = 1; ; attempt++) {
 		try {
 			return await fn();
 		} catch (err) {
-			const decision = attempt >= maxAttempts ? { retryable: false as const } : policy.isRetryable(err);
+			if (err instanceof LLMTimeoutError) timeouts++;
+			const decision =
+				attempt >= maxAttempts || timeouts >= TIMEOUT_ATTEMPTS ? { retryable: false as const } : policy.isRetryable(err);
 			if (!decision.retryable) throw err;
 
 			// Honour the provider's Retry-After directly (it is authoritative for how
@@ -156,10 +179,13 @@ export async function callWithRetry<T>(
  * Errors thrown by the provider layer carry an HTTP `status` (and `headers`) once
  * the broker's own internal retries are spent, so classification is exact for the
  * common case. A failure with no status falls back to its message text, but only
- * for unmistakable transient signatures (rate-limit / connection-reset wording) —
- * never swallowing what could be a genuine configuration or business error.
+ * for unmistakable transient signatures (rate-limit / connection-reset wording,
+ * or a response stream that closed before the provider sent its finish reason) —
+ * never swallowing what could be a genuine configuration or business error. A
+ * call abandoned at the per-call timeout is retried, at most once.
  */
 export function classifyRetryable(err: unknown): RetryDecision {
+	if (err instanceof LLMTimeoutError) return { retryable: true };
 	const status = providerStatus(err);
 	if (typeof status === "number") {
 		const retryable = status === 408 || status === 409 || status === 429 || status >= 500;
@@ -167,7 +193,7 @@ export function classifyRetryable(err: unknown): RetryDecision {
 	}
 	const msg = err instanceof Error ? err.message : String(err);
 	const retryable =
-		/\b429\b|rate limit|too many requests|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ESOCKETTIMEDOUT|socket hang up|\b50[1234]\b/.test(
+		/\b429\b|rate limit|too many requests|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ESOCKETTIMEDOUT|socket hang up|\b50[1234]\b|Stream ended without finish_reason/.test(
 			msg,
 		);
 	return { retryable, retryAfterMs: retryable ? retryAfterMs(err) : undefined };
