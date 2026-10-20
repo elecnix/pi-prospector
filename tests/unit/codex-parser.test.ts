@@ -132,32 +132,48 @@ describe("parseCodexLine", () => {
 		assert.equal(parsed.entry.model, "gpt-5-codex");
 	});
 
-	it("reads an item_completed event, whatever the format and whatever the item", () => {
+	it("reads an event the host wrote, whatever the event is", () => {
 		// The older format's events carry the conversation; the current
-		// format's events carry the command's exit code.
+		// format's events carry the command's exit code; an abort event says
+		// the host gave up on a turn.
 		const cases = [
 			{
 				what: "a message in the older format",
 				format: "older" as const,
-				item: { type: "AgentMessage", id: "msg-1", content: [{ type: "Text", text: "The note is written." }] },
+				payload: {
+					type: "item_completed",
+					turn_id: "turn-1",
+					item: { type: "AgentMessage", id: "msg-1", content: [{ type: "Text", text: "The note is written." }] },
+				},
 				kind: "message",
 			},
 			{
 				what: "a command in the current format",
 				format: "current" as const,
-				item: { type: "CommandExecution", id: "cmd-1", command: "ls", exit_code: 0, aggregated_output: "a\nb\n" },
+				payload: {
+					type: "item_completed",
+					turn_id: "turn-1",
+					item: { type: "CommandExecution", id: "cmd-1", command: "ls", exit_code: 0, aggregated_output: "a\nb\n" },
+				},
 				kind: "command",
+			},
+			{
+				what: "an abandoned turn",
+				format: "current" as const,
+				payload: { type: "turn_aborted", turn_id: "turn-1", reason: "interrupted" },
+				kind: "aborted",
 			},
 		];
 		for (const c of cases) {
 			const event = JSON.stringify({
 				type: "event_msg",
 				timestamp: "2026-03-04T09:15:07.000Z",
-				payload: { type: "item_completed", turn_id: "turn-1", item: c.item },
+				payload: c.payload,
 			});
 			const parsed = parseCodexLine(event, "2026-03-04T09:15:07.000Z", c.format);
 			assert.ok(parsed, `${c.what} parses`);
 			assert.equal(parsed.kind, c.kind);
+			assert.equal(parsed.entry.turnId, "turn-1");
 			if (c.kind === "message") {
 				assert.equal(parsed.entry.role, "assistant");
 				assert.equal(parsed.entry.text, "The note is written.");
@@ -167,18 +183,6 @@ describe("parseCodexLine", () => {
 				assert.equal(parsed.entry.exitCode, 0);
 			}
 		}
-	});
-
-	it("reads a turn_aborted event as the host's verdict on the turn", () => {
-		const event = JSON.stringify({
-			type: "event_msg",
-			timestamp: "2026-03-04T09:15:08.000Z",
-			payload: { type: "turn_aborted", turn_id: "turn-1", reason: "interrupted" },
-		});
-		const parsed = parseCodexLine(event, "2026-03-04T09:15:08.000Z");
-		assert.ok(parsed);
-		assert.equal(parsed.kind, "aborted");
-		assert.equal(parsed.entry.turnId, "turn-1");
 	});
 
 	it("ignores a line it does not own", () => {

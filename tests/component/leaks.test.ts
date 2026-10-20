@@ -14,7 +14,7 @@ import { describe, it } from "node:test";
 import * as os from "node:os";
 import * as path from "node:path";
 import assert from "node:assert/strict";
-import { tempDb, insertSession, insertMessages } from "./helpers.js";
+import { tempDb, insertSession, insertMessages, sourcesNamedBy } from "./helpers.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { secretLeakAnalyzer } from "../../src/analyze/analyzers/secret-leak/index.js";
@@ -29,6 +29,7 @@ import {
 	type LeakReport,
 } from "../../src/commands/leaks.js";
 import type { ExtensionCommandContext } from "../../src/pi-stubs.js";
+
 
 // Shape-correct, never-live synthetic credentials (same convention as
 // secret-leak.test.ts). The two detector families have disjoint catalogues for
@@ -105,9 +106,7 @@ describe("prospect leaks (issue #196)", () => {
 	it("accepts every source its usage line names", () => {
 		// The usage line and the parser are one vocabulary: a source the line
 		// names must parse, and one it does not must not.
-		const named = [...leaksUsage().matchAll(/--source <([^>]+)>/g)]
-			.flatMap((m) => (m[1] ?? "").split("|"))
-			.filter(Boolean);
+		const named = sourcesNamedBy(leaksUsage());
 		assert.ok(named.length > 0, "the usage line names its sources");
 		for (const source of named) {
 			assert.deepEqual(parseLeaksArgs(`--source ${source}`), { source }, `${source} parses`);

@@ -90,6 +90,20 @@ export function fixtureUuid(label: string): string {
  */
 export const NO_CLAUDE_DIR = path.join(os.tmpdir(), "prospect-tests-no-claude-sessions");
 
+/**
+ * The sources a command's usage line names, read out of the line itself.
+ *
+ * A usage line and the parser behind it are one vocabulary: a source the line
+ * names must parse. The commands that print their own source list build it
+ * from the shared harness vocabulary, so this reads the same list the user
+ * sees.
+ */
+export function sourcesNamedBy(usage: string): string[] {
+	return [...usage.matchAll(/--source <([^>]+)>/g)]
+		.flatMap((m) => (m[1] ?? "").split("|"))
+		.filter(Boolean);
+}
+
 export interface TempDb {
 	db: AsyncDatabase;
 	close: () => Promise<void>;

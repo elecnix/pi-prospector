@@ -18,6 +18,7 @@ import {
 	type SearchReport,
 } from "../../src/commands/search.js";
 import { SNIPPET_OPEN, SNIPPET_CLOSE } from "../../src/db/search-queries.js";
+import { sourcesNamedBy } from "../component/helpers.js";
 
 describe("parseSearchArgs", () => {
 	it("treats every non-flag token as the query, joined in order", () => {
@@ -44,9 +45,7 @@ describe("parseSearchArgs", () => {
 	it("accepts every source its usage line names", () => {
 		// The usage line and the parser are one vocabulary: a source the line
 		// names must parse, and one it does not must not.
-		const named = [...searchUsage().matchAll(/--source <([^>]+)>/g)]
-			.flatMap((m) => (m[1] ?? "").split("|"))
-			.filter(Boolean);
+		const named = sourcesNamedBy(searchUsage());
 		assert.ok(named.length > 0, "the usage line names its sources");
 		for (const source of named) {
 			assert.equal(parseSearchArgs(`x --source ${source}`).source, source, `${source} parses`);
