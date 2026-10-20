@@ -544,6 +544,24 @@ describe("measureSkillSpans", () => {
 		assert.equal(spans[0]?.seconds, 90);
 	});
 
+	it("does not end a pull-request skill at a gh pr create whose answer lands after the next skill", () => {
+		// The span ends when the forge answered, and the answer came after the
+		// next skill started. Claiming it would make the two spans overlap.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "s1", role: "assistant", timestamp: at(100), tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "pr" } }]) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(150), tool_calls: JSON.stringify([{ id: "gh1", name: "bash", arguments: { command: "gh pr create" } }]) }),
+			// The next skill starts at 160, before the answer arrives at 500.
+			spanRow({ id: "s2", role: "assistant", timestamp: at(160), tool_calls: JSON.stringify([{ id: "sk2", name: "Skill", arguments: { skill: "review" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(500), tool_results: JSON.stringify([{ toolCallId: "gh1", toolName: "bash", isError: false, textLength: 20 }]) }),
+		];
+		const spans = measureSkillSpans(rows);
+		assert.equal(spans.length, 2);
+		// The PR skill does not claim the late answer; it ends at the next skill.
+		assert.equal(spans[0]?.end_reason, "next_skill");
+		assert.equal(spans[0]?.seconds, 60);
+	});
+
 	it("does not double-count a nested skill", () => {
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),

@@ -28,7 +28,7 @@
 
 import { Type, type Static } from "typebox";
 import type { MessageRow } from "../../types.js";
-import { buildToolStream } from "../../tool-stream.js";
+import { buildToolStream, singleResult } from "../../tool-stream.js";
 import { parseTime } from "../stale-verification/command-vocabulary.js";
 import {
 	findFailureMarkers,
@@ -442,18 +442,15 @@ function findPrCreateEnd(
 		if (next && (next.ms === null || ms > next.ms)) continue;
 		// A failed creation is a retry, not the end of the skill's work.
 		if (!inv.outcome || inv.outcome.isError) continue;
-		return { messageId: inv.outcome.messageId, ms: timeById.get(inv.outcome.messageId) ?? ms };
+		// The span ends when the forge answered, so the *result's* time has to
+		// be inside the span too. A slow creation whose answer arrives after
+		// the next skill started would otherwise run the span past that
+		// skill's start, and the two spans would overlap — the same minutes
+		// counted twice.
+		const endedMs = timeById.get(inv.outcome.messageId) ?? null;
+		if (endedMs === null) continue;
+		if (next && (next.ms === null || endedMs > next.ms)) continue;
+		return { messageId: inv.outcome.messageId, ms: endedMs };
 	}
 	return null;
-}
-
-/** Whether a tool-result row carried exactly one result, so its text is unambiguously that result's. */
-function singleResult(json: string | null): boolean {
-	if (!json) return false;
-	try {
-		const parsed: unknown = JSON.parse(json);
-		return Array.isArray(parsed) && parsed.length === 1;
-	} catch {
-		return false;
-	}
 }

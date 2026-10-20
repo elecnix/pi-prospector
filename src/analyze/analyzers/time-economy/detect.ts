@@ -459,4 +459,3 @@ export function measureTime(
 		hidden_exit_codes: hiddenExitCodes.slice(0, config.evidenceCap),
 	};
 }
-

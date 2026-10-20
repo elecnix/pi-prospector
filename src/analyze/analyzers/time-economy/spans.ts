@@ -18,7 +18,7 @@
 
 import { Type, type Static } from "typebox";
 import type { MessageRow } from "../../types.js";
-import { buildToolStream, type ToolInvocation } from "../../tool-stream.js";
+import { buildToolStream, singleResult, type ToolInvocation } from "../../tool-stream.js";
 import { parseTime } from "../stale-verification/command-vocabulary.js";
 
 // ─────────────────────────── shared helpers ───────────────────────────
