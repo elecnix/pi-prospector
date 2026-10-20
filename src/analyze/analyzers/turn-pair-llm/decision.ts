@@ -46,32 +46,36 @@ export const TURN_DECISION_QUESTIONS: Record<string, DecisionQuestion> = {
 	friction_type: {
 		type: "choice",
 		instructions: {
-			question: "What went wrong in the assistant's work, according to `user_message`?",
-			focus: "Use `prior_turns` to judge repetition. Use `tool_calls` to judge tool misuse.",
+			question: "What problem with the assistant's work does the user raise in `user_message`?",
+			focus:
+				"Judge only what the user says in `user_message`. When the user raises no problem, the answer is none, " +
+				"even if `tool_calls` shows failures. `prior_turns` and `tool_calls` only help name a problem the user raised.",
 		},
 		criteria: {
 			none: {
-				what: "Nothing went wrong: the user continues the task, asks something new, or approves",
-				examples: ["now do the same for the other file", "looks good, ship it"],
+				what: "The user raises no problem: they continue the task, give a new instruction, ask a question, or approve",
+				not_for: "A message that says the assistant did something wrong",
+				examples: ["now do the same for the other file", "looks good, ship it", "run the build"],
 			},
 			wrong_approach: {
-				what: "The assistant chose a method, design, or fix the user rejects",
+				what: "The user rejects the method, design, or fix the assistant chose",
 				examples: ["don't mock it, use the real database", "that's the wrong place to fix this"],
 			},
 			missed_instruction: {
-				what: "The assistant ignored or forgot something the user had asked for",
+				what: "The user says the assistant ignored or forgot something they had asked for",
 				examples: ["I said to run the tests first", "you were supposed to keep the old name"],
 			},
 			tool_misuse: {
-				what: "A tool call in `tool_calls` used wrong flags, a wrong target, or a wrong command",
+				what: "The user objects to how the assistant ran a tool: wrong flags, wrong target, or wrong command",
+				not_for: "A tool failure the user does not mention",
 				examples: ["you forgot --repo", "that pushed to the wrong remote"],
 			},
 			repetition: {
-				what: "The assistant repeated a failed attempt, or the user repeats a request from `prior_turns`",
+				what: "The user complains that the assistant repeats a failed attempt, or repeats a request they already made",
 				examples: ["you tried that already", "again, same error"],
 			},
 			other: {
-				what: "Something went wrong that fits none of the other options",
+				what: "The user raises a problem that fits none of the other options",
 			},
 		},
 	},
