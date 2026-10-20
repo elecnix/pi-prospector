@@ -17,6 +17,12 @@ export const TurnPairLLMConfig = Type.Object({
 	 * Caps cost even on very long sessions. Must be >= 1.
 	 */
 	maxPairsHardCeiling: Type.Number(),
+	/**
+	 * A decision model (`provider/model`, e.g. `jev/jev-1.13.0`) that answers the
+	 * classification as four questions in one request instead of a generation
+	 * (#338). Absent by default, which keeps the generative path on `tier`.
+	 */
+	decisionModel: Type.Optional(Type.String()),
 });
 export type TurnPairLLMConfig = Static<typeof TurnPairLLMConfig>;
 
