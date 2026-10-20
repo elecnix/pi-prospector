@@ -49,11 +49,18 @@ describe("matchRebuttalCandidates", () => {
 	});
 
 	it("does not match other corrections and method disputes", () => {
-		assert.equal(firstMatch("no, use yarn instead"), null);
-		assert.equal(firstMatch("actually, I said use pnpm"), null);
-		assert.equal(firstMatch("stop using npm"), null);
-		assert.equal(firstMatch("instead of that, use the other branch"), null);
-		assert.equal(firstMatch("please add a test for the parser"), null);
+		// Each of these is an instruction or a request for different behaviour,
+		// not a dispute of something the assistant stated.
+		const notDisputes = [
+			"no, use yarn instead",
+			"actually, I said use pnpm",
+			"stop using npm",
+			"instead of that, use the other branch",
+			"please add a test for the parser",
+		];
+		for (const text of notDisputes) {
+			assert.equal(firstMatch(text), null, `"${text}" is not a rebuttal`);
+		}
 	});
 
 	it("does not match a claim about a thing rather than about what was said", () => {

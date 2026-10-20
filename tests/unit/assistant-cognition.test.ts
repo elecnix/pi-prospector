@@ -143,8 +143,6 @@ describe("parseCognitionObject — apology (issue #318)", () => {
 					{ quote: "the assistant apologised for the mistake", severity: "high", rationale: "paraphrased" },
 					// Verbatim → kept.
 					{ quote: "the flag is --repo, not --repository.", severity: "moderate", rationale: "verbatim in the response" },
-					// Missing quote → rejected.
-					{ severity: "high", rationale: "no quote at all" },
 				],
 			},
 			APOLOGY_GROUNDS,
@@ -165,12 +163,13 @@ describe("parseCognitionObject — apology (issue #318)", () => {
 		assert.deepEqual(result.apology, []);
 	});
 
-	it("drops an apology with an invalid severity or an empty rationale", () => {
+	it("drops an apology with an invalid severity, an empty rationale, or no quote", () => {
 		const result = parseCognitionObject(
 			{
 				apology: [
 					{ quote: "Sorry, my mistake", severity: "catastrophic", rationale: "bad severity" },
 					{ quote: "Sorry, my mistake", severity: "high", rationale: "" },
+					{ severity: "high", rationale: "no quote at all" },
 					{ quote: "Sorry, my mistake", severity: "mild", rationale: "kept" },
 				],
 			},

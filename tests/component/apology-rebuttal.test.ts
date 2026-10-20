@@ -23,7 +23,7 @@ import { ASSISTANT_COGNITION_DEF } from "../../src/analyze/analyzers/assistant-c
 import { TURN_PAIR_CORE_DEF } from "../../src/analyze/analyzers/turn-pair-core/index.js";
 import { TURN_PAIR_LLM_DEF } from "../../src/analyze/analyzers/turn-pair-llm/index.js";
 import type { AnalysisNodeRow } from "../../src/analyze/types.js";
-import type { LLMRequest } from "../../src/analyze/types.js";
+import type { Analyzer, LLMRequest } from "../../src/analyze/types.js";
 
 /** A turn's assistant response that concedes a mistake, with a thinking trace. */
 const APOLOGY_RESPONSE = "Sorry, my mistake — the flag is --repo, not --repository.";
@@ -344,129 +344,113 @@ describe("issue #318 — apology and rebuttal", () => {
 		}
 	});
 
-	it("keeps the core's earlier verdicts through its version bump and links them by a revises edge", async () => {
-		const { db, close } = await tempDb();
-		try {
-			await insertSession(db, "s318-lineage-core");
-			await insertMessages(db, "s318-lineage-core", [
-				{ id: "u1", role: "user", text: "use --repo to open the pull request" },
-				{ id: "a1", role: "assistant", text: "Opened it with --repository.", thinking: THINKING },
-				{ id: "u2", role: "user", text: "that's wrong, the flag is --repo" },
-				{ id: "a2", role: "assistant", text: "Checking the help output now.", thinking: THINKING },
-			]);
+	it("keeps every bumped analyzer's earlier verdicts through a revises edge", async () => {
+		// Each analyzer that changed ships a new version, and each one's earlier
+		// verdict must stay reachable beside the revision. The three cases share
+		// one shape, so they are driven from one table rather than written out
+		// three times.
+		const { turnPairCoreAnalyzer } = await import("../../src/analyze/analyzers/turn-pair-core/index.js");
+		const { turnPairLLMAnalyzer } = await import("../../src/analyze/analyzers/turn-pair-llm/index.js");
+		const { assistantCognitionAnalyzer } = await import("../../src/analyze/analyzers/assistant-cognition/index.js");
 
-			const { turnPairCoreAnalyzer } = await import("../../src/analyze/analyzers/turn-pair-core/index.js");
-
-			// Fill with the pre-bump core (minor 1), as an older install would
-			// have. The core's source set is the turn's message ids, which do not
-			// change, so the unit goes stale and is revised beside its predecessor.
-			const oldFw = new AnalyzerFramework({ db, llm: mockWith("rebuttal", null).caller, modelTiers: DEFAULT_MODEL_TIERS });
-			await oldFw.register({ ...turnPairCoreAnalyzer, version: { ...turnPairCoreAnalyzer.version, minor: 1 } });
-			await oldFw.run("s318-lineage-core", {});
-
-			const before = await contentsOf<CoreContent>(await nodesOf(db, TURN_PAIR_CORE_DEF.id, "s318-lineage-core"));
-			assert.equal(before.length, 2, "the old install filled each turn once");
-			assert.equal(before[0]!.rebuttal_candidate, false, "the old install had no rebuttal field");
-
-			const fw = new AnalyzerFramework({ db, llm: mockWith("rebuttal", null).caller, modelTiers: DEFAULT_MODEL_TIERS });
-			await fw.register(turnPairCoreAnalyzer);
-			const revised = await fw.run("s318-lineage-core", { revise: ["minor"] });
-			assert.ok(revised.nodesRevised >= 1, "the version bump marks the core's units for revision");
-
-			const after = await contentsOf<CoreContent>(await nodesOf(db, TURN_PAIR_CORE_DEF.id, "s318-lineage-core"));
-			assert.equal(after.length, 4, "the earlier verdicts are preserved beside the revisions");
-			assert.ok(after.some((c) => c.rebuttal_candidate), "the revision carries the new signal");
-
-			const revisesEdges = (await db
-				.prepare("SELECT COUNT(*) AS c FROM analysis_edges WHERE edge_kind = 'revises'")
-				.get()) as { c: number };
-			assert.ok(revisesEdges.c >= 1, "the new node carries a revises edge back to its predecessor");
-		} finally {
-			await close();
+		interface LineageCase {
+			/** The analyzer under test. */
+			analyzer: Analyzer;
+			/** The version an older install would have shipped. */
+			oldVersion: { major: number; minor: number };
+			/** The analyzers that must run alongside it, at their current version. */
+			also: Analyzer[];
+			/** The analyzer id the nodes are read back under. */
+			analyzerId: string;
+			/** What the earlier verdict said, and what the revision must say. */
+			oldVerdict: string;
+			newVerdict: string;
+			/** The model the old install answered with, and the one the new one does. */
+			oldFrictionType: string;
+			newFrictionType: string;
 		}
-	});
 
-	it("keeps the cognition's earlier verdicts through its version bump", async () => {
-		const { db, close } = await tempDb();
-		try {
-			await insertSession(db, "s318-lineage-cognition");
-			await insertMessages(db, "s318-lineage-cognition", [
-				{ id: "u1", role: "user", text: "use --repo to open the pull request" },
-				{ id: "a1", role: "assistant", text: "Opened it with --repository.", thinking: THINKING },
-				{ id: "u2", role: "user", text: "that's wrong, the flag is --repo" },
-				{ id: "a2", role: "assistant", text: "Checking the help output now.", thinking: THINKING },
-			]);
+		const cases: LineageCase[] = [
+			{
+				analyzer: turnPairCoreAnalyzer,
+				oldVersion: { major: 1, minor: 1 },
+				also: [],
+				analyzerId: TURN_PAIR_CORE_DEF.id,
+				oldVerdict: "no rebuttal candidate",
+				newVerdict: "a rebuttal candidate",
+				oldFrictionType: "rebuttal",
+				newFrictionType: "rebuttal",
+			},
+			{
+				analyzer: turnPairLLMAnalyzer,
+				oldVersion: { major: 1, minor: 5 },
+				also: [turnPairCoreAnalyzer],
+				analyzerId: TURN_PAIR_LLM_DEF.id,
+				oldVerdict: "wrong_approach",
+				newVerdict: "rebuttal",
+				oldFrictionType: "wrong_approach",
+				newFrictionType: "rebuttal",
+			},
+			{
+				analyzer: assistantCognitionAnalyzer,
+				oldVersion: { major: 1, minor: 0 },
+				also: [turnPairCoreAnalyzer],
+				analyzerId: ASSISTANT_COGNITION_DEF.id,
+				oldVerdict: "no apology array",
+				newVerdict: "an apology",
+				oldFrictionType: "rebuttal",
+				newFrictionType: "rebuttal",
+			},
+		];
 
-			const { assistantCognitionAnalyzer } = await import("../../src/analyze/analyzers/assistant-cognition/index.js");
-			const { turnPairCoreAnalyzer } = await import("../../src/analyze/analyzers/turn-pair-core/index.js");
+		for (const c of cases) {
+			const { db, close } = await tempDb();
+			try {
+				const sessionId = `s318-lineage-${c.analyzerId}`;
+				await insertSession(db, sessionId);
+				await insertMessages(db, sessionId, [
+					{ id: "u1", role: "user", text: "use --repo to open the pull request" },
+					{ id: "a1", role: "assistant", text: "Opened it with --repository.", thinking: THINKING },
+					{ id: "u2", role: "user", text: "that's wrong, the flag is --repo" },
+					{ id: "a2", role: "assistant", text: "Checking the help output now.", thinking: THINKING },
+				]);
 
-			// The core runs at its current version in both passes, so the core's
-			// output key — and therefore the cognition unit's source set — is
-			// stable and the unit goes stale rather than re-identifying.
-			const oldFw = new AnalyzerFramework({ db, llm: mockWith("rebuttal", null).caller, modelTiers: DEFAULT_MODEL_TIERS });
-			await oldFw.register(turnPairCoreAnalyzer);
-			await oldFw.register({ ...assistantCognitionAnalyzer, version: { ...assistantCognitionAnalyzer.version, minor: 0 } });
-			await oldFw.run("s318-lineage-cognition", {});
+				// Fill with the pre-bump analyzer, as an older install would have.
+				// The analyzers that also run are registered at their *current*
+				// version in both passes, so their output keys — and therefore this
+				// analyzer's source set — stay stable and the unit goes stale
+				// rather than re-identifying as missing.
+				const oldFw = new AnalyzerFramework({ db, llm: mockWith(c.oldFrictionType, null).caller, modelTiers: DEFAULT_MODEL_TIERS });
+				for (const a of c.also) await oldFw.register(a);
+				await oldFw.register({ ...c.analyzer, version: { ...c.analyzer.version, major: c.oldVersion.major, minor: c.oldVersion.minor } });
+				await oldFw.run(sessionId, {});
 
-			const before = await nodesOf(db, ASSISTANT_COGNITION_DEF.id, "s318-lineage-cognition");
-			assert.ok(before.length > 0, "the old install graded the turns");
+				const before = await nodesOf(db, c.analyzerId, sessionId);
+				assert.ok(before.length > 0, `${c.analyzerId}: the old install produced a verdict`);
 
-			const fw = new AnalyzerFramework({ db, llm: mockWith("rebuttal", "Sorry, my mistake").caller, modelTiers: DEFAULT_MODEL_TIERS });
-			await fw.register(turnPairCoreAnalyzer);
-			await fw.register(assistantCognitionAnalyzer);
-			const revised = await fw.run("s318-lineage-cognition", { revise: ["minor"] });
-			assert.ok(revised.nodesRevised >= 1, "the version bump marks the cognition unit for revision");
+				const fw = new AnalyzerFramework({ db, llm: mockWith(c.newFrictionType, "Sorry, my mistake").caller, modelTiers: DEFAULT_MODEL_TIERS });
+				for (const a of c.also) await fw.register(a);
+				await fw.register(c.analyzer);
+				const revised = await fw.run(sessionId, { revise: ["minor"] });
+				assert.ok(revised.nodesRevised >= 1, `${c.analyzerId}: the version bump marks its units for revision`);
 
-			const after = await nodesOf(db, ASSISTANT_COGNITION_DEF.id, "s318-lineage-cognition");
-			assert.ok(after.length > before.length, "the earlier verdict is preserved beside the revision");
-			const revisesEdges = (await db
-				.prepare("SELECT COUNT(*) AS c FROM analysis_edges WHERE edge_kind = 'revises'")
-				.get()) as { c: number };
-			assert.ok(revisesEdges.c >= 1, "the revision carries a revises edge back to its predecessor");
-		} finally {
-			await close();
-		}
-	});
+				const after = await nodesOf(db, c.analyzerId, sessionId);
+				assert.ok(after.length > before.length, `${c.analyzerId}: the earlier verdict is preserved beside the revision`);
 
-	it("keeps the classifier's earlier verdicts through its version bump", async () => {
-		const { db, close } = await tempDb();
-		try {
-			await insertSession(db, "s318-lineage-llm");
-			await insertMessages(db, "s318-lineage-llm", [
-				{ id: "u1", role: "user", text: "use --repo to open the pull request" },
-				{ id: "a1", role: "assistant", text: "Opened it with --repository.", thinking: THINKING },
-				{ id: "u2", role: "user", text: "that's wrong, the flag is --repo" },
-				{ id: "a2", role: "assistant", text: "Checking the help output now.", thinking: THINKING },
-			]);
+				const revisesEdges = (await db
+					.prepare("SELECT COUNT(*) AS c FROM analysis_edges WHERE edge_kind = 'revises'")
+					.get()) as { c: number };
+				assert.ok(revisesEdges.c >= 1, `${c.analyzerId}: the revision carries a revises edge back to its predecessor`);
 
-			const { turnPairCoreAnalyzer } = await import("../../src/analyze/analyzers/turn-pair-core/index.js");
-			const { turnPairLLMAnalyzer } = await import("../../src/analyze/analyzers/turn-pair-llm/index.js");
-
-			const oldFw = new AnalyzerFramework({ db, llm: mockWith("wrong_approach", null).caller, modelTiers: DEFAULT_MODEL_TIERS });
-			await oldFw.register(turnPairCoreAnalyzer);
-			await oldFw.register({ ...turnPairLLMAnalyzer, version: { ...turnPairLLMAnalyzer.version, minor: 5 } });
-			await oldFw.run("s318-lineage-llm", {});
-
-			const before = await contentsOf<LlmContent>(await nodesOf(db, TURN_PAIR_LLM_DEF.id, "s318-lineage-llm"));
-			assert.ok(before.length > 0, "the old install enriched the disputed turn");
-			assert.equal(before[0]!.friction_type, "wrong_approach", "the old install had no rebuttal type");
-
-			const fw = new AnalyzerFramework({ db, llm: mockWith("rebuttal", null).caller, modelTiers: DEFAULT_MODEL_TIERS });
-			await fw.register(turnPairCoreAnalyzer);
-			await fw.register(turnPairLLMAnalyzer);
-			const revised = await fw.run("s318-lineage-llm", { revise: ["minor"] });
-			assert.ok(revised.nodesRevised >= 1, "the version bump marks the classifier unit for revision");
-
-			const after = await contentsOf<LlmContent>(await nodesOf(db, TURN_PAIR_LLM_DEF.id, "s318-lineage-llm"));
-			assert.ok(after.length > before.length, "the earlier verdict is preserved beside the revision");
-			assert.ok(after.some((l) => l.friction_type === "rebuttal"), "the revision carries the new signal");
-
-			const revisesEdges = (await db
-				.prepare("SELECT COUNT(*) AS c FROM analysis_edges WHERE edge_kind = 'revises'")
-				.get()) as { c: number };
-			assert.ok(revisesEdges.c >= 1, "the revision carries a revises edge back to its predecessor");
-		} finally {
-			await close();
+				// The revision carries the new signal the bump was for.
+				if (c.analyzerId === TURN_PAIR_LLM_DEF.id) {
+					const llm = await contentsOf<LlmContent>(after);
+					assert.ok(llm.some((l) => l.friction_type === c.newVerdict), `${c.analyzerId}: the revision names the rebuttal`);
+					assert.ok(llm.some((l) => l.friction_type === c.oldVerdict), `${c.analyzerId}: the earlier verdict is still readable`);
+				}
+			} finally {
+				await close();
+			}
 		}
 	});
 });

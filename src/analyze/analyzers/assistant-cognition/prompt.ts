@@ -217,24 +217,17 @@ function parseGradedEntries(value: unknown): Array<ConfusionEntry | IndecisionEn
 	return out;
 }
 
+/**
+ * Parse the model's surprise entries.
+ *
+ * A surprise quote is validated against the turn's thinking trace *or* its
+ * response text: the stored evidence must be findable verbatim in the turn
+ * itself, otherwise it cannot be traced back to the conversation.
+ */
 function parseSurprises(value: unknown, grounds: QuoteGrounds): SurpriseEntry[] {
-	if (!Array.isArray(value)) return [];
-	const out: SurpriseEntry[] = [];
-	for (const raw of value) {
-		if (!raw || typeof raw !== "object") continue;
-		const obj = raw as Record<string, unknown>;
-		const severity = obj["severity"];
-		const rationale = obj["rationale"];
-		const quote = obj["quote"];
-		if (typeof severity !== "string" || !VALID_LEVELS.has(severity)) continue;
-		if (typeof rationale !== "string" || rationale.trim().length === 0) continue;
-		if (typeof quote !== "string" || quote.length === 0) continue;
-		// Quote validation: the stored evidence must be findable verbatim in the
-		// turn itself, otherwise it cannot be traced back to the conversation.
-		if (!grounds.thinkingText.includes(quote) && !grounds.assistantText.includes(quote)) continue;
-		out.push({ quote, severity, rationale: rationale.slice(0, 300) });
-	}
-	return out;
+	return parseQuotedEntries<SurpriseEntry>(value, (quote) =>
+		grounds.thinkingText.includes(quote) || grounds.assistantText.includes(quote),
+	);
 }
 
 /**
@@ -248,8 +241,37 @@ function parseSurprises(value: unknown, grounds: QuoteGrounds): SurpriseEntry[] 
  * dropped, because it is not evidence the user ever saw.
  */
 function parseApologies(value: unknown, grounds: QuoteGrounds): ApologyEntry[] {
+	return parseQuotedEntries<ApologyEntry>(value, (quote) => grounds.assistantText.includes(quote));
+}
+
+/**
+ * The shared shape of a quote-carrying cognition entry: a quote, a severity,
+ * and a rationale.
+ *
+ * Both the surprise and the apology entries have that shape and both are
+ * validated the same way — the grade must be mild|moderate|high, the
+ * rationale must be present, and the quote must be findable verbatim in the
+ * turn. Only the ground the quote is checked against differs, so that check
+ * is a parameter rather than a second copy of the loop.
+ */
+interface QuotedCognitionEntry {
+	quote: string;
+	severity: string;
+	rationale: string;
+}
+
+/**
+ * Normalise a list of quote-carrying entries, dropping the ones that do not
+ * hold up. Structural validation drops rather than repairs: an entry whose
+ * grade is invalid, whose rationale is missing, or whose quote is not
+ * findable verbatim does not enter the graph.
+ */
+function parseQuotedEntries<T extends QuotedCognitionEntry>(
+	value: unknown,
+	isGrounded: (quote: string) => boolean,
+): T[] {
 	if (!Array.isArray(value)) return [];
-	const out: ApologyEntry[] = [];
+	const out: T[] = [];
 	for (const raw of value) {
 		if (!raw || typeof raw !== "object") continue;
 		const obj = raw as Record<string, unknown>;
@@ -259,11 +281,10 @@ function parseApologies(value: unknown, grounds: QuoteGrounds): ApologyEntry[] {
 		if (typeof severity !== "string" || !VALID_LEVELS.has(severity)) continue;
 		if (typeof rationale !== "string" || rationale.trim().length === 0) continue;
 		if (typeof quote !== "string" || quote.length === 0) continue;
-		// Quote validation, exactly as for a surprise: the stored evidence must
-		// be findable verbatim in the turn's response, or it cannot be traced
-		// back to what the assistant actually said.
-		if (!grounds.assistantText.includes(quote)) continue;
-		out.push({ quote, severity, rationale: rationale.slice(0, 300) });
+		// Quote validation: the stored evidence must be findable verbatim in the
+		// turn itself, otherwise it cannot be traced back to the conversation.
+		if (!isGrounded(quote)) continue;
+		out.push({ quote, severity, rationale: rationale.slice(0, 300) } as T);
 	}
 	return out;
 }
