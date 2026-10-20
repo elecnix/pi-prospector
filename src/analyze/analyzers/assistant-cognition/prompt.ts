@@ -132,6 +132,8 @@ export const AssistantCognitionProperties = Type.Object({
 	confusion: Type.Array(ConfusionEntry),
 	indecision: Type.Array(IndecisionEntry),
 	surprise: Type.Array(SurpriseEntry),
+	/** The decision model's distribution per question, when that path produced the node (#338). */
+	probabilities: Type.Optional(Type.Record(Type.String(), Type.Record(Type.String(), Type.Number()))),
 });
 export type AssistantCognitionProperties = Static<typeof AssistantCognitionProperties>;
 

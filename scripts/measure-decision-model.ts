@@ -24,7 +24,7 @@ import { buildTurnPairs } from "../src/analyze/analyzers/turn-pair-core/build.js
 import { DEFAULT_MODEL_TIERS } from "../src/analyze/model-tiers.js";
 import { createThrowingLLM } from "../src/analyze/mock-llm.js";
 import { MEASURED_ANALYZERS, type MeasuredAnalyzer } from "./decision-model-fields.js";
-import type { AnalysisNodeRow, AnalysisUnit, AnalyzerPlanContext, AnalyzerRunContext, MessageRow } from "../src/analyze/types.js";
+import type { AnalysisNodeRow, AnalysisUnit, AnalyzerPlanContext, AnalyzerRunContext, LLMCaller, MessageRow } from "../src/analyze/types.js";
 import type { AsyncDatabase } from "../src/db/async-db.js";
 
 function arg(name: string, fallback?: string): string {
@@ -99,6 +99,13 @@ const runConfig = { id: "measure", analyzerId, configHash: "measure", configJson
 const prompts: Record<string, string> = {};
 for (const [name, p] of Object.entries(analyzer.prompts)) prompts[name] = p.content;
 
+/** Quote extraction is counted, not paid for: the measurement compares the decision verdict. */
+let quoteCalls = 0;
+const countingLLM: LLMCaller = async (request) => {
+	quoteCalls++;
+	return { text: "", structured: {}, model: request.model, costUsd: 0, tokensUsed: 0, durationMs: 0, stopReason: "stop" };
+};
+
 const started = Date.now();
 const results = await mapWithConcurrency(pairs, concurrency, async ({ unit, generative, sessionId }) => {
 	const ctx: AnalyzerRunContext = {
@@ -110,7 +117,7 @@ const results = await mapWithConcurrency(pairs, concurrency, async ({ unit, gene
 		getSessionMessages: async () => [],
 		getSubagentRuns: async () => [],
 		getTurnPairs: async () => [],
-		llm: measured.allowsLLM ? measured.llmForQuotes() : createThrowingLLM("the measurement only pays for the decision model"),
+		llm: measured.allowsLLM ? countingLLM : createThrowingLLM("the measurement only pays for the decision model"),
 		decide,
 		config: runConfig,
 		prompts,
@@ -159,6 +166,7 @@ console.log(
 			sessions: sessions.length,
 			units: results.length,
 			decision_failures: failures,
+			...(measured.allowsLLM ? { generative_follow_up_calls: quoteCalls } : {}),
 			generative: { cost_usd: +genCost.toFixed(4), call_seconds_sum: +(sum(genMs) / 1000).toFixed(1), call_seconds_median: +(median(genMs) / 1000).toFixed(2) },
 			decision: {
 				cost_usd: +decCost.toFixed(5),

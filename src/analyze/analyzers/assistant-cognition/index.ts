@@ -44,6 +44,16 @@ import {
 	AssistantCognitionProperties,
 	type QuoteGrounds,
 } from "./prompt.js";
+import {
+	COGNITION_DECISION_HASH,
+	COGNITION_DECISION_QUESTIONS,
+	QUOTE_PROMPT,
+	QUOTE_PROMPT_HASH,
+	QUOTE_TOOL,
+	buildCognitionDecisionState,
+	parseCognitionDecision,
+} from "./decision.js";
+import { decisionIdentity } from "../../decision-model.js";
 import { DEFAULT_ASSISTANT_COGNITION_CONFIG, type AssistantCognitionConfig } from "./config.js";
 
 export const ASSISTANT_COGNITION_DEF: AnalyzerDef = {
@@ -66,6 +76,7 @@ export const ASSISTANT_COGNITION_VERSION: AnalyzerVersion = {
 
 const PROMPTS: Record<string, PromptVersion> = {
 	cognition: { hash: COGNITION_PROMPT_HASH, content: COGNITION_PROMPT, role: "classify" },
+	quote_surprise: { hash: QUOTE_PROMPT_HASH, content: QUOTE_PROMPT, role: "extract" },
 };
 
 interface CognitionMeta {
@@ -89,6 +100,10 @@ export const assistantCognitionAnalyzer: Analyzer = {
 
 	modelsForIdentity(config, modelTiers): string[] {
 		const cfg = (config as unknown as AssistantCognitionConfig) ?? DEFAULT_ASSISTANT_COGNITION_CONFIG;
+		// The decision path still extracts surprise quotes on `tier`, so both count.
+		if (cfg.decisionModel) {
+			return [decisionIdentity(cfg.decisionModel, COGNITION_DECISION_HASH), resolveModelSpec(cfg.tier, modelTiers)];
+		}
 		return [resolveModelSpec(cfg.tier, modelTiers)];
 	},
 
@@ -142,6 +157,7 @@ export const assistantCognitionAnalyzer: Analyzer = {
 		const config = (ctx.config.configJson as unknown as AssistantCognitionConfig) ?? DEFAULT_ASSISTANT_COGNITION_CONFIG;
 		const meta = unit.meta as unknown as CognitionMeta;
 		const grounds: QuoteGrounds = { thinkingText: meta.thinkingText, assistantText: meta.assistantText };
+		if (config.decisionModel) return analyzeWithDecisionModel(unit, meta, grounds, config, config.decisionModel, ctx);
 		const request = {
 			model: resolveModelSpec(config.tier, ctx.modelTiers),
 			system: ctx.prompts["cognition"] ?? COGNITION_PROMPT,
@@ -201,3 +217,75 @@ export const assistantCognitionAnalyzer: Analyzer = {
 		};
 	},
 };
+
+/**
+ * One decision request grades the turn (#338); a generative call runs only when
+ * the turn shows surprise, to copy the quote that grounds it.
+ */
+async function analyzeWithDecisionModel(
+	unit: AnalysisUnit,
+	meta: CognitionMeta,
+	grounds: QuoteGrounds,
+	config: AssistantCognitionConfig,
+	model: string,
+	ctx: AnalyzerRunContext,
+): Promise<AnalysisResult> {
+	if (!ctx.decide) {
+		throw new Error(`assistant-cognition is configured with decision model '${model}', but this run has no decision-model client.`);
+	}
+	const input = { userText: meta.userText, thinkingText: meta.thinkingText, assistantText: meta.assistantText };
+	const decision = await ctx.decide({ model, state: buildCognitionDecisionState(input), questions: COGNITION_DECISION_QUESTIONS });
+	const parsed = parseCognitionDecision(decision);
+
+	let costUsd = decision.costUsd;
+	let inputTokens = decision.inputTokens;
+	let cachedInputTokens = 0;
+	let outputTokens = decision.outputTokens;
+	const surprise: AssistantCognitionProperties["surprise"] = [];
+	const edges: AnalysisResult["edges"] = [
+		{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
+		{ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: meta.coreOutputKey, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 },
+	];
+	if (parsed.surpriseSeverity) {
+		const response = await ctx.llm({
+			model: resolveModelSpec(config.tier, ctx.modelTiers),
+			system: ctx.prompts["quote_surprise"] ?? QUOTE_PROMPT,
+			user: buildCognitionPrompt(input),
+			temperature: config.temperature,
+			maxTokens: 300,
+			tool: QUOTE_TOOL,
+		});
+		costUsd += response.costUsd;
+		inputTokens += response.inputTokens ?? 0;
+		cachedInputTokens += response.cachedInputTokens ?? 0;
+		outputTokens += response.outputTokens ?? 0;
+		const quote = (response.structured as { quote?: unknown } | undefined)?.quote;
+		// Same rule as the generative path: a quote that is not verbatim in the turn never enters the graph.
+		if (typeof quote === "string" && quote.length > 0 && (grounds.thinkingText.includes(quote) || grounds.assistantText.includes(quote))) {
+			surprise.push({ quote, severity: parsed.surpriseSeverity, rationale: "" });
+		}
+		edges.push({ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: QUOTE_PROMPT_HASH, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: 2 });
+	}
+
+	const properties: AssistantCognitionProperties = {
+		confusion: parsed.confusion,
+		indecision: parsed.indecision,
+		surprise,
+		probabilities: parsed.probabilities,
+		user_message_id: unit.anchorRef,
+	};
+	return {
+		nodeKind: "classification",
+		contentJson: properties as unknown as Record<string, unknown>,
+		anchorKind: "message",
+		anchorRef: unit.anchorRef,
+		modelUsed: decision.model,
+		costUsd,
+		tokensUsed: inputTokens + cachedInputTokens + outputTokens,
+		inputTokens,
+		cachedInputTokens,
+		outputTokens,
+		durationMs: decision.durationMs,
+		edges,
+	};
+}
