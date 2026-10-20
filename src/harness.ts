@@ -1,22 +1,23 @@
 /**
- * The coding harness a session came from ("pi" | "claude" | "codex") — the raw
- * value the sync layer stores, and the display label rendered from it.
+ * The coding harness a session came from ("pi" | "claude" | "codex" |
+ * "opencode" | "cline") — the raw value the sync layer stores, and the display
+ * label rendered from it.
  *
  * This is the one place the harnesses meet. Everything that shows which host
  * produced a session — the token-report's "Agent" dimension, session filters,
  * proposal group headers — reads the source here and renders it as Pi /
- * Claude / Codex, and a session whose source is absent or orphaned renders as
+ * Claude / Codex / OpenCode / Cline, and a session whose source is absent or orphaned renders as
  * "unknown" rather than silently defaulting to a host name. A missing source is
  * a fact worth surfacing, not something to paper over with a guess.
  */
 
-export type HarnessSource = "pi" | "claude" | "codex";
+export type HarnessSource = "pi" | "claude" | "codex" | "opencode" | "cline";
 
-export const HARNESS_SOURCES: readonly HarnessSource[] = ["pi", "claude", "codex"];
+export const HARNESS_SOURCES: readonly HarnessSource[] = ["pi", "claude", "codex", "opencode", "cline"];
 
 /** True when a value is one of the harness sources. */
 export function isHarnessSource(v: unknown): v is HarnessSource {
-	return v === "pi" || v === "claude" || v === "codex";
+	return (HARNESS_SOURCES as readonly unknown[]).includes(v);
 }
 
 /**
@@ -27,8 +28,8 @@ export function isHarnessSource(v: unknown): v is HarnessSource {
 export function parseHarnessSource(v: string | undefined): HarnessSource | undefined {
 	if (v === undefined || v === "") return undefined;
 	const t = v.trim().toLowerCase();
-	if (t === "pi" || t === "claude" || t === "codex") return t;
-	throw new Error(`unknown source '${v}' (use pi, claude or codex)`);
+	if (isHarnessSource(t)) return t;
+	throw new Error(`unknown source '${v}' (use ${HARNESS_SOURCES.join(", ")})`);
 }
 
 /**
@@ -39,5 +40,7 @@ export function harnessLabel(source: string | null | undefined): string {
 	if (source === "pi") return "Pi";
 	if (source === "claude") return "Claude";
 	if (source === "codex") return "Codex";
+	if (source === "opencode") return "OpenCode";
+	if (source === "cline") return "Cline";
 	return "unknown";
 }

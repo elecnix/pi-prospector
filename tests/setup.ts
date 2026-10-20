@@ -18,6 +18,8 @@ process.env["PROSPECTOR_INSTRUCTIONS_HOME"] = "/nonexistent/prospector-test-home
 process.env["PROSPECTOR_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-sessions";
 process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-claude-sessions";
 process.env["PROSPECTOR_CODEX_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-codex-sessions";
+process.env["PROSPECTOR_OPENCODE_DATA_DIR"] ||= "/nonexistent/prospector-test-opencode";
+process.env["PROSPECTOR_CLINE_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-cline-sessions";
 // Usage reports (#290): no test may read or write the developer's consent file
 // or send a report. Tests of the telemetry code clear these for themselves.
 process.env["PROSPECTOR_TELEMETRY_DISABLED"] = "1";

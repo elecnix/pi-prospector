@@ -6,12 +6,23 @@ import type { SessionSourceAdapter } from "../sync/adapter.js";
 import { PiFileSource } from "../sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../sync/sources/claude-file.js";
 import { CodexFileSource } from "../sync/sources/codex-file.js";
+import { OpenCodeDbSource } from "../sync/sources/opencode-db.js";
+import { ClineFileSource } from "../sync/sources/cline-file.js";
 import { PiSubagentSource } from "../sync/sources/pi-subagent.js";
 import { parseHarnessSource } from "../harness.js";
-import { loadConfig, getDbPath, getSessionsDir, getClaudeSessionsDir, getCodexSessionsDir } from "../config.js";
+import {
+	loadConfig,
+	getDbPath,
+	getSessionsDir,
+	getClaudeSessionsDir,
+	getCodexSessionsDir,
+	getOpenCodeDataDir,
+	getClineSessionsDir,
+} from "../config.js";
+import type { HarnessSource } from "../harness.js";
 
 /**
- * Composition root for session sources: the three built-in file sources, plus
+ * Composition root for session sources: the built-in harness sources, plus
  * any extra source named in config `sources` (e.g. "pi-subagent").
  *
  * The pi-subagent adapter is deliberately registered *before* PiFileSource:
@@ -25,6 +36,8 @@ export function buildAdapters(): SessionSourceAdapter[] {
 	const adapters: SessionSourceAdapter[] = [
 		new ClaudeFileSource(getClaudeSessionsDir()),
 		new CodexFileSource(getCodexSessionsDir()),
+		new OpenCodeDbSource(getOpenCodeDataDir()),
+		new ClineFileSource(getClineSessionsDir()),
 	];
 
 	const sources = loadConfig().sources ?? [];
@@ -74,7 +87,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 
 interface SyncArgs {
 	project?: string;
-	source?: "pi" | "claude" | "codex";
+	source?: HarnessSource;
 }
 
 function parseSyncArgs(raw: string): SyncArgs {

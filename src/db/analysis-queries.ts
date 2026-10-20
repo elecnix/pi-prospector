@@ -369,7 +369,7 @@ export interface NodeListFilter {
 	analyzerId?: string;
 	/** Match any of these analyzer ids (used together with, not instead of, `analyzerId`). */
 	analyzerIds?: string[];
-	/** Restrict to sessions whose harness source matches (`pi` | `claude`). */
+	/** Restrict to sessions whose harness source matches (`pi` | `claude` | `codex` | `opencode` | `cline`). */
 	source?: string;
 	nodeKind?: string;
 	sessionId?: string;

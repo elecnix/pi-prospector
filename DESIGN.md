@@ -54,9 +54,9 @@ roughly the order concepts build on one another.
   captured at sync time for display only; it is never an input to identity or
   analysis.
 - **Coding harness** (or **harness**) — which host produced a session: **Pi**,
-  **Claude Code** or **Codex**. The sync layer records it as the session's
-  **source** (`pi` | `claude` | `codex`) from which directory tree the session
-  file was discovered.
+  **Claude Code**, **Codex**, **OpenCode** or **Cline**. The sync layer records
+  it as the session's **source** (`pi` | `claude` | `codex` | `opencode` |
+  `cline`) from which store the session was discovered.
   It is a first-class attribute: filters (`--source`, the agent tool's
   `source`), per-harness statistics, and the token report's “Agent” dimension
   all read it, and a session whose source is absent or orphaned renders as
@@ -70,7 +70,9 @@ roughly the order concepts build on one another.
   **Each source claims the file shapes it owns, and discovery claims nothing by
   extension.** Pi's session files are `<timestamp>_<uuid>.jsonl`; Claude Code's
   are `<uuid>.jsonl`; Codex's rollouts are `rollout-*.jsonl` under a
-  `YYYY/MM/DD` tree; a child run's session is the `session.jsonl` the extension
+  `YYYY/MM/DD` tree; Cline's are `<id>/<id>.messages.json` (and a child
+  agent's `<id>/<agent>.messages.json`) beside the session's manifest;
+  OpenCode's are rows of the `session` table in `opencode.db`; a child run's session is the `session.jsonl` the extension
   names inside its run directory. Every other `.jsonl` in those trees belongs to
   whoever wrote it and is not a session: the RPC daemon's `out.jsonl` protocol
   stream, the extension's `*_transcript.jsonl` artifacts, Claude Code's
@@ -78,12 +80,20 @@ roughly the order concepts build on one another.
   logs. A file no source names is never read, never becomes a session, and is
   never reported as a broken one. A new origin means a new source with its own
   shapes, never a wider match on the existing ones.
+- **Session unit** — what one source discovers and the sync loop keeps one
+  cursor for. For a file-based source it is a file. For a source whose host
+  keeps many sessions in one database (OpenCode) it is one session in that
+  database, addressed as `<database path>#<session id>`, and its modification
+  time is the latest update to the session or anything it holds. The cursor's
+  `last_line` counts whatever the source advances by: lines for a JSONL file,
+  messages for a file the host rewrites whole (Cline), the creation time of the
+  last settled message for a database (OpenCode).
 - **Message** — a single entry within a session: something the user said, one of
   the agent's replies, the agent's private reasoning, or the result of a tool the
   agent ran. Messages carry metadata (timing, model, token usage, error flags).
 - **Billed cost** — the dollar amount the host platform recorded for a single
-  assistant message (`usage.cost.total` for Pi; Claude Code and Codex record
-  none). It is
+  assistant message (`usage.cost.total` for Pi; `cost` on the message for
+  OpenCode; `metrics.cost` for Cline; Claude Code and Codex record none). It is
   money and is never inferred: a message whose transcript recorded no cost — or
   whose cost total is zero, which Pi writes when it has not priced a message —
   carries **null**, never a synthetic 0, because a silent zero reads as

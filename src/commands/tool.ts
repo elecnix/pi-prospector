@@ -301,8 +301,8 @@ Analysis-graph & point-in-time commands (slash commands):
   - /prospect-node <output-key> — one node + resolved outgoing edges (consumes/anchors/produces/revises)
   - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
   - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
-  - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude|codex] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
-  - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude|codex] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
+  - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude|codex|opencode|cline] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
+  - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude|codex|opencode|cline] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)

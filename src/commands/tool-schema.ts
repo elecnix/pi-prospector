@@ -12,7 +12,7 @@ export const PROSPECT_TOOL = {
 	label: "Prospect",
 	description:
 		"Index sessions, run analysis, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, analyze, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, nodes, node, session_summary, leaks, search, help. " +
-		"list_proposals accepts source (pi|claude|codex) to filter by coding harness. " +
+		"list_proposals accepts source (pi|claude|codex|opencode|cline) to filter by coding harness. " +
 		"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 		"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
 		"Use proposal_ids (string array) on accept/reject for bulk operations with a shared rationale. " +
@@ -60,7 +60,7 @@ export const PROSPECT_TOOL = {
 			]),
 		),
 		severity: Type.Optional(Type.String({ description: "list_proposals: filter by severity (friction, correction, waste, suggestion, reinforcement). leaks: minimum severity floor — report this severity (medium|high|critical) and above." })),
-		source: Type.Optional(Type.String({ description: "Filter by coding harness: pi, claude or codex." })),
+		source: Type.Optional(Type.String({ description: "Filter by coding harness: pi, claude, codex, opencode or cline." })),
 		session_id: Type.Optional(Type.String({ description: "Scope list_proposals to a single session (only that session's proposals); analyze runs just that one session." })),
 		project: Type.Optional(Type.String({ description: "Scope sync to one project (derived from the session directory name) so a fresh install skips every other project on disk." })),
 		proposal_id: Type.Optional(Type.String()),

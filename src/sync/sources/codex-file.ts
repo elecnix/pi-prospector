@@ -25,6 +25,7 @@ import {
   type CodexLine,
 } from "../codex-parser.js";
 import { classifyToolError } from "../tool-errors.js";
+import { projectFromCwd } from "../project.js";
 
 /**
  * The name Codex gives a rollout file: `rollout-<timestamp>-<uuid>.jsonl`.
@@ -70,22 +71,10 @@ export function codexSessionRowId(hostId: string, filePath: string): string {
 
 /**
  * The project a Codex session belongs to, from the working directory it ran in.
- *
- * Codex's own tree carries no project name, so the directory is the only
- * record of where the session happened. The last path segment is the project
- * for a plain directory; a path under a `Source`-style checkout keeps the
- * repository and the worktree, the same shape the token report derives.
+ * Codex's own tree carries no project name; see {@link projectFromCwd}.
  */
 export function codexProjectFromCwd(cwd: string): string {
-  const parts = cwd.split("/").filter(Boolean);
-  if (parts.length === 0) return "workspace";
-  const srcIdx = parts.lastIndexOf("Source");
-  if (srcIdx >= 0 && parts.length > srcIdx + 1) {
-    const repo = parts[srcIdx + 1]!;
-    const worktree = parts[srcIdx + 2];
-    return worktree && worktree !== "main" ? `${repo}/${worktree}` : repo;
-  }
-  return parts[parts.length - 1]!;
+  return projectFromCwd(cwd);
 }
 
 /**

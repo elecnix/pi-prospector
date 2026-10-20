@@ -56,6 +56,34 @@ export function getCodexSessionsDir(): string {
 }
 
 /**
+ * OpenCode's data directory, which holds its `opencode.db`. OpenCode resolves
+ * it as `$XDG_DATA_HOME/opencode`, `~/.local/share/opencode` when that is unset,
+ * on every platform.
+ */
+export function getOpenCodeDataDir(): string {
+	const override = process.env["PROSPECTOR_OPENCODE_DATA_DIR"];
+	if (override !== undefined) return override;
+	const xdgData = process.env["XDG_DATA_HOME"] || path.join(os.homedir(), ".local", "share");
+	return path.join(xdgData, "opencode");
+}
+
+/**
+ * Cline's sessions root, which holds one directory per session. Cline resolves
+ * it from `CLINE_SESSION_DATA_DIR`, then `CLINE_DATA_DIR/sessions`, then
+ * `CLINE_DIR/data/sessions`, then `~/.cline/data/sessions`.
+ */
+export function getClineSessionsDir(): string {
+	const override = process.env["PROSPECTOR_CLINE_SESSIONS_DIR"];
+	if (override !== undefined) return override;
+	const sessionDir = process.env["CLINE_SESSION_DATA_DIR"]?.trim();
+	if (sessionDir) return sessionDir;
+	const dataDir = process.env["CLINE_DATA_DIR"]?.trim();
+	if (dataDir) return path.join(dataDir, "sessions");
+	const clineDir = process.env["CLINE_DIR"]?.trim() || path.join(os.homedir(), ".cline");
+	return path.join(clineDir, "data", "sessions");
+}
+
+/**
  * Per-analyzer config overrides from `~/.pi/agent/prospector.json`, keyed by
  * analyzer id. Merged over each analyzer's shipped defaults by the framework.
  */
