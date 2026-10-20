@@ -31,7 +31,7 @@ import { Type, type Static } from "typebox";
 import type { BackgroundTaskRow, MessageRow } from "../../types.js";
 import { buildToolStream, singleResult } from "../../tool-stream.js";
 import { parseTime } from "../stale-verification/command-vocabulary.js";
-import { completionTime, indexBackgroundTasks } from "./background.js";
+import { completionTime, indexBackgroundTasks, isBackgroundCall } from "./background.js";
 import { findFailureMarkers, HiddenExitCodeSchema, roundSeconds as r, type HiddenExitCode } from "./spans.js";
 import type { TimeEconomyConfig } from "./config.js";
 
@@ -350,6 +350,16 @@ export function measureTime(
 				if (isFailedBackgroundStatus(completion.status)) f.error_count++;
 				families.set(family, f);
 			}
+			continue;
+		}
+
+		// A call the host ran in the background whose completion was never
+		// recorded. Its acknowledgement says nothing about how long the work
+		// took, so timing it by the acknowledgement would report the
+		// near-instant the change exists to remove. It is untimed background:
+		// the duration is unknown, never zero.
+		if (isBackgroundCall(inv.args)) {
+			untimedBackground++;
 			continue;
 		}
 

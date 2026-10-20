@@ -111,6 +111,23 @@ describe("background calls", () => {
 		assert.equal(scan.timed_call_count, 1);
 	});
 
+	it("counts a backgrounded call with no completion as untimed background, not by its acknowledgement", () => {
+		// The call carries the host's background flag but no completion was
+		// recorded. Its acknowledgement says nothing about how long the work
+		// took, so it must not be timed by it.
+		const scan = measureTime(
+			[shell("bg", "npm run build", 10, { run_in_background: true }), result("bg", 11)],
+			CONFIG,
+			[],
+		);
+		assert.equal(scan.background_calls.timed_call_count, 0);
+		assert.equal(scan.background_calls.untimed_call_count, 1);
+		// Not timed at all: it is neither a timed call nor a near-instant one.
+		assert.equal(scan.timed_call_count, 0);
+		assert.equal(scan.untimed_call_count, 0);
+		assert.equal(scan.tool_seconds, 0);
+	});
+
 	it("counts a background call whose completion carries no usable timestamp as untimed", () => {
 		const scan = measureTime(
 			[shell("bg", "npm run build", 10), result("bg", 11)],
@@ -319,6 +336,22 @@ describe("measurePhaseSpans", () => {
 		// commit, at 200 — not at the first test run of the session.
 		assert.equal(preparations[1]?.seconds, 300);
 		assert.equal(preparations[1]?.commit_subject, "two");
+	});
+
+	it("does not claim a preparation marker for a commit with no usable timestamp", () => {
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			// The commit carries no timestamp, so it cannot bound a preparation.
+			spanRow({ id: "c1", role: "assistant", timestamp: null, tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "git commit -m 'one'" } }]) }),
+			// A marker from a later turn, which must not be claimed as its start.
+			spanRow({ id: "c2", role: "assistant", timestamp: at(300), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "git add -A" } }]) }),
+		];
+		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand, commitSubject: commitSubjectOf });
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		// No marker is claimed, so the span starts at the session's start.
+		assert.equal(preparation.start_message_id, "u1");
+		assert.equal(preparation.seconds, 0);
 	});
 
 	it("says so when the session never reached a commit", () => {

@@ -223,7 +223,13 @@ export function measurePhaseSpans(
 			(c) =>
 				opts.isPreparation(c.command) &&
 				(previousCommitMs === null || (c.ms !== null && c.ms > previousCommitMs)) &&
-				(commitMs === null || (c.ms !== null && c.ms <= commitMs)),
+				// A commit whose own time cannot be placed cannot bound its
+				// preparation: a marker from a later turn is not a start for
+				// it. The same rule the pull-request end follows — a bound
+				// that cannot be placed excludes the candidate.
+				commitMs !== null &&
+				c.ms !== null &&
+				c.ms <= commitMs,
 		);
 		const startMs = preparation ? (preparation.ms ?? null) : previousCommitMs ?? firstMs;
 		const startMessageId = preparation

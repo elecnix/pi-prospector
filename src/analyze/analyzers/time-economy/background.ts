@@ -65,3 +65,21 @@ export function completionTime(row: BackgroundTaskRow): number | null {
 	const ms = Date.parse(row.completed_at);
 	return Number.isNaN(ms) ? null : ms;
 }
+
+/**
+ * Whether a tool call was run in the background.
+ *
+ * The host marks it in the call's own arguments: `run_in_background: true` for
+ * a shell call, and the same flag on an `Agent` or `Workflow` call. A call
+ * that carries the flag returned at once, so its transcript result is an
+ * acknowledgement — whatever the host later recorded, or did not, about the
+ * work.
+ *
+ * The flag is what distinguishes a backgrounded call whose completion was
+ * never recorded from an ordinary call. Without it, such a call would fall
+ * through to the ordinary timing path and be measured by its acknowledgement,
+ * which is the near-instant reading this whole mechanism exists to remove.
+ */
+export function isBackgroundCall(args: Record<string, unknown>): boolean {
+	return args["run_in_background"] === true || args["runInBackground"] === true;
+}
