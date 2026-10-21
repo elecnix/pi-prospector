@@ -50,7 +50,7 @@ function fixtureLines(): string[] {
 		uuid: "u-1",
 		parentUuid: null,
 		timestamp: at(0),
-		cwd: "/home/dev/project",
+		cwd: "/home/user/project",
 		message: { role: "user", content: "Build the release and open a pull request." },
 	});
 
@@ -186,7 +186,7 @@ function fixtureLines(): string[] {
 /** Write the fixture into a temp Claude sessions root and return its path and id. */
 function writeFixture(): { root: string; sessionId: string; cleanup: () => void } {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-te-bg-home-"));
-	const projectDir = path.join(root, ".claude", "projects", "-home-dev-project");
+	const projectDir = path.join(root, ".claude", "projects", "-home-user-project");
 	fs.mkdirSync(projectDir, { recursive: true });
 	const label = "te-bg-session";
 	const sessionId = claudeSessionId(label);
