@@ -128,7 +128,10 @@ export const turnPairLLMAnalyzer: Analyzer = {
 	},
 
 	// Term mutes are part of this analyzer's config: a muted term's hit must not
-	// escalate a turn to the classifier, nor appear in the evidence slice (#325).
+	// escalate a turn to the classifier (#325). It still marks a slice boundary:
+	// the turn happened, and shrinking an unrelated turn's slice because a word
+	// was muted is a change the operator never asked for. Only the escalation
+	// the hit causes is withheld.
 	consultsAssertions: ["term"],
 
 	modelsForIdentity(config, modelTiers): string[] {

@@ -174,16 +174,20 @@ export async function supersedeAssertion(
  * conclusion drawn under a setup that no longer holds is retracted, so the
  * conclusion that *does* hold becomes current again.
  *
- * A node is one of those conclusions when it was written *after* the mute and
- * *read* a muted hit — the `consumes` edge says "this node was built from that
- * node". The timing is what distinguishes a muted-era conclusion from the
+ * A node is one of those conclusions when it was written *after* the mute was
+ * asserted. The timing is what distinguishes a muted-era conclusion from the
  * pre-mute one, which read the very same hit: the pre-mute one was written
  * before the mute was asserted.
  *
- * A reader that does not consume the hit cannot be found this way, so every
- * reader that reads a hit emits a `consumes` edge for it. The edge is also
- * what lets a reader walk back from a conclusion to the evidence it was built
- * from, which is the reason the edge table exists in the first place.
+ * The window is the mute's own lifetime: a conclusion written between the
+ * assertion and the supersession was drawn under the mute, whichever reader
+ * drew it. That covers a reader whose source set does not name the hit at
+ * all — `turn-pair-llm` consumes the turn's core node — where there is no
+ * edge to walk back along. It also covers the case where the mute-era
+ * conclusion landed in a *sibling* unit rather than a revision of the
+ * pre-mute one: a silenced hit leaves the source set, so the unit that read
+ * it re-identifies, and the mute-era conclusion is a new lineage, not a
+ * successor of the pre-mute one.
  *
  * Retraction is the existing reversible one: the node stays in the graph, its
  * content still verifies, and `prospect retract --undo` can bring it back.
@@ -193,58 +197,25 @@ export async function retractConclusionsMadeUnder(
 	term: string,
 	now: string,
 ): Promise<number> {
+	// The mute's own lifetime: the assertion and its supersession.
 	const assertion = (await prep(db, `
-		SELECT asserted_at FROM assertions
+		SELECT asserted_at, superseded_at FROM assertions
 		WHERE subject_kind = 'term' AND subject_key = ? AND verdict = 'muted'
 		ORDER BY asserted_at DESC LIMIT 1
-	`).get(term)) as { asserted_at: string } | undefined;
+	`).get(term)) as { asserted_at: string; superseded_at: string | null } | undefined;
 	if (!assertion) return 0;
 
-	// The hit nodes the mute silenced, and the output keys a reader consumed them
-	// by before the mute.
-	const hits = (await prep(db, `
-		SELECT n.output_key AS output_key
-		FROM analysis_edges e
-		JOIN assertions a ON a.id = e.to_ref_id
-		JOIN analysis_nodes n ON n.id = e.from_node_id
-		WHERE e.edge_kind = ? AND e.to_ref_kind = ?
-		  AND a.subject_kind = 'term' AND a.verdict = 'muted' AND a.subject_key = ?
-	`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION, term)) as Array<{ output_key: string }>;
-	if (hits.length === 0) return 0;
+	// The conclusions drawn under the mute: the nodes written between the
+	// assertion and the supersession, and still live.
+	const rows = (await prep(db, `
+		SELECT id FROM analysis_nodes
+		WHERE created_at >= ? AND created_at < ?
+		  AND retracted_at IS NULL
+	`).all(assertion.asserted_at, assertion.superseded_at ?? now)) as Array<{ id: string }>;
+	const targets = rows.map((r) => r.id);
+	if (targets.length === 0) return 0;
 
-	// The conclusions that read one of those hits: the pre-mute ones.
-	const preMute = new Set<string>();
-	for (const hit of hits) {
-		const consumers = (await prep(db, `
-			SELECT c.from_node_id AS id
-			FROM analysis_edges c
-			WHERE c.edge_kind = ? AND c.to_ref_kind = ? AND c.to_ref_id = ?
-		`).all(EDGE_KINDS.CONSUMES, REF_KINDS.ANALYSIS_NODE, hit.output_key)) as Array<{ id: string }>;
-		for (const c of consumers) preMute.add(c.id);
-	}
-	if (preMute.size === 0) return 0;
-
-	// The mute-era versions of those conclusions: the nodes that *revise* them
-	// and were written after the mute. A retracted successor supersedes nothing,
-	// so retracting it hands the head of the lineage back to the pre-mute node —
-	// the conclusion that holds again once the mute is lifted.
-	const targets = new Set<string>();
-	for (const readerId of preMute) {
-		const reader = (await prep(db, `SELECT output_key FROM analysis_nodes WHERE id = ?`).get(readerId)) as
-			| { output_key: string }
-			| undefined;
-		if (!reader?.output_key) continue;
-		const revisions = (await prep(db, `
-			SELECT r.from_node_id AS id
-			FROM analysis_edges r
-			WHERE r.edge_kind = ? AND r.to_ref_kind = ? AND r.to_ref_id = ?
-			  AND r.from_node_id IN (SELECT id FROM analysis_nodes WHERE created_at >= ?)
-		`).all(EDGE_KINDS.REVISES, REF_KINDS.ANALYSIS_NODE, reader.output_key, assertion.asserted_at)) as Array<{ id: string }>;
-		for (const r of revisions) targets.add(r.id);
-	}
-	if (targets.size === 0) return 0;
-
-	const marks = [...targets].map(() => "?").join(",");
+	const marks = targets.map(() => "?").join(",");
 	const res = await prep(db, `
 		UPDATE analysis_nodes SET retracted_at = ?, retracted_by_run = ?
 		WHERE retracted_at IS NULL AND id IN (${marks})

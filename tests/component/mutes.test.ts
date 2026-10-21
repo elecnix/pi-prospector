@@ -45,7 +45,7 @@ import type { LLMRequest } from "../../src/analyze/types.js";
 
 const FRUSTRATED_TERMS = new Set(["putain", "wrong", "pénible"]);
 
-async function build(db: AsyncDatabase) {
+async function build(db: AsyncDatabase, configOverrides?: Record<string, Record<string, unknown>>) {
 	const llm = createMockLLM({
 		responder: (req: LLMRequest) => {
 			const term = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
@@ -76,7 +76,7 @@ async function build(db: AsyncDatabase) {
 			};
 		},
 	});
-	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
+	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS, configOverrides });
 	await framework.register(turnPairCoreAnalyzer);
 	await framework.register(lexiconCandidatesAnalyzer);
 	await framework.register(frustrationLexiconAnalyzer);
@@ -85,8 +85,8 @@ async function build(db: AsyncDatabase) {
 }
 
 /** The same chain plus the readers that fold frustration hits into a session score. */
-async function buildWithReaders(db: AsyncDatabase) {
-	const { framework, llm } = await build(db);
+async function buildWithReaders(db: AsyncDatabase, configOverrides?: Record<string, Record<string, unknown>>) {
+	const { framework, llm } = await build(db, configOverrides);
 	await framework.register(toolTrajectoryAnalyzer);
 	await framework.register(frictionAccumulationAnalyzer);
 	return { framework, llm };
@@ -545,7 +545,12 @@ describe("a muted term's existing hits (#325)", () => {
 			await insertSession(db, "s1");
 			await insertMessages(db, "s1", [{ role: "user", text: "wrong and putain" }, { role: "assistant", text: "ok" }]);
 
-			const { framework } = await buildWithReaders(db);
+			// The default cap (0.5) hides the difference: one hit alone already
+			// reaches it. Raising it lets both terms' weights show, so the
+			// assertion can tell the muted term's weight apart from the live one's.
+			const { framework } = await buildWithReaders(db, {
+				"friction-accumulation": { frustrationWeightCap: 5 },
+			});
 			await framework.run("s1");
 
 			const readAccumulation = async () => {
@@ -559,6 +564,11 @@ describe("a muted term's existing hits (#325)", () => {
 			// Before the mute: one conclusion, counting both terms' hits.
 			const before = await readAccumulation();
 			assert.equal(before.length, 1, "one current accumulation node before the mute");
+			assert.equal(
+				before[0]!.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0),
+				1,
+				"both terms' hits contribute before the mute",
+			);
 
 			await muteTerm(db, { term: "wrong", by: "operator" });
 			await framework.run("s1", { revise: ["config"] });
@@ -569,9 +579,8 @@ describe("a muted term's existing hits (#325)", () => {
 			// is not in it.
 			const after = await readAccumulation();
 			assert.equal(after.length, 1, "exactly one current accumulation node after the mute");
-			const totalFrustration = after[0]!.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0);
 			assert.equal(
-				totalFrustration,
+				after[0]!.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0),
 				0.5,
 				"the current conclusion counts the unmuted term's hit only",
 			);
