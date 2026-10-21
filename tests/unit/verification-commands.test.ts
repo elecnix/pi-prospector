@@ -20,6 +20,7 @@ import {
 import { normaliseCommand } from "../../src/analyze/analyzers/stale-verification/command-vocabulary.js";
 import { VERIFICATION_DECISION_QUESTIONS } from "../../src/analyze/analyzers/verification-commands/decision.js";
 import type { MessageRow } from "../../src/analyze/types.js";
+import { makeMessageRow as row } from "./helpers.js";
 
 const CONFIG: VerificationCommandsConfig = { ...DEFAULT_VERIFICATION_COMMANDS_CONFIG };
 
@@ -28,24 +29,6 @@ function at(s: number): string {
 	return new Date(T0 + s * 1000).toISOString();
 }
 
-let seq = 0;
-function row(partial: Partial<MessageRow> & { role: string }): MessageRow {
-	return {
-		id: partial.id ?? `row-${seq++}`,
-		session_id: "s",
-		parent_id: null,
-		timestamp: null,
-		content_text: null,
-		content_thinking: null,
-		tool_calls: null,
-		tool_results: null,
-		model: null,
-		cost_usd: null,
-		stop_reason: null,
-		error_message: null,
-		...partial,
-	};
-}
 
 /** A shell call and its result, `seconds` long. */
 function sh(id: string, command: string, s: number, seconds: number): MessageRow[] {

@@ -13,6 +13,7 @@ import {
 import { classifyCall, findStaleVerifications } from "../../src/analyze/analyzers/stale-verification/detect.js";
 import { buildProposals, resolveConfig } from "../../src/analyze/analyzers/stale-verification/index.js";
 import type { MessageRow } from "../../src/analyze/types.js";
+import { makeMessageRow as row } from "./helpers.js";
 
 const CONFIG: StaleVerificationConfig = { ...DEFAULT_STALE_VERIFICATION_CONFIG };
 
@@ -21,24 +22,6 @@ function at(s: number): string {
 	return new Date(T0 + s * 1000).toISOString();
 }
 
-let seq = 0;
-function row(partial: Partial<MessageRow> & { role: string }): MessageRow {
-	return {
-		id: partial.id ?? `row-${seq++}`,
-		session_id: "s",
-		parent_id: null,
-		timestamp: null,
-		content_text: null,
-		content_thinking: null,
-		tool_calls: null,
-		tool_results: null,
-		model: null,
-		cost_usd: null,
-		stop_reason: null,
-		error_message: null,
-		...partial,
-	};
-}
 
 /** An assistant row issuing one tool call at second `s`. */
 function call(id: string, name: string, args: Record<string, unknown>, s: number): MessageRow {

@@ -29,7 +29,7 @@
 
 import { Type, type Static } from "typebox";
 import type { MessageRow } from "../../types.js";
-import { buildToolStream } from "../../tool-stream.js";
+import { buildToolStream, singleResult } from "../../tool-stream.js";
 import type { TimeEconomyConfig } from "./config.js";
 
 export const FamilyTimeSchema = Type.Object({
@@ -339,12 +339,3 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 	};
 }
 
-function singleResult(json: string | null): boolean {
-	if (!json) return false;
-	try {
-		const parsed: unknown = JSON.parse(json);
-		return Array.isArray(parsed) && parsed.length === 1;
-	} catch {
-		return false;
-	}
-}

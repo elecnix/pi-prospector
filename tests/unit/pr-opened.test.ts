@@ -13,25 +13,8 @@ import {
 	stackedCreatedUrls,
 } from "../../src/analyze/analyzers/pr-opened/detect.js";
 import type { MessageRow } from "../../src/analyze/types.js";
+import { makeMessageRow as row } from "./helpers.js";
 
-let seq = 0;
-function row(partial: Partial<MessageRow> & { role: string }): MessageRow {
-	return {
-		id: partial.id ?? `row-${seq++}`,
-		session_id: "s",
-		parent_id: null,
-		timestamp: null,
-		content_text: null,
-		content_thinking: null,
-		tool_calls: null,
-		tool_results: null,
-		model: null,
-		cost_usd: null,
-		stop_reason: null,
-		error_message: null,
-		...partial,
-	};
-}
 
 /** An assistant row issuing one call, and the row carrying its result. */
 function exchange(id: string, name: string, args: Record<string, unknown>, text: string, isError = false): MessageRow[] {

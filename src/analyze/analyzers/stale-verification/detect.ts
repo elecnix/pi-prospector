@@ -43,7 +43,7 @@
 
 import { Type, type Static } from "typebox";
 import type { MessageRow } from "../../types.js";
-import { buildToolStream } from "../../tool-stream.js";
+import { buildToolStream, singleResult } from "../../tool-stream.js";
 import type { StaleVerificationConfig } from "./config.js";
 import { commandSegments, normaliseCommand, normalisePath, workDir } from "./command-vocabulary.js";
 
@@ -319,12 +319,3 @@ export function findStaleVerifications(
 	};
 }
 
-function singleResult(json: string | null): boolean {
-	if (!json) return false;
-	try {
-		const parsed: unknown = JSON.parse(json);
-		return Array.isArray(parsed) && parsed.length === 1;
-	} catch {
-		return false;
-	}
-}

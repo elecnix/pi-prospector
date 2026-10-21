@@ -221,6 +221,24 @@ export function parseToolCalls(json: string): Array<{ id: string; name: string; 
 	return out;
 }
 
+/**
+ * Whether a result row carries exactly one result.
+ *
+ * A row's text belongs to its one result only when the row holds one result.
+ * The transcript joins several results' texts into a single field, and there
+ * is no honest way to split them back apart, so a row with several results
+ * carries no text an analyzer can attribute to any of them.
+ */
+export function singleResult(json: string | null): boolean {
+	if (!json) return false;
+	try {
+		const parsed: unknown = JSON.parse(json);
+		return Array.isArray(parsed) && parsed.length === 1;
+	} catch {
+		return false;
+	}
+}
+
 /** Parse the stored `tool_results` JSON, tolerating malformed rows. */
 function parseToolResults(json: string): RawResult[] {
 	let parsed: unknown;
