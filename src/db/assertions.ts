@@ -33,6 +33,7 @@ import { shortHash } from "../analyze/input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 import { computeSourceSetHash } from "../analyze/input-hash.js";
 import { findLatestNodeBySourceSet, insertEdge, selectByKeyIn } from "./analysis-queries.js";
+import { MUTE_INSTANCE_ORDINAL_SQL, muteInstanceOrdinalSql } from "./current-generation.js";
 import { newGcRunId } from "./gc.js";
 import { FRUSTRATION_LEXICON_DEF } from "../analyze/analyzers/frustration-lexicon/index.js";
 
@@ -130,6 +131,46 @@ export async function upsertAssertion(
 		params.remediationId ?? null,
 	);
 	return id;
+}
+
+/**
+ * Record a term mute, keeping the *mute episode* intact.
+ *
+ * A mute episode is the span during which a mute has been in force without
+ * interruption. It starts when the mute is imposed and ends when it is
+ * lifted. The episode's start time is the mute *instance* that the `mutes`
+ * edges carry, so it must move exactly when the episode does:
+ *
+ *   - a mute imposed on an unmuted term starts an episode, so the instance is
+ *     the time of the mute;
+ *   - a mute re-imposed after an unmute starts a *new* episode, so the
+ *     instance is the time of the re-mute, and the previous episode's edges
+ *     stay inert;
+ *   - a mute restated while it is already in force continues the episode, so
+ *     the instance does not move. A restatement is not a new judgement, and
+ *     moving the instance would attach a second `mutes` edge to every node
+ *     the first one already marks, for no change in what is silenced.
+ *
+ * The reason and the author still refresh: the latest statement of *why* wins.
+ */
+export async function upsertMuteAssertion(
+	db: AsyncDatabase,
+	params: { term: string; reason?: string | null; assertedBy?: string | null },
+): Promise<string> {
+	const id = assertionId("term", params.term, "muted");
+	const existing = (await prep(db, `
+		SELECT asserted_at, superseded_at FROM assertions WHERE id = ?
+	`).get(id)) as { asserted_at: string; superseded_at: string | null } | undefined;
+	const inForce = existing !== undefined && existing.superseded_at === null;
+	return upsertAssertion(db, {
+		subjectKind: "term",
+		subjectKey: params.term,
+		verdict: "muted",
+		reason: params.reason ?? null,
+		// An episode in force keeps its start; a new one starts now.
+		assertedAt: inForce ? existing.asserted_at : new Date().toISOString(),
+		assertedBy: params.assertedBy ?? "operator",
+	});
 }
 
 /**
@@ -555,17 +596,21 @@ async function attachMuteEdgeFrom(db: AsyncDatabase, nodeId: string, assertionId
 
 /**
  * The ordinal that identifies a mute instance: the assertion's `asserted_at`
- * as seconds since the epoch.
+ * as a millisecond epoch.
  *
  * The edge table's `ordinal` is otherwise a position within a node's edge
  * list, and the `mutes` edge has no siblings to order — it is a single
  * relation — so the field is free to carry the instance marker. The mark is
  * compared against the same expression in the `current_nodes` view, so the two
  * always agree.
+ *
+ * The resolution is milliseconds, not seconds: two mutes inside one second are
+ * two different judgements, and a second-resolution instance would let the
+ * second mute claim the first mute's edges.
  */
 async function muteInstanceOrdinal(db: AsyncDatabase, assertionId: string): Promise<number> {
 	const row = (await prep(db, `
-		SELECT CAST(strftime('%s', asserted_at) AS INTEGER) AS instance
+		SELECT ${muteInstanceOrdinalSql("assertions")} AS instance
 		FROM assertions WHERE id = ?
 	`).get(assertionId)) as { instance: number | null } | undefined;
 	return row?.instance ?? 0;
@@ -617,7 +662,7 @@ export async function getMutedNodeIds(db: AsyncDatabase, asOf?: string): Promise
 			  AND a.verdict = 'muted'
 			  AND a.asserted_at <= ?
 			  AND (a.superseded_at IS NULL OR a.superseded_at > ?)
-			  AND e.ordinal = CAST(strftime('%s', a.asserted_at) AS INTEGER)
+			  AND e.ordinal = ${MUTE_INSTANCE_ORDINAL_SQL}
 		`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION, asOf, asOf)) as Array<{ id: string }>;
 		return new Set(rows.map((r) => r.id));
 	}
@@ -630,7 +675,7 @@ export async function getMutedNodeIds(db: AsyncDatabase, asOf?: string): Promise
 		  AND a.subject_kind = 'term'
 		  AND a.verdict = 'muted'
 		  AND a.superseded_at IS NULL
-		  AND e.ordinal = CAST(strftime('%s', a.asserted_at) AS INTEGER)
+		  AND e.ordinal = ${MUTE_INSTANCE_ORDINAL_SQL}
 	`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION)) as Array<{ id: string }>;
 	return new Set(rows.map((r) => r.id));
 }
@@ -670,6 +715,12 @@ export async function silenceConclusionsOfSilencedHits(
 	// The conclusions that consumed a silenced hit. A `consumes` edge names its
 	// target by the target's content-addressed output key, while the `mutes`
 	// edge starts at the hit's row id — so the join goes through the node.
+	//
+	// The `mutes` edge is constrained to the mute instance in force, the same
+	// way the retraction query constrains it. A hit silenced by an earlier
+	// instance of this mute is not silenced by the one in force, so it is not a
+	// candidate, and neither are the conclusions that read it.
+	const instance = await muteInstanceOrdinal(db, assertionId);
 	const consumers = (await prep(db, `
 		SELECT DISTINCT c.from_node_id AS id
 		FROM analysis_edges c
@@ -678,12 +729,19 @@ export async function silenceConclusionsOfSilencedHits(
 		                   AND m.edge_kind = ?
 		                   AND m.to_ref_kind = ?
 		                   AND m.to_ref_id = ?
+		                   AND m.ordinal = ?
 		WHERE c.edge_kind = ? AND c.to_ref_kind = ?
-	`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION, assertionId, EDGE_KINDS.CONSUMES, REF_KINDS.ANALYSIS_NODE)) as Array<{ id: string }>;
+	`).all(
+		EDGE_KINDS.MUTES,
+		REF_KINDS.ASSERTION,
+		assertionId,
+		instance,
+		EDGE_KINDS.CONSUMES,
+		REF_KINDS.ANALYSIS_NODE,
+	)) as Array<{ id: string }>;
 	if (consumers.length === 0) return 0;
 
 	let marked = 0;
-	const instance = await muteInstanceOrdinal(db, assertionId);
 	for (const consumer of consumers) {
 		const already = await prep(db, `
 			SELECT 1 FROM analysis_edges

@@ -20,6 +20,30 @@ export const NOT_REVISED_LIVE = `NOT EXISTS (
 	WHERE e.edge_kind = '${EDGE_KINDS.REVISES}' AND e.to_ref_id = n.output_key)`;
 
 /**
+ * The SQL expression for a mute instance: an assertion row's `asserted_at` as a
+ * millisecond epoch.
+ *
+ * A `mutes` edge's `ordinal` carries the mute instance that created it, so the
+ * edge says "this edge belongs to the mute in force". The instance is derived
+ * from the assertion's own `asserted_at`, which a re-mute replaces, so two
+ * mutes of the same term are two instances.
+ *
+ * The resolution is milliseconds, not seconds: two mutes inside one second are
+ * two different judgements, and a second-resolution instance would let the
+ * second mute claim the first mute's edges. The expression is the same one the
+ * SQLite epoch gives, so the value a query computes matches the value the
+ * writer stored.
+ *
+ * The alias names the assertions row in the calling query, because SQLite
+ * resolves a column through the alias a table is joined under.
+ */
+export const muteInstanceOrdinalSql = (assertionsAlias = "a"): string =>
+	`CAST((julianday(${assertionsAlias}.asserted_at) - 2440587.5) * 86400000 AS INTEGER)`;
+
+/** The expression for a mute instance, for a query that joins `assertions a`. */
+export const MUTE_INSTANCE_ORDINAL_SQL = muteInstanceOrdinalSql("a");
+
+/**
  * True when no ACTIVE mute silences the row aliased `n` (#325).
  *
  * A `mutes` edge records that a human assertion silenced a node's conclusion —
@@ -46,7 +70,7 @@ export const NOT_MUTED_LIVE = `NOT EXISTS (
 	  AND e.to_ref_kind = '${REF_KINDS.ASSERTION}'
 	  AND e.from_node_id = n.id
 	  AND a.subject_kind = 'term' AND a.verdict = 'muted' AND a.superseded_at IS NULL
-	  AND e.ordinal = CAST(strftime('%s', a.asserted_at) AS INTEGER))`;
+	  AND e.ordinal = ${MUTE_INSTANCE_ORDINAL_SQL})`;
 
 /**
  * The as-of twin of {@link NOT_REVISED_LIVE}: true when no node that existed and
@@ -69,4 +93,4 @@ export const NOT_MUTED_AS_OF = `NOT EXISTS (
 	  AND e.from_node_id = n.id
 	  AND a.subject_kind = 'term' AND a.verdict = 'muted'
 	  AND a.asserted_at <= ? AND (a.superseded_at IS NULL OR a.superseded_at > ?)
-	  AND e.ordinal = CAST(strftime('%s', a.asserted_at) AS INTEGER))`;
+	  AND e.ordinal = ${MUTE_INSTANCE_ORDINAL_SQL})`;

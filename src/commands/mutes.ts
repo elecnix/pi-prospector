@@ -18,7 +18,7 @@ import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { getDbPath } from "../config.js";
 import {
-	upsertAssertion,
+	upsertMuteAssertion,
 	supersedeAssertion,
 	listAssertions,
 	attachMuteEdge,
@@ -98,10 +98,8 @@ export async function muteTerm(
 	args: { term: string; reason?: string | null; by?: string | null },
 ): Promise<{ muted: boolean; assertionId: string; liveHits: number }> {
 	const term = normaliseTerm(args.term);
-	const assertionId = await upsertAssertion(db, {
-		subjectKind: "term",
-		subjectKey: term,
-		verdict: "muted",
+	const assertionId = await upsertMuteAssertion(db, {
+		term,
 		reason: args.reason ?? null,
 		assertedBy: args.by ?? "operator",
 	});

@@ -696,4 +696,43 @@ describe("a muted term's existing hits (#325)", () => {
 			await close();
 		}
 	});
+
+	it("treats a restated mute as the same episode, and a re-imposed mute as a new one", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+			const hit = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!;
+
+			// A restatement while the mute is in force continues the episode: the
+			// mute instance does not move, so the same `mutes` edge still marks the
+			// hit. A second edge would say the term was muted twice, for the same
+			// silence.
+			const first = await muteTerm(db, { term: "wrong", by: "operator" });
+			const restated = await muteTerm(db, { term: "wrong", by: "operator" });
+			assert.equal(restated.assertionId, first.assertionId, "the assertion row is the same");
+			const muteEdges = (await getEdgesFrom(db, hit.id)).filter((e) => e.edge_kind === "mutes");
+			assert.equal(muteEdges.length, 1, "a restated mute leaves one mark on the hit");
+
+			// A mute re-imposed after an unmute is a new episode: the instance
+			// moves, so the new mark replaces the old one rather than reviving
+			// the conclusions the first episode left alone.
+			await unmuteTerm(db, "wrong");
+			const reimposed = await muteTerm(db, { term: "wrong", by: "operator" });
+			const afterEdges = (await getEdgesFrom(db, hit.id)).filter((e) => e.edge_kind === "mutes");
+			assert.equal(afterEdges.length, 2, "a re-imposed mute adds a mark for the new episode");
+			const instances = new Set(afterEdges.map((e) => e.ordinal));
+			assert.equal(instances.size, 2, "the two episodes carry different instances");
+			assert.ok(
+				(await getMutedNodeIds(db)).has(hit.id),
+				"the hit is muted under the new episode",
+			);
+			assert.equal(reimposed.assertionId, first.assertionId, "still the same assertion row");
+		} finally {
+			await close();
+		}
+	});
 });

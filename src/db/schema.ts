@@ -728,34 +728,45 @@ async function migrateAnalysisNodesRecipeUniqueness(db: AsyncDatabase): Promise<
 	const hasTableUnique = rows.some((r) => r.origin === "u");
 	if (!hasTableUnique) return;
 
+	// The table is rebuilt rather than renamed: SQLite rewrites a `REFERENCES`
+	// clause to name the renamed table, so renaming `analysis_nodes` would
+	// leave `analysis_edges` pointing at a table that is then dropped, and the
+	// next edge insert would fail. Copying into a new table and renaming that
+	// one leaves the edge table's foreign key naming `analysis_nodes`, which is
+	// the name the rebuilt table ends up with.
+	//
+	// The views are dropped first and recreated by the caller: they name
+	// `analysis_nodes`, and SQLite refuses to rename a table a view reads.
+	await db.exec("DROP VIEW IF EXISTS live_nodes");
+	await db.exec("DROP VIEW IF EXISTS current_nodes");
 	await db.exec("PRAGMA foreign_keys = OFF");
-	await db.exec("ALTER TABLE analysis_nodes RENAME TO analysis_nodes_old");
-	await db.exec(`CREATE TABLE analysis_nodes (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		analyzer_id TEXT NOT NULL,
-		analyzer_version_id TEXT NOT NULL,
-		config_id TEXT NOT NULL,
-		run_id TEXT,
-		node_kind TEXT NOT NULL,
-		content_json TEXT NOT NULL,
-		source_set_hash TEXT NOT NULL,
-		input_key TEXT NOT NULL,
-		output_key TEXT NOT NULL DEFAULT '',
-		config_fingerprint TEXT NOT NULL DEFAULT '',
-		model_used TEXT,
-		cost_usd REAL,
-		tokens_used INTEGER,
-		input_tokens INTEGER,
-		cached_input_tokens INTEGER,
-		output_tokens INTEGER,
-		duration_ms INTEGER,
-		created_at TEXT NOT NULL,
-		retracted_at TEXT,
-		retracted_by_run TEXT,
-		FOREIGN KEY (session_id) REFERENCES sessions(id)
-	)`);
-	await db.exec(`INSERT INTO analysis_nodes (
+	await db.exec(`
+		CREATE TABLE analysis_nodes_new (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			analyzer_id TEXT NOT NULL,
+			analyzer_version_id TEXT NOT NULL,
+			config_id TEXT NOT NULL,
+			run_id TEXT,
+			node_kind TEXT NOT NULL,
+			content_json TEXT NOT NULL,
+			source_set_hash TEXT NOT NULL,
+			input_key TEXT NOT NULL,
+			output_key TEXT NOT NULL DEFAULT '',
+			config_fingerprint TEXT NOT NULL DEFAULT '',
+			model_used TEXT,
+			cost_usd REAL,
+			tokens_used INTEGER,
+			input_tokens INTEGER,
+			cached_input_tokens INTEGER,
+			output_tokens INTEGER,
+			duration_ms INTEGER,
+			created_at TEXT NOT NULL,
+			retracted_at TEXT,
+			retracted_by_run TEXT,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		)`);
+	await db.exec(`INSERT INTO analysis_nodes_new (
 		id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind,
 		content_json, source_set_hash, input_key, output_key, config_fingerprint,
 		model_used, cost_usd, tokens_used, input_tokens, cached_input_tokens,
@@ -765,8 +776,9 @@ async function migrateAnalysisNodesRecipeUniqueness(db: AsyncDatabase): Promise<
 		content_json, source_set_hash, input_key, output_key, config_fingerprint,
 		model_used, cost_usd, tokens_used, input_tokens, cached_input_tokens,
 		output_tokens, duration_ms, created_at, retracted_at, retracted_by_run
-		FROM analysis_nodes_old`);
-	await db.exec("DROP TABLE analysis_nodes_old");
+		FROM analysis_nodes`);
+	await db.exec("DROP TABLE analysis_nodes");
+	await db.exec("ALTER TABLE analysis_nodes_new RENAME TO analysis_nodes");
 	await db.exec("PRAGMA foreign_keys = ON");
 }
 
