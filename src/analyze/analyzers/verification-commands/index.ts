@@ -86,8 +86,6 @@ export const VerificationCommandProperties = Type.Object({
 	confidence: Type.Number(),
 	/** The distribution over the options, stored as the evidence. */
 	probabilities: Type.Optional(Type.Record(Type.String(), Type.Number())),
-	/** The longest run of the command the session saw, in seconds. */
-	seconds: Type.Number(),
 });
 export type VerificationCommandProperties = Static<typeof VerificationCommandProperties>;
 
@@ -244,20 +242,25 @@ export const verificationCommandsAnalyzer: Analyzer = {
 			// in every session that ran it. That is what makes the graph the
 			// corpus-wide cache: the first session to run a command pays for the
 			// verdict, and every later session finds the unit `current`.
+			//
+			// The source set names the command alone, so the node's content must
+			// too. A session-specific number here would make the same command
+			// produce two different outputs, one per session, and the corpus-wide
+			// cache would stop reproducing on another machine.
 			const sources: SourceRef[] = [{ kind: "term", id: candidate.command }];
 			return {
 				sources,
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "session",
 				anchorRef: ctx.sessionId,
-				meta: { command: candidate.command, seconds: candidate.seconds, runs: candidate.runs } as unknown as Record<string, unknown>,
+				meta: { command: candidate.command } as unknown as Record<string, unknown>,
 			};
 		});
 	},
 
 	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = resolveConfig(ctx.config.configJson);
-		const meta = unit.meta as unknown as { command: string; seconds: number; runs: number };
+		const meta = unit.meta as unknown as { command: string };
 		if (!config.decisionModel) {
 			throw new Error("verification-commands planned a unit with no decision model configured.");
 		}
@@ -279,7 +282,6 @@ export const verificationCommandsAnalyzer: Analyzer = {
 			verdict: verdict.verdict,
 			confidence: verdict.confidence,
 			probabilities: verdict.probabilities,
-			seconds: meta.seconds,
 		};
 
 		return {

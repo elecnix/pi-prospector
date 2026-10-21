@@ -21,6 +21,7 @@ import type {
 	AnalyzerVersion,
 	AnalysisResult,
 	AnalysisUnit,
+	IdentityReader,
 	MessageRow,
 	PromptVersion,
 	SourceRef,
@@ -28,8 +29,6 @@ import type {
 import { computeConfigHash, shortHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
-import type { AsyncDatabase } from "../../../db/async-db.js";
-import { getLatestNodesByAnalyzerAcrossSessions } from "../../../db/analysis-queries.js";
 import { DEFAULT_STALE_VERIFICATION_CONFIG, type StaleVerificationConfig } from "./config.js";
 import { StaleScanSchema, findStaleVerifications, type StaleCause, type StaleScan } from "./detect.js";
 import {
@@ -204,10 +203,8 @@ export const staleVerificationAnalyzer: Analyzer = {
 	 * marks the nodes for the `config` reason: a plain fill leaves them alone,
 	 * and `--revise config` recomputes them with lineage preserved.
 	 */
-	async identityExtrasAsync(db: AsyncDatabase): Promise<readonly string[]> {
-		const judged = verificationCommandsByCommand(
-			await getLatestNodesByAnalyzerAcrossSessions(db, VERIFICATION_COMMANDS_DEF.id),
-		);
+	async identityExtrasAsync(read: IdentityReader): Promise<readonly string[]> {
+		const judged = verificationCommandsByCommand(await read(VERIFICATION_COMMANDS_DEF.id));
 		return [`learned:${judgedSetFingerprint(judged)}`];
 	},
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {

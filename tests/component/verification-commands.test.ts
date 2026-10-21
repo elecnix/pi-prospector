@@ -125,6 +125,29 @@ describe("verification-commands component test", () => {
 		}
 	});
 
+	it("the verdict is a function of the command alone, so it reproduces on another machine", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "vc-4a", gateSession());
+			await seed(db, "vc-4b", gateSession());
+			const { fw } = await framework(db, "jev/jev-1.13.0");
+			await fw.run("vc-4a", {});
+			await fw.run("vc-4b", {});
+
+			const nodes = (await db
+				.prepare("SELECT output_key, content_json FROM analysis_nodes WHERE analyzer_id = 'verification-commands'")
+				.all()) as Array<{ output_key: string; content_json: string }>;
+			assert.equal(nodes.length, 1);
+			const content = JSON.parse(nodes[0]!.content_json) as Record<string, unknown>;
+			assert.equal(content["command"], "tools/ci/verify-all");
+			// Nothing session-specific rides along: the content is the verdict and
+			// the command, nothing a second session would change.
+			assert.deepEqual(Object.keys(content).sort(), ["command", "confidence", "probabilities", "verdict"]);
+		} finally {
+			await close();
+		}
+	});
+
 	it("stale-verification counts a run of a command the pattern list does not cover", async () => {
 		const { db, close } = await tempDb();
 		try {

@@ -522,6 +522,9 @@ export interface AnalyzerRunContext {
 }
 
 /** An analyzer: stable definition + version + prompts + default config + behaviour. */
+/** The read an analyzer's identity hook uses: a declared dependency, corpus-wide. */
+export type IdentityReader = (analyzerId: string) => Promise<AnalysisNodeRow[]>;
+
 export interface Analyzer {
 	def: AnalyzerDef;
 	version: AnalyzerVersion;
@@ -584,11 +587,16 @@ export interface Analyzer {
 	 * `config` reason, so a conclusion drawn under an older set is revised
 	 * rather than left standing unchallenged.
 	 *
+	 * The reader it receives returns a declared dependency's newest node per
+	 * logical unit, across every session — the corpus-scoped read. The
+	 * dependency must be declared, so the scope rule holds: an analyzer reads
+	 * only what it declared, and only the corpus scope of what it declared.
+	 *
 	 * Called during scan, so it must never throw: an unreadable source of truth
 	 * is a fact about the environment, and the analyzer states it on the node
 	 * instead of failing the run.
 	 */
-	identityExtrasAsync?: (db: AsyncDatabase) => Promise<readonly string[]>;
+	identityExtrasAsync?: (read: IdentityReader) => Promise<readonly string[]>;
 	/**
 	 * Files this analyzer can render from the finished graph.
 	 *
