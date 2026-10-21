@@ -64,10 +64,16 @@ export interface VerificationDecision {
  *
  * A verdict is cached corpus-wide, so a response without one is an error
  * rather than a default: a guessed "not_verification" would silently mark a
- * project's gate script as unverified.
+ * project's gate script as unverified. An answer outside the three options is
+ * the same kind of fault, so it is rejected rather than stored.
  */
 export function parseVerificationDecision(response: DecisionResponse): VerificationDecision {
 	const answer = answerOf(response, "verifies", "choice");
+	if (!VERIFICATION_VERDICTS.includes(answer.choice as VerificationVerdict)) {
+		throw new Error(
+			`Decision model returned verdict '${answer.choice}', which is not one of ${VERIFICATION_VERDICTS.join(", ")}.`,
+		);
+	}
 	return {
 		verdict: answer.choice as VerificationVerdict,
 		confidence: answer.probabilities[answer.choice] ?? answer.confidence,

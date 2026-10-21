@@ -171,6 +171,23 @@ describe("parseVerificationDecision", () => {
 			/no choice answer for 'verifies'/,
 		);
 	});
+
+	it("rejects a verdict outside the three options", () => {
+		assert.throws(
+			() =>
+				parseVerificationDecision({
+					answers: {
+						verifies: { type: "choice", choice: "maybe", confidence: 0.5, probabilities: { maybe: 0.5 } },
+					},
+					model: "jev-1.13.0",
+					costUsd: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					durationMs: 0,
+				}),
+			/which is not one of full, narrow, not_verification/,
+		);
+	});
 });
 
 describe("VERIFICATION_DECISION_QUESTIONS", () => {

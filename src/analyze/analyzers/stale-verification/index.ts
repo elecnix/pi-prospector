@@ -35,7 +35,6 @@ import {
 	VERIFICATION_COMMANDS_DEF,
 	judgedSetFingerprint,
 	verificationCommandsByCommand,
-	type VerificationCommandProperties,
 } from "../verification-commands/index.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */

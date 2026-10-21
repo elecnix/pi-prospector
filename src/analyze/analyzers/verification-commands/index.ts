@@ -57,7 +57,6 @@ import {
 	VERIFICATION_DECISION_QUESTIONS,
 	VERIFICATION_DECISION_QUESTIONS_HASH,
 	parseVerificationDecision,
-	type VerificationVerdict,
 } from "./decision.js";
 
 export {
@@ -201,23 +200,6 @@ export function nominateCommands(messages: readonly MessageRow[], config: Verifi
 	return candidates.slice(0, config.maxCandidatesPerSession);
 }
 
-/** The tool names a stored assistant row called, without their arguments. */
-function parseCallNames(json: string): string[] {
-	try {
-		const parsed: unknown = JSON.parse(json);
-		if (!Array.isArray(parsed)) return [];
-		const names: string[] = [];
-		for (const raw of parsed) {
-			if (!raw || typeof raw !== "object") continue;
-			const name = (raw as Record<string, unknown>)["name"];
-			if (typeof name === "string") names.push(name.toLowerCase());
-		}
-		return names;
-	} catch {
-		return [];
-	}
-}
-
 export const verificationCommandsAnalyzer: Analyzer = {
 	def: VERIFICATION_COMMANDS_DEF,
 	version: VERIFICATION_COMMANDS_VERSION,
@@ -230,7 +212,7 @@ export const verificationCommandsAnalyzer: Analyzer = {
 		label: "default",
 	},
 
-	modelsForIdentity(config, modelTiers) {
+	modelsForIdentity(config) {
 		const cfg = resolveConfig(config);
 		if (cfg.decisionModel) return [decisionIdentity(cfg.decisionModel, VERIFICATION_DECISION_QUESTIONS_HASH)];
 		return [];
