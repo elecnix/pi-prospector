@@ -512,6 +512,26 @@ describe("measurePhaseSpans", () => {
 		assert.equal(spans[0]?.seconds, 60);
 	});
 
+	it("measures a session whose rows are out of timestamp order", () => {
+		// Rows are not guaranteed to be in timestamp order, so the session's
+		// bounds are its earliest and its latest, not its first and its last
+		// row. A session whose last row is earlier than its first is still a
+		// session of a real length.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(500) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(100) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(200) }),
+		];
+		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand });
+		assert.equal(spans[0]?.end_reason, "session_end");
+		// From the earliest row at 100 to the latest at 500.
+		assert.equal(spans[0]?.seconds, 400);
+		// The message ids name the rows that carry those bounds, so the id and
+		// the time agree.
+		assert.equal(spans[0]?.start_message_id, "c1");
+		assert.equal(spans[0]?.end_message_id, "u1");
+	});
+
 	it("counts the turn a preparation opened in, even when the turn began earlier", () => {
 		// The turn opened at 0, the preparation at 10 and the commit at 110.
 		// The span covers the one turn the preparation belonged to: a turn
@@ -781,5 +801,22 @@ describe("measureSkillSpans", () => {
 		assert.equal(spans.length, 2);
 		assert.equal(spans[0]?.seconds, 60);
 		assert.equal(spans[1]?.end_reason, "turn_end");
+	});
+
+	it("ends a skill at the session's latest message, not at its last row", () => {
+		// Rows are not guaranteed to be in timestamp order, so the session's
+		// end is its latest message. A skill whose turn cannot be placed ends
+		// at that message, not at whichever row happens to be last.
+		const rows = [
+			spanRow({ id: "s1", role: "assistant", timestamp: at(100), tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "review" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(200) }),
+			spanRow({ id: "u1", role: "user", timestamp: at(50) }),
+		];
+		const spans = measureSkillSpans(rows);
+		assert.equal(spans.length, 1);
+		// The opening turn runs to the latest message, at 200, and the last
+		// row is the user message at 50.
+		assert.equal(spans[0]?.end_reason, "turn_end");
+		assert.equal(spans[0]?.seconds, 100);
 	});
 });

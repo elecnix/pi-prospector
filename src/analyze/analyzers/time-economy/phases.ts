@@ -142,6 +142,26 @@ function tokensBetween(rows: readonly SpanRow[], fromMs: number | null, toMs: nu
 }
 
 /**
+ * The session's bounds: its earliest message and its latest.
+ *
+ * Rows are not guaranteed to be in timestamp order, so the bounds are the
+ * earliest and the latest message rather than the first and the last row. A
+ * session whose last row is earlier than its first is still a session of a
+ * real length.
+ */
+function sessionBounds(rows: readonly SpanRow[]): { firstMs: number | null; lastMs: number | null } {
+	let firstMs: number | null = null;
+	let lastMs: number | null = null;
+	for (const row of rows) {
+		const ms = parseTime(row.timestamp);
+		if (ms === null) continue;
+		if (firstMs === null || ms < firstMs) firstMs = ms;
+		if (lastMs === null || ms > lastMs) lastMs = ms;
+	}
+	return { firstMs, lastMs };
+}
+
+/**
  * The number of turns a span covers.
  *
  * A turn counts when the span reaches into it: it opened before the span
@@ -260,8 +280,14 @@ export function measurePhaseSpans(
 	}
 
 	const spans: PhaseSpan[] = [];
-	const firstMs = rows.length > 0 ? parseTime(rows[0]!.timestamp) : null;
-	const lastMs = rows.length > 0 ? parseTime(rows[rows.length - 1]!.timestamp) : null;
+	// The session's bounds are its earliest and its latest message, not its
+	// first and its last row: rows are not guaranteed to be in timestamp
+	// order, and a session whose last row is earlier than its first is still
+	// a session of a real length. The message ids name the rows that carry
+	// those bounds, so the id and the time agree.
+	const { firstMs, lastMs } = sessionBounds(rows);
+	const firstRow = rows.find((r) => parseTime(r.timestamp) === firstMs) ?? null;
+	const lastRow = [...rows].reverse().find((r) => parseTime(r.timestamp) === lastMs) ?? null;
 
 	// The first commit ends the start-to-first-commit span.
 	const firstCommit = commands.find((c) => opts.isCommit(c.command));
@@ -269,7 +295,7 @@ export function measurePhaseSpans(
 		const endMs = timeById.get(firstCommit.messageId) ?? null;
 		spans.push({
 			kind: "start_to_first_commit",
-			start_message_id: rows[0]?.id ?? "",
+			start_message_id: firstRow?.id ?? rows[0]?.id ?? "",
 			end_message_id: firstCommit.messageId,
 			seconds: endMs !== null && firstMs !== null ? r(Math.max(0, endMs - firstMs) / 1000) : 0,
 			turns: turnsBetween(firstMs, endMs, turns),
@@ -281,8 +307,8 @@ export function measurePhaseSpans(
 		// No commit: the span ran to the end of the session, and says so.
 		spans.push({
 			kind: "start_to_first_commit",
-			start_message_id: rows[0]!.id,
-			end_message_id: rows[rows.length - 1]!.id,
+			start_message_id: firstRow?.id ?? rows[0]!.id,
+			end_message_id: lastRow?.id ?? rows[rows.length - 1]!.id,
 			seconds: lastMs !== null && firstMs !== null ? r(Math.max(0, lastMs - firstMs) / 1000) : 0,
 			turns: turnsBetween(firstMs, lastMs, turns),
 			tokens: tokensBetween(rows, firstMs, lastMs),
@@ -377,6 +403,10 @@ export function measureSkillSpans(
 	const timeById = new Map<string, number | null>();
 	for (const row of rows) timeById.set(row.id, parseTime(row.timestamp));
 	const turns = turnStarts(rows);
+	// The session's latest message, which is where the session ended. Rows are
+	// not guaranteed to be in timestamp order, so the latest wins rather than
+	// the last.
+	const sessionEndMs = sessionBounds(rows).lastMs;
 
 	// The end of each turn, so a skill span can be closed at its turn's end.
 	// Keyed by the turn's ordinal, the same key the skill calls carry, so the
@@ -470,7 +500,9 @@ export function measureSkillSpans(
 			// The end of the turn the skill ran in.
 			const turnEnd = turnEndMs.get(call.turn) ?? null;
 			const isLast = i === skillCalls.length - 1;
-			const sessionEnd = rows.length > 0 ? parseTime(rows[rows.length - 1]!.timestamp) : null;
+			// The session's end is its latest message, not its last row: rows
+			// are not guaranteed to be in timestamp order.
+			const sessionEnd = sessionEndMs;
 			if (turnEnd !== null) {
 				endMs = turnEnd;
 				endReason = "turn_end";
