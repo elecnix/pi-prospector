@@ -28,6 +28,14 @@ export const NOT_REVISED_LIVE = `NOT EXISTS (
  * edge inert again, so the node counts once more. The edge is never deleted, so
  * the mark's history stays inspectable.
  *
+ * The edge's `ordinal` carries the *mute instance* that created it: the
+ * assertion's `asserted_at` at the moment of the mute. An assertion row is one
+ * logical judgement — (kind, key, verdict) — and a re-mute reactivates that
+ * same row. Without the instance, a re-mute would revive the previous mute's
+ * edges and silence conclusions the new mute never marked, which is how a
+ * second mute quietly unsilences a conclusion that was drawn under no mute at
+ * all. The instance is what says "this edge belongs to the mute in force".
+ *
  * A muted node is live (it still exists, still verifies, still carries its
  * lineage) but it is not a *current* finding: the operator has said this
  * conclusion does not count, so it must leave every aggregate read.
@@ -37,7 +45,8 @@ export const NOT_MUTED_LIVE = `NOT EXISTS (
 	WHERE e.edge_kind = '${EDGE_KINDS.MUTES}'
 	  AND e.to_ref_kind = '${REF_KINDS.ASSERTION}'
 	  AND e.from_node_id = n.id
-	  AND a.subject_kind = 'term' AND a.verdict = 'muted' AND a.superseded_at IS NULL)`;
+	  AND a.subject_kind = 'term' AND a.verdict = 'muted' AND a.superseded_at IS NULL
+	  AND e.ordinal = CAST(strftime('%s', a.asserted_at) AS INTEGER))`;
 
 /**
  * The as-of twin of {@link NOT_REVISED_LIVE}: true when no node that existed and
@@ -59,4 +68,5 @@ export const NOT_MUTED_AS_OF = `NOT EXISTS (
 	  AND e.to_ref_kind = '${REF_KINDS.ASSERTION}'
 	  AND e.from_node_id = n.id
 	  AND a.subject_kind = 'term' AND a.verdict = 'muted'
-	  AND a.asserted_at <= ? AND (a.superseded_at IS NULL OR a.superseded_at > ?))`;
+	  AND a.asserted_at <= ? AND (a.superseded_at IS NULL OR a.superseded_at > ?)
+	  AND e.ordinal = CAST(strftime('%s', a.asserted_at) AS INTEGER))`;

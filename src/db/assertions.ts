@@ -174,20 +174,23 @@ export async function supersedeAssertion(
  * conclusion drawn under a setup that no longer holds is retracted, so the
  * conclusion that *does* hold becomes current again.
  *
- * A node is one of those conclusions when it was written *after* the mute was
- * asserted. The timing is what distinguishes a muted-era conclusion from the
- * pre-mute one, which read the very same hit: the pre-mute one was written
- * before the mute was asserted.
+ * A node is one of those conclusions when it *read* a silenced hit — the
+ * `consumes` edge says "this node was built from that node" — and was written
+ * while the mute was in force. Both conditions matter:
  *
- * The window is the mute's own lifetime: a conclusion written between the
- * assertion and the supersession was drawn under the mute, whichever reader
- * drew it. That covers a reader whose source set does not name the hit at
- * all — `turn-pair-llm` consumes the turn's core node — where there is no
- * edge to walk back along. It also covers the case where the mute-era
- * conclusion landed in a *sibling* unit rather than a revision of the
- * pre-mute one: a silenced hit leaves the source set, so the unit that read
- * it re-identifies, and the mute-era conclusion is a new lineage, not a
- * successor of the pre-mute one.
+ *   - the edge says the conclusion depends on the hit, so an unrelated
+ *     conclusion — a secret-leak finding, a trajectory node — is never touched,
+ *     even when it was written during the mute;
+ *   - the timing says the conclusion was drawn under the mute, which
+ *     distinguishes it from the pre-mute conclusion that read the very same
+ *     hit.
+ *
+ * The timing is what lets the mute-era conclusion be found when it landed in a
+ * *sibling* unit rather than a revision of the pre-mute one: a silenced hit
+ * leaves the readers' source set, so the unit that read it re-identifies and
+ * the mute-era conclusion starts a new lineage instead of revising the
+ * pre-mute one. There is no `revises` edge to walk back along, and the
+ * `consumes` edge is the only link.
  *
  * Retraction is the existing reversible one: the node stays in the graph, its
  * content still verifies, and `prospect retract --undo` can bring it back.
@@ -205,13 +208,29 @@ export async function retractConclusionsMadeUnder(
 	`).get(term)) as { asserted_at: string; superseded_at: string | null } | undefined;
 	if (!assertion) return 0;
 
-	// The conclusions drawn under the mute: the nodes written between the
-	// assertion and the supersession, and still live.
+	// The conclusions that read one of the hits the mute silenced, and were
+	// written while the mute was in force. The `consumes` edge names its target
+	// by the target's content-addressed output key, so the join goes through
+	// the node.
 	const rows = (await prep(db, `
-		SELECT id FROM analysis_nodes
-		WHERE created_at >= ? AND created_at < ?
-		  AND retracted_at IS NULL
-	`).all(assertion.asserted_at, assertion.superseded_at ?? now)) as Array<{ id: string }>;
+		SELECT DISTINCT c.from_node_id AS id
+		FROM analysis_edges c
+		JOIN analysis_nodes hit ON hit.output_key = c.to_ref_id
+		JOIN analysis_edges m ON m.from_node_id = hit.id
+		                   AND m.edge_kind = ?
+		                   AND m.to_ref_kind = ?
+		JOIN analysis_nodes conclusion ON conclusion.id = c.from_node_id
+		WHERE c.edge_kind = ? AND c.to_ref_kind = ?
+		  AND conclusion.created_at >= ? AND conclusion.created_at < ?
+		  AND conclusion.retracted_at IS NULL
+	`).all(
+		EDGE_KINDS.MUTES,
+		REF_KINDS.ASSERTION,
+		EDGE_KINDS.CONSUMES,
+		REF_KINDS.ANALYSIS_NODE,
+		assertion.asserted_at,
+		assertion.superseded_at ?? now,
+	)) as Array<{ id: string }>;
 	const targets = rows.map((r) => r.id);
 	if (targets.length === 0) return 0;
 
@@ -480,18 +499,44 @@ export async function attachMuteEdge(db: AsyncDatabase, term: string, assertionI
 
 /** Attach one `mutes` edge, unless it is already there. Idempotent. */
 async function attachMuteEdgeFrom(db: AsyncDatabase, nodeId: string, assertionId: string): Promise<void> {
+	// The edge carries the mute instance that created it, in its ordinal: the
+	// assertion's `asserted_at` at the moment of the mute. An assertion row is
+	// one logical judgement — (kind, key, verdict) — and a re-mute reactivates
+	// that same row, so without the instance a re-mute would revive the
+	// previous mute's edges and silence conclusions it never marked. The
+	// instance is what says "this edge belongs to the mute in force".
+	const instance = await muteInstanceOrdinal(db, assertionId);
 	const existing = await prep(db, `
 		SELECT 1 FROM analysis_edges
-		WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? LIMIT 1
-	`).get(nodeId, assertionId, EDGE_KINDS.MUTES);
+		WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? AND ordinal = ?
+		LIMIT 1
+	`).get(nodeId, assertionId, EDGE_KINDS.MUTES, instance);
 	if (existing) return;
 	await insertEdge(db, {
 		fromNodeId: nodeId,
 		toRefKind: REF_KINDS.ASSERTION,
 		toRefId: assertionId,
 		edgeKind: EDGE_KINDS.MUTES,
-		ordinal: 0,
+		ordinal: instance,
 	});
+}
+
+/**
+ * The ordinal that identifies a mute instance: the assertion's `asserted_at`
+ * as seconds since the epoch.
+ *
+ * The edge table's `ordinal` is otherwise a position within a node's edge
+ * list, and the `mutes` edge has no siblings to order — it is a single
+ * relation — so the field is free to carry the instance marker. The mark is
+ * compared against the same expression in the `current_nodes` view, so the two
+ * always agree.
+ */
+async function muteInstanceOrdinal(db: AsyncDatabase, assertionId: string): Promise<number> {
+	const row = (await prep(db, `
+		SELECT CAST(strftime('%s', asserted_at) AS INTEGER) AS instance
+		FROM assertions WHERE id = ?
+	`).get(assertionId)) as { instance: number | null } | undefined;
+	return row?.instance ?? 0;
 }
 
 /**
@@ -540,6 +585,7 @@ export async function getMutedNodeIds(db: AsyncDatabase, asOf?: string): Promise
 			  AND a.verdict = 'muted'
 			  AND a.asserted_at <= ?
 			  AND (a.superseded_at IS NULL OR a.superseded_at > ?)
+			  AND e.ordinal = CAST(strftime('%s', a.asserted_at) AS INTEGER)
 		`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION, asOf, asOf)) as Array<{ id: string }>;
 		return new Set(rows.map((r) => r.id));
 	}
@@ -552,6 +598,7 @@ export async function getMutedNodeIds(db: AsyncDatabase, asOf?: string): Promise
 		  AND a.subject_kind = 'term'
 		  AND a.verdict = 'muted'
 		  AND a.superseded_at IS NULL
+		  AND e.ordinal = CAST(strftime('%s', a.asserted_at) AS INTEGER)
 	`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION)) as Array<{ id: string }>;
 	return new Set(rows.map((r) => r.id));
 }
@@ -604,18 +651,20 @@ export async function silenceConclusionsOfSilencedHits(
 	if (consumers.length === 0) return 0;
 
 	let marked = 0;
+	const instance = await muteInstanceOrdinal(db, assertionId);
 	for (const consumer of consumers) {
 		const already = await prep(db, `
 			SELECT 1 FROM analysis_edges
-			WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? LIMIT 1
-		`).get(consumer.id, assertionId, EDGE_KINDS.MUTES);
+			WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? AND ordinal = ?
+			LIMIT 1
+		`).get(consumer.id, assertionId, EDGE_KINDS.MUTES, instance);
 		if (already) continue;
 		await insertEdge(db, {
 			fromNodeId: consumer.id,
 			toRefKind: REF_KINDS.ASSERTION,
 			toRefId: assertionId,
 			edgeKind: EDGE_KINDS.MUTES,
-			ordinal: 0,
+			ordinal: instance,
 		});
 		marked++;
 	}

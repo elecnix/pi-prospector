@@ -588,4 +588,85 @@ describe("a muted term's existing hits (#325)", () => {
 			await close();
 		}
 	});
+
+	it("leaves a conclusion that never read the muted term alone", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			// A second session, analysed while the mute is in force. It never
+			// matched the muted term, so its conclusion says nothing about it.
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "another turn" }, { role: "assistant", text: "ok" }]);
+			await framework.run("s2");
+
+			const other = await listAnalysisNodes(db, { analyzerId: "friction-accumulation", sessionId: "s2" });
+			assert.equal(other.length, 1, "the second session has its own conclusion");
+
+			// Unmuting lifts the conclusions drawn under the mute. The second
+			// session's conclusion was not drawn under the mute, so it stays.
+			await unmuteTerm(db, "wrong");
+			const after = await listAnalysisNodes(db, { analyzerId: "friction-accumulation", sessionId: "s2" });
+			assert.equal(after.length, 1, "the unrelated conclusion is still current");
+			assert.equal(after[0]!.output_key, other[0]!.output_key, "and it is the same node");
+		} finally {
+			await close();
+		}
+	});
+
+	it("survives a mute → unmute → re-mute cycle", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+
+			const readAccumulation = async () => {
+				const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
+				assert.equal(nodes.length, 1, "exactly one current accumulation node");
+				return JSON.parse(nodes[0]!.content_json) as {
+					accumulated_friction: number;
+					turn_contributions: Array<{ frustration_weight: number }>;
+				};
+			};
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+			const muted = await readAccumulation();
+			assert.equal(
+				muted.turn_contributions.every((c) => c.frustration_weight === 0),
+				true,
+				"the muted term contributes no friction",
+			);
+
+			await unmuteTerm(db, "wrong");
+			const restored = await readAccumulation();
+			assert.ok(
+				restored.turn_contributions.some((c) => c.frustration_weight > 0),
+				"unmuting restores the term's contribution",
+			);
+
+			// Muting again must reach the same state as the first mute. The
+			// assertion row is one logical judgement, so a re-mute reactivates
+			// that same row — and the mute-era conclusion it left behind must
+			// not block the recomputation.
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+			const remuted = await readAccumulation();
+			assert.equal(
+				remuted.turn_contributions.every((c) => c.frustration_weight === 0),
+				true,
+				"the re-muted term contributes no friction",
+			);
+		} finally {
+			await close();
+		}
+	});
 });
