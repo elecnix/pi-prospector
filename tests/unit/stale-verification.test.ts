@@ -150,18 +150,30 @@ describe("findStaleVerifications", () => {
 		assert.equal(scan.stale_seconds, 120);
 	});
 
-	it("does not flag a run whose result the commit used", () => {
-		const scan = findStaleVerifications(
-			[...sh("v1", "npm test", 0, 120), ...sh("c1", "git commit -m x", 130, 1), ...edit("e1", "src/a.ts", 140)],
-			CONFIG,
-		);
-		assert.equal(scan.stale_runs.length, 0);
-	});
-
-	it("does not flag a failing run: editing after a failure is the fix loop", () => {
-		const scan = findStaleVerifications([...sh("v1", "npm test", 0, 120, true), ...edit("e1", "src/a.ts", 130)], CONFIG);
-		assert.equal(scan.stale_runs.length, 0);
-		assert.equal(scan.passing_run_count, 0);
+	it("does not flag a run a later edit did not invalidate", () => {
+		// Three situations in which a run is not stale. Each is its own rule, so
+		// the table names the rule and the messages that stand for it.
+		const cases: Array<{ rule: string; messages: MessageRow[] }> = [
+			{
+				rule: "the commit used the run's result",
+				messages: [...sh("v1", "npm test", 0, 120), ...sh("c1", "git commit -m x", 130, 1), ...edit("e1", "src/a.ts", 140)],
+			},
+			{
+				rule: "the run failed, so editing after it is the fix loop",
+				messages: [...sh("v1", "npm test", 0, 120, true), ...edit("e1", "src/a.ts", 130)],
+			},
+			{
+				rule: "the run was shorter than the minimum",
+				messages: [...sh("v1", "npm test", 0, 5), ...edit("e1", "src/a.ts", 10)],
+			},
+			{
+				rule: "the edit failed or touched a scratch path",
+				messages: [...sh("v1", "npm test", 0, 120), ...edit("e1", "src/a.ts", 130, true), ...edit("e2", "/tmp/notes.md", 140)],
+			},
+		];
+		for (const c of cases) {
+			assert.equal(findStaleVerifications(c.messages, CONFIG).stale_runs.length, 0, c.rule);
+		}
 	});
 
 	it("treats a run that exited 0 but printed a failure as failing, and counts it as a zero-exit failure", () => {
@@ -203,14 +215,6 @@ describe("findStaleVerifications", () => {
 
 	it("ignores runs shorter than the minimum, so a quick test-edit loop is not waste", () => {
 		const scan = findStaleVerifications([...sh("v1", "npm test", 0, 5), ...edit("e1", "src/a.ts", 10)], CONFIG);
-		assert.equal(scan.stale_runs.length, 0);
-	});
-
-	it("does not count a failed edit or a scratch-file edit as invalidating", () => {
-		const scan = findStaleVerifications(
-			[...sh("v1", "npm test", 0, 120), ...edit("e1", "src/a.ts", 130, true), ...edit("e2", "/tmp/notes.md", 140)],
-			CONFIG,
-		);
 		assert.equal(scan.stale_runs.length, 0);
 	});
 

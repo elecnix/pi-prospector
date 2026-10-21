@@ -80,12 +80,19 @@ describe("nominateCommands", () => {
 		assert.deepEqual(candidates.map((c) => c.command), ["tools/ci/verify-all"]);
 	});
 
-	it("does not nominate a command that ran once, briefly", () => {
-		assert.deepEqual(nominateCommands([...sh("v1", "ls -la", 0, 5)], CONFIG), []);
-	});
-
-	it("does not nominate a command that ran once with no commit after it", () => {
-		assert.deepEqual(nominateCommands([...sh("v1", "tools/ci/verify-all", 0, 120)], CONFIG), []);
+	it("does not nominate a command that matches neither shape", () => {
+		// Each case is a command the corpus would learn nothing useful from.
+		const cases: Array<{ rule: string; messages: MessageRow[] }> = [
+			{ rule: "it ran once, briefly", messages: [...sh("v1", "ls -la", 0, 5)] },
+			{ rule: "it ran once with no commit after it", messages: [...sh("v1", "tools/ci/verify-all", 0, 120)] },
+			{
+				rule: "it ran twice with no edit between and no commit",
+				messages: [...sh("v1", "tools/ci/verify-all", 0, 120), ...sh("v2", "tools/ci/verify-all", 200, 120)],
+			},
+		];
+		for (const c of cases) {
+			assert.deepEqual(nominateCommands(c.messages, CONFIG), [], c.rule);
+		}
 	});
 
 	it("nominates a command that ran twice with no edit between and a commit after", () => {
@@ -100,13 +107,6 @@ describe("nominateCommands", () => {
 			CONFIG,
 		);
 		assert.deepEqual(candidates.map((c) => c.command), ["tools/ci/verify-all"]);
-	});
-
-	it("does not nominate a command that ran twice with no edit between and no commit", () => {
-		assert.deepEqual(
-			nominateCommands([...sh("v1", "tools/ci/verify-all", 0, 120), ...sh("v2", "tools/ci/verify-all", 200, 120)], CONFIG),
-			[],
-		);
 	});
 
 	it("does not nominate a command that matches a default verification pattern", () => {
