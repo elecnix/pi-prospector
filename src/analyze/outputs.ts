@@ -109,6 +109,9 @@ export async function renderOutputs(
 	resolved: readonly ResolvedOutput[],
 	opts: RenderOptions,
 ): Promise<RenderResult[]> {
+	// The cache is keyed by analyzer *and* instant: a call that asks for a
+	// different instant than an earlier one wants a different set of nodes, so
+	// the earlier one must not answer for it.
 	const cache = new Map<string, AnalysisNodeRow[]>();
 	// A node a human mute silenced is not a finding (#325): it stays in the
 	// graph, but a report that counted it would be counting a conclusion the
@@ -117,19 +120,28 @@ export async function renderOutputs(
 	// Lazy: an output that reads no nodes pays no query, and a caller whose
 	// database has no assertion table yet is not broken by it.
 	//
-	// The mute set is read as of the same instant as the nodes: a historical
-	// render must not apply today's mutes to a past graph.
-	let mutedPromise: Promise<Set<string>> | undefined;
-	const mutedIds = (): Promise<Set<string>> => {
-		mutedPromise ??= getMutedNodeIds(opts.db, opts.asOf);
-		return mutedPromise;
+	// The mute set is read as of the same instant as the nodes it filters: a
+	// historical render must not apply today's mutes to a past graph, and a
+	// read of one instant must not apply another instant's mutes to it. The
+	// sets are memoised per instant, so a render that reads two instants pays
+	// for two reads and no more.
+	const mutedSets = new Map<string, Promise<Set<string>>>();
+	const mutedIds = (asOf?: string): Promise<Set<string>> => {
+		const key = asOf ?? "";
+		let pending = mutedSets.get(key);
+		if (!pending) {
+			pending = getMutedNodeIds(opts.db, asOf);
+			mutedSets.set(key, pending);
+		}
+		return pending;
 	};
 	const getNodes = async (analyzerId: string, asOf?: string): Promise<AnalysisNodeRow[]> => {
-		const cached = cache.get(analyzerId);
+		const key = `${analyzerId}\u0000${asOf ?? ""}`;
+		const cached = cache.get(key);
 		if (cached) return cached;
 		const rows = await getLatestNodesByAnalyzerAcrossSessions(opts.db, analyzerId, asOf);
-		const kept = withoutMutedNodes(rows, await mutedIds());
-		cache.set(analyzerId, kept);
+		const kept = withoutMutedNodes(rows, await mutedIds(asOf));
+		cache.set(key, kept);
 		return kept;
 	};
 

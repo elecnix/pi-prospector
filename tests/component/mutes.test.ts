@@ -39,6 +39,8 @@ import {
 import { getActiveAssertions, getMutedTerms, getMutedNodeIds, isTermMuted, listAssertions, supersedeAssertion } from "../../src/db/assertions.js";
 import { verifyNodes } from "../../src/commands/verify.js";
 import { frictionAccumulationAnalyzer } from "../../src/analyze/analyzers/friction-accumulation/index.js";
+import { renderOutputs } from "../../src/analyze/outputs.js";
+import type { AnalyzerOutputContext } from "../../src/analyze/types.js";
 import { toolTrajectoryAnalyzer } from "../../src/analyze/analyzers/tool-trajectory/index.js";
 import { turnPairLLMAnalyzer } from "../../src/analyze/analyzers/turn-pair-llm/index.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
@@ -459,6 +461,47 @@ describe("a muted term's existing hits (#325)", () => {
 			const after = await getAnalysisStats(db);
 			assert.equal(after.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0, 0, "the muted hit is not a current node");
 			assert.equal(after.supersededNodes, 0, "and it is not a superseded generation either");
+		} finally {
+			await close();
+		}
+	});
+
+	it("filters a per-call as-of read with that instant's mute set", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+
+			// The instant the hit was written: the graph as it stood before the
+			// mute, since the mute comes after. The mute is a moment later, so
+			// the two instants do not collapse into one.
+			const hit = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!;
+			const before = hit.created_at;
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			await muteTerm(db, { term: "wrong", by: "operator" });
+
+			// An output that asks for the graph as it stood before the mute gets
+			// the hit, because the mute had not been asserted yet. The mute set
+			// has to come from the same instant as the rows it filters.
+			const reads: Array<{ rows: number; muted: number }> = [];
+			const probe = {
+				def: { id: "probe", label: "Probe", description: "d" },
+				render: async (ctx: AnalyzerOutputContext) => {
+					const rows = await ctx.getNodes(TURN_FRUSTRATION_DEF.id, before);
+					reads.push({ rows: rows.length, muted: (await getMutedNodeIds(db, before)).size });
+					return [];
+				},
+			};
+			await renderOutputs(
+				[{ analyzer: turnFrustrationAnalyzer, output: probe as never, address: "probe" }],
+				{ db },
+			);
+			assert.equal(reads.length, 1, "the output ran");
+			assert.equal(reads[0]!.rows, 1, "the hit is there as it stood before the mute");
+			assert.equal(reads[0]!.muted, 0, "and nothing was muted at that instant");
 		} finally {
 			await close();
 		}
