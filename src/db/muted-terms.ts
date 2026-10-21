@@ -83,8 +83,10 @@ export function hitSignal(node: AnalysisNodeRow): string | null {
  *
  * Returns the nodes that still count, in the order they were given, so a reader
  * keeps its own ordering. A node that cannot be parsed, or that carries no
- * signal, is dropped: it cannot be checked against the mute list, and a hit
- * with no signal contributes no weight to anything.
+ * readable signal, is **kept**: it cannot be checked against the mute list, and
+ * a mute says "not that term", never "this node does not exist". A hit with no
+ * signal contributes no weight to anything, so keeping it costs the reader
+ * nothing.
  */
 export function unmutedHits(nodes: readonly AnalysisNodeRow[], muted: ReadonlySet<string>): AnalysisNodeRow[] {
 	if (muted.size === 0) return [...nodes];
@@ -112,6 +114,11 @@ export function unmutedHits(nodes: readonly AnalysisNodeRow[], muted: ReadonlySe
  * reader that took every live hit would count the signal twice — once from the
  * muted era and once from the unmute era.
  *
+ * Error nodes are left alone. An error node is a failed unit, not a hit, and
+ * a reader that reports hits has no use for one. A reader that lists the
+ * graph does: an error is exactly what the operator needs to see, so it keeps
+ * its own nodes and collapses the hits on its own.
+ *
  * The newest node wins, decided by `created_at` and then by `id`, so the
  * result does not depend on the order the rows arrive in.
  */
@@ -123,6 +130,17 @@ export function currentHits(nodes: readonly AnalysisNodeRow[]): AnalysisNodeRow[
 		if (!current || isNewer(node, current)) newest.set(node.source_set_hash, node);
 	}
 	return [...newest.values()];
+}
+
+/**
+ * The current generation of a set of nodes, keeping the error nodes.
+ *
+ * The listing reader shows the whole graph, an error node included, so it
+ * collapses the hits and passes the rest through untouched.
+ */
+export function currentNodesKeepingErrors(nodes: readonly AnalysisNodeRow[]): AnalysisNodeRow[] {
+	const errors = nodes.filter((node) => node.node_kind === "error");
+	return [...currentHits(nodes), ...errors];
 }
 
 /** Whether `a` was created after `b`, with the id breaking a tie. */

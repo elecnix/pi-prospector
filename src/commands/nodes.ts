@@ -42,7 +42,7 @@ import { getDbPath } from "../config.js";
 import { parseTimestamp, resolveTimepoint } from "../timepoint.js";
 import { findAnalyzerDef } from "./analyzers.js";
 import { NodeKind } from "../analyze/types.js";
-import { currentHits, mutedTerms, unmutedHits } from "../db/muted-terms.js";
+import { currentHits, currentNodesKeepingErrors, mutedTerms, unmutedHits } from "../db/muted-terms.js";
 import { TURN_FRUSTRATION_DEF } from "../analyze/analyzers/turn-frustration/index.js";
 import type { AnalysisEdgeRow, AnalysisNodeRow, AnalyzerDef, MessageRow } from "../analyze/types.js";
 
@@ -383,22 +383,19 @@ export async function readNodes(db: AsyncDatabase, q: NodesQuery): Promise<Nodes
 	// past instant, and the mute set belongs to *now*.
 	if (!asOf) {
 		const muted = await mutedTerms(db);
+		// The rows are filtered in place, so the listing keeps the order the query
+		// returned (newest first).
 		const isFrustration = (row: AnalysisNodeRow): boolean => row.analyzer_id === TURN_FRUSTRATION_DEF.id;
-		if (q.analyzerId === TURN_FRUSTRATION_DEF.id) {
-			// A listing of the frustration hits reads the current generation, so a
-			// signal whose hit was recomputed (an unmute produces a new one) is
-			// listed once rather than once per generation.
-			rows = unmutedHits(q.allVersions ? rows : currentHits(rows), muted);
-		} else {
-			// A listing across every analyzer keeps the frustration rows apart, so
-			// the collapse runs over that subset alone.
-			const rest = rows.filter((row) => !isFrustration(row));
-			const frustrationRows = rows.filter(isFrustration);
-			const kept = q.allVersions
-				? unmutedHits(frustrationRows, muted)
-				: unmutedHits(currentHits(frustrationRows), muted);
-			rows = [...rest, ...kept];
-		}
+		const frustrationRows = rows.filter(isFrustration);
+		// The hits are read at their current generation, so a signal whose hit was
+		// recomputed (an unmute produces a new one) is listed once rather than
+		// once per generation. Under --all-versions every generation is asked
+		// for, so none is collapsed.
+		const current = q.allVersions
+			? frustrationRows
+			: currentNodesKeepingErrors(frustrationRows);
+		const keptIds = new Set(unmutedHits(current, muted).map((row) => row.id));
+		rows = rows.filter((row) => !isFrustration(row) || keptIds.has(row.id));
 	}
 
 	// Typed filters over the analyzer's declared outputSchema; best-effort when
