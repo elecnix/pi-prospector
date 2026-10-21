@@ -68,16 +68,30 @@ describe("nominateCommands", () => {
 		assert.equal(candidates[0]!.seconds, 120);
 	});
 
-	it("nominates a command that ran twice with an edit between", () => {
-		const candidates = nominateCommands(
-			[
-				...sh("v1", "tools/ci/verify-all", 0, 120),
-				...edit("e1", "src/a.ts", 130),
-				...sh("v2", "tools/ci/verify-all", 200, 120),
-			],
-			CONFIG,
-		);
-		assert.deepEqual(candidates.map((c) => c.command), ["tools/ci/verify-all"]);
+	it("nominates a command that matches a shape", () => {
+		// The two shapes a gate run takes.
+		const cases: Array<{ rule: string; messages: MessageRow[] }> = [
+			{
+				rule: "it ran twice with an edit between",
+				messages: [
+					...sh("v1", "tools/ci/verify-all", 0, 120),
+					...edit("e1", "src/a.ts", 130),
+					...sh("v2", "tools/ci/verify-all", 200, 120),
+				],
+			},
+			{
+				rule: "it ran twice with no edit between and a commit after",
+				messages: [
+					...sh("v1", "tools/ci/verify-all", 0, 120),
+					...sh("v2", "tools/ci/verify-all", 200, 120),
+					...sh("c1", "git commit -m 'chore: bump'", 400, 1),
+				],
+			},
+		];
+		for (const c of cases) {
+			const candidates = nominateCommands(c.messages, CONFIG);
+			assert.deepEqual(candidates.map((x) => x.command), ["tools/ci/verify-all"], c.rule);
+		}
 	});
 
 	it("does not nominate a command that matches neither shape", () => {
@@ -93,20 +107,6 @@ describe("nominateCommands", () => {
 		for (const c of cases) {
 			assert.deepEqual(nominateCommands(c.messages, CONFIG), [], c.rule);
 		}
-	});
-
-	it("nominates a command that ran twice with no edit between and a commit after", () => {
-		// The commit shape applies whatever the run count: the agent ran the gate
-		// twice and then committed, so the command verifies the tree.
-		const candidates = nominateCommands(
-			[
-				...sh("v1", "tools/ci/verify-all", 0, 120),
-				...sh("v2", "tools/ci/verify-all", 200, 120),
-				...sh("c1", "git commit -m 'chore: bump'", 400, 1),
-			],
-			CONFIG,
-		);
-		assert.deepEqual(candidates.map((c) => c.command), ["tools/ci/verify-all"]);
 	});
 
 	it("does not nominate a command that matches a default verification pattern", () => {

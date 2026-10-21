@@ -99,9 +99,14 @@ describe("classifyCall", () => {
 	});
 
 	it("classifies a commit before verification, even when the message mentions a test command", () => {
-		assert.equal(shell('git commit -m "fix: make npm test pass"').kind, "commit");
-		assert.equal(shell("git -C /repo commit -F msg.txt").kind, "commit");
-		assert.equal(shell("git commit --dry-run").kind, "other");
+		const cases: Array<{ rule: string; command: string; kind: string }> = [
+			{ rule: "the message mentions a test command", command: 'git commit -m "fix: make npm test pass"', kind: "commit" },
+			{ rule: "the commit runs in another directory", command: "git -C /repo commit -F msg.txt", kind: "commit" },
+			{ rule: "the commit is a dry run", command: "git commit --dry-run", kind: "other" },
+		];
+		for (const c of cases) {
+			assert.equal(shell(c.command).kind, c.kind, c.rule);
+		}
 	});
 
 	it("reads edit tools by their path argument and skips scratch paths", () => {
@@ -126,9 +131,14 @@ describe("classifyCall", () => {
 	});
 
 	it("counts in-place shell edits on repository files", () => {
-		assert.equal(shell("sed -i '' 's/a/b/' src/a.go").kind, "edit");
-		assert.equal(shell("perl -pi -e 's/a/b/' README.md").kind, "edit");
-		assert.equal(shell("sed -i '' 's/a/b/' /tmp/out.txt").kind, "other");
+		const cases: Array<{ rule: string; command: string; kind: string }> = [
+			{ rule: "sed edits a repository file", command: "sed -i '' 's/a/b/' src/a.go", kind: "edit" },
+			{ rule: "perl edits a repository file", command: "perl -pi -e 's/a/b/' README.md", kind: "edit" },
+			{ rule: "sed edits a temp file", command: "sed -i '' 's/a/b/' /tmp/out.txt", kind: "other" },
+		];
+		for (const c of cases) {
+			assert.equal(shell(c.command).kind, c.kind, c.rule);
+		}
 	});
 
 	it("skips an in-place edit on a scratch path set in a variable", () => {
