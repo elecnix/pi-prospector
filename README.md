@@ -85,6 +85,8 @@ flowchart TD
     TU[token-units<br/>MITE per request segment]
     RCL[repetition-collapse<br/>looping steps]
     TE[time-economy<br/>wall-clock time]
+    VC[verification-commands<br/>learned gate commands]
+    SV[stale-verification<br/>verification thrown away]
   end
 
   subgraph deterministic [Deterministic layers]
@@ -119,6 +121,7 @@ flowchart TD
   TF -->|frustration signals| RO
   TT -->|trajectory signals| RO
   RCL -->|collapsed steps| RO
+  VC -->|judged commands| SV
   TPC -->|pair metrics| SO
   TPL -->|classifications| SO
   TT -->|trajectory signals| SO
@@ -195,6 +198,58 @@ Source: [`repetition-collapse/index.ts`](./src/analyze/analyzers/repetition-coll
 Tells you why a session was slow. It times every tool call from the message that issued it to the message that carried its result, then sums the seconds by command family, so one slow test runner or one polling habit shows up as one row. It separates active time from idle time and flags three kinds of waiting: waits inside one call (a loop that sleeps, a long `sleep`, a blocking watcher), calls that ran until the harness timed them out, and `pgrep -f` / `ps | grep` wait loops whose pattern matches the loop itself. Each kind earns a proposal once it passes its threshold. A call it cannot time is reported as untimed, never as zero seconds. No LLM.
 
 Source: [`time-economy/index.ts`](./src/analyze/analyzers/time-economy/index.ts) · timing and wait detection in [`detect.ts`](./src/analyze/analyzers/time-economy/detect.ts) · thresholds and patterns in [`config.ts`](./src/analyze/analyzers/time-economy/config.ts).
+
+### verification-commands — which commands verify the tree (corpus-wide, decision model)
+
+The regex list `stale-verification` reads covers the common runners, and a project whose checks go through `tox`, `bazel test`, `just test`, or a gate script of its own got a stale count of zero. That reads as "no waste" rather than "not measured".
+
+This analyzer closes the gap by learning the answer from your own corpus. It nominates the commands a session actually ran, then asks a decision model once per distinct command for the whole corpus. The verdict is one of three: a **full** check (the whole suite, the gate script, a build), a **narrow** check (one test file, one linted package), or **not a check at all**. The full-versus-narrow distinction is the part a regex cannot give, and it is what lets a proposal say "the full gate ran again after one edit" rather than "a check ran again".
+
+The command belongs to the corpus rather than to the session that first ran it, so the graph is the cache: the first session to run a command pays one model call, and every later session reuses the verdict for nothing. A command the shipped patterns already match is never nominated, so the model never pays for a verdict nobody needs.
+
+The next section says exactly what leaves your machine when this analyzer is on.
+
+Source: [`verification-commands/index.ts`](./src/analyze/analyzers/verification-commands/index.ts) · the decision question in [`decision.ts`](./src/analyze/analyzers/verification-commands/decision.ts) · redaction in [`redact.ts`](./src/analyze/analyzers/verification-commands/redact.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/verification-commands/config.ts).
+
+#### What leaves your machine
+
+`verification-commands` is the only analyzer in the project that sends anything from your sessions to a remote service. Here is the whole of it.
+
+**What is sent:** the distinct command lines a session ran, one per command, and nothing else. A command line is the text of a shell call, such as `tools/ci/verify-all` or `npm test -- --coverage`. The request carries that one line in a `command` field, together with the fixed question text the analyzer ships. No prompt, no reply, no file path, no timestamp, no tool result, and no message of any kind travels with it. A test in the suite asserts exactly that, and asserts it against a request that has been given extra session text to catch a regression.
+
+**Where it goes:** to the decision model you configured, at the endpoint that model names. The default `jev` provider posts to `https://api.typesafe.ai/v1/systemone`. The API key is read from `JEV_API_KEY` or `TYPESAFE_API_KEY` and travels in the `Authorization` header. A different provider is reachable through `decisionProviders` in `prospector.json`.
+
+**When:** only when you set `decisionModel` on the analyzer, and only for a command the shipped patterns do not already cover. A command `npm test` never leaves, because the pattern list already answers it.
+
+**How often:** once per distinct command for the whole corpus, not once per session. The verdict is cached in the graph, so the second session that runs the same command sends nothing.
+
+**Secrets are taken out first.** A command line can carry a credential, so the analyzer redacts the obvious ones before sending: a bearer token in an `Authorization` header, the value of an environment assignment whose name looks secret (`API_TOKEN=…`), the credentials in a URL, a provider token of a known shape, and a password given as a flag. The redaction replaces the secret with `<redacted>` and leaves the rest of the line, so the model still sees which command it is judging. A redaction is not a guarantee: a secret in a shape the redactor does not know passes through.
+
+**Turning it off.** Set `allowRemoteVerdicts` to false and no command line leaves your machine:
+
+```json
+{
+  "analyzers": {
+    "verification-commands": { "allowRemoteVerdicts": false }
+  }
+}
+```
+
+The analyzer then nominates nothing and makes no model call. `stale-verification` falls back to its local pattern list, so it keeps measuring the runners that list names and counts a project whose gate script of its own naming as zero. The switch is part of the config fingerprint, so turning it off marks the nodes drawn under it stale for `config`, and turning it back on revises them.
+
+### stale-verification — verification runs a later edit threw away (deterministic)
+
+Tells you how much test, lint, build, and gate time the session threw away. A passing run describes the tree as it was when it ran. When the agent edits a file after it and before committing, the result no longer describes the committed tree: the agent either runs the check again or commits an edit that nothing checked. The analyzer finds each such run and records what came between the run and the edit (the agent's own decision, a human prompt, or a subagent such as a reviewer) and what came after (a rerun, or a commit with no rerun). It makes three kinds of proposal:
+
+- Run the slow checks after the last edit, when the agent's own edits threw away more than five minutes of runs.
+- Run reviews before the slow checks, when edits after a subagent threw away more than five minutes.
+- Rerun before committing, when two or more commits took an edit made after the last passing run.
+
+A run counts as passing only when its result isn't an error, the harness didn't time it out, and its output has no failure line such as `--- FAIL` or `2 failed`. The output test catches `cmd | tail`, which exits with `tail`'s status, so a failure there still reads as one, and runs shorter than a minute don't count, since a quick test between edits is the normal edit-test loop. When a run changes into a directory first (`cd /repo/admin && pnpm test`), only edits inside that directory count against it. Background runs return at once, so this version can't time them.
+
+It recognises a run either from the `verificationPatterns` list or from a command the corpus judged to verify the tree, so a gate script the list does not cover still counts once `verification-commands` has learned it. The judged set is part of its config identity, so a newly learned command marks the node stale rather than leaving an older conclusion standing. The analyzer itself is deterministic and calls no model.
+
+Source: [`stale-verification/index.ts`](./src/analyze/analyzers/stale-verification/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/stale-verification/detect.ts) · shared command vocabulary in [`command-vocabulary.ts`](./src/analyze/analyzers/stale-verification/command-vocabulary.ts) · patterns and thresholds in [`config.ts`](./src/analyze/analyzers/stale-verification/config.ts).
 
 ### pr-opened — the pull request a session opened (deterministic)
 
@@ -586,7 +641,6 @@ Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one p
 ### Decision models
 
 `turn-pair-llm`, `assistant-cognition`, `frustration-lexicon`, and `user-reply-acts` fill fixed-choice forms, so each can send its questions to a decision model such as [Jev](https://docs.typesafe.ai/introduction) instead of a generative model. A decision model answers every question for one input in one request, with a probability for each option, and generates no text. Set `decisionModel` on the analyzer:
-
 ```json
 {
   "analyzers": {
@@ -596,6 +650,8 @@ Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one p
 ```
 
 The `jev` provider reads its key from `JEV_API_KEY` or `TYPESAFE_API_KEY`. `decisionProviders` adds other endpoints that serve the System One API, each with a `baseUrl`, the `apiKeyEnv` variables to read, and `inputUsdPerMtok` for the node's cost. The decision model and the question set are part of a node's identity, so switching marks earlier nodes stale for `config`. `assistant-cognition` still calls its `tier` model to copy the verbatim quote for a turn that shows surprise. The generative path stays the default.
+
+`verification-commands` has no generative path: it is a decision model or nothing. Set its `decisionModel` and it starts learning which commands verify your tree; leave it unset and it nominates nothing, so `stale-verification` falls back to its pattern list. It is the only analyzer that sends anything from your sessions to a remote service: the distinct command lines and nothing else. The section [What leaves your machine](#what-leaves-your-machine) says exactly what goes where, and how to keep it on your machine with `allowRemoteVerdicts: false`.
 
 `scripts/measure-decision-model.ts` compares the two paths on up to 20 sessions already analysed, read-only, and prints agreement per field, time, and cost.
 

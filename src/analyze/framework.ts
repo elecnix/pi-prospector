@@ -45,6 +45,7 @@ import type {
 	AnalysisResult,
 	AnalysisUnit,
 	ClassifiedUnit,
+	IdentityReader,
 	LLMCaller,
 	MessageRow,
 	ModelTierConfig,
@@ -813,6 +814,28 @@ export class AnalyzerFramework {
 		// Same category as the assertion set above: the user set it, so it is
 		// `config`, and changing it marks the nodes drawn under the old setup stale.
 		for (const fact of analyzer.identityExtras?.() ?? []) extra.push(fact);
+		// The async form, for a fact the analyzer reads from the graph rather
+		// than from the machine's setup — the corpus-wide set of learned
+		// verdicts, say. A change to it is a change of `config`, so the nodes
+		// drawn under the older set go stale and a `config` run revises them.
+		if (analyzer.identityExtrasAsync) {
+			try {
+				const read: IdentityReader = async (depId) => {
+					if (!analyzer.def.dependencies.includes(depId)) {
+						throw new Error(
+							`Analyzer '${analyzer.def.id}' read dependency '${depId}' without declaring it. ` +
+								`Add '${depId}' to def.dependencies.`,
+						);
+					}
+					return this.globalDependencyNodes(analyzer, depId);
+				};
+				for (const fact of await analyzer.identityExtrasAsync(read)) extra.push(fact);
+			} catch {
+				// An unreadable source of truth is a fact about the environment,
+				// not a failure of the run. State it on the node instead.
+				extra.push("graph:unknown");
+			}
+		}
 		const configFingerprint = computeConfigFingerprint(config.configHash, models, extra);
 		return { analyzer, config, promptBundleHash, configFingerprint };
 	}
