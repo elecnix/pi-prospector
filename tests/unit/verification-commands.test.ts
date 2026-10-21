@@ -15,6 +15,7 @@ import {
 import {
 	nominateCommands,
 	parseVerificationDecision,
+	verificationCommandsByCommand,
 } from "../../src/analyze/analyzers/verification-commands/index.js";
 import { normaliseCommand } from "../../src/analyze/analyzers/stale-verification/command-vocabulary.js";
 import { VERIFICATION_DECISION_QUESTIONS } from "../../src/analyze/analyzers/verification-commands/decision.js";
@@ -102,6 +103,27 @@ describe("nominateCommands", () => {
 
 	it("does not nominate a command that ran once with no commit after it", () => {
 		assert.deepEqual(nominateCommands([...sh("v1", "tools/ci/verify-all", 0, 120)], CONFIG), []);
+	});
+
+	it("nominates a command that ran twice with no edit between and a commit after", () => {
+		// The commit shape applies whatever the run count: the agent ran the gate
+		// twice and then committed, so the command verifies the tree.
+		const candidates = nominateCommands(
+			[
+				...sh("v1", "tools/ci/verify-all", 0, 120),
+				...sh("v2", "tools/ci/verify-all", 200, 120),
+				...sh("c1", "git commit -m 'chore: bump'", 400, 1),
+			],
+			CONFIG,
+		);
+		assert.deepEqual(candidates.map((c) => c.command), ["tools/ci/verify-all"]);
+	});
+
+	it("does not nominate a command that ran twice with no edit between and no commit", () => {
+		assert.deepEqual(
+			nominateCommands([...sh("v1", "tools/ci/verify-all", 0, 120), ...sh("v2", "tools/ci/verify-all", 200, 120)], CONFIG),
+			[],
+		);
 	});
 
 	it("does not nominate a command that matches a default verification pattern", () => {
@@ -196,5 +218,31 @@ describe("VERIFICATION_DECISION_QUESTIONS", () => {
 		assert.ok(question);
 		assert.equal(question.type, "choice");
 		assert.deepEqual(Object.keys(question.criteria).sort(), ["full", "narrow", "not_verification"]);
+	});
+});
+
+// ─────────────────────────── reading the judged set ───────────────────────────
+
+describe("verificationCommandsByCommand", () => {
+	const node = (command: string, verdict: string, createdAt: string) => ({
+		content_json: JSON.stringify({ command, verdict, confidence: 0.9 }),
+		created_at: createdAt,
+	});
+
+	it("keeps the newest verdict for a command, whatever order the rows arrive in", () => {
+		const older = node("tools/ci/verify-all", "narrow", "2026-01-01T00:00:00.000Z");
+		const newer = node("tools/ci/verify-all", "full", "2026-02-01T00:00:00.000Z");
+		for (const rows of [
+			[older, newer],
+			[newer, older],
+		]) {
+			const judged = verificationCommandsByCommand(rows);
+			assert.equal(judged.get("tools/ci/verify-all")?.verdict, "full");
+		}
+	});
+
+	it("drops a command the model judged not to verify", () => {
+		const judged = verificationCommandsByCommand([node("ls -la", "not_verification", "2026-01-01T00:00:00.000Z")]);
+		assert.equal(judged.size, 0);
 	});
 });

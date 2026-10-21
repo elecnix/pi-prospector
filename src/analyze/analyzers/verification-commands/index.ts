@@ -152,6 +152,9 @@ function isCommit(command: string): boolean {
  * changed something and ran it again, or ran it and committed. A command that
  * ran once, briefly, matches neither and is not nominated.
  *
+ * The two shapes are checked independently, so a command that ran several
+ * times still qualifies when a commit follows the last of them.
+ *
  * The nomination uses the *raw* command line, not the segments a launcher
  * split off, because the model judges the command the agent actually typed.
  * Two lines that differ only in their launcher are two entries, and both get
@@ -183,16 +186,16 @@ export function nominateCommands(messages: readonly MessageRow[], config: Verifi
 		if (seen.seconds < config.minRunSeconds) continue;
 		if (config.skipKnownPatterns && matchesKnownPattern(command)) continue;
 		const times = seen.times;
-		let qualifies = false;
-		if (times.length >= 2) {
-			// Several runs: it counts when an edit separates two of them.
-			qualifies = times.some((first, i) => times.slice(i + 1).some((second) => edits.some((e) => e > first && e < second)));
-		} else {
-			// One run: it counts only when a commit follows it.
-			const last = times[0];
-			qualifies = last !== undefined && commitTimes.some((c) => c > last);
-		}
-		if (!qualifies) continue;
+		// The two shapes are checked independently, so a command that ran twice
+		// with no edit between still qualifies when a commit follows it. The
+		// agent ran the gate and then committed; the command verifies the tree
+		// whether or not an edit separates two of its runs.
+		const ranTwiceWithEditBetween =
+			times.length >= 2 &&
+			times.some((first, i) => times.slice(i + 1).some((second) => edits.some((e) => e > first && e < second)));
+		const last = times[times.length - 1];
+		const commitFollows = last !== undefined && commitTimes.some((c) => c > last);
+		if (!ranTwiceWithEditBetween && !commitFollows) continue;
 		candidates.push({ command, seconds: seen.seconds, runs: seen.runs });
 	}
 
@@ -299,11 +302,17 @@ export const verificationCommandsAnalyzer: Analyzer = {
  * Reads the newest verdict per command across every session, so a verdict
  * learned in one session applies to all of them. A command the model judged
  * `not_verification` is absent: it verifies nothing.
+ *
+ * The newest verdict is picked by the node's own timestamp rather than by the
+ * order the rows arrive in, so the result does not depend on the caller's
+ * ordering. The corpus-wide read returns the rows oldest-first, which would
+ * otherwise let an older verdict replace a newer one.
  */
 export function verificationCommandsByCommand(
-	nodes: readonly { content_json: string }[],
+	nodes: readonly { content_json: string; created_at?: string }[],
 ): Map<string, VerificationCommandProperties> {
 	const out = new Map<string, VerificationCommandProperties>();
+	const newestAt = new Map<string, string>();
 	for (const node of nodes) {
 		let props: VerificationCommandProperties;
 		try {
@@ -312,6 +321,10 @@ export function verificationCommandsByCommand(
 			continue;
 		}
 		if (!props.command || props.verdict === "not_verification") continue;
+		const at = node.created_at ?? "";
+		const seen = newestAt.get(props.command);
+		if (seen !== undefined && seen >= at) continue;
+		newestAt.set(props.command, at);
 		out.set(props.command, props);
 	}
 	return out;
