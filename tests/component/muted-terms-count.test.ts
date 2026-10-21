@@ -32,7 +32,13 @@ import { lexiconCandidatesAnalyzer } from "../../src/analyze/analyzers/lexicon-c
 import { frustrationLexiconAnalyzer, FRUSTRATION_LEXICON_DEF } from "../../src/analyze/analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer, TURN_FRUSTRATION_DEF } from "../../src/analyze/analyzers/turn-frustration/index.js";
 import { frictionAccumulationAnalyzer, FRICTION_ACCUMULATION_DEF } from "../../src/analyze/analyzers/friction-accumulation/index.js";
-import { getNodesByAnalyzer, listAnalysisNodes } from "../../src/db/analysis-queries.js";
+import { buildDigest } from "../../src/analyze/analyzers/session-overview/digest.js";
+import { readNodes } from "../../src/commands/nodes.js";
+import {
+	getNodesByAnalyzer,
+	listAnalysisNodes,
+	getSessionMessageRows,
+} from "../../src/db/analysis-queries.js";
 import { muteTerm, unmuteTerm } from "../../src/commands/mutes.js";
 import { getMutedTerms } from "../../src/db/assertions.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
@@ -164,6 +170,93 @@ describe("a muted term stops counting", () => {
 			const after = await accumulation(db, "s1");
 			assert.equal(after.frustrationWeight, before.frustrationWeight);
 			assert.equal(after.accumulated, before.accumulated);
+		} finally {
+			await close();
+		}
+	});
+
+	it("lists a signal once in the digest, even after an unmute leaves two live generations of the hit", async () => {
+		// The unmute does not retract the muted-era hit node; it produces a *new*
+		// one under a new recipe, and the graph is append-only. Both generations
+		// are live, so a reader that takes every live hit counts the same
+		// frustration signal twice and renders it twice in the digest line.
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", MESSAGES);
+
+			const framework = await build(db);
+			await framework.run("s1");
+
+			await muteTerm(db, { term: "putain", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+			await unmuteTerm(db, "putain");
+			await framework.run("s1", { revise: ["config"] });
+
+			const live = await listAnalysisNodes(db, {
+				analyzerId: TURN_FRUSTRATION_DEF.id,
+				sessionId: "s1",
+				allVersions: true,
+			});
+			assert.equal(live.length, 2, "the unmute leaves both hit generations live");
+
+			const core = await getNodesByAnalyzer(db, "turn-pair-core", "s1");
+			const digest = buildDigest({
+				sessionId: "s1",
+				messages: (await getSessionMessageRows(db, "s1")) as never,
+				coreNodes: core,
+				llmNodes: [],
+				trajectoryNodes: [],
+				failureNodes: [],
+				frustrationNodes: live,
+			});
+			assert.equal(digest.frustrationSignalCount, 1, "one turn carries the signal");
+			const line = digest.text.split("\n").find((l) => l.includes("frustration=["));
+			assert.ok(line, "the digest carries a frustration line");
+			const fragment = line.match(/frustration=\[([^\]]*)\]/)?.[1] ?? "";
+			assert.equal(
+				fragment.split(",").filter((s) => s.includes("putain")).length,
+				1,
+				`the digest lists the signal once, not once per generation: ${fragment}`,
+			);
+		} finally {
+			await close();
+		}
+	});
+
+	it("keeps a muted term out of the frustration ranking, and unmuting puts it back", async () => {
+		// The ranking is the operator-facing view of the corpus's loudest signals.
+		// A muted term must not appear in it, or the mute achieves nothing the
+		// operator can see.
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", MESSAGES);
+
+			const framework = await build(db);
+			await framework.run("s1");
+
+			const ranking = async () => {
+				const result = await readNodes(db, {
+					analyzerId: TURN_FRUSTRATION_DEF.id,
+					filters: [],
+					counts: "signal",
+				});
+				return result.text
+					.split("\n")
+					.map((l) => l.trim())
+					.filter((l) => l.startsWith("putain:"))
+					.map((l) => l.split(":")[0]!);
+			};
+			assert.deepEqual(await ranking(), ["putain"], "the term is ranked before the mute");
+
+			await muteTerm(db, { term: "putain", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+			assert.deepEqual(await ranking(), [], "a muted term is not ranked");
+
+			await unmuteTerm(db, "putain");
+			await framework.run("s1", { revise: ["config"] });
+			assert.deepEqual(await ranking(), ["putain"], "unmuting puts the term back, exactly once");
 		} finally {
 			await close();
 		}

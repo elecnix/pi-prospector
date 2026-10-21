@@ -28,6 +28,18 @@
  * A muted term's hits are *excluded*, not zeroed: exclusion is what "stops
  * counting" means, and it leaves the unmute symmetric — unmuting restores the
  * term to the counts without anything having to be recomputed.
+ *
+ * ## The current generation
+ *
+ * A mute and its unmute each produce a *new* hit node under a new recipe, and
+ * the graph is append-only: the muted-era hit stays live beside the unmute-era
+ * one, superseded by a `revises` edge rather than deleted. A reader that took
+ * every live hit would therefore count the same signal twice after an unmute.
+ *
+ * So every reader here reads the **current generation** — the newest node per
+ * logical hit — which is what the `current_nodes` view already resolves for
+ * the rest of the system. The hit's logical identity is its (turn, signal)
+ * pair, which is also its source set: the turn's message plus the signal.
  */
 
 import { type AsyncDatabase } from "./async-db.js";
@@ -84,4 +96,37 @@ export function unmutedHits(nodes: readonly AnalysisNodeRow[], muted: ReadonlySe
 		if (signal === null) return true;
 		return !muted.has(signal);
 	});
+}
+
+/**
+ * The current generation of a set of hit nodes: the newest node per logical
+ * hit.
+ *
+ * A hit's logical identity is its (turn, signal) pair, which is exactly its
+ * source set — the turn's message plus the signal. Two live nodes with the
+ * same source set are two generations of one hit: the earlier one was revised
+ * by the later, and the graph keeps it as lineage.
+ *
+ * Collapsing here is what keeps an unmute symmetric. The unmute produces a new
+ * hit node under the unmute-era recipe and leaves the muted-era one live, so a
+ * reader that took every live hit would count the signal twice — once from the
+ * muted era and once from the unmute era.
+ *
+ * The newest node wins, decided by `created_at` and then by `id`, so the
+ * result does not depend on the order the rows arrive in.
+ */
+export function currentHits(nodes: readonly AnalysisNodeRow[]): AnalysisNodeRow[] {
+	const newest = new Map<string, AnalysisNodeRow>();
+	for (const node of nodes) {
+		if (node.node_kind === "error") continue;
+		const current = newest.get(node.source_set_hash);
+		if (!current || isNewer(node, current)) newest.set(node.source_set_hash, node);
+	}
+	return [...newest.values()];
+}
+
+/** Whether `a` was created after `b`, with the id breaking a tie. */
+function isNewer(a: AnalysisNodeRow, b: AnalysisNodeRow): boolean {
+	if (a.created_at !== b.created_at) return a.created_at > b.created_at;
+	return a.id > b.id;
 }

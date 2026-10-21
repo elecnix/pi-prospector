@@ -62,6 +62,7 @@ import {
 	DeclineVerdict,
 } from "./detect.js";
 import { getMutedNodeIds } from "../../../db/assertions.js";
+import { currentHits } from "../../../db/muted-terms.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const FrictionAccumulationRawProposal = Type.Object({
@@ -306,7 +307,11 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 		// A hit a human mute silenced contributes no weight (#325): the term is
 		// not a signal for this corpus, so its hits must not accumulate friction.
 		const frustrationWeightByTurnId = new Map<string, number>();
-		for (const node of frustrationNodes) {
+		// The hits are read at their *current* generation: a revise of the hit
+		// analyzer leaves the superseded node live beside the new one, so summing
+		// every live hit would count the same signal twice. The mute filter is the
+		// edge-based one (#325); this only collapses generations.
+		for (const node of currentHits(frustrationNodes)) {
 			if (mutedHitIds.has(node.id)) continue;
 			try {
 				const c = JSON.parse(node.content_json) as { user_message_id?: string; weight?: number };

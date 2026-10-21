@@ -42,6 +42,8 @@ import { getDbPath } from "../config.js";
 import { parseTimestamp, resolveTimepoint } from "../timepoint.js";
 import { findAnalyzerDef } from "./analyzers.js";
 import { NodeKind } from "../analyze/types.js";
+import { currentHits, mutedTerms, unmutedHits } from "../db/muted-terms.js";
+import { TURN_FRUSTRATION_DEF } from "../analyze/analyzers/turn-frustration/index.js";
 import type { AnalysisEdgeRow, AnalysisNodeRow, AnalyzerDef, MessageRow } from "../analyze/types.js";
 
 // ─────────────────────────── argument parsing ───────────────────────────
@@ -371,6 +373,19 @@ export async function readNodes(db: AsyncDatabase, q: NodesQuery): Promise<Nodes
 	};
 	const totalBeforeFilters = await countAnalysisNodes(db, filter);
 	let rows = await listAnalysisNodes(db, filter);
+
+	// A muted lexicon term stops counting, so a frustration hit the operator
+	// rejected must not appear in the listing or in a count over one. The hit
+	// nodes stay in the graph as lineage; this is a read filter, not a
+	// retraction. The rows are also read at their current generation, so a
+	// signal whose hit was recomputed (an unmute produces a new one) is listed
+	// once rather than once per generation.
+	//
+	// An as-of read is left alone: it reconstructs the graph as it stood at a
+	// past instant, and the mute set and the generation both belong to *now*.
+	if (q.analyzerId === TURN_FRUSTRATION_DEF.id && !asOf) {
+		rows = unmutedHits(currentHits(rows), await mutedTerms(db));
+	}
 
 	// Typed filters over the analyzer's declared outputSchema; best-effort when
 	// the analyzer declares none or is not registered locally.

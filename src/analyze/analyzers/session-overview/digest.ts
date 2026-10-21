@@ -24,7 +24,7 @@ import {
 	sliceStartIndex,
 } from "../../evidence-slices.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
-import { unmutedHits } from "../../../db/muted-terms.js";
+import { currentHits } from "../../../db/muted-terms.js";
 
 /** Properties stored in a user-reply-acts classification node. */
 interface ReplyActProperties {
@@ -212,8 +212,12 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	// Group learned-lexicon and lexicon-free hits by the turn they landed on.
 	// A hit a human mute silenced is skipped: the term is not a signal for this
 	// corpus, so it must not colour the digest (#325).
+	//
+	// The hits are read at their *current* generation first: a revise leaves the
+	// superseded node live beside the new one, so taking every live hit would list
+	// the same signal twice.
 	const frustrationByUser = new Map<string, TurnFrustrationProperties[]>();
-	for (const node of input.frustrationNodes ?? []) {
+	for (const node of currentHits(input.frustrationNodes ?? [])) {
 		if (input.mutedHitIds?.has(node.id)) continue;
 		const props = safeParse<TurnFrustrationProperties>(node.content_json);
 		if (!props?.user_message_id) continue;

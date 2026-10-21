@@ -54,6 +54,7 @@ import {
 	type FrustrationLexiconProperties,
 } from "../frustration-lexicon/index.js";
 import { hasLoneExclamation } from "../lexicon-candidates/tokenize.js";
+import { isStoplistedTerm } from "../frustration-lexicon/stoplist.js";
 import { DEFAULT_TURN_FRUSTRATION_CONFIG, type TurnFrustrationConfig } from "./config.js";
 import { getMutedTerms } from "../../../db/assertions.js";
 import { Type, type Static } from "typebox";
@@ -121,7 +122,17 @@ interface HitMeta extends TurnFrustrationProperties {
 	/** Output key of the lexicon node that justified a lexicon hit. */
 	termOutputKey: string | null;
 }
-/** The usable lexicon: confident, non-neutral verdicts, newest per term. */
+/**
+ * The usable lexicon: confident, non-neutral verdicts, newest per term.
+ *
+ * The function-word guard is applied **here**, at the read, as well as at the
+ * write in `frustration-lexicon`. Applying it at the read is what makes the
+ * guard take effect on a verdict the corpus cached before the guard existed:
+ * the guard is deterministic, so a cached "frustration" verdict for a function
+ * word is corrected to neutral without spending a model call to re-adjudicate
+ * a word whose answer is discarded anyway. Without this, the corpus keeps
+ * ranking `do` and `no` until the operator pays to re-judge every term.
+ */
 function usableLexicon(
 	nodes: readonly AnalysisNodeRow[],
 	config: TurnFrustrationConfig,
@@ -135,6 +146,7 @@ function usableLexicon(
 			continue;
 		}
 		if (!props.term) continue;
+		if (isStoplistedTerm(props.term)) continue;
 		if (props.polarity === "neutral") continue;
 		if (props.polarity === "praise" && !config.includePraise) continue;
 		if (props.confidence < config.minConfidence) continue;

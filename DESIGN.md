@@ -772,14 +772,22 @@ list — the system **learns the vocabulary from the corpus**.
   individually ordinary. The list is English because the failure it fixes was
   measured on an English-dominant corpus; it is a stoplist of a known failure
   mode, not a general stopword list, and nomination stays language-blind.
+  The guard runs at two points: on the verdict as it is written, and again when
+  a verdict is read. The second point is what reaches a term the corpus judged
+  before the guard existed. The guard is deterministic, so it needs no model
+  call to reach that verdict, and paying one would buy nothing: the model's
+  answer is discarded.
 - **Mute** — the operator's content-addressed judgement that a term is not a
   signal. It is external human input, never an analysis node, and it has two
   halves: a muted term stops *matching* new turns, and its existing hits stop
   *counting*. The hit nodes themselves stay in the graph as append-only
   lineage — the graph is never mutated — so the count is filtered at the point
   the number is computed, which makes unmuting symmetric: the term returns to
-  the counts with nothing recomputed. Retracting the hit nodes themselves is a
-  separate, deliberate act.
+  the counts with nothing recomputed. A reader takes the hits at their
+  *current* generation, because an unmute produces a new hit node and leaves
+  the muted-era one live beside it, and a reader that took both would report
+  the signal twice. Retracting the hit nodes themselves is a separate,
+  deliberate act.
 - **Hit** — one (turn, signal) pair: a node recording that a turn's user text
   carried a particular signal. Identity is the turn plus that one signal, which
   makes growth **purely additive** — learning a new word adds nodes to the turns
@@ -1047,9 +1055,11 @@ contain the new word have anything to compute.
   mute-era conclusion is retracted when the mute is lifted, handing the head of
   the lineage back to the conclusion that holds again. Unmuting is append-only via
   `superseded_at` — the mute row stays inspectable with its reason and time, and
-  the `mutes` edges it carried become inert, so the hits count once more. The
-  mute corpus is operator judgement, and like the decision corpus it is natural
-  training input for improving the classifier.
+  the `mutes` edges it carried become inert, so the hits count once more. A
+  reader takes the hits at their **current generation**: a revise leaves the
+  superseded node live beside its replacement, so summing every live hit would
+  count one signal twice. The mute corpus is operator judgement, and like the
+  decision corpus it is natural training input for improving the classifier.
 
 ---
 

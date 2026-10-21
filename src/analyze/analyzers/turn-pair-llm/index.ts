@@ -27,6 +27,7 @@ import {
 import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import { TURN_FRUSTRATION_DEF, type TurnFrustrationProperties } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF, type ToolTrajectoryProperties } from "../tool-trajectory/index.js";
+import { currentHits } from "../../../db/muted-terms.js";
 import {
 	EVIDENCE_SLICE_CEILING,
 	buildMessageIdToPairIndex,
@@ -169,6 +170,10 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		// markers. This *widens* selection: a turn whose only evidence is a French
 		// correction or a row of question marks scores near zero deterministically,
 		// and would never otherwise reach the classifier that can name its friction type.
+		//
+		// The hits are read at their *current* generation: a revise of the hit
+		// analyzer leaves the previous generation live beside the new one, and
+		// summing both would count the same signal twice in the boost.
 		const frustrationBoost = new Map<string, number>();
 		const frustrationIds: string[][] = [];
 		// A muted term's hits are silenced (#325): a silenced hit must not
@@ -179,7 +184,10 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		// change the operator never asked for.
 		const muted = await getMutedNodeIds(ctx.db);
 		const hitOutputKeys: string[] = [];
-		for (const node of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
+		// The hits are read at their *current* generation: a revise leaves the
+		// superseded node live beside the new one, and summing both would count the
+		// same signal twice in the boost. The mute filter stays edge-based (#325).
+		for (const node of currentHits(ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? [])) {
 			let hit: TurnFrustrationProperties;
 			try {
 				hit = JSON.parse(node.content_json) as TurnFrustrationProperties;

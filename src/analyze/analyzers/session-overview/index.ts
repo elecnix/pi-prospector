@@ -33,7 +33,6 @@ import { ASSISTANT_COGNITION_DEF } from "../assistant-cognition/index.js";
 import { PLAN_COMPLIANCE_DEF } from "../plan-compliance/index.js";
 import { PHASE_TRAJECTORY_DEF } from "../phase-trajectory/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
-import { mutedTerms } from "../../../db/muted-terms.js";
 import { MAP_PROMPT, MAP_PROMPT_HASH, MAP_TOOL, buildMapPrompt, parseMapResponse, parseMapObject, type MapSummary } from "./prompt-map.js";
 import {
 	REDUCE_PROMPT,
@@ -228,12 +227,6 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const complianceNodes = await ctx.getDependencyNodes(PLAN_COMPLIANCE_DEF.id);
 		const phaseNodes = await ctx.getDependencyNodes(PHASE_TRAJECTORY_DEF.id);
 		const messages = await ctx.getSessionMessages(ctx.sessionId);
-
-		// The operator's mute set is honoured here: a muted term's hits are excluded
-		// from the digest's counts and term list, so the session's frustration
-		// summary never reports a term the operator rejected as a signal. The hit
-		// nodes stay in the graph as append-only lineage.
-		const muted = await mutedTerms(ctx.db);
 
 		const digest = buildDigest({
 			sessionId: ctx.sessionId,

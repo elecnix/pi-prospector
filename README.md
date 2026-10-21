@@ -155,7 +155,7 @@ Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.t
 The correction patterns in `turn-pair-core` are English regexes. Write `putain, c'est encore faux` or `не то` and they see nothing. Instead of shipping more languages — an unbounded list that is always partial — these three analyzers **learn the vocabulary from your own corpus**.
 
 1. **lexicon-candidates** (deterministic) tokenises your messages and nominates the distinct terms worth judging, ranked by frequency and capped per session. It is language-blind on purpose: no stopwords, no stemming, just a shape filter that drops code, paths, and identifiers.
-2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it. A **function-word guard** runs after the model answers: a single-token term on the stoplist (`do`, `no`, `never`, `cannot`, `still`, …) comes back neutral whatever the model said, so the instruction words that appear in nearly every prompt can never top the ranking. A multi-word term is not covered — a phrase is judged as a unit and can be a pointed complaint.
+2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it. A **function-word guard** runs after the model answers: a single-token term on the stoplist (`do`, `no`, `never`, `cannot`, `still`, …) comes back neutral whatever the model said, so the instruction words that appear in nearly every prompt can never top the ranking. The guard also runs when a verdict is *read*, so a term the corpus judged before the guard existed is corrected without a model call. A multi-word term is not covered — a phrase is judged as a unit and can be a pointed complaint.
 3. **turn-frustration** (deterministic) matches each turn against the learned lexicon, emitting one node per (turn, signal). A hit promotes the turn into `turn-pair-llm` enrichment even when the deterministic score missed it, and lands in the `session-overview` digest as `frustration=[term:category/lang]`.
 
 Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
@@ -535,8 +535,10 @@ command never reports a mute it did not record.
 A muted term stops matching new turns, and its **existing hits stop counting**:
 they are excluded from the frustration rankings and from the accumulated friction
 a session reports. The hit nodes themselves stay in the graph as append-only
-lineage — the graph is never mutated. Because a mute is `config`, muting folds
-a hash of the mute set into the config fingerprint of every analyzer that
+lineage — the graph is never mutated. The readers take the hits at their
+*current* generation, so an unmute, which leaves the muted-era hit live beside
+the new one, still reports the signal once. Because a mute is `config`, muting
+folds a hash of the mute set into the config fingerprint of every analyzer that
 consults it — `turn-frustration`, `friction-accumulation`, `session-overview` —
 so muting marks the affected nodes `stale/config`, a plain `/prospect-analyze`
 never silently recomputes them, and `--revise config` cleanly recomputes them
