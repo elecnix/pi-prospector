@@ -307,12 +307,17 @@ export const verificationCommandsAnalyzer: Analyzer = {
  * order the rows arrive in, so the result does not depend on the caller's
  * ordering. The corpus-wide read returns the rows oldest-first, which would
  * otherwise let an older verdict replace a newer one.
+ *
+ * A row with no timestamp carries no age, so it never displaces a dated row.
+ * It is kept only for a command no dated row speaks for, and then the first
+ * such row wins, so the result stays the same whatever order they arrive in.
  */
 export function verificationCommandsByCommand(
 	nodes: readonly { content_json: string; created_at?: string }[],
 ): Map<string, VerificationCommandProperties> {
 	const out = new Map<string, VerificationCommandProperties>();
-	const newestAt = new Map<string, string>();
+	const age = new Map<string, string>();
+	const undated = new Map<string, VerificationCommandProperties>();
 	for (const node of nodes) {
 		let props: VerificationCommandProperties;
 		try {
@@ -322,10 +327,17 @@ export function verificationCommandsByCommand(
 		}
 		if (!props.command || props.verdict === "not_verification") continue;
 		const at = node.created_at ?? "";
-		const seen = newestAt.get(props.command);
+		if (at === "") {
+			if (!undated.has(props.command)) undated.set(props.command, props);
+			continue;
+		}
+		const seen = age.get(props.command);
 		if (seen !== undefined && seen >= at) continue;
-		newestAt.set(props.command, at);
+		age.set(props.command, at);
 		out.set(props.command, props);
+	}
+	for (const [command, props] of undated) {
+		if (!out.has(command)) out.set(command, props);
 	}
 	return out;
 }

@@ -228,4 +228,24 @@ describe("verificationCommandsByCommand", () => {
 		const judged = verificationCommandsByCommand([node("ls -la", "not_verification", "2026-01-01T00:00:00.000Z")]);
 		assert.equal(judged.size, 0);
 	});
+
+	it("keeps a dated verdict over an undated one", () => {
+		// An undated row carries no age, so it must not displace a verdict that
+		// has one.
+		const dated = node("tools/ci/verify-all", "full", "2026-01-01T00:00:00.000Z");
+		const undated = { content_json: JSON.stringify({ command: "tools/ci/verify-all", verdict: "narrow", confidence: 0.9 }) };
+		for (const rows of [
+			[dated, undated],
+			[undated, dated],
+		]) {
+			const judged = verificationCommandsByCommand(rows);
+			assert.equal(judged.get("tools/ci/verify-all")?.verdict, "full");
+		}
+	});
+
+	it("keeps an undated verdict for a command no dated row speaks for", () => {
+		const undated = { content_json: JSON.stringify({ command: "tools/ci/verify-all", verdict: "narrow", confidence: 0.9 }) };
+		const judged = verificationCommandsByCommand([undated]);
+		assert.equal(judged.get("tools/ci/verify-all")?.verdict, "narrow");
+	});
 });
