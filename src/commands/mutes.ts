@@ -22,6 +22,7 @@ import {
 	supersedeAssertion,
 	listAssertions,
 	attachMuteEdge,
+	silenceConclusionsOfSilencedHits,
 	retractConclusionsMadeUnder,
 	type AssertionRow,
 } from "../db/assertions.js";
@@ -105,6 +106,11 @@ export async function muteTerm(
 		assertedBy: args.by ?? "operator",
 	});
 	await attachMuteEdge(db, term, assertionId);
+	// The conclusions the silenced hits produced are silenced too: a conclusion
+	// drawn from a hit the operator said does not count is a conclusion about a
+	// term that does not count. Marking them keeps the reader's old conclusion
+	// out of the current generation, so a report never counts a muted term.
+	await silenceConclusionsOfSilencedHits(db, assertionId);
 	// The hit nodes the mute left behind: they stay live until a `--revise config`
 	// recomputes the readers, and the operator is told how many there are. The
 	// count is of the *hits* only — the term's lexicon verdict is not a hit.

@@ -596,3 +596,57 @@ export async function getMutedNodeIds(db: AsyncDatabase, asOf?: string): Promise
 export function withoutMutedNodes<T extends { id: string }>(nodes: readonly T[], mutedIds: ReadonlySet<string>): T[] {
 	return nodes.filter((n) => !mutedIds.has(n.id));
 }
+
+/**
+ * Silence the conclusions a muted term's hits produced (#325).
+ *
+ * A reader that folds a hit into a conclusion draws that conclusion *from* the
+ * hit: the `consumes` edge says so. When the hit is silenced, the conclusion
+ * it produced is a conclusion about a term the operator said does not count, so
+ * it must leave the current generation too — otherwise the reader's old
+ * conclusion stays current and keeps counting the silenced hit.
+ *
+ * The conclusion is marked with the same `mutes` edge, so one predicate covers
+ * both the hit and what was drawn from it, and the mark is reversible: an
+ * unmute supersedes the assertion, which makes the edge inert again.
+ *
+ * Only *current* conclusions are marked. A superseded generation is already out
+ * of every aggregate read, and marking it would add a mark nothing reads.
+ */
+export async function silenceConclusionsOfSilencedHits(
+	db: AsyncDatabase,
+	assertionId: string,
+): Promise<number> {
+	// The conclusions that consumed a silenced hit. A `consumes` edge names its
+	// target by the target's content-addressed output key, while the `mutes`
+	// edge starts at the hit's row id — so the join goes through the node.
+	const consumers = (await prep(db, `
+		SELECT DISTINCT c.from_node_id AS id
+		FROM analysis_edges c
+		JOIN analysis_nodes hit ON hit.output_key = c.to_ref_id
+		JOIN analysis_edges m ON m.from_node_id = hit.id
+		                   AND m.edge_kind = ?
+		                   AND m.to_ref_kind = ?
+		                   AND m.to_ref_id = ?
+		WHERE c.edge_kind = ? AND c.to_ref_kind = ?
+	`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION, assertionId, EDGE_KINDS.CONSUMES, REF_KINDS.ANALYSIS_NODE)) as Array<{ id: string }>;
+	if (consumers.length === 0) return 0;
+
+	let marked = 0;
+	for (const consumer of consumers) {
+		const already = await prep(db, `
+			SELECT 1 FROM analysis_edges
+			WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? LIMIT 1
+		`).get(consumer.id, assertionId, EDGE_KINDS.MUTES);
+		if (already) continue;
+		await insertEdge(db, {
+			fromNodeId: consumer.id,
+			toRefKind: REF_KINDS.ASSERTION,
+			toRefId: assertionId,
+			edgeKind: EDGE_KINDS.MUTES,
+			ordinal: 0,
+		});
+		marked++;
+	}
+	return marked;
+}

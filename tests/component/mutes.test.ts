@@ -538,4 +538,45 @@ describe("a muted term's existing hits (#325)", () => {
 			await close();
 		}
 	});
+
+	it("leaves one current conclusion in a session that also carries an unmuted term's hit", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong and putain" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+
+			const readAccumulation = async () => {
+				const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
+				return nodes.map((n) => JSON.parse(n.content_json) as {
+					accumulated_friction: number;
+					turn_contributions: Array<{ frustration_weight: number }>;
+				});
+			};
+
+			// Before the mute: one conclusion, counting both terms' hits.
+			const before = await readAccumulation();
+			assert.equal(before.length, 1, "one current accumulation node before the mute");
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+
+			// After the mute and the revise: the conclusion the muted term's hit
+			// produced is not a finding any more, and the recomputed one replaces
+			// it. Exactly one conclusion is current, and the muted term's weight
+			// is not in it.
+			const after = await readAccumulation();
+			assert.equal(after.length, 1, "exactly one current accumulation node after the mute");
+			const totalFrustration = after[0]!.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0);
+			assert.equal(
+				totalFrustration,
+				0.5,
+				"the current conclusion counts the unmuted term's hit only",
+			);
+		} finally {
+			await close();
+		}
+	});
 });
