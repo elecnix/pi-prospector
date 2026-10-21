@@ -44,7 +44,7 @@ import {
 } from "./detect.js";
 import { PhaseSpanSchema, SkillSpanSchema, HiddenExitCodeSchema, type PhaseSpan, type SkillSpan } from "./spans.js";
 import { measurePhaseSpans, measureSkillSpans, type SpanRow } from "./phases.js";
-import { isPreparationCommand, isCommitCommand, commitSubjectOf, isFailedPreparation } from "./spans.js";
+import { isPreparationCommand, isCommitCommand, commitSubjectOf, isFailedPreparation, isPullRequestSkill } from "./spans.js";
 import type { AsyncDatabase } from "../../../db/async-db.js";
 import { getBackgroundTasksForSession } from "../../../db/queries.js";
 import type { BackgroundTaskRow } from "../../types.js";
@@ -346,6 +346,7 @@ export const timeEconomyAnalyzer: Analyzer = {
 			isPreparation: isPreparationCommand,
 			commitSubject: commitSubjectOf,
 			isFailedPreparation,
+			isPreparationSkill: isPullRequestSkill,
 			failureMarkers: config.failureMarkers,
 		});
 		const skillSpans = measureSkillSpans(rows);

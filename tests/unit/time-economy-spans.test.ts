@@ -14,7 +14,7 @@ import { DEFAULT_TIME_ECONOMY_CONFIG } from "../../src/analyze/analyzers/time-ec
 import type { TimeEconomyConfig } from "../../src/analyze/analyzers/time-economy/config.js";
 import { measureTime } from "../../src/analyze/analyzers/time-economy/detect.js";
 import { findFailureMarkers } from "../../src/analyze/analyzers/time-economy/spans.js";
-import { isCommitCommand, commitSubjectOf, isPreparationCommand, isFailedPreparation } from "../../src/analyze/analyzers/time-economy/spans.js";
+import { isCommitCommand, commitSubjectOf, isPreparationCommand, isFailedPreparation, isPullRequestSkill } from "../../src/analyze/analyzers/time-economy/spans.js";
 import { measurePhaseSpans, measureSkillSpans, type SpanRow } from "../../src/analyze/analyzers/time-economy/phases.js";
 import { extractBackgroundTasks, parseTaskNotification } from "../../src/sync/background-tasks.js";
 import type { BackgroundTaskRow } from "../../src/analyze/types.js";
@@ -553,6 +553,55 @@ describe("measurePhaseSpans", () => {
 		assert.equal(start.seconds, 300);
 		// One commit, not two: the quote did not open a preparation span.
 		assert.equal(spans.filter((s) => s.kind === "commit_preparation").length, 1);
+	});
+
+	it("starts a preparation at a pull-request skill", () => {
+		// The issue names four preparation markers: a full test run, `git add`,
+		// a review, and a PR skill. The skill is a tool call, not a shell
+		// command, so the preparation scan has to see it too.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "s1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "pr" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(20) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(100), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "git commit -m 'x'" } }]) }),
+		];
+		const spans = measurePhaseSpans(rows, {
+			isCommit: isCommitCommand,
+			isPreparation: isPreparationCommand,
+			commitSubject: commitSubjectOf,
+			isPreparationSkill: isPullRequestSkill,
+		});
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		assert.equal(preparation.start_message_id, "s1");
+		assert.equal(preparation.seconds, 90);
+	});
+
+	it("does not start a preparation at a skill that opens no pull request", () => {
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "s1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "code-review" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(20) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(100), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "git commit -m 'x'" } }]) }),
+		];
+		const spans = measurePhaseSpans(rows, {
+			isCommit: isCommitCommand,
+			isPreparation: isPreparationCommand,
+			commitSubject: commitSubjectOf,
+			isPreparationSkill: isPullRequestSkill,
+		});
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		// No marker was seen, so the span starts at the session's start.
+		assert.equal(preparation.start_message_id, "u1");
+		assert.equal(preparation.seconds, 100);
+	});
+
+	it("does not read a shell command that mentions a skill as a preparation", () => {
+		// The skill is a tool call. A command that merely names one — the
+		// agent reading the skill's own documentation, say — is not it.
+		assert.equal(isPreparationCommand("cat skills/pr.md"), false);
+		assert.equal(isPreparationCommand("echo 'use the skill for pr'"), false);
 	});
 
 	it("measures a commit with no preparation marker from the previous commit, not from zero", () => {

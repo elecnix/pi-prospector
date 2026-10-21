@@ -250,11 +250,16 @@ describe("time-economy: background calls, hidden exit codes, phase and skill spa
 
 			const preparation = spans.find((s) => s.kind === "commit_preparation");
 			assert.ok(preparation, "a commit-preparation span is measured");
-			// There is no previous commit, so the preparation starts at the
-			// session's first *passing* test run — the piped run at second 320
-			// failed, and a failed run prepared nothing. The passing run is
-			// at second 540, and the commit at 620.
-			assert.equal(preparation.seconds, 80);
+			// The preparation starts at the first preparation marker after the
+			// previous commit — and there is no previous commit, so it is the
+			// first marker in the session. The PR skill at second 400 is one.
+			//
+			// The piped run at second 320 is not: its failure was hidden from
+			// the exit code, and a run that failed left the agent with work to
+			// do, so it prepared nothing. Had it been admitted, the span would
+			// have started at 320 and run for 300 seconds.
+			assert.equal(preparation.start_message_id, "a-3", "the PR skill is the first preparation marker");
+			assert.equal(preparation.seconds, 220, "from the PR skill at 400 to the commit at 620");
 
 			// The skill span: it opens at the Skill call and ends at the
 			// successful `gh pr create`.

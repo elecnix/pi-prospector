@@ -279,6 +279,11 @@ const PREPARATION_COMMAND_PATTERNS: readonly { source: string; re: RegExp }[] = 
 	// A review: the agent asked someone to look at the work.
 	{ source: "review", re: /\bgh\s+pr\s+(review|view|diff)\b/ },
 	{ source: "review", re: /\bcode-?review\b|\breview\b.*--diff/ },
+	// A PR skill is the fourth marker the issue names, and it is a tool call
+	// rather than a shell command, so it is not matched here. The analyzer
+	// passes the skill's name in separately — see `isPreparationSkill` in the
+	// phase-span options. A shell pattern for it would match any command
+	// that merely mentioned the word.
 ];
 
 /** The preparation markers that are a test run, and so can fail. */

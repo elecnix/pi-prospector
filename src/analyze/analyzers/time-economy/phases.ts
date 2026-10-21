@@ -200,6 +200,14 @@ export function measurePhaseSpans(
 		 * output is the only evidence that it failed.
 		 */
 		failureMarkers?: readonly string[];
+		/**
+		 * Whether a skill call marks the start of a commit's preparation.
+		 *
+		 * The issue names a PR skill as one of the four markers, and a skill
+		 * is a tool call, not a shell command: the shell scan never sees it.
+		 * The callback is given the skill's name.
+		 */
+		isPreparationSkill?: (skill: string) => boolean;
 	},
 ): PhaseSpan[] {
 	const stream = buildToolStream([...rows]);
@@ -233,7 +241,11 @@ export function measurePhaseSpans(
 	}> = [];
 	for (const inv of stream.invocations) {
 		const command = typeof inv.args["command"] === "string" ? (inv.args["command"] as string) : "";
-		if (!command) continue;
+		// A skill call is a preparation marker too, and the shell scan never
+		// sees it: it carries no command at all.
+		const skill = inv.name === SKILL_TOOL ? skillNameOf(inv.args) : null;
+		const skillIsPreparation = skill !== null && (opts.isPreparationSkill?.(skill) ?? false);
+		if (!command && !skillIsPreparation) continue;
 		const output = inv.outcome ? (outputTextById.get(inv.outcome.messageId) ?? "") : "";
 		const markers = inv.outcome && !inv.outcome.isError && output ? findFailureMarkers(output, opts.failureMarkers ?? []) : [];
 		commands.push({
@@ -243,7 +255,7 @@ export function measurePhaseSpans(
 			isError: inv.outcome?.isError ?? false,
 			markers,
 			position: inv.ordinal,
-			isPreparation: opts.isPreparation(command),
+			isPreparation: skillIsPreparation || (command !== "" && opts.isPreparation(command)),
 		});
 	}
 
