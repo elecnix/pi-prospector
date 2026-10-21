@@ -60,9 +60,11 @@ const BEARER = /(\bAuthorization\s*:\s*Bearer\s+)([^\s'"\\]+)/gi;
  * An environment assignment: `NAME=value`, with the value quoted or bare.
  *
  * The name is matched in any case, because a shell line is free to spell a
- * name in lower case.
+ * name in lower case. The value's three forms are named groups, so the code
+ * that reads them does not depend on counting capture groups.
  */
-const ENV_ASSIGNMENT = /\b([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)("([^"]*)"|'([^']*)'|([^\s;&|]+))/g;
+const ENV_ASSIGNMENT =
+	/\b(?<name>[A-Za-z_][A-Za-z0-9_]*)(?<eq>\s*=\s*)(?:"(?<double>[^"]*)"|'(?<single>[^']*)'|(?<bare>[^\s;&|]+))/g;
 
 /** The credentials in a URL: `scheme://user:password@host`. */
 const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/)([^\s/:@]+):([^\s/@]+)@/gi;
@@ -88,11 +90,17 @@ export function redactCommandLine(command: string): string {
 
 	// An environment assignment whose *name* looks secret loses its value; one
 	// whose name does not keeps it.
-	out = out.replace(ENV_ASSIGNMENT, (all, name, eq, ...rest) => {
+	out = out.replace(ENV_ASSIGNMENT, (all: string, ...args: unknown[]) => {
+		// The named groups arrive as the last argument.
+		const { name, eq, double, single, bare } = args[args.length - 1] as {
+			name: string;
+			eq: string;
+			double?: string;
+			single?: string;
+			bare?: string;
+		};
 		if (!SECRET_NAME.test(name)) return all;
-		const quoted = rest[0] as string | undefined;
-		const bare = rest[2] as string | undefined;
-		const value = quoted ?? bare;
+		const value = double ?? single ?? bare;
 		if (value === undefined || value === "") return all;
 		return `${name}${eq}${REDACTED}`;
 	});
