@@ -82,7 +82,9 @@ function compileMarker(source: string): CompiledMarker {
  * Several patterns can match one line — `--- FAIL:` also satisfies `\bFAIL\b`
  * — and two markers naming the same failure are noise, so a marker whose
  * matched text is contained in an already-accepted marker's is dropped. The
- * catalogue's order decides which one survives, so the result is stable.
+ * check is symmetric, so the result does not depend on the catalogue's order:
+ * whichever marker matched the wider text is the one that survives, and it
+ * survives whichever way round the two were tried.
  */
 export function findFailureMarkers(output: string, markers: readonly string[]): string[] {
 	const found: Array<{ source: string; text: string }> = [];
