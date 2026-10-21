@@ -7,6 +7,14 @@
  * the turn shows surprise, a Score beside it grades the severity, and only a
  * turn past the threshold pays for a generative call that extracts the quote.
  * The quote is still validated as an exact substring before it is stored.
+ *
+ * The apology (#318) works the same way, for the same reason: an apology is a
+ * concession the assistant made in its own words, so it needs a verbatim quote
+ * from the response text. A Noul decides whether the turn carries an apology, a
+ * Score beside it grades the severity, and only a turn past the threshold pays
+ * for the quote. The apology quote is checked against the **response** text
+ * only — an apology is something the user saw, not a phrase in private
+ * reasoning.
  */
 
 import { Type } from "typebox";
@@ -19,6 +27,9 @@ export const COGNITION_LEVELS = ["mild", "moderate", "high"] as const;
 
 /** A Noul above this calls the turn surprised. */
 export const SURPRISE_THRESHOLD = 0.5;
+
+/** A Noul above this calls the turn apologetic. */
+export const APOLOGY_THRESHOLD = 0.5;
 
 export const COGNITION_DECISION_QUESTIONS: Record<string, DecisionQuestion> = {
 	confusion: {
@@ -74,6 +85,34 @@ export const COGNITION_DECISION_QUESTIONS: Record<string, DecisionQuestion> = {
 			"An unexpected result that overturns the assistant's plan or understanding",
 		],
 	},
+	apology: {
+		type: "noul",
+		instructions:
+			"Does `response_text` show the assistant conceding that it was wrong? An apology is the assistant's own " +
+			"concession, in the words it said to the user: 'sorry', 'my mistake', 'I was wrong'. A regret about the " +
+			"user's situation ('sorry to hear that') is not a concession, and a quotation of the user's words is not " +
+			"the assistant conceding.",
+		criteria: {
+			true: {
+				what: "The assistant admits it was wrong",
+				examples: ["sorry, my mistake", "I was wrong about the flag", "apologies, that was my error"],
+			},
+			false: {
+				what: "The assistant does not concede an error",
+				examples: ["here is the fix", "sorry to hear that, let me check"],
+			},
+		},
+	},
+	apology_severity: {
+		type: "score",
+		instructions: "How much does the concession in `response_text` cost the user?",
+		criteria: [
+			"No concession is made",
+			"A passing concession, with the work carried on unchanged",
+			"A concession that walks back a stated fact, so the user has to redo the check",
+			"A concession that undoes work the user was relying on",
+		],
+	},
 };
 
 export const QUOTE_PROMPT = `You copy evidence from one coding-agent turn.
@@ -92,9 +131,24 @@ export const QUOTE_TOOL = {
 	parameters: Type.Object({ quote: Type.String({ description: "verbatim text from the thinking trace or response" }) }),
 };
 
+export const APOLOGY_QUOTE_PROMPT = `You copy evidence from one coding-agent turn.
+
+The turn's RESPONSE TEXT shows the assistant conceding that it was wrong. Call
+the \`quote_apology\` tool with the shortest passage that says so, copied
+character for character from the RESPONSE TEXT. Never paraphrase, trim inside
+the passage, or invent text.`;
+
+export const APOLOGY_QUOTE_PROMPT_HASH = shortHash(APOLOGY_QUOTE_PROMPT);
+
+export const APOLOGY_QUOTE_TOOL = {
+	name: "quote_apology",
+	description: "Submit the verbatim passage that shows the assistant's apology.",
+	parameters: Type.Object({ quote: Type.String({ description: "verbatim text from the response" }) }),
+};
+
 /** Content hash of the question set and quote prompt: part of the node's config identity. */
 export const COGNITION_DECISION_HASH = shortHash(
-	`cognition-decision(${canonicalJson(COGNITION_DECISION_QUESTIONS)}|${QUOTE_PROMPT_HASH})`,
+	`cognition-decision(${canonicalJson(COGNITION_DECISION_QUESTIONS)}|${QUOTE_PROMPT_HASH}|${APOLOGY_QUOTE_PROMPT_HASH})`,
 );
 
 /** Same cap as the generative prompt, so both paths read the same turn. */
@@ -120,12 +174,16 @@ export interface CognitionDecision {
 	indecision: IndecisionEntry[];
 	/** The surprise grade when the Noul passes the threshold, else undefined. */
 	surpriseSeverity: (typeof COGNITION_LEVELS)[number] | undefined;
+	/** The apology grade when the Noul passes the threshold, else undefined. */
+	apologySeverity: (typeof COGNITION_LEVELS)[number] | undefined;
 	probabilities: Record<string, Record<string, number>>;
 }
 
 export function parseCognitionDecision(response: DecisionResponse): CognitionDecision {
 	const surprise = answerOf(response, "surprise", "noul");
 	const severity = answerOf(response, "surprise_severity", "score");
+	const apology = answerOf(response, "apology", "noul");
+	const apologySeverity = answerOf(response, "apology_severity", "score");
 	const labelled = (p: Record<string, number>) =>
 		Object.fromEntries(Object.entries(p).map(([k, v]) => [Number(k) === 0 ? "none" : (COGNITION_LEVELS[Number(k) - 1] ?? k), v]));
 	return {
@@ -133,11 +191,16 @@ export function parseCognitionDecision(response: DecisionResponse): CognitionDec
 		indecision: graded(response, "indecision"),
 		// A surprised turn whose severity reads "none" is still a surprise: grade it mild.
 		surpriseSeverity: surprise.noul > SURPRISE_THRESHOLD ? (COGNITION_LEVELS[Math.max(1, scoreLevel(severity)) - 1] ?? "mild") : undefined,
+		// Same rule for an apology: the concession is the finding, the grade is
+		// how much it cost.
+		apologySeverity: apology.noul > APOLOGY_THRESHOLD ? (COGNITION_LEVELS[Math.max(1, scoreLevel(apologySeverity)) - 1] ?? "mild") : undefined,
 		probabilities: {
 			confusion: labelled(answerOf(response, "confusion", "score").probabilities),
 			indecision: labelled(answerOf(response, "indecision", "score").probabilities),
 			surprise: { true: surprise.noul },
 			surprise_severity: labelled(severity.probabilities),
+			apology: { true: apology.noul },
+			apology_severity: labelled(apologySeverity.probabilities),
 		},
 	};
 }

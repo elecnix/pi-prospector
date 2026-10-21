@@ -49,7 +49,9 @@ export const TURN_DECISION_QUESTIONS: Record<string, DecisionQuestion> = {
 			question: "What problem with the assistant's work does the user raise in `user_message`?",
 			focus:
 				"Judge only what the user says in `user_message`. When the user raises no problem, the answer is none, " +
-				"even if `tool_calls` shows failures. `prior_turns` and `tool_calls` only help name a problem the user raised.",
+				"even if `tool_calls` shows failures. `prior_turns` and `tool_calls` only help name a problem the user raised. " +
+				"A `rebuttal_candidate` is a hint, not a finding: confirm it only when the text really disputes something the " +
+				"assistant stated.",
 		},
 		criteria: {
 			none: {
@@ -73,6 +75,11 @@ export const TURN_DECISION_QUESTIONS: Record<string, DecisionQuestion> = {
 			repetition: {
 				what: "The user complains that the assistant repeats a failed attempt, or repeats a request they already made",
 				examples: ["you tried that already", "again, same error"],
+			},
+			rebuttal: {
+				what: "The user disputes whether something the assistant SAID is true: a stated fact, a named flag, an option, or a reported outcome",
+				not_for: "A message that asks for different behaviour without disputing what the assistant said",
+				examples: ["that's wrong", "that flag doesn't exist", "the test didn't pass, it failed"],
 			},
 			other: {
 				what: "The user raises a problem that fits none of the other options",
@@ -119,6 +126,12 @@ export function buildTurnDecisionState(input: ClassifyInput): Record<string, unk
 		user_message: truncate(input.userText, USER_TEXT_MAX),
 		assistant_response: truncate(input.assistantText, ASSISTANT_TEXT_MAX),
 	};
+	// The deterministic rebuttal candidate (#318), carried as the generative path
+	// carries it: a candidate the decision model confirms or rejects, never a
+	// conclusion. Absent when the wording matched nothing.
+	if (input.rebuttalCandidate) {
+		state["rebuttal_candidate"] = truncate(input.rebuttalCandidate, USER_TEXT_MAX);
+	}
 	const prior = (input.priorTurns ?? []).slice(-EVIDENCE_SLICE_CEILING);
 	if (prior.length > 0) {
 		state["prior_turns"] = prior.map((t) => ({
