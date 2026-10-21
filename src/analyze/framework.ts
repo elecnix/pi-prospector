@@ -731,7 +731,6 @@ export class AnalyzerFramework {
 			getTurnPairs: (sid) => this.turnPairsCached(cache, sid),
 			llm: this.deps.llm,
 			decide: this.deps.decide,
-			db,
 			config,
 			prompts,
 			modelTiers: this.deps.modelTiers,

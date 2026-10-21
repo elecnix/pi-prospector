@@ -210,7 +210,6 @@ export const staleVerificationAnalyzer: Analyzer = {
 		);
 		return [`learned:${judgedSetFingerprint(judged)}`];
 	},
-
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		if (ctx.messages.length === 0) return [];
 		const fp = fingerprint(ctx.messages);
@@ -231,9 +230,7 @@ export const staleVerificationAnalyzer: Analyzer = {
 		// The commands the corpus judged to verify the tree, which the pattern list
 		// does not cover. Read across every session, because the judgement belongs
 		// to the corpus rather than to the session that first surfaced it.
-		const judged = verificationCommandsByCommand(
-			await getLatestNodesByAnalyzerAcrossSessions(ctx.db, VERIFICATION_COMMANDS_DEF.id),
-		);
+		const judged = verificationCommandsByCommand(await ctx.getGlobalDependencyNodes(VERIFICATION_COMMANDS_DEF.id));
 		const scan = findStaleVerifications(messages, config, new Set(judged.keys()));
 		const proposals = buildProposals(scan, config);
 		const properties: StaleVerificationProperties = { session_id: ctx.sessionId, ...scan, improvement_proposals: proposals };

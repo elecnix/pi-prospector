@@ -515,12 +515,6 @@ export interface AnalyzerRunContext {
 	 * config names a `decisionModel` sends its questions here instead of to `llm`.
 	 */
 	decide?: DecisionCaller;
-	/**
-	 * The database the run writes to. An analyzer reads a corpus-wide set
-	 * (the learned verdicts, say) through it, when the corpus scope is what
-	 * the set belongs to.
-	 */
-	db: AsyncDatabase;
 	config: AnalyzerConfig;
 	/** Prompt content keyed by prompt name. */
 	prompts: Record<string, string>;
