@@ -105,10 +105,24 @@ describe("classifyCall", () => {
 	});
 
 	it("reads edit tools by their path argument and skips scratch paths", () => {
-		assert.deepEqual(classifyCall("Edit", { file_path: "/repo/src/a.ts" }, CONFIG), { kind: "edit", target: "/repo/src/a.ts" });
-		assert.deepEqual(classifyCall("write", { path: "src/b.ts" }, CONFIG), { kind: "edit", target: "src/b.ts" });
-		assert.equal(classifyCall("Write", { file_path: "/tmp/notes.md" }, CONFIG).kind, "other");
-		assert.equal(classifyCall("Write", { file_path: "/private/tmp/x/scratchpad/a.py" }, CONFIG).kind, "other");
+		// The path argument's name differs by tool, and a scratch path is not
+		// an edit of the tree at all.
+		const cases: Array<{ rule: string; actual: ReturnType<typeof classifyCall> }> = [
+			{
+				rule: "the path is under file_path",
+				actual: classifyCall("Edit", { file_path: "/repo/src/a.ts" }, CONFIG),
+			},
+			{ rule: "the path is under path", actual: classifyCall("write", { path: "src/b.ts" }, CONFIG) },
+			{ rule: "the path is a temp file", actual: classifyCall("Write", { file_path: "/tmp/notes.md" }, CONFIG) },
+			{
+				rule: "the path is a scratch file",
+				actual: classifyCall("Write", { file_path: "/private/tmp/x/scratchpad/a.py" }, CONFIG),
+			},
+		];
+		assert.deepEqual(cases[0]!.actual, { kind: "edit", target: "/repo/src/a.ts" }, cases[0]!.rule);
+		assert.deepEqual(cases[1]!.actual, { kind: "edit", target: "src/b.ts" }, cases[1]!.rule);
+		assert.equal(cases[2]!.actual.kind, "other", cases[2]!.rule);
+		assert.equal(cases[3]!.actual.kind, "other", cases[3]!.rule);
 	});
 
 	it("counts in-place shell edits on repository files", () => {
@@ -254,19 +268,19 @@ describe("findStaleVerifications", () => {
 	});
 
 	it("blames a human prompt between the run and the edit on the user", () => {
-		const scan = findStaleVerifications(
-			[...sh("v1", "npm test", 0, 120), user("Rename that function.", 130), ...edit("e1", "src/a.ts", 140)],
-			CONFIG,
-		);
-		assert.equal(scan.stale_runs[0]!.cause, "user");
-	});
-
-	it("does not take an injected harness message for a human prompt", () => {
-		const scan = findStaleVerifications(
-			[...sh("v1", "npm test", 0, 120), user("<task-notification>done</task-notification>", 130), ...edit("e1", "src/a.ts", 140)],
-			CONFIG,
-		);
-		assert.equal(scan.stale_runs[0]!.cause, "agent");
+		// A person typed between the run and the edit makes the user the cause;
+		// a message the harness injected does not.
+		const cases: Array<{ rule: string; text: string; cause: string }> = [
+			{ rule: "a person typed it", text: "Rename that function.", cause: "user" },
+			{ rule: "the harness injected it", text: "<task-notification>done</task-notification>", cause: "agent" },
+		];
+		for (const c of cases) {
+			const scan = findStaleVerifications(
+				[...sh("v1", "npm test", 0, 120), user(c.text, 130), ...edit("e1", "src/a.ts", 140)],
+				CONFIG,
+			);
+			assert.equal(scan.stale_runs[0]!.cause, c.cause, c.rule);
+		}
 	});
 
 	it("blames a subagent that ran between the run and the edit", () => {
