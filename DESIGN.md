@@ -550,7 +550,9 @@ estimated.
 
 Every span reports the same three things, so spans can be compared: minutes,
 turns, and tokens. Tokens are unknown, never zero, when the transcript
-recorded no usage for the window.
+recorded no usage for the window. A turn counts when the span reaches into it:
+a span that opens in the middle of a turn still counts that turn, because the
+work the agent did in it belongs to the turn.
 
 Background work is measured, not skipped: a call the host ran in the background
 is joined to the record of its completion, so it times as the work it actually

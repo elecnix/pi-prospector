@@ -288,6 +288,42 @@ describe("commit detection", () => {
 		assert.equal(commitSubjectOf("git commit"), null);
 	});
 
+	it("does not mistake a command that only mentions a commit for one", () => {
+		// The agent quoting a commit command is not committing: the phase span
+		// would end at the quote instead of at the real commit.
+		assert.equal(isCommitCommand("echo 'git commit -m \"x\"'"), false);
+		// A different git command that shares the name writes a commit object
+		// without landing the work on a branch.
+		assert.equal(isCommitCommand("git commit-tree abc123"), false);
+	});
+
+	it("does not mistake a heredoc body for a commit", () => {
+		// The agent writing a script that contains a commit command is not
+		// committing either. A heredoc body is text, not a command.
+		const script = "cat > /tmp/deploy.sh <<'EOF'\ngit commit -m 'phantom'\nEOF";
+		assert.equal(isCommitCommand(script), false);
+	});
+
+	it("recognises a commit behind git's global options", () => {
+		// `git -C <dir>` is how an agent commits in a worktree, and
+		// `--git-dir=` names the repository outright. Both are still commits.
+		assert.equal(isCommitCommand("git -C /repo commit -m 'fix'"), true);
+		assert.equal(isCommitCommand("git --git-dir=/repo/.git commit -m 'fix'"), true);
+		assert.equal(isCommitCommand("git -c user.name=dev commit -m 'fix'"), true);
+		assert.equal(isPreparationCommand("git -C /repo add -A"), true);
+		// A long option that takes its value separately is not a global
+		// option, so the word after it is not a subcommand.
+		assert.equal(isCommitCommand("git log --grep commit"), false);
+	});
+
+	it("reads each command a chained command runs", () => {
+		// A shell runs the parts of a chained command in turn, and each is a
+		// command of its own.
+		assert.equal(isCommitCommand("git add -A && git commit -m 'x'"), true);
+		assert.equal(isPreparationCommand("git add -A && git commit -m 'x'"), true);
+		assert.equal(isCommitCommand("git add -A; git commit -m 'x'"), true);
+	});
+
 	it("recognises the commands that start a commit's preparation", () => {
 		assert.equal(isPreparationCommand("npm test"), true);
 		assert.equal(isPreparationCommand("git add -A"), true);
@@ -381,6 +417,9 @@ describe("measurePhaseSpans", () => {
 		// The preparation starts at the passing run, at 200.
 		assert.equal(preparation.start_message_id, "c2");
 		assert.equal(preparation.seconds, 200);
+		// The turn the preparation opened in is counted, even though the turn
+		// itself opened before the preparation's start.
+		assert.equal(preparation.turns, 1);
 	});
 
 	it("does not start a preparation at a test run whose failure a pipe hid", () => {
@@ -471,6 +510,49 @@ describe("measurePhaseSpans", () => {
 		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand });
 		assert.equal(spans[0]?.end_reason, "session_end");
 		assert.equal(spans[0]?.seconds, 60);
+	});
+
+	it("counts the turn a preparation opened in, even when the turn began earlier", () => {
+		// The turn opened at 0, the preparation at 10 and the commit at 110.
+		// The span covers the one turn the preparation belonged to: a turn
+		// counts when the span reaches into it, not only when the span opened
+		// at the turn's own start.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "npm test" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(100) }),
+			spanRow({ id: "c2", role: "assistant", timestamp: at(110), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "git commit -m 'one'" } }]) }),
+			spanRow({ id: "r2", role: "toolResult", timestamp: at(120) }),
+		];
+		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand, commitSubject: commitSubjectOf });
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		assert.equal(preparation.turns, 1);
+	});
+
+	it("does not end a start-to-first-commit span at a command that only mentions a commit", () => {
+		// The agent writes a script whose body contains a commit command. The
+		// span must end at the real commit, not at the quote.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({
+				id: "c0",
+				role: "assistant",
+				timestamp: at(10),
+				tool_calls: JSON.stringify([{ id: "t0", name: "bash", arguments: { command: "cat > /tmp/deploy.sh <<'EOF'\ngit commit -m 'phantom'\nEOF" } }]),
+			}),
+			spanRow({ id: "r0", role: "toolResult", timestamp: at(20) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(300), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "git commit -m 'real'" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(310) }),
+		];
+		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand, commitSubject: commitSubjectOf });
+		const start = spans.find((s) => s.kind === "start_to_first_commit");
+		assert.ok(start);
+		assert.equal(start.commit_subject, "real");
+		assert.equal(start.end_message_id, "c1");
+		assert.equal(start.seconds, 300);
+		// One commit, not two: the quote did not open a preparation span.
+		assert.equal(spans.filter((s) => s.kind === "commit_preparation").length, 1);
 	});
 
 	it("measures a commit with no preparation marker from the previous commit, not from zero", () => {
@@ -600,10 +682,6 @@ describe("measureSkillSpans", () => {
 	});
 
 	it("does not end a skill span at the turn after the one it ran in", () => {
-		// The skill is in the second turn, so the turn it belongs to is not
-		// the first: a lookup that keyed the turn's end by anything but the
-		// turn's own ordinal would miss it and stretch the span to the
-		// session's end.
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
 			spanRow({ id: "a1", role: "assistant", timestamp: at(10) }),
@@ -618,6 +696,9 @@ describe("measureSkillSpans", () => {
 		assert.equal(spans[0]?.end_reason, "turn_end");
 		// The turn ended at 200, not at the session's end.
 		assert.equal(spans[0]?.seconds, 90);
+		// The turn the skill ran in is counted, even though the turn opened
+		// before the skill's own start.
+		assert.equal(spans[0]?.turns, 1);
 	});
 
 	it("does not end a pull-request skill at a gh pr create whose answer lands after the next skill", () => {

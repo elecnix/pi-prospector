@@ -19,28 +19,6 @@
 import type { BackgroundTaskRow } from "../../types.js";
 
 /**
- * A backgrounded call whose real end is known.
- */
-export interface BackgroundCall {
-	/** The call's tool-use id — the join key. */
-	toolUseId: string;
-	/** The message that issued the call. */
-	messageId: string;
-	/** The tool's name, as normalised by the parser. */
-	name: string;
-	/** When the call was issued. */
-	startedAt: number;
-	/** When the background task really finished. */
-	completedAt: number;
-	/** How long the work took, in seconds. */
-	seconds: number;
-	/** The harness's verdict, verbatim: completed | failed | killed | … */
-	status: string | null;
-	/** The harness's task id, when it recorded one. */
-	taskId: string | null;
-}
-
-/**
  * Index a session's background-task completions by the tool-use id they name.
  *
  * A tool-use id appears at most once per session — the table's key is

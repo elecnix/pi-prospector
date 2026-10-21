@@ -59,6 +59,14 @@ interface Turn {
 	startMessageId: string;
 	/** The instant the turn opened, in ms, or null when unrecorded. */
 	startMs: number | null;
+	/**
+	 * The instant the turn closed, in ms, or null when unrecorded.
+	 *
+	 * The turn's end is the last message before the next user message. A span
+	 * that opens in the middle of a turn still belongs to that turn, so the
+	 * turn's end is what says the span is inside it.
+	 */
+	endMs: number | null;
 }
 
 /**
@@ -73,16 +81,20 @@ function turnStarts(rows: readonly SpanRow[]): Turn[] {
 	let current: Turn | null = null;
 	for (const row of rows) {
 		if (row.role === "user") {
-			current = { startMessageId: row.id, startMs: parseTime(row.timestamp) };
+			current = { startMessageId: row.id, startMs: parseTime(row.timestamp), endMs: null };
 			turns.push(current);
 			continue;
 		}
 		if (current === null) {
 			// Work before the first user message still belongs to a turn: the
 			// harness's own opening actions. It is a turn with no user message.
-			current = { startMessageId: row.id, startMs: parseTime(row.timestamp) };
+			current = { startMessageId: row.id, startMs: parseTime(row.timestamp), endMs: null };
 			turns.push(current);
 		}
+		const ms = parseTime(row.timestamp);
+		// The turn's end is the latest message in it. Rows are not guaranteed
+		// to be in timestamp order, so the latest wins rather than the last.
+		if (ms !== null) current.endMs = current.endMs === null ? ms : Math.max(current.endMs, ms);
 	}
 	return turns;
 }
@@ -132,14 +144,26 @@ function tokensBetween(rows: readonly SpanRow[], fromMs: number | null, toMs: nu
 /**
  * The number of turns a span covers.
  *
- * A turn counts when it opened inside the span. A span that opens before the
- * first turn and closes after it counts that turn once.
+ * A turn counts when the span reaches into it: it opened before the span
+ * started, or it opened inside it. A turn that opened after the span ended is
+ * not counted, and neither is one that closed before the span began.
+ *
+ * A span that starts in the middle of a turn therefore counts that turn: the
+ * work the agent did in it belongs to the turn, whether or not the span
+ * covers the turn's opening message.
  */
 function turnsBetween(startMs: number | null, endMs: number | null, turns: readonly Turn[]): number {
 	if (startMs === null || endMs === null) return 0;
 	let count = 0;
 	for (const turn of turns) {
 		if (turn.startMs === null) continue;
+		// The turn opened before the span began and closed after it ended: the
+		// span sits inside the turn.
+		if (turn.startMs <= startMs && turn.endMs !== null && turn.endMs >= endMs) {
+			count++;
+			continue;
+		}
+		// The turn opened inside the span.
 		if (turn.startMs >= startMs && turn.startMs <= endMs) count++;
 	}
 	return count;
@@ -204,6 +228,8 @@ export function measurePhaseSpans(
 		isError: boolean;
 		markers: readonly string[];
 		position: number;
+		/** Whether this call is a preparation marker of its own. */
+		isPreparation: boolean;
 	}> = [];
 	for (const inv of stream.invocations) {
 		const command = typeof inv.args["command"] === "string" ? (inv.args["command"] as string) : "";
@@ -217,6 +243,7 @@ export function measurePhaseSpans(
 			isError: inv.outcome?.isError ?? false,
 			markers,
 			position: inv.ordinal,
+			isPreparation: opts.isPreparation(command),
 		});
 	}
 
@@ -273,7 +300,7 @@ export function measurePhaseSpans(
 		const isFailed = opts.isFailedPreparation ?? (() => false);
 		const preparation = commands.find(
 			(c) =>
-				opts.isPreparation(c.command) &&
+				c.isPreparation &&
 				// A test run that failed prepared nothing: the agent still had
 				// work to do before the commit. Only a run that passed marks
 				// the start of the preparation.
@@ -354,7 +381,7 @@ export function measureSkillSpans(
 			for (let j = 0; j < rows.length; j++) {
 				if (rows[j]!.role === "user") break;
 				const ms = parseTime(rows[j]!.timestamp);
-				if (ms !== null) end = ms;
+				if (ms !== null) end = end === null ? ms : Math.max(end, ms);
 			}
 			turnEndMs.set(-1, end);
 		}
@@ -365,7 +392,9 @@ export function measureSkillSpans(
 			for (let j = i + 1; j < rows.length; j++) {
 				if (rows[j]!.role === "user") break;
 				const ms = parseTime(rows[j]!.timestamp);
-				if (ms !== null) end = ms;
+				// The latest message in the turn, not the last one: rows are
+				// not guaranteed to be in timestamp order.
+				if (ms !== null) end = end === null ? ms : Math.max(end, ms);
 			}
 			turnEndMs.set(turn, end);
 		}

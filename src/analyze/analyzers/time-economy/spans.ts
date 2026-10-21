@@ -137,25 +137,130 @@ export const PhaseSpanSchema = Type.Object({
 export type PhaseSpan = Static<typeof PhaseSpanSchema>;
 
 /**
- * A shell command that marks the end of a phase: a commit.
+ * The shell commands a script body can hide behind.
  *
- * The pattern is deliberately narrow. `git commit` *is* the boundary the phase
- * span measures to; `git commit --amend` is too. A command that merely mentions
- * commits (`git log`, `git show`) is not a boundary.
+ * A heredoc body is text the agent wrote, and a quoted string is an argument
+ * the agent passed. A commit named inside either is not a commit.
  */
-const COMMIT_COMMAND = /\bgit\s+commit\b/;
+const HEREDOC_BODY = /<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*?\n\1\b/g;
+const QUOTED_STRING = /"[^"\n]*"|'[^'\n]*'/g;
 
-/** Whether a command commits. */
+/**
+ * A command with its heredoc bodies and quoted strings removed.
+ *
+ * What is left is the part the shell actually executes, so a pattern that
+ * matches it matches a command rather than a mention of one.
+ */
+export function stripCommandText(command: string): string {
+	return command.replace(HEREDOC_BODY, "<<HEREDOC").replace(QUOTED_STRING, " ");
+}
+
+/**
+ * git's global options that take their value in the next word.
+ *
+ * The value is a path or a setting, never a subcommand, so it is skipped
+ * along with the option.
+ */
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+	"-C",
+	"-c",
+	"--git-dir",
+	"--work-tree",
+	"--namespace",
+	"--super-prefix",
+	"--config-env",
+]);
+
+/**
+ * The segments a shell command runs, one per command.
+ *
+ * A shell runs the parts of a command separated by `&&`, `||`, `;`, `|` and
+ * newlines in turn, and each part is a command of its own. `git add -A && git
+ * commit` is two commands: one stages and one commits.
+ */
+const COMMAND_SEPARATOR = /\|\||&&|[;\n|]/;
+
+function commandSegments(command: string): string[] {
+	return command
+		.split(COMMAND_SEPARATOR)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+}
+
+/**
+ * The subcommand a command runs, when the command is a git one.
+ *
+ * git takes global options before the subcommand: `git -C <dir> commit`,
+ * `git --git-dir=<dir> commit`, `git -c key=value commit`. An agent commits in
+ * a worktree that way, so a pattern that only matched a bare `git commit`
+ * would miss it.
+ *
+ * The options git itself takes are skipped, and the ones that carry a value
+ * take the next word with them. Everything after the subcommand belongs to
+ * the subcommand and is left alone, so `git log --grep commit` reads a log
+ * rather than committing.
+ */
+export function gitSubcommand(command: string): string | null {
+	const match = /\bgit\b/.exec(command);
+	if (!match) return null;
+	const tokens = command
+		.slice(match.index + match[0].length)
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean);
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i]!;
+		if (!token.startsWith("-")) return token;
+		// An option that carries its value: `--git-dir=/repo/.git`.
+		if (token.includes("=")) continue;
+		// An option that takes the next word as its value.
+		if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(token)) {
+			i++;
+			continue;
+		}
+		// A short option with an attached value: `-C/repo`.
+		if (/^-[a-zA-Z]./.test(token)) continue;
+		// A flag: `--no-pager`. It takes no value and is not a subcommand.
+	}
+	return null;
+}
+
+/**
+ * The git subcommands a command runs, one per segment of it.
+ *
+ * A command that runs several commands has one subcommand per segment, and
+ * each is reported: `git add -A && git commit` stages and commits.
+ */
+function gitSubcommands(command: string): string[] {
+	return commandSegments(command)
+		.map((segment) => gitSubcommand(segment))
+		.filter((sub): sub is string => sub !== null);
+}
+
+/**
+ * Whether a command commits.
+ *
+ * `git commit` *is* the boundary the phase span measures to; `git commit
+ * --amend` is too. A command that merely mentions commits (`git log`, `git
+ * show`) is not a boundary.
+ *
+ * The command is read as a command, not as text: a heredoc body is a script
+ * the agent wrote, and a quoted string is an argument. Neither commits
+ * anything, and a phase span that ended at one would report a commit the
+ * repository never received.
+ */
 export function isCommitCommand(command: string): boolean {
-	return COMMIT_COMMAND.test(command);
+	return gitSubcommands(stripCommandText(command)).includes("commit");
 }
 
 /** The subject a commit command carries, when it names one. */
 export function commitSubjectOf(command: string): string | null {
 	// `git commit -m "subject"` or `git commit -m 'subject'`. The subject is
 	// read from the command, never from a repository the analyzer cannot see.
-	const match = /(?:^|\s)-m\s+["']([^"']*)["']/.exec(command);
-	if (match?.[1]) return match[1];
+	// The quote is matched as a pair, so a subject that contains the other
+	// kind of quote is not truncated at it.
+	const match = /(?:^|\s)-m\s+(["'])([\s\S]*?)\1/.exec(command);
+	if (match?.[2]) return match[2];
 	const bare = /(?:^|\s)-m\s+(\S+)/.exec(command);
 	return bare?.[1] ?? null;
 }
@@ -171,13 +276,9 @@ const PREPARATION_COMMAND_PATTERNS: readonly { source: string; re: RegExp }[] = 
 	// A full test run: the project's own test command.
 	{ source: "test run", re: /\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b/ },
 	{ source: "test run", re: /\bpytest\b|\bunittest\b|\bgo\s+test\b|\bcargo\s+test\b|\bmvn\s+test\b|\bgradle\s+test\b/ },
-	// Staging: the agent is assembling the commit.
-	{ source: "git add", re: /\bgit\s+add\b/ },
 	// A review: the agent asked someone to look at the work.
 	{ source: "review", re: /\bgh\s+pr\s+(review|view|diff)\b/ },
 	{ source: "review", re: /\bcode-?review\b|\breview\b.*--diff/ },
-	// A PR skill: the agent invoked the pull-request skill.
-	{ source: "pr skill", re: /\bskill\b.*\b(pr|pull-?request)\b/i },
 ];
 
 /** The preparation markers that are a test run, and so can fail. */
@@ -207,9 +308,20 @@ export function isFailedPreparation(command: string, isError: boolean, outputMar
 	return outputMarkers.length > 0;
 }
 
-/** Whether a command marks the start of a commit's preparation. */
+/**
+ * Whether a command marks the start of a commit's preparation.
+ *
+ * The issue names four markers: a full test run, `git add`, a review, and a
+ * PR skill. The first three are shell commands and are matched here. The
+ * fourth is a tool call, so the analyzer passes the skill's name in
+ * separately — see `isPreparationSkill` in the phase-span options.
+ */
 export function isPreparationCommand(command: string): boolean {
-	return PREPARATION_COMMAND_PATTERNS.some((p) => p.re.test(command));
+	const stripped = stripCommandText(command);
+	// Staging: the agent is assembling the commit. The subcommand may sit
+	// behind git's global options, so it is read the way git reads it.
+	if (gitSubcommands(stripped).includes("add")) return true;
+	return PREPARATION_COMMAND_PATTERNS.some((p) => p.re.test(stripped));
 }
 
 // ─────────────────────────── skill spans ───────────────────────────
