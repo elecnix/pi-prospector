@@ -187,6 +187,14 @@ carries information neither one carries alone.
   An apology is not a **correction**: the user corrects the agent, the agent
   apologises, and the two never stand for the same act.
 
+Both speech acts are read on either model path a classifier analyzer can take.
+On the generative path the model fills a form, and an apology comes back with
+the quote it copied from the response. On the decision-model path the same
+question is asked of the model, and the apology's quote — which a decision
+model cannot write, because it generates no text — is copied by a second
+generative call, on the same rule as a surprise quote. A signal that only one
+path could reach would vanish the moment a run chose the other.
+
 ### Analysis domain (the append-only output)
 
 - **Analysis graph** — the entire body of derived analysis, layered on top of
