@@ -121,6 +121,30 @@ describe("rebuttal on the turn-pair-llm decision-model path", () => {
 		);
 		assert.equal((result.contentJson as Record<string, unknown>)["friction_type"], "rebuttal");
 	});
+
+	it("carries the deterministic candidate into the state as a hint", async () => {
+		const mock = createMockDecisionModel({ responder: () => turnAnswers("rebuttal") });
+		await turnPairLLMAnalyzer.analyze(
+			TURN_UNIT,
+			runContext("turn-pair-llm", mock.caller, createMockLLM({ fallback: "" }).caller),
+		);
+		const state = mock.calls[0]!.state as Record<string, unknown>;
+		assert.equal(state["rebuttal_candidate"], REBUTTAL_TEXT, "the candidate travels with the turn");
+	});
+
+	it("leaves the candidate out of the state when the wording matched nothing", async () => {
+		const mock = createMockDecisionModel({ responder: () => turnAnswers("rebuttal") });
+		const withoutCandidate: AnalysisUnit = {
+			...TURN_UNIT,
+			meta: { ...(TURN_UNIT.meta as Record<string, unknown>), rebuttalCandidate: null },
+		};
+		await turnPairLLMAnalyzer.analyze(
+			withoutCandidate,
+			runContext("turn-pair-llm", mock.caller, createMockLLM({ fallback: "" }).caller),
+		);
+		const state = mock.calls[0]!.state as Record<string, unknown>;
+		assert.ok(!("rebuttal_candidate" in state), "no candidate, no hint");
+	});
 });
 
 describe("apology on the assistant-cognition decision-model path", () => {
