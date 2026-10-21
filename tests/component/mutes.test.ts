@@ -120,6 +120,23 @@ async function tfProps(db: AsyncDatabase, sessionId: string): Promise<TurnFrustr
 	return (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId)).map((n) => JSON.parse(n.content_json) as TurnFrustrationProperties);
 }
 
+/**
+ * The *current* accumulation node — the head of its lineage, which is what a
+ * reader sees. `listAnalysisNodes` reads the current generation, so this is the
+ * conclusion, not merely the newest one.
+ */
+async function readAccumulation(db: AsyncDatabase): Promise<{
+	accumulated_friction: number;
+	turn_contributions: Array<{ frustration_weight: number }>;
+}> {
+	const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
+	assert.equal(nodes.length, 1, "exactly one current accumulation node");
+	return JSON.parse(nodes[0]!.content_json) as {
+		accumulated_friction: number;
+		turn_contributions: Array<{ frustration_weight: number }>;
+	};
+}
+
 describe("muting a lexicon term", () => {
 	it("stops a muted term matching new turns while previous hits remain", async () => {
 		const { db, close } = await tempDb();
@@ -456,20 +473,8 @@ describe("a muted term's existing hits (#325)", () => {
 			const { framework } = await buildWithReaders(db);
 			await framework.run("s1");
 
-			const readAccumulation = async () => {
-				// The *current* accumulation node — the head of its lineage, which is
-				// what a reader sees. `listAnalysisNodes` reads the current
-				// generation, so this is the conclusion, not merely the newest one.
-				const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
-				assert.equal(nodes.length, 1, "exactly one current accumulation node");
-				return JSON.parse(nodes[0]!.content_json) as {
-					accumulated_friction: number;
-					turn_contributions: Array<{ frustration_weight: number }>;
-				};
-			};
-
 			// Before the mute, the hit's weight is part of the session's friction.
-			const before = await readAccumulation();
+			const before = await readAccumulation(db);
 			assert.ok(
 				before.turn_contributions.some((c) => c.frustration_weight > 0),
 				"the lexicon hit contributes friction before the mute",
@@ -480,7 +485,7 @@ describe("a muted term's existing hits (#325)", () => {
 			// A plain fill leaves the stale accumulation alone; the revise
 			// recomputes it, and the muted hit no longer contributes.
 			await framework.run("s1", { revise: ["config"] });
-			const after = await readAccumulation();
+			const after = await readAccumulation(db);
 			assert.equal(
 				after.turn_contributions.every((c) => c.frustration_weight === 0),
 				true,
@@ -491,7 +496,7 @@ describe("a muted term's existing hits (#325)", () => {
 			// reverts the fingerprint and the next revise brings the hit back.
 			await unmuteTerm(db, "wrong");
 			await framework.run("s1", { revise: ["config"] });
-			const restored = await readAccumulation();
+			const restored = await readAccumulation(db);
 			assert.ok(
 				restored.turn_contributions.some((c) => c.frustration_weight > 0),
 				"unmuting restores the term's contribution",
@@ -553,19 +558,10 @@ describe("a muted term's existing hits (#325)", () => {
 			});
 			await framework.run("s1");
 
-			const readAccumulation = async () => {
-				const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
-				return nodes.map((n) => JSON.parse(n.content_json) as {
-					accumulated_friction: number;
-					turn_contributions: Array<{ frustration_weight: number }>;
-				});
-			};
-
 			// Before the mute: one conclusion, counting both terms' hits.
-			const before = await readAccumulation();
-			assert.equal(before.length, 1, "one current accumulation node before the mute");
+			const before = await readAccumulation(db);
 			assert.equal(
-				before[0]!.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0),
+				before.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0),
 				1,
 				"both terms' hits contribute before the mute",
 			);
@@ -577,13 +573,53 @@ describe("a muted term's existing hits (#325)", () => {
 			// produced is not a finding any more, and the recomputed one replaces
 			// it. Exactly one conclusion is current, and the muted term's weight
 			// is not in it.
-			const after = await readAccumulation();
-			assert.equal(after.length, 1, "exactly one current accumulation node after the mute");
+			const after = await readAccumulation(db);
 			assert.equal(
-				after[0]!.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0),
+				after.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0),
 				0.5,
 				"the current conclusion counts the unmuted term's hit only",
 			);
+		} finally {
+			await close();
+		}
+	});
+
+	it("leaves the other muted term's conclusion alone", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong and putain" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db, {
+				"friction-accumulation": { frustrationWeightCap: 5 },
+			});
+			await framework.run("s1");
+
+			// A second session that carries only one of the two terms. Its
+			// conclusion rests on that term's hit alone.
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+			await framework.run("s2");
+
+			// Two terms muted at once. Each silence is its own assertion, and a
+			// conclusion drawn from one term's hit is not the other term's
+			// business.
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await muteTerm(db, { term: "putain", by: "operator" });
+
+			// Recompute the second session's conclusion while both mutes are in
+			// force. It is written inside the 'putain' mute's window and it
+			// consumed 'wrong's silenced hit.
+			await framework.run("s2", { revise: ["config"] });
+			const other = await listAnalysisNodes(db, { analyzerId: "friction-accumulation", sessionId: "s2" });
+			assert.equal(other.length, 1, "the second session has its own conclusion");
+
+			// Lifting the 'putain' mute says nothing about 'wrong's silenced
+			// hit, so the second session's conclusion is not its business.
+			await unmuteTerm(db, "putain");
+			const after = await listAnalysisNodes(db, { analyzerId: "friction-accumulation", sessionId: "s2" });
+			assert.equal(after.length, 1, "the other term's conclusion is still current");
+			assert.equal(after[0]!.output_key, other[0]!.output_key, "and it is the same node");
 		} finally {
 			await close();
 		}
@@ -628,18 +664,9 @@ describe("a muted term's existing hits (#325)", () => {
 			const { framework } = await buildWithReaders(db);
 			await framework.run("s1");
 
-			const readAccumulation = async () => {
-				const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
-				assert.equal(nodes.length, 1, "exactly one current accumulation node");
-				return JSON.parse(nodes[0]!.content_json) as {
-					accumulated_friction: number;
-					turn_contributions: Array<{ frustration_weight: number }>;
-				};
-			};
-
 			await muteTerm(db, { term: "wrong", by: "operator" });
 			await framework.run("s1", { revise: ["config"] });
-			const muted = await readAccumulation();
+			const muted = await readAccumulation(db);
 			assert.equal(
 				muted.turn_contributions.every((c) => c.frustration_weight === 0),
 				true,
@@ -647,7 +674,7 @@ describe("a muted term's existing hits (#325)", () => {
 			);
 
 			await unmuteTerm(db, "wrong");
-			const restored = await readAccumulation();
+			const restored = await readAccumulation(db);
 			assert.ok(
 				restored.turn_contributions.some((c) => c.frustration_weight > 0),
 				"unmuting restores the term's contribution",
@@ -659,7 +686,7 @@ describe("a muted term's existing hits (#325)", () => {
 			// not block the recomputation.
 			await muteTerm(db, { term: "wrong", by: "operator" });
 			await framework.run("s1", { revise: ["config"] });
-			const remuted = await readAccumulation();
+			const remuted = await readAccumulation(db);
 			assert.equal(
 				remuted.turn_contributions.every((c) => c.frustration_weight === 0),
 				true,

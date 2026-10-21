@@ -202,16 +202,18 @@ export async function retractConclusionsMadeUnder(
 ): Promise<number> {
 	// The mute's own lifetime: the assertion and its supersession.
 	const assertion = (await prep(db, `
-		SELECT asserted_at, superseded_at FROM assertions
+		SELECT id, asserted_at, superseded_at FROM assertions
 		WHERE subject_kind = 'term' AND subject_key = ? AND verdict = 'muted'
 		ORDER BY asserted_at DESC LIMIT 1
-	`).get(term)) as { asserted_at: string; superseded_at: string | null } | undefined;
+	`).get(term)) as { id: string; asserted_at: string; superseded_at: string | null } | undefined;
 	if (!assertion) return 0;
 
-	// The conclusions that read one of the hits the mute silenced, and were
+	// The conclusions that read one of the hits *this* mute silenced, and were
 	// written while the mute was in force. The `consumes` edge names its target
 	// by the target's content-addressed output key, so the join goes through
-	// the node.
+	// the node, and the `mutes` edge is constrained to this mute's assertion
+	// and to the mute instance that created it, so another term's silenced hits
+	// and a previous instance of this term's mute are not candidates.
 	const rows = (await prep(db, `
 		SELECT DISTINCT c.from_node_id AS id
 		FROM analysis_edges c
@@ -219,6 +221,7 @@ export async function retractConclusionsMadeUnder(
 		JOIN analysis_edges m ON m.from_node_id = hit.id
 		                   AND m.edge_kind = ?
 		                   AND m.to_ref_kind = ?
+		                   AND m.to_ref_id = ?
 		JOIN analysis_nodes conclusion ON conclusion.id = c.from_node_id
 		WHERE c.edge_kind = ? AND c.to_ref_kind = ?
 		  AND conclusion.created_at >= ? AND conclusion.created_at < ?
@@ -226,6 +229,7 @@ export async function retractConclusionsMadeUnder(
 	`).all(
 		EDGE_KINDS.MUTES,
 		REF_KINDS.ASSERTION,
+		assertion.id,
 		EDGE_KINDS.CONSUMES,
 		REF_KINDS.ANALYSIS_NODE,
 		assertion.asserted_at,
