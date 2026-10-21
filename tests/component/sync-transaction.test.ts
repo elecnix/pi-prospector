@@ -28,7 +28,7 @@ import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
-import { tempDb, NO_CLAUDE_DIR } from "./helpers.js";
+import { tempDb, NO_CLAUDE_DIR, piSessionFileName } from "./helpers.js";
 
 function adps(piDir: string, claudeDir: string) {
 	return [new PiFileSource(piDir), new ClaudeFileSource(claudeDir)];
@@ -77,6 +77,12 @@ function piSessionFile(headerId: string, ...messages: Array<Record<string, unkno
 	return lines;
 }
 
+// Session ids are uuids, as pi writes them in the header, and the file name
+// follows the id — discovery claims a session file by its pi-shaped name.
+const A = "aaaa3001-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const B = "aaaa3002-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const S = "aaaa3003-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
 describe("per-session sync transaction (issue #59)", () => {
 	it("a session that fails mid-sync leaves no partial session", async () => {
 		const { db, close } = await tempDb();
@@ -84,35 +90,35 @@ describe("per-session sync transaction (issue #59)", () => {
 		try {
 			// Session A succeeds; session B carries a sentinel message that will
 			// abort its transaction once the failure trigger is armed.
-			const aLines = piSessionFile("sess-a",
+			const aLines = piSessionFile(A,
 				{ type: "message", id: "a-1", timestamp: "2026-02-01T09:01:00Z", message: { role: "user", content: "fine" } },
 			);
-			fs.writeFileSync(path.join(fx.dir("proj-a"), "sess-a.jsonl"), aLines.join("\n") + "\n");
+			fs.writeFileSync(path.join(fx.dir("proj-a"), piSessionFileName(A)), aLines.join("\n") + "\n");
 
-			const bLines = piSessionFile("sess-b",
+			const bLines = piSessionFile(B,
 				{ type: "message", id: "b-1", timestamp: "2026-02-01T09:01:00Z", message: { role: "user", content: "before the failure" } },
 				{ type: "message", id: "b-2-fail", timestamp: "2026-02-01T09:02:00Z", message: { role: "user", content: "boom" } },
 			);
-			fs.writeFileSync(path.join(fx.dir("proj-b"), "sess-b.jsonl"), bLines.join("\n") + "\n");
+			fs.writeFileSync(path.join(fx.dir("proj-b"), piSessionFileName(B)), bLines.join("\n") + "\n");
 
 			await armMessageFailure(db, true);
 
 			const result = await runSync(db, adps(fx.piRoot, NO_CLAUDE_DIR));
 
-			assert.ok(result.errors.some((e) => e.includes("sess-b.jsonl")), `error should mention session B, got: ${result.errors}`);
+			assert.ok(result.errors.some((e) => e.includes(piSessionFileName(B))), `error should mention session B, got: ${result.errors}`);
 			// Session A is unaffected; only A counts as processed.
 			assert.equal(result.sessionsProcessed, 1, "only session A commits; B's failure must not count as processed");
 			assert.equal(result.messagesInserted, 1, "only A's message counts as inserted");
 
 			// B must hold ZERO rows — its session row, messages and cursor all
 			// rolled back together; nothing partial survives.
-			const bSession = await db.prepare("SELECT last_line, message_count FROM sessions WHERE id = ?").get("sess-b");
+			const bSession = await db.prepare("SELECT last_line, message_count FROM sessions WHERE id = ?").get(B);
 			assert.equal(bSession, undefined, "no session row for B may survive a partial failure");
-			const bCount = ((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess-b")) as { c: number }).c;
+			const bCount = ((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get(B)) as { c: number }).c;
 			assert.equal(bCount, 0, "no message for B may survive a partial failure");
 
 			// A is fully committed.
-			const aCount = ((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess-a")) as { c: number }).c;
+			const aCount = ((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get(A)) as { c: number }).c;
 			assert.equal(aCount, 1);
 		} finally {
 			fx.cleanup();
@@ -124,7 +130,7 @@ describe("per-session sync transaction (issue #59)", () => {
 		const { db, close } = await tempDb();
 		const fx = makePiRoot();
 		try {
-			const filePath = path.join(fx.dir("proj"), "sess.jsonl");
+			const filePath = path.join(fx.dir("proj"), piSessionFileName(S));
 
 			// The syncer's resume cursor is `lines.length` (the count of
 			// `content.split("\n")`). A file ending in a newline yields a trailing
@@ -139,7 +145,7 @@ describe("per-session sync transaction (issue #59)", () => {
 			const write = (lines: string[], trailingNewline: boolean) =>
 				fs.writeFileSync(filePath, lines.join("\n") + (trailingNewline ? "\n" : ""));
 
-			const original = piSessionFile("sess",
+			const original = piSessionFile(S,
 				{ type: "message", id: "m1", timestamp: "2026-02-01T09:01:00Z", message: { role: "user", content: "one" } },
 			);
 			write(original, false);
@@ -150,8 +156,8 @@ describe("per-session sync transaction (issue #59)", () => {
 			const r1 = await runSync(db, adps(fx.piRoot, NO_CLAUDE_DIR));
 			armMessageFailure(db, false);
 			assert.equal(r1.errors.length, 0);
-			assert.equal(((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get("sess")) as { c: number }).c, 1);
-			let cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess")) as { last_line: number };
+			assert.equal(((await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get(S)) as { c: number }).c, 1);
+			let cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get(S)) as { last_line: number };
 			assert.equal(cursor.last_line, origLineCount, "run 1 advances the cursor to the end of the file");
 
 			// Run 2: append one good row then one failing row. The good row (m2) is
@@ -168,12 +174,12 @@ describe("per-session sync transaction (issue #59)", () => {
 			const r2 = await runSync(db, adps(fx.piRoot, NO_CLAUDE_DIR));
 			armMessageFailure(db, true);
 
-			assert.ok(r2.errors.some((e) => e.includes("sess.jsonl")), `second run must report the failure, got: ${r2.errors}`);
+			assert.ok(r2.errors.some((e) => e.includes(piSessionFileName(S))), `second run must report the failure, got: ${r2.errors}`);
 			// The already-committed row survives; the appended rows rolled back
 			// together — m2 was written, then undone when m3-fail aborted.
-			const idsAfter = ((await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>).map((r) => r.id);
+			const idsAfter = ((await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all(S)) as Array<{ id: string }>).map((r) => r.id);
 			assert.deepEqual(idsAfter, ["m1"], "a successful insert in the session must roll back with the failure");
-			cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess")) as { last_line: number };
+			cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get(S)) as { last_line: number };
 			assert.equal(cursor.last_line, origLineCount, "the cursor must not advance past rows that were rolled back");
 
 			// Run 3: once the failure is gone, sync resumes and imports the rows the
@@ -182,12 +188,12 @@ describe("per-session sync transaction (issue #59)", () => {
 			const r3 = await runSync(db, adps(fx.piRoot, NO_CLAUDE_DIR));
 			armMessageFailure(db, false);
 			assert.equal(r3.errors.length, 0, `third run should succeed, got: ${r3.errors}`);
-			const idsRecovered = ((await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all("sess")) as Array<{ id: string }>).map((r) => r.id);
+			const idsRecovered = ((await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all(S)) as Array<{ id: string }>).map((r) => r.id);
 			assert.deepEqual(idsRecovered, ["m1", "m2", "m3-fail"], "re-sync imports the rows the failed run rolled back");
 			// The cursor tracks `lines.length` (split length), which includes the
 			// trailing empty element after the final newline.
 			const finalLineCount = fs.readFileSync(filePath, "utf-8").split("\n").length;
-			cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get("sess")) as { last_line: number };
+			cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get(S)) as { last_line: number };
 			assert.equal(cursor.last_line, finalLineCount, "cursor advances past the full file after a successful re-run");
 		} finally {
 			fx.cleanup();

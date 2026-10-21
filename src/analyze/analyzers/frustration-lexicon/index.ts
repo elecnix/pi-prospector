@@ -41,6 +41,8 @@ import {
 	parseClassifyTermObject,
 	extractVerdict,
 } from "./prompt.js";
+import { TERM_DECISION_QUESTIONS, TERM_DECISION_QUESTIONS_HASH, parseTermDecision } from "./decision.js";
+import { decisionIdentity } from "../../decision-model.js";
 import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, type FrustrationLexiconConfig } from "./config.js";
 import { Type, type Static } from "typebox";
 
@@ -53,6 +55,8 @@ export const FrustrationLexiconProperties = Type.Object({
 	rationale: Type.String(),
 	/** The normalised term this verdict is about. */
 	term: Type.String(),
+	/** The decision model's distribution per field, when that path produced the verdict (#338). */
+	probabilities: Type.Optional(Type.Record(Type.String(), Type.Record(Type.String(), Type.Number()))),
 });
 export type FrustrationLexiconProperties = Static<typeof FrustrationLexiconProperties>;
 
@@ -115,6 +119,7 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 
 	modelsForIdentity(config, modelTiers): string[] {
 		const cfg = (config as unknown as FrustrationLexiconConfig) ?? DEFAULT_FRUSTRATION_LEXICON_CONFIG;
+		if (cfg.decisionModel) return [decisionIdentity(cfg.decisionModel, TERM_DECISION_QUESTIONS_HASH)];
 		return [resolveModelSpec(cfg.tier, modelTiers)];
 	},
 
@@ -182,6 +187,29 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = (ctx.config.configJson as unknown as FrustrationLexiconConfig) ?? DEFAULT_FRUSTRATION_LEXICON_CONFIG;
 		const { term } = unit.meta as unknown as TermMeta;
+
+		if (config.decisionModel) {
+			if (!ctx.decide) {
+				throw new Error(`frustration-lexicon is configured with decision model '${config.decisionModel}', but this run has no decision-model client.`);
+			}
+			// The term is the whole state, so the verdict stays a function of the term alone.
+			const decision = await ctx.decide({ model: config.decisionModel, state: { term }, questions: TERM_DECISION_QUESTIONS });
+			const properties: FrustrationLexiconProperties = { ...parseTermDecision(decision), term };
+			return {
+				nodeKind: "classification",
+				contentJson: properties as unknown as Record<string, unknown>,
+				anchorKind: "session",
+				anchorRef: unit.anchorRef,
+				modelUsed: decision.model,
+				costUsd: decision.costUsd,
+				tokensUsed: decision.inputTokens + decision.outputTokens,
+				inputTokens: decision.inputTokens,
+				cachedInputTokens: 0,
+				outputTokens: decision.outputTokens,
+				durationMs: decision.durationMs,
+				edges: [{ toRefKind: REF_KINDS.SESSION, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 }],
+			};
+		}
 
 		const response = await ctx.llm({
 			model: resolveModelSpec(config.tier, ctx.modelTiers),

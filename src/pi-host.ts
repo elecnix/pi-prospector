@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { PiAiModule, PiAssistantMessage, PiCompleteOptions, PiContext, PiModel } from "./pi-stubs.js";
 
 /**
  * Loads pi's own packages (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`)
@@ -107,4 +108,17 @@ function readPackageName(dir: string): string | undefined {
 
 function isModuleNotFound(err: unknown): boolean {
 	return err instanceof Error && (err as NodeJS.ErrnoException).code === "ERR_MODULE_NOT_FOUND";
+}
+
+/**
+ * Complete a request with the module-level `complete` of pi-ai, which pi
+ * versions before 1.0 export. A pi-ai without it is a newer pi, whose model
+ * registry completes requests itself.
+ */
+export async function completeWithPiAi(model: PiModel, context: PiContext, options: PiCompleteOptions): Promise<PiAssistantMessage> {
+	const piAi = await importPiPackage<PiAiModule>("@earendil-works/pi-ai");
+	if (typeof piAi.complete !== "function") {
+		throw new Error("The installed pi-ai has no module-level complete, and the model registry has no completeSimple. Update pi-prospector for this pi.");
+	}
+	return piAi.complete(model, context, options);
 }

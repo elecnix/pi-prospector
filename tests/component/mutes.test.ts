@@ -189,6 +189,20 @@ describe("muting a lexicon term", () => {
 		}
 	});
 
+	it("keys a quoted multi-word mute the way the lexicon keys the phrase, and unmutes it", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await muteTerm(db, { term: '"Do  Not"' });
+			assert.deepEqual(await getMutedTerms(db), ["do not"]);
+			assert.equal(await isTermMuted(db, "do not"), true);
+
+			assert.equal(await unmuteTerm(db, '"do not"'), 1);
+			assert.deepEqual(await getMutedTerms(db), []);
+		} finally {
+			await close();
+		}
+	});
+
 	it("joins the mute to the graph with a mutes edge", async () => {
 		const { db, close } = await tempDb();
 		try {

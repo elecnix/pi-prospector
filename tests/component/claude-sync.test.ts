@@ -9,6 +9,7 @@ import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi-file.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { getStats } from "../../src/db/queries.js";
+import { claudeSessionFileName, claudeSessionId, piSessionFileName } from "./helpers.js";
 
 function adps(piDir: string, claudeDir: string) {
 	return [new PiFileSource(piDir), new ClaudeFileSource(claudeDir)];
@@ -36,18 +37,19 @@ function createMixedFixture(
 	const piRoot = path.join(home, ".pi", "agent", "sessions");
 	const claudeRoot = path.join(home, ".claude", "projects");
 
-	// Create Pi session directories and files
+	// Create Pi session directories and files. A file name may carry a subpath,
+	// which is how a nested layout (a child run's own directory) is expressed.
 	for (const sess of piSessions) {
-		const projectDir = path.join(piRoot, sess.projectDir);
-		fs.mkdirSync(projectDir, { recursive: true });
-		fs.writeFileSync(path.join(projectDir, sess.fileName), sess.lines.join("\n") + "\n");
+		const filePath = path.join(piRoot, sess.projectDir, sess.fileName);
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, sess.lines.join("\n") + "\n");
 	}
 
 	// Create Claude directories
 	for (const sess of claudeSessions) {
-		const projectDir = path.join(claudeRoot, sess.projectDir);
-		fs.mkdirSync(projectDir, { recursive: true });
-		fs.writeFileSync(path.join(projectDir, sess.fileName), sess.lines.join("\n") + "\n");
+		const filePath = path.join(claudeRoot, sess.projectDir, sess.fileName);
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, sess.lines.join("\n") + "\n");
 	}
 
 	return { piRoot, claudeRoot };
@@ -68,10 +70,10 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "-Users-testuser",
-						fileName: "claude-sess-001.jsonl",
+						fileName: claudeSessionFileName("claude-sess-001"),
 						lines: [
-							JSON.stringify({ type: "last-prompt", leafUuid: "lp1", sessionId: "claude-sess-001" }),
-							JSON.stringify({ type: "ai-title", aiTitle: "Test Claude Session", sessionId: "claude-sess-001" }),
+							JSON.stringify({ type: "last-prompt", leafUuid: "lp1", sessionId: claudeSessionId("claude-sess-001") }),
+							JSON.stringify({ type: "ai-title", aiTitle: "Test Claude Session", sessionId: claudeSessionId("claude-sess-001") }),
 							JSON.stringify({ type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "Hello" } }),
 							JSON.stringify({ type: "assistant", uuid: "a1", parentUuid: "u1", timestamp: "2026-01-15T10:30:05Z", message: { role: "assistant", model: "claude-sonnet", content: [{ type: "text", text: "Hi there!" }] } }),
 						],
@@ -85,11 +87,11 @@ describe("Claude session sync", () => {
 				// Verify session row
 				const session = (await db.prepare("SELECT * FROM sessions WHERE source = 'claude'").get()) as Record<string, unknown>;
 				assert.ok(session);
-				assert.equal(session.id, "claude-sess-001");
+				assert.equal(session.id, claudeSessionId("claude-sess-001"));
 				assert.equal(session.source, "claude");
 
 				// Verify messages: ai-title is not inserted as a message
-				const messages = (await db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all("claude-sess-001")) as Array<{ role: string; source: string }>;
+				const messages = (await db.prepare("SELECT role, source FROM messages WHERE session_id = ? ORDER BY rowid").all(claudeSessionId("claude-sess-001"))) as Array<{ role: string; source: string }>;
 				assert.equal(messages.length, 2);
 				assert.equal(messages[0]!.role, "user");
 				assert.equal(messages[1]!.role, "assistant");
@@ -113,7 +115,7 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "-Users-testuser",
-						fileName: "claude-cost.jsonl",
+						fileName: claudeSessionFileName("claude-cost"),
 						lines: [
 							JSON.stringify({ type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "Hello" } }),
 							JSON.stringify({
@@ -158,7 +160,7 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "-Users-testuser",
-						fileName: "claude-incr.jsonl",
+						fileName: claudeSessionFileName("claude-incr"),
 						lines: [
 							JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "test" } }),
 						],
@@ -170,7 +172,7 @@ describe("Claude session sync", () => {
 				assert.equal(r1.sessionsProcessed, 1);
 
 				const r2 = await runSync(db, adps(piRoot, claudeRoot));
-				assert.equal(r1.sessionsProcessed, 1);
+				assert.equal(r2.sessionsProcessed, 0, "a re-sync processes nothing new");
 
 				assert.equal(r2.sessionsSkipped, 1);
 				assert.equal(r2.messagesInserted, 0);
@@ -189,7 +191,7 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "--Users-testuser--myproject",
-						fileName: "session-pi.jsonl",
+						fileName: piSessionFileName("aaaa0012-bbbb-4ccc-8ddd-eeeeeeeeeeee", "2026-01-15T10-00-00"),
 						lines: [
 							JSON.stringify({ type: "session", version: 3, id: "pi-sess-1", timestamp: "2026-01-15T10:00:00Z", cwd: "/home/user" }),
 							JSON.stringify({ type: "message", id: "m1", timestamp: "2026-01-15T10:01:00Z", message: { role: "user", content: "pi message" } }),
@@ -199,7 +201,7 @@ describe("Claude session sync", () => {
 				[
 					{
 						projectDir: "-Users-testuser",
-						fileName: "claude-sess.jsonl",
+						fileName: claudeSessionFileName("claude-sess"),
 						lines: [
 							JSON.stringify({ type: "user", uuid: "cu1", timestamp: "2026-01-15T11:00:00Z", message: { role: "user", content: "claude message" } }),
 						],
@@ -213,6 +215,74 @@ describe("Claude session sync", () => {
 				const stats = await getStats(db);
 				assert.ok(stats.piSessions >= 1);
 				assert.ok(stats.claudeSessions >= 1);
+			} finally {
+				cleanupFixture(piRoot);
+			}
+		} finally {
+			await close();
+		}
+	});
+
+	it("indexes a child agent as its own session, attached to the session that spawned it", async () => {
+		const { db, close } = await tempDb();
+		try {
+			// Claude Code names every child agent's transcript `agent-<id>.jsonl` and
+			// writes it under its parent session's `subagents/` directory, which is
+			// how the parent is recovered: the enclosing directory holds the session
+			// id. A workflow child sits two directories deeper, behind `workflows`
+			// and `wf-<id>`, and answers to the same session.
+			const parent = claudeSessionId("child-agent-parent");
+			const childAgent = "a9d08af694d4f7bd7";
+			const workflowChildAgent = "a8670a845f713d1f0";
+			const { piRoot, claudeRoot } = createMixedFixture(
+				[],
+				[
+					{
+						projectDir: "-Users-testuser",
+						fileName: claudeSessionFileName("child-agent-parent"),
+						lines: [
+							JSON.stringify({ type: "user", uuid: "pu1", timestamp: "2026-01-15T10:30:00Z", message: { role: "user", content: "delegate this" } }),
+						],
+					},
+					{
+						projectDir: "-Users-testuser",
+						fileName: path.join(parent, "subagents", `agent-${childAgent}.jsonl`),
+						lines: [
+							JSON.stringify({ type: "user", uuid: "cu1", isSidechain: true, timestamp: "2026-01-15T10:31:00Z", message: { role: "user", content: "the delegated task" } }),
+							JSON.stringify({ type: "assistant", uuid: "ca1", parentUuid: "cu1", isSidechain: true, timestamp: "2026-01-15T10:31:05Z", message: { role: "assistant", model: "claude-sonnet", content: [{ type: "text", text: "done" }] } }),
+						],
+					},
+					{
+						projectDir: "-Users-testuser",
+						fileName: path.join(parent, "subagents", "workflows", "wf_a8e717b7-548", `agent-${workflowChildAgent}.jsonl`),
+						lines: [
+							JSON.stringify({ type: "user", uuid: "wu1", isSidechain: true, timestamp: "2026-01-15T10:32:00Z", message: { role: "user", content: "the workflow stage" } }),
+						],
+					},
+				],
+			);
+			try {
+				const result = await runSync(db, adps(piRoot, claudeRoot));
+				assert.deepEqual(result.errors, []);
+				assert.equal(result.sessionsProcessed, 3, "the session and its two child agents each index once");
+
+				const rows = (await db
+					.prepare("SELECT id, source, parent_session FROM sessions ORDER BY parent_session, id")
+					.all()) as Array<{ id: string; source: string; parent_session: string | null }>;
+				assert.deepEqual(rows, [
+					{ id: parent, source: "claude", parent_session: null },
+					{ id: `agent-${workflowChildAgent}`, source: "claude", parent_session: parent },
+					{ id: `agent-${childAgent}`, source: "claude", parent_session: parent },
+				]);
+
+				// The child's own turns are indexed under its own id, not merged into
+				// the parent's.
+				const childMessages = (await db
+					.prepare("SELECT role FROM messages WHERE session_id = ? ORDER BY rowid")
+					.all(`agent-${childAgent}`)) as Array<{ role: string }>;
+				assert.deepEqual(childMessages.map((m) => m.role), ["user", "assistant"]);
+				const parentMessages = (await db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get(parent)) as { c: number };
+				assert.equal(parentMessages.c, 1, "the parent keeps only its own message");
 			} finally {
 				cleanupFixture(piRoot);
 			}

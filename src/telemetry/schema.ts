@@ -40,6 +40,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"decode-collapse",
 	"repetition-collapse",
 	"session-ending",
+	"pr-opened",
 	"time-economy",
 	"stale-verification",
 	"files-in-play",

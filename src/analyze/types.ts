@@ -11,6 +11,7 @@ import { Type, type Static } from "typebox";
 import type { AsyncDatabase } from "../db/async-db.js";
 import type { TurnPair } from "./analyzers/turn-pair-core/build.js";
 import type { CwdSmoothnessCache } from "./analyzers/session-overview/cross-session.js";
+import type { DecisionCaller } from "./decision-model.js";
 
 // ─────────────────────────── enumerations ───────────────────────────
 
@@ -509,6 +510,11 @@ export interface AnalyzerRunContext {
 	 */
 	getTurnPairs: (sessionId: string) => Promise<TurnPair[]>;
 	llm: LLMCaller;
+	/**
+	 * The decision-model seam (#338), when the run has one. An analyzer whose
+	 * config names a `decisionModel` sends its questions here instead of to `llm`.
+	 */
+	decide?: DecisionCaller;
 	config: AnalyzerConfig;
 	/** Prompt content keyed by prompt name. */
 	prompts: Record<string, string>;

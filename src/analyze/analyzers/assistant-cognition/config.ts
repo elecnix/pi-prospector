@@ -13,6 +13,12 @@ export const AssistantCognitionConfig = Type.Object({
 	 * token) thinking trace carry no cognitive signal worth a model call.
 	 */
 	minThinkingLength: Type.Number(),
+	/**
+	 * A decision model (`provider/model`, e.g. `jev/jev-1.13.0`) that grades
+	 * confusion, indecision, and surprise in one request (#338). Only a turn it
+	 * judges surprised makes a generative call, on `tier`, for the quote.
+	 */
+	decisionModel: Type.Optional(Type.String()),
 });
 export type AssistantCognitionConfig = Static<typeof AssistantCognitionConfig>;
 

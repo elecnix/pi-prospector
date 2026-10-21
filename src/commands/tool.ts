@@ -7,7 +7,7 @@ import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposal
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
 import { collectSupportMap, nestProposals, renderGroupedProposals, serialiseGrouped } from "./grouping.js";
-import { muteTerm, unmuteTerm, formatAssertion } from "./mutes.js";
+import { muteTerm, unmuteTerm, formatAssertion, normaliseTerm } from "./mutes.js";
 import { prospectAnalyze } from "./analyze.js";
 import { getLatestAnalyzeRuns } from "../db/analysis-queries.js";
 import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
@@ -195,9 +195,9 @@ export async function executeProspectTool(
 					by: "agent",
 				});
 				return text(
-					`Muted '${term.toLowerCase()}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage. ` +
+					`Muted '${normaliseTerm(term)}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage. ` +
 						`Run analyze with revise=config to recompute nodes that consulted it. Assertion ${assertionId}.`,
-					{ assertionId, term: term.toLowerCase() },
+					{ assertionId, term: normaliseTerm(term) },
 				);
 			}
 			case "unmute": {
@@ -205,8 +205,8 @@ export async function executeProspectTool(
 				const term = params.term as string;
 				const n = await unmuteTerm(db, term);
 				return text(
-					n > 0 ? `Unmuted '${term.toLowerCase()}'.` : `'${term.toLowerCase()}' was not muted.`,
-					{ superseded: n, term: term.toLowerCase() },
+					n > 0 ? `Unmuted '${normaliseTerm(term)}'.` : `'${normaliseTerm(term)}' was not muted.`,
+					{ superseded: n, term: normaliseTerm(term) },
 				);
 			}
 			case "mutes": {
@@ -301,8 +301,8 @@ Analysis-graph & point-in-time commands (slash commands):
   - /prospect-node <output-key> — one node + resolved outgoing edges (consumes/anchors/produces/revises)
   - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
   - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
-  - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
-  - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
+  - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude|codex|opencode|cline] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
+  - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude|codex|opencode|cline] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions
   - /prospect-runs — list recent runs (ids for diff --runs / --as-of-run)

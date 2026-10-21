@@ -60,7 +60,7 @@ export const COMMANDS: ProspectCommand[] = [
 		name: "prospect-sync",
 		flag: "sync",
 		description:
-			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude (restrict to one coding harness)",
+			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude|codex|opencode|cline (restrict to one coding harness)",
 		load: () => import("./sync.js"),
 		handler: (module) => module.prospectSync,
 	}),
@@ -75,7 +75,7 @@ export const COMMANDS: ProspectCommand[] = [
 		name: "prospect-proposals",
 		flag: "proposals",
 		description:
-			"List proposals, ranked by trust tier (replay-validated) then billed cost, then confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, --source <pi|claude>, --session <id> (only that session's proposals), and --full for evidence/source.",
+			"List proposals, ranked by trust tier (replay-validated) then billed cost, then confidence. Optional status filter (open|applied|rejected|duplicate), --severity <friction|correction|waste|suggestion|reinforcement>, --source <pi|claude|codex|opencode|cline>, --session <id> (only that session's proposals), and --full for evidence/source.",
 		load: () => import("./proposals.js"),
 		handler: (module) => module.prospectProposals,
 	}),
@@ -104,7 +104,7 @@ export const COMMANDS: ProspectCommand[] = [
 		name: "prospect-analyze",
 		flag: "analyze",
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --backfill-missing (run only the analyzers each analysed session is missing — closes coverage gaps after a new or previously-unselected analyzer ships, without re-running everything), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --source pi|claude (restrict to sessions from one coding harness), --analyzer ID (run one analyzer and its dependencies, even one outside the defaultAnalyzers/disabledAnalyzers set in prospector.json), --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --backfill-missing (run only the analyzers each analysed session is missing — closes coverage gaps after a new or previously-unselected analyzer ships, without re-running everything), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --source pi|claude|codex|opencode|cline (restrict to sessions from one coding harness), --analyzer ID (run one analyzer and its dependencies, even one outside the defaultAnalyzers/disabledAnalyzers set in prospector.json), --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		load: () => import("./analyze.js"),
 		handler: (module) => module.prospectAnalyze,
 	}),
@@ -170,7 +170,7 @@ export const COMMANDS: ProspectCommand[] = [
 		description:
 			"Report which sessions contain detected secrets: every finding from the credential-detector analyzers " +
 			"(secret-leak, gitleaks, nosey-parker, detect-secrets, trufflehog, secret-scanner) with its severity, rule, " +
-			"redacted preview, fingerprint, and the message it appeared in. Flags: --severity <critical|high|medium> (floor), --limit <n>, --source <pi|claude>.",
+			"redacted preview, fingerprint, and the message it appeared in. Flags: --severity <critical|high|medium> (floor), --limit <n>, --source <pi|claude|codex|opencode|cline>.",
 		load: () => import("./leaks.js"),
 		handler: (module) => module.prospectLeaks,
 	}),
@@ -182,7 +182,7 @@ export const COMMANDS: ProspectCommand[] = [
 			"with links into prospect show / prospect node. " +
 			"Syntax: plain terms (implicit AND), \"quoted phrases\", prefix terms (lexicon*), OR / NOT / AND, " +
 			"NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence). " +
-			"Flags: --kind <all|messages|proposals>, --limit <n>, --source <pi|claude>.",
+			"Flags: --kind <all|messages|proposals>, --limit <n>, --source <pi|claude|codex|opencode|cline>.",
 		load: () => import("./search.js"),
 		handler: (module) => module.prospectSearch,
 	}),

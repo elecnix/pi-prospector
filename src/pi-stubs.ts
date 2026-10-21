@@ -28,6 +28,12 @@ export interface ModelRegistry {
 	getAll(): PiModel[] | Promise<PiModel[]>;
 	getAvailable(): PiModel[] | Promise<PiModel[]>;
 	getApiKeyAndHeaders(model: PiModel): Promise<ResolvedRequestAuth>;
+	/**
+	 * Stream a request through the registry's own providers and credentials.
+	 * pi-ai 1.x moved completion here from a module-level `complete`; older pi
+	 * registries don't have it. `result()` resolves with the final message.
+	 */
+	streamSimple?: (model: PiModel, context: PiContext, options?: PiRegistryCompleteOptions) => { result(): Promise<PiAssistantMessage> };
 }
 
 export interface ExtensionUIContext {
@@ -179,7 +185,10 @@ export interface PiCompleteOptions {
 	samplingParams?: Record<string, unknown>;
 }
 
-/** The subset of `@earendil-works/pi-ai` we call at runtime. */
+/** The options a registry's `streamSimple` takes: `PiCompleteOptions` without the credentials it supplies itself. */
+export type PiRegistryCompleteOptions = Omit<PiCompleteOptions, "apiKey" | "headers">;
+
+/** The subset of `@earendil-works/pi-ai` we call at runtime on pi versions before 1.0. */
 export interface PiAiModule {
 	complete: (model: PiModel, context: PiContext, options?: PiCompleteOptions) => Promise<PiAssistantMessage>;
 }
