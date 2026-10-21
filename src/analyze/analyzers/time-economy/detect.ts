@@ -257,6 +257,39 @@ export function isFailedBackgroundStatus(status: string | null): boolean {
 	return status === "failed" || status === "killed" || status === "stopped" || status === "error";
 }
 
+/**
+ * Record a hidden exit code, when the call's output carries one.
+ *
+ * A call the host called successful whose output says it failed: the exit
+ * code a pipe hid. `cmd 2>&1 | tail -40` returns tail's status, so the
+ * failure never reaches the exit code — only the output shows it.
+ *
+ * Only a *shell* call is examined. A read of a document that happens to
+ * contain the phrase "Permission denied" is not a failed command, and a
+ * non-shell tool has no exit code for a pipe to hide in the first place.
+ *
+ * The check runs for a backgrounded call as well as a synchronous one: the
+ * same call can be a slow task and a failed one, and the branch that times a
+ * background call must not skip it.
+ */
+function findHiddenExitCode(
+	inv: { messageId: string; outcome: { messageId: string; isError: boolean } | null },
+	isShell: boolean,
+	family: string,
+	seconds: number | null,
+	textById: ReadonlyMap<string, string>,
+	failureMarkers: readonly string[],
+	out: HiddenExitCode[],
+): void {
+	if (!isShell || !inv.outcome || inv.outcome.isError) return;
+	const resultText = textById.get(inv.outcome.messageId) ?? "";
+	if (!resultText) return;
+	const markers = findFailureMarkers(resultText, failureMarkers);
+	if (markers.length > 0) {
+		out.push({ message_id: inv.messageId, family, seconds: seconds === null ? null : r(seconds), markers });
+	}
+}
+
 /** Total length of a set of [start, end] intervals, counting overlaps once. */
 function unionLength(intervals: Array<[number, number]>): number {
 	const sorted = intervals.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
@@ -349,7 +382,10 @@ export function measureTime(
 				// analyzer makes measurable.
 				if (isFailedBackgroundStatus(completion.status)) f.error_count++;
 				families.set(family, f);
-			}
+				// A backgrounded call's output can hide a failure too: the same
+				// call can be a slow task and a failed one, and the branch that
+				// times a background call must not skip the output check.
+				findHiddenExitCode(inv, isShell, family, seconds, textById, config.failureMarkers, hiddenExitCodes);			}
 			continue;
 		}
 
@@ -360,6 +396,10 @@ export function measureTime(
 		// the duration is unknown, never zero.
 		if (isBackgroundCall(inv.args)) {
 			untimedBackground++;
+			// The output still says whether the work failed, even though the
+			// duration is unknown. A failed background test run is worth
+			// knowing about, and its duration is not what the finding is about.
+			findHiddenExitCode(inv, isShell, family, null, textById, config.failureMarkers, hiddenExitCodes);
 			continue;
 		}
 
@@ -391,12 +431,7 @@ export function measureTime(
 		// Only a *shell* call is examined. A read of a document that happens to
 		// contain the phrase "Permission denied" is not a failed command, and a
 		// non-shell tool has no exit code for a pipe to hide in the first place.
-		if (isShell && inv.outcome && !inv.outcome.isError && resultText) {
-			const markers = findFailureMarkers(resultText, config.failureMarkers);
-			if (markers.length > 0) {
-				hiddenExitCodes.push({ message_id: inv.messageId, family, seconds: r(seconds), markers });
-			}
-		}
+		findHiddenExitCode(inv, isShell, family, seconds, textById, config.failureMarkers, hiddenExitCodes);
 
 		if (isShell) {
 			const w = classifyWait(command, config);

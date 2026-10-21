@@ -251,6 +251,41 @@ describe("hidden exit codes", () => {
 		assert.equal(scan.hidden_exit_codes.length, 0);
 	});
 
+	it("finds a hidden failure in a backgrounded call's output too", () => {
+		// The same call can be a slow background task and hide a failure. The
+		// background path is a separate branch of the timing pass, and it
+		// must not skip the output check.
+		const scan = measureTime(
+			[
+				shell("bg", "npm test 2>&1 | tail -40", 10, { run_in_background: true }),
+				result("bg", 11, false, "--- FAIL: test_x (0.02s)\n1 failed, 12 passed"),
+			],
+			CONFIG,
+			[backgroundTask("bg", at(310))],
+		);
+		assert.equal(scan.hidden_exit_codes.length, 1);
+		assert.equal(scan.hidden_exit_codes[0]?.message_id, "call-bg");
+		assert.equal(scan.hidden_exit_codes[0]?.family, "npm test");
+		// The call's real end is known, so its duration is too.
+		assert.equal(scan.hidden_exit_codes[0]?.seconds, 300);
+	});
+
+	it("reports a backgrounded hidden failure whose duration is unknown", () => {
+		// The completion was never recorded, so the duration is unknown. The
+		// failure is still worth reporting, and the duration says so rather
+		// than reading as zero.
+		const scan = measureTime(
+			[
+				shell("bg", "npm test 2>&1 | tail -40", 10, { run_in_background: true }),
+				result("bg", 11, false, "--- FAIL: test_x (0.02s)\n1 failed, 12 passed"),
+			],
+			CONFIG,
+			[],
+		);
+		assert.equal(scan.hidden_exit_codes.length, 1);
+		assert.equal(scan.hidden_exit_codes[0]?.seconds, null);
+	});
+
 	it("does not read a non-shell call's output as a hidden failure", () => {
 		// A file that documents the error is not a failed command, and a
 		// non-shell tool has no exit code for a pipe to hide.

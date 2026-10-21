@@ -35,8 +35,15 @@ export const HiddenExitCodeSchema = Type.Object({
 	message_id: Type.String(),
 	/** The command family the call belongs to. */
 	family: Type.String(),
-	/** How long the call took, in seconds. */
-	seconds: Type.Number(),
+	/**
+	 * How long the call took, in seconds, when its duration is known.
+	 *
+	 * Null when the call's duration is unknown — a backgrounded call whose
+	 * completion the host never recorded. The failure is still worth
+	 * reporting; only its duration is missing, and a zero would read as
+	 * "this was instant".
+	 */
+	seconds: Type.Union([Type.Number(), Type.Null()]),
 	/** The failure markers found in the output. */
 	markers: Type.Array(Type.String()),
 });
