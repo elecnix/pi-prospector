@@ -1,19 +1,25 @@
 /**
- * assistant-cognition — detects confusion, indecision, and surprise in the
- * assistant's own words during a turn.
+ * assistant-cognition — detects confusion, indecision, surprise, and apology in
+ * the assistant's own words during a turn.
  *
  * Depends on turn-pair-core (turn construction). A turn is analysed when its
- * aggregated thinking trace is substantive (>= config.minThinkingLength): a
- * token "Okay, let me..." carries no cognitive signal worth a model call. The
- * analyzer reads the turn's THINKING TRACE and RESPONSE TEXT as separately
- * labeled inputs plus the anchoring user message, and emits one `classification`
- * node per analysed turn carrying three signal arrays:
+ * aggregated thinking trace is substantive (>= config.minThinkingLength) — a
+ * token "Okay, let me..." carries no cognitive signal worth a model call — or
+ * when its response carries a deterministic apology match, which is the second
+ * way in for an apology (issue #318): an apology lives in the response text,
+ * and a model that never reasoned would otherwise never be read. The analyzer
+ * reads the turn's THINKING TRACE and RESPONSE TEXT as separately labeled
+ * inputs plus the anchoring user message, and emits one `classification` node
+ * per analysed turn carrying four signal arrays:
  *
  *   - confusion   {level, rationale}   inferred across the turn; no quote.
  *   - indecision  {level, rationale}   structural flip-flopping; no quote.
  *   - surprise    {quote, severity, rationale} — the quote is validated as an
  *                 exact substring of the thinking or response text before it is
  *                 stored, so every surprise traces back to verbatim evidence.
+ *   - apology     {quote, severity, rationale} — the assistant conceding that it
+ *                 was wrong; the quote is validated as an exact substring of the
+ *                 response text, exactly as a surprise quote is.
  *
  * Robustness: native structured output via a forced tool call, with one retry;
  * a second failure records an abstention (empty arrays are valid analysis).
@@ -34,6 +40,7 @@ import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { resolveModelSpec } from "../../model-tiers.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
+import { matchApologyCandidates } from "../../speech-acts.js";
 import {
 	COGNITION_PROMPT,
 	COGNITION_PROMPT_HASH,
@@ -47,6 +54,9 @@ import {
 import {
 	COGNITION_DECISION_HASH,
 	COGNITION_DECISION_QUESTIONS,
+	APOLOGY_QUOTE_PROMPT,
+	APOLOGY_QUOTE_PROMPT_HASH,
+	APOLOGY_QUOTE_TOOL,
 	QUOTE_PROMPT,
 	QUOTE_PROMPT_HASH,
 	QUOTE_TOOL,
@@ -60,7 +70,7 @@ export const ASSISTANT_COGNITION_DEF: AnalyzerDef = {
 	id: "assistant-cognition",
 	label: "Assistant Cognition (LLM)",
 	description:
-		"Detects confusion, indecision, and surprise in the assistant's own thinking trace and response per turn, with graded intensity and verbatim-validated surprise quotes.",
+		"Detects confusion, indecision, surprise, and apology in the assistant's own thinking trace and response per turn, with graded intensity and verbatim-validated surprise and apology quotes.",
 	anchorSpan: "pair",
 	dependencies: [TURN_PAIR_CORE_DEF.id],
 	outputSchema: AssistantCognitionProperties,
@@ -69,7 +79,15 @@ export const ASSISTANT_COGNITION_DEF: AnalyzerDef = {
 export const ASSISTANT_COGNITION_VERSION: AnalyzerVersion = {
 	analyzerId: ASSISTANT_COGNITION_DEF.id,
 	major: 1,
-	minor: 0,
+	// 1.1 (issue #318): the **apology** signal — the assistant conceding that it
+	// was wrong, carrying a quote validated verbatim against the response text
+	// exactly as a surprise quote is. The gate gains a second way in: a turn whose
+	// response carries a deterministic apology match is analysed even when its
+	// thinking trace is empty, because an apology lives in the response. The
+	// prompt gained a fourth signal array and the node content gained a fourth
+	// field, so the version moves and prior verdicts stay reachable through
+	// `revises`.
+	minor: 1,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/assistant-cognition/index.ts",
 };
@@ -77,6 +95,7 @@ export const ASSISTANT_COGNITION_VERSION: AnalyzerVersion = {
 const PROMPTS: Record<string, PromptVersion> = {
 	cognition: { hash: COGNITION_PROMPT_HASH, content: COGNITION_PROMPT, role: "classify" },
 	quote_surprise: { hash: QUOTE_PROMPT_HASH, content: QUOTE_PROMPT, role: "extract" },
+	quote_apology: { hash: APOLOGY_QUOTE_PROMPT_HASH, content: APOLOGY_QUOTE_PROMPT, role: "extract" },
 };
 
 interface CognitionMeta {
@@ -127,12 +146,23 @@ export const assistantCognitionAnalyzer: Analyzer = {
 			}
 		}
 
-		// Gate: any turn whose thinking text is non-empty above the minimum length.
+		// Gate: a turn is analysed when its thinking text is non-empty above the
+		// minimum length, OR when its response carries a deterministic apology
+		// match (issue #318). The second way in matters because an apology lives
+		// in the response text: a model that never reasoned is never analysed
+		// through the thinking gate, yet an apology is exactly the turn where the
+		// assistant's own words admit a mistake. The match admits the turn to
+		// scrutiny — what is stored is still the model's graded apology with a
+		// quote validated against the response.
+		//
 		// Unlike turn-pair-llm this is not ranked or capped — cognition is cheap-tier
-		// and the gate alone bounds volume to turns where the agent actually reasoned.
+		// and the gate alone bounds volume to turns where the agent actually reasoned
+		// or conceded.
 		const units: AnalysisUnit[] = [];
 		for (const pair of pairs) {
-			if (pair.thinkingText.trim().length < config.minThinkingLength) continue;
+			const hasThinking = pair.thinkingText.trim().length >= config.minThinkingLength;
+			const apologised = matchApologyCandidates(pair.assistantText).length > 0;
+			if (!hasThinking && !apologised) continue;
 			const coreOutputKey = coreKeyByUserId.get(pair.userMessageId);
 			if (!coreOutputKey) continue;
 			const sources: SourceRef[] = [{ kind: "analysis_node", id: coreOutputKey }];
@@ -175,7 +205,7 @@ export const assistantCognitionAnalyzer: Analyzer = {
 		// empty-signal classification rather than an error node: absence of evidence
 		// here is a legitimate conclusion, and it keeps the unit from being retried
 		// forever by later fills.
-		let parsed: Pick<AssistantCognitionProperties, "confusion" | "indecision" | "surprise">;
+		let parsed: Pick<AssistantCognitionProperties, "confusion" | "indecision" | "surprise" | "apology">;
 		let response = await ctx.llm(request);
 		try {
 			parsed = response.structured
@@ -188,7 +218,7 @@ export const assistantCognitionAnalyzer: Analyzer = {
 					? parseCognitionObject(response.structured as Record<string, unknown>, grounds)
 					: parseCognitionResponse(response.text, grounds);
 			} catch {
-				parsed = { confusion: [], indecision: [], surprise: [] };
+				parsed = { confusion: [], indecision: [], surprise: [], apology: [] };
 			}
 		}
 
@@ -242,6 +272,7 @@ async function analyzeWithDecisionModel(
 	let cachedInputTokens = 0;
 	let outputTokens = decision.outputTokens;
 	const surprise: AssistantCognitionProperties["surprise"] = [];
+	const apology: AssistantCognitionProperties["apology"] = [];
 	const edges: AnalysisResult["edges"] = [
 		{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 		{ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: meta.coreOutputKey, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 },
@@ -264,13 +295,35 @@ async function analyzeWithDecisionModel(
 		if (typeof quote === "string" && quote.length > 0 && (grounds.thinkingText.includes(quote) || grounds.assistantText.includes(quote))) {
 			surprise.push({ quote, severity: parsed.surpriseSeverity, rationale: "" });
 		}
-		edges.push({ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: QUOTE_PROMPT_HASH, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: 2 });
+		edges.push({ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: QUOTE_PROMPT_HASH, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: edges.length });
+	}
+	if (parsed.apologySeverity) {
+		const response = await ctx.llm({
+			model: resolveModelSpec(config.tier, ctx.modelTiers),
+			system: ctx.prompts["quote_apology"] ?? APOLOGY_QUOTE_PROMPT,
+			user: buildCognitionPrompt(input),
+			temperature: config.temperature,
+			maxTokens: 300,
+			tool: APOLOGY_QUOTE_TOOL,
+		});
+		costUsd += response.costUsd;
+		inputTokens += response.inputTokens ?? 0;
+		cachedInputTokens += response.cachedInputTokens ?? 0;
+		outputTokens += response.outputTokens ?? 0;
+		const quote = (response.structured as { quote?: unknown } | undefined)?.quote;
+		// An apology quote is checked against the response text only: an apology is
+		// something the user saw, never a phrase from the private reasoning.
+		if (typeof quote === "string" && quote.length > 0 && grounds.assistantText.includes(quote)) {
+			apology.push({ quote, severity: parsed.apologySeverity, rationale: "" });
+		}
+		edges.push({ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: APOLOGY_QUOTE_PROMPT_HASH, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: edges.length });
 	}
 
 	const properties: AssistantCognitionProperties = {
 		confusion: parsed.confusion,
 		indecision: parsed.indecision,
 		surprise,
+		apology,
 		probabilities: parsed.probabilities,
 		user_message_id: unit.anchorRef,
 	};

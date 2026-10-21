@@ -37,12 +37,23 @@ under-explained.
 If an ASSISTANT COGNITION section is present, it shows what the assistant's own
 thinking revealed per turn. Confusion and indecision carry a graded intensity;
 each surprise carries its severity plus a verbatim quote from the thinking trace
-or response. Each class points at a different artifact to fix — confusion
-suggests a missing or unclear standing instruction or doc the agent needed;
-indecision suggests ambiguous instructions or competing conventions; surprise
-suggests a wrong assumption baked into standing instructions or a misleading
-tool description. Propose fixing the artifact the signal points at, citing the
-quoted evidence.
+or response, and each apology carries its severity plus a verbatim quote of the
+assistant conceding that it was wrong. Each class points at a different artifact
+to fix — confusion suggests a missing or unclear standing instruction or doc the
+agent needed; indecision suggests ambiguous instructions or competing
+conventions; surprise suggests a wrong assumption baked into standing
+instructions or a misleading tool description; an apology suggests the agent
+asserted something it had not checked, so a rule that makes it verify before
+asserting is the artifact to fix. Propose fixing the artifact the signal points
+at, citing the quoted evidence.
+
+A turn whose per-pair line says type=rebuttal is one where the user disputed
+something the ASSISTANT SAID was true ("that's wrong", "that flag doesn't
+exist"). That is a claim the assistant made without checking it, and the
+instruction to change is usually about checking before asserting — not about
+the method the assistant chose. A turn whose line says correction=explicit with
+no rebuttal is a plain correction (including an instruction like "I told you to
+use X"), and is a different thing.
 
 Each TRAJECTORY SIGNALS entry carries its own EVIDENCE SLICE — the turns since
 the previous trigger of any kind, not a fixed window. Read the slice as the

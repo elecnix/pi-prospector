@@ -156,6 +156,45 @@ roughly the order concepts build on one another.
   summarised and truncated to fit the model's context. The system is aware of
   these so it does not mistake a summary for an ordinary message.
 
+### Speech acts (the conversation domain)
+
+Not every disagreement between a human and an agent is the same disagreement.
+Most friction is about *method* — a wrong approach, a misused tool, a missed
+instruction — and the correction machinery already names those. Two speech acts
+say something sharper: the human disputes what the agent **stated**, and the
+agent concedes that it was wrong. They are read separately because the pair
+carries information neither one carries alone.
+
+- **Rebuttal** — a user message that disputes whether something the assistant
+  said is true ("that's wrong", "that flag doesn't exist", "the test didn't
+  pass, it failed"). It is a dispute of a **claim**, not an instruction: an
+  instruction ("use X instead", "I told you to use X") asks for different
+  behaviour and leaves the assistant's stated fact unchallenged, while a
+  rebuttal says that fact is false. The distinction is the whole point of the
+  deterministic layer, and it is why an instruction never becomes a rebuttal.
+  A rebuttal is the **user's** side of the signal. It is first marked as a
+  deterministic **candidate** — the wording is cheap to match — and then judged
+  by a model, because a pattern alone cannot always tell a dispute of fact from
+  a dispute of method. Marking a candidate is not a finding: the deterministic
+  layer proposes, the model disposes.
+- **Apology** — an assistant response that concedes the assistant was wrong
+  ("Sorry, my mistake — the flag is `--repo`"). It is the **assistant's** side
+  of the same disagreement. An apology carries a **verbatim quote** validated
+  as an exact substring of the response text, exactly like a surprise quote, so
+  every apology traces back to the words that conceded. An apology with no
+  preceding rebuttal marks an error the assistant caught itself; a rebuttal
+  followed by an apology marks a claim the assistant made without checking it.
+  An apology is not a **correction**: the user corrects the agent, the agent
+  apologises, and the two never stand for the same act.
+
+Both speech acts are read on either model path a classifier analyzer can take.
+On the generative path the model fills a form, and an apology comes back with
+the quote it copied from the response. On the decision-model path the same
+question is asked of the model, and the apology's quote — which a decision
+model cannot write, because it generates no text — is copied by a second
+generative call, on the same rule as a surprise quote. A signal that only one
+path could reach would vanish the moment a run chose the other.
+
 ### Analysis domain (the append-only output)
 
 - **Analysis graph** — the entire body of derived analysis, layered on top of
@@ -1125,6 +1164,27 @@ it must never *gate* what the synthesizer is allowed to see. Every pair carries
 a truncated verbatim user-text snippet in the digest; pairs the regex misses are
 still visible to the session-level LLM. The un-gating ensures that recall is
 not bounded by regex coverage.
+
+The same discipline governs the **rebuttal** candidate. The deterministic layer
+matches the *wording* of a dispute ("that's wrong", "that flag doesn't exist")
+and marks the turn as a candidate; it does not reclassify the turn away from
+the correction it already was. A turn whose wording is an instruction — "I told
+you to use X" — stays a **correction** and never becomes a rebuttal, because
+the two words mean different things about the conversation. A model then reads
+the turn and confirms or rejects the candidate, so a wording match that turns
+out to be a method dispute never becomes a finding. The deterministic layer
+proposes; the model disposes; nothing is gated on the pattern having fired.
+
+The **apology** is the mirror image, and it is found the other way round. It
+lives in the assistant's response text, and the analyzer that reads the
+assistant's own words only runs on turns with a substantive thinking trace — a
+model that never reasoned is never analysed there. An apology therefore gets a
+second way in: a cheap deterministic match on the response text
+("sorry", "apologi[sz]e", "my mistake", "I was wrong") admits the turn to the
+analyzer, which then grades the apology and validates its quote against the
+response verbatim. The match is a **gate for scrutiny**, never a finding: it
+widens which turns are read, and what is stored is still what the model reports
+and the quote check confirms.
 
 ### Synthesis enumerates exhaustively; volume managed by display-time grouping
 

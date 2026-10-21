@@ -37,6 +37,8 @@ function answers(surprise: number): Record<string, DecisionAnswer> {
 		indecision: score(0),
 		surprise: { type: "noul", noul: surprise },
 		surprise_severity: score(1),
+		apology: { type: "noul", noul: 0.05 },
+		apology_severity: score(0),
 	};
 }
 

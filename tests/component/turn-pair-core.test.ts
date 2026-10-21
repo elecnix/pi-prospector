@@ -144,3 +144,54 @@ describe("turn-pair-core scoring", () => {
 		}
 	});
 });
+
+describe("turn-pair-core rebuttal candidate (issue #318)", () => {
+	it("marks a dispute of a claim and leaves an instruction a plain correction", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
+				// pair 0: a dispute of what the assistant said
+				{ role: "user", text: "that's wrong, the flag is --repo" },
+				{ role: "assistant", text: "checking" },
+				// pair 1: an instruction — a correction, never a rebuttal
+				{ role: "user", text: "I told you to use --repo, not --repository" },
+				{ role: "assistant", text: "redoing it" },
+				// pair 2: an ordinary request
+				{ role: "user", text: "please open a pull request" },
+				{ role: "assistant", text: "opened" },
+			]);
+			const props = await runCore(db, "s1");
+			assert.equal(props.length, 3);
+
+			assert.equal(props[0]!.rebuttal_candidate, true, "the dispute is a rebuttal candidate");
+			assert.ok(props[0]!.rebuttal_patterns.length > 0, "the candidate names the pattern that fired");
+			assert.match(props[0]!.rebuttal_text ?? "", /that's wrong/);
+
+			assert.equal(props[1]!.rebuttal_candidate, false, "an instruction is never a rebuttal candidate");
+			assert.equal(props[1]!.correction_detected, true, "an instruction is still a correction");
+			assert.equal(props[1]!.correction_type, "explicit");
+
+			assert.equal(props[2]!.rebuttal_candidate, false, "an ordinary request is not a rebuttal candidate");
+		} finally {
+			await close();
+		}
+	});
+
+	it("keeps the existing correction detection intact on a disputed turn", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [
+				{ role: "user", text: "that's wrong, use yarn" },
+				{ role: "assistant", text: "ok" },
+			]);
+			const props = await runCore(db, "s1");
+			assert.equal(props[0]!.correction_detected, true, "the turn is still a correction");
+			assert.equal(props[0]!.correction_type, "explicit");
+			assert.equal(props[0]!.rebuttal_candidate, true, "and it is also a rebuttal candidate");
+		} finally {
+			await close();
+		}
+	});
+});
