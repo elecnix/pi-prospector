@@ -109,6 +109,15 @@ describe("nominateCommands", () => {
 		assert.deepEqual(nominateCommands([...sh("v1", "npm test", 0, 120), ...sh("c1", "git commit -m x", 130, 1)], CONFIG), []);
 	});
 
+	it("does not nominate a line whose command the patterns cover behind another segment", () => {
+		// The detector matches a segment, so the nomination must too: the corpus
+		// must not pay a model call for a verdict the pattern list already has.
+		assert.deepEqual(
+			nominateCommands([...sh("v1", "cd /repo && npm test", 0, 120), ...sh("c1", "git commit -m x", 130, 1)], CONFIG),
+			[],
+		);
+	});
+
 	it("nominates each distinct command once, keeping the longest run", () => {
 		const candidates = nominateCommands(
 			[

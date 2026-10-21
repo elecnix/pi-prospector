@@ -119,15 +119,24 @@ function commandForModel(command: string, max = 400): string {
 	return command.length > max ? `${command.slice(0, max - 1)}…` : command;
 }
 
-/** Whether the shipped pattern list already covers a command. */
+/**
+ * Whether the shipped pattern list already covers a command.
+ *
+ * The check runs on the line's segments, the same way the detector matches
+ * patterns, so the two agree on what "already covered" means. A line like
+ * `cd /repo && npm test` holds a command the patterns cover, and the corpus
+ * must not pay a model call for a verdict it already has.
+ */
 function matchesKnownPattern(command: string): boolean {
-	return DEFAULT_STALE_VERIFICATION_CONFIG.verificationPatterns.some((source) => {
-		try {
-			return new RegExp(`^(?:${source})`, "i").test(command);
-		} catch {
-			return false;
-		}
-	});
+	return commandSegments(command).some((segment) =>
+		DEFAULT_STALE_VERIFICATION_CONFIG.verificationPatterns.some((source) => {
+			try {
+				return new RegExp(`^(?:${source})`, "i").test(segment);
+			} catch {
+				return false;
+			}
+		}),
+	);
 }
 
 /** Whether a shell line commits. */
