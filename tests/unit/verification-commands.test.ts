@@ -17,6 +17,7 @@ import {
 	parseVerificationDecision,
 	verificationCommandsByCommand,
 } from "../../src/analyze/analyzers/verification-commands/index.js";
+import { redactCommandLine } from "../../src/analyze/analyzers/verification-commands/redact.js";
 import { normaliseCommand } from "../../src/analyze/analyzers/stale-verification/command-vocabulary.js";
 import { VERIFICATION_DECISION_QUESTIONS } from "../../src/analyze/analyzers/verification-commands/decision.js";
 import type { MessageRow } from "../../src/analyze/types.js";
@@ -201,6 +202,49 @@ describe("VERIFICATION_DECISION_QUESTIONS", () => {
 		assert.ok(question);
 		assert.equal(question.type, "choice");
 		assert.deepEqual(Object.keys(question.criteria).sort(), ["full", "narrow", "not_verification"]);
+	});
+});
+
+// ─────────────────────────── redaction ───────────────────────────
+
+describe("redactCommandLine", () => {
+	it("redacts a bearer token and keeps the rest of the line", () => {
+		const out = redactCommandLine("curl -H 'Authorization: Bearer abc123def456' https://example.test/api");
+		assert.ok(!out.includes("abc123def456"), "the token is gone");
+		assert.match(out, /Authorization: Bearer <redacted>/);
+		assert.match(out, /https:\/\/example\.test\/api/, "the rest of the line survives");
+	});
+
+	it("redacts the value of a secret-looking environment assignment", () => {
+		const out = redactCommandLine("API_TOKEN=abc123def456 npm test");
+		assert.ok(!out.includes("abc123def456"), "the value is gone");
+		assert.match(out, /API_TOKEN=<redacted>/);
+		assert.match(out, /npm test/, "the command itself survives");
+	});
+
+	it("leaves an environment assignment that is not a secret", () => {
+		assert.equal(redactCommandLine("NODE_ENV=production npm test"), "NODE_ENV=production npm test");
+	});
+
+	it("redacts the credentials in a URL and keeps the host", () => {
+		const out = redactCommandLine("git clone https://user:hunter2@example.test/repo.git");
+		assert.ok(!out.includes("hunter2"), "the password is gone");
+		assert.match(out, /example\.test/, "the host survives");
+	});
+
+	it("redacts a provider token in a command", () => {
+		const out = redactCommandLine("gh auth login --with-token ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+		assert.ok(!out.includes("ghp_aaaa"), "the token is gone");
+	});
+
+	it("redacts a password given as a flag", () => {
+		const out = redactCommandLine("mysql -u root --password=hunter2");
+		assert.ok(!out.includes("hunter2"), "the password is gone");
+	});
+
+	it("leaves an ordinary command untouched", () => {
+		const line = "tools/ci/verify-all --verbose";
+		assert.equal(redactCommandLine(line), line);
 	});
 });
 

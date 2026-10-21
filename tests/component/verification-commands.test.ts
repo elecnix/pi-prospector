@@ -106,6 +106,93 @@ describe("verification-commands component test", () => {
 		}
 	});
 
+	it("sends only the command line, and never the session text", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "vc-5", gateSession());
+			const { fw, decision } = await framework(db, "jev/jev-1.13.0");
+			await fw.run("vc-5", {});
+
+			assert.equal(decision.calls.length, 1);
+			const request = decision.calls[0]!;
+			// The whole state is the command line. Nothing else about the
+			// session rides along.
+			assert.deepEqual(Object.keys(request.state as Record<string, unknown>), ["command"]);
+			const state = request.state as { command: string };
+			assert.equal(state.command, "tools/ci/verify-all");
+
+			// The session's own words never appear in the request. The question's
+			// own examples name paths of their own, so the check is on the
+			// strings the session carried.
+			const serialised = JSON.stringify(request);
+			assert.ok(!serialised.includes("Fix the date parser"), "the user's prompt is not sent");
+			assert.ok(!serialised.includes("the parser"), "the assistant's words are not sent");
+			assert.ok(!serialised.includes("2026-01-01"), "no timestamp from the session is sent");
+		} finally {
+			await close();
+		}
+	});
+
+	it("redacts an obvious secret before the command line is sent", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "vc-6");
+			await insertMessages(db, "vc-6", [
+				call("v1", "bash", { command: "API_TOKEN=s3cretvalue123 tools/ci/verify-all" }, 10),
+				done("v1", "bash", 130),
+				call("c1", "bash", { command: "git commit -m 'chore: bump'" }, 140),
+				done("c1", "bash", 141),
+			]);
+			const { fw, decision } = await framework(db, "jev/jev-1.13.0");
+			await fw.run("vc-6", {});
+
+			assert.equal(decision.calls.length, 1);
+			const state = decision.calls[0]!.state as { command: string };
+			assert.ok(!state.command.includes("s3cretvalue123"), "the secret is not sent");
+			assert.match(state.command, /API_TOKEN=<redacted>/);
+			assert.match(state.command, /tools\/ci\/verify-all/, "the command itself is sent");
+		} finally {
+			await close();
+		}
+	});
+
+	it("the off-switch keeps every command line on the machine", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "vc-7", gateSession());
+			const llm = createMockLLM({ responder: () => "unused" });
+			const decision = createMockDecisionModel({ responder: () => FULL, inputTokensPerCall: 200 });
+			const fw = new AnalyzerFramework({
+				db,
+				llm: llm.caller,
+				decide: decision.caller,
+				modelTiers: DEFAULT_MODEL_TIERS,
+				configOverrides: {
+					"verification-commands": { decisionModel: "jev/jev-1.13.0", allowRemoteVerdicts: false },
+				},
+			});
+			await fw.register(verificationCommandsAnalyzer);
+			await fw.register(staleVerificationAnalyzer);
+			await fw.run("vc-7", {});
+
+			assert.equal(decision.calls.length, 0, "no command line left the machine");
+			const nodes = (await db
+				.prepare("SELECT id FROM analysis_nodes WHERE analyzer_id = 'verification-commands'")
+				.all()) as unknown[];
+			assert.equal(nodes.length, 0, "no verdict was sought");
+
+			// The local pattern list still works.
+			const stale = (await db
+				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'stale-verification'")
+				.all()) as Array<{ content_json: string }>;
+			assert.equal(stale.length, 1);
+			const content = JSON.parse(stale[0]!.content_json) as Record<string, unknown>;
+			assert.equal(content["passing_run_count"], 0, "the gate script no default pattern covers is not measured");
+		} finally {
+			await close();
+		}
+	});
+
 	it("a second session that ran the same command reuses the verdict for free", async () => {
 		const { db, close } = await tempDb();
 		try {

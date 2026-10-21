@@ -53,6 +53,7 @@ import { decisionIdentity } from "../../decision-model.js";
 import { DEFAULT_STALE_VERIFICATION_CONFIG } from "../stale-verification/config.js";
 import { commandSegments, editCallTimes, normaliseCommand, shellCalls } from "../stale-verification/command-vocabulary.js";
 import { DEFAULT_VERIFICATION_COMMANDS_CONFIG, type VerificationCommandsConfig } from "./config.js";
+import { redactCommandLine } from "./redact.js";
 import {
 	VERIFICATION_DECISION_QUESTIONS,
 	VERIFICATION_DECISION_QUESTIONS_HASH,
@@ -112,10 +113,17 @@ export function resolveConfig(raw: unknown): VerificationCommandsConfig {
 }
 
 /**
- * The command line as the model sees it: the normalised form, capped in length.
+ * The command line as the model sees it: the normalised form, the obvious
+ * secrets taken out, and the result capped in length.
+ *
+ * The redaction runs here rather than at nomination, so the corpus-wide key
+ * stays the command as the agent typed it. Two sessions that ran the same
+ * command with different secrets are then the same subject, and the verdict
+ * the corpus caches applies to both.
  */
 function commandForModel(command: string, max = 400): string {
-	return command.length > max ? `${command.slice(0, max - 1)}…` : command;
+	const redacted = redactCommandLine(command);
+	return redacted.length > max ? `${redacted.slice(0, max - 1)}…` : redacted;
 }
 
 /**
@@ -226,6 +234,10 @@ export const verificationCommandsAnalyzer: Analyzer = {
 		// Without a decision model there is nobody to ask, so nothing is
 		// nominated and the pattern list stands alone.
 		if (!config.decisionModel) return [];
+		// The off-switch. With it set, no command line leaves the machine:
+		// nothing is nominated, so no model call is made, and
+		// `stale-verification` falls back to its local pattern list.
+		if (!config.allowRemoteVerdicts) return [];
 		if (ctx.messages.length === 0) return [];
 
 		const candidates = nominateCommands(ctx.messages, config);
@@ -258,6 +270,9 @@ export const verificationCommandsAnalyzer: Analyzer = {
 		if (!config.decisionModel) {
 			throw new Error("verification-commands planned a unit with no decision model configured.");
 		}
+		if (!config.allowRemoteVerdicts) {
+			throw new Error("verification-commands planned a unit with the remote verdict call switched off.");
+		}
 		if (!ctx.decide) {
 			throw new Error(
 				`verification-commands is configured with decision model '${config.decisionModel}', but this run has no decision-model client.`,
@@ -266,6 +281,8 @@ export const verificationCommandsAnalyzer: Analyzer = {
 
 		const decision = await ctx.decide({
 			model: config.decisionModel,
+			// The command line is the whole state. Nothing else about the session
+			// is sent, so the model judges the command and nothing more.
 			state: { command: commandForModel(meta.command) },
 			questions: VERIFICATION_DECISION_QUESTIONS,
 		});

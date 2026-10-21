@@ -29,6 +29,18 @@ export const VerificationCommandsConfig = Type.Object({
 	 * then the analyzer nominates nothing and the pattern list stands alone.
 	 */
 	decisionModel: Type.Optional(Type.String()),
+	/**
+	 * Whether the analyzer may send a command line to the decision model.
+	 *
+	 * Set this to false to keep every command line on the machine. The
+	 * analyzer then nominates nothing, so `stale-verification` falls back to
+	 * its local pattern list and no command ever leaves.
+	 *
+	 * The switch is part of the config fingerprint, so turning the remote call
+	 * off marks the nodes drawn under it stale for `config`, and turning it
+	 * back on revises them.
+	 */
+	allowRemoteVerdicts: Type.Boolean(),
 	/** How many distinct commands one session may nominate. */
 	maxCandidatesPerSession: Type.Integer({ minimum: 1 }),
 });
@@ -38,5 +50,6 @@ export const DEFAULT_VERIFICATION_COMMANDS_CONFIG: VerificationCommandsConfig = 
 	shellToolNames: ["bash"],
 	minRunSeconds: 60,
 	skipKnownPatterns: true,
+	allowRemoteVerdicts: true,
 	maxCandidatesPerSession: 20,
 };
