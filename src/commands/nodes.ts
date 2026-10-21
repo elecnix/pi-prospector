@@ -377,14 +377,28 @@ export async function readNodes(db: AsyncDatabase, q: NodesQuery): Promise<Nodes
 	// A muted lexicon term stops counting, so a frustration hit the operator
 	// rejected must not appear in the listing or in a count over one. The hit
 	// nodes stay in the graph as lineage; this is a read filter, not a
-	// retraction. The rows are also read at their current generation, so a
-	// signal whose hit was recomputed (an unmute produces a new one) is listed
-	// once rather than once per generation.
+	// retraction.
 	//
 	// An as-of read is left alone: it reconstructs the graph as it stood at a
-	// past instant, and the mute set and the generation both belong to *now*.
-	if (q.analyzerId === TURN_FRUSTRATION_DEF.id && !asOf) {
-		rows = unmutedHits(currentHits(rows), await mutedTerms(db));
+	// past instant, and the mute set belongs to *now*.
+	if (!asOf) {
+		const muted = await mutedTerms(db);
+		const isFrustration = (row: AnalysisNodeRow): boolean => row.analyzer_id === TURN_FRUSTRATION_DEF.id;
+		if (q.analyzerId === TURN_FRUSTRATION_DEF.id) {
+			// A listing of the frustration hits reads the current generation, so a
+			// signal whose hit was recomputed (an unmute produces a new one) is
+			// listed once rather than once per generation.
+			rows = unmutedHits(q.allVersions ? rows : currentHits(rows), muted);
+		} else {
+			// A listing across every analyzer keeps the frustration rows apart, so
+			// the collapse runs over that subset alone.
+			const rest = rows.filter((row) => !isFrustration(row));
+			const frustrationRows = rows.filter(isFrustration);
+			const kept = q.allVersions
+				? unmutedHits(frustrationRows, muted)
+				: unmutedHits(currentHits(frustrationRows), muted);
+			rows = [...rest, ...kept];
+		}
 	}
 
 	// Typed filters over the analyzer's declared outputSchema; best-effort when

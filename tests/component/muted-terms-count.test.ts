@@ -261,4 +261,28 @@ describe("a muted term stops counting", () => {
 			await close();
 		}
 	});
+
+	it("keeps a muted term out of a listing across every analyzer", async () => {
+		// `prospect nodes --all` reads every analyzer's nodes, so the mute has to
+		// be honoured there too, or the operator sees the term in one listing and
+		// not in the other.
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", MESSAGES);
+
+			const framework = await build(db);
+			await framework.run("s1");
+			await muteTerm(db, { term: "putain", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+
+			const result = await readNodes(db, { all: true, filters: [] });
+			const signals = result.rows
+				.filter((r) => r.analyzer_id === TURN_FRUSTRATION_DEF.id)
+				.map((r) => (JSON.parse(r.content_json) as { signal: string }).signal);
+			assert.deepEqual(signals, [], "a muted term appears in no listing");
+		} finally {
+			await close();
+		}
+	});
 });
