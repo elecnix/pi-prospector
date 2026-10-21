@@ -177,7 +177,13 @@ export async function supersedeAssertion(
  * A node is one of those conclusions when it was written *after* the mute and
  * *read* a muted hit — the `consumes` edge says "this node was built from that
  * node". The timing is what distinguishes a muted-era conclusion from the
- * pre-mute one, which read the very same hit.
+ * pre-mute one, which read the very same hit: the pre-mute one was written
+ * before the mute was asserted.
+ *
+ * A reader that does not consume the hit cannot be found this way, so every
+ * reader that reads a hit emits a `consumes` edge for it. The edge is also
+ * what lets a reader walk back from a conclusion to the evidence it was built
+ * from, which is the reason the edge table exists in the first place.
  *
  * Retraction is the existing reversible one: the node stays in the graph, its
  * content still verifies, and `prospect retract --undo` can bring it back.

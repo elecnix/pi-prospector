@@ -99,6 +99,20 @@ interface EnrichMeta {
 	/** Event-centered slice: turns since the previous trigger point (issue #118). */
 	priorTurns: SliceTurn[];
 	coreOutputKey: string;
+	/**
+	 * The output keys of the dependency nodes this unit was built from: the
+	 * frustration hits that escalated the turn, the trajectory node whose signals
+	 * bounded the slice, and the turn's core node.
+	 *
+	 * The source set already names them — that is what makes the unit's identity
+	 * move when an upstream conclusion changes — but the *edge* is what lets a
+	 * reader walk back from a conclusion to the evidence it was built from. The
+	 * frustration hits matter most: a human mute silences a hit by marking it,
+	 * and a conclusion drawn from a silenced hit has to be findable so that
+	 * lifting the mute can hand the lineage head back to the conclusion that
+	 * holds again (#325).
+	 */
+	consumedOutputKeys: string[];
 }
 
 export const turnPairLLMAnalyzer: Analyzer = {
@@ -140,6 +154,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		// turn happened, and shrinking an unrelated turn's evidence slice because
 		// a word was muted would be a change the operator never asked for.
 		const muted = await getMutedNodeIds(ctx.db);
+		const hitOutputKeys: string[] = [];
 		for (const node of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
 			let hit: TurnFrustrationProperties;
 			try {
@@ -149,6 +164,7 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			}
 			if (!hit.user_message_id) continue;
 			frustrationIds.push([hit.user_message_id]);
+			hitOutputKeys.push(node.output_key);
 			if (muted.has(node.id)) continue;
 			if (hit.polarity !== "frustration") continue;
 			frustrationBoost.set(hit.user_message_id, (frustrationBoost.get(hit.user_message_id) ?? 0) + hit.weight);
@@ -246,6 +262,13 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				})),
 				priorTurns,
 				coreOutputKey: node.output_key,
+				// The evidence trail: every dependency node whose conclusion shaped
+				// this unit. The hits first — they are what a human mute silences.
+				consumedOutputKeys: [
+					...hitOutputKeys,
+					...(ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? []).map((n) => n.output_key),
+					node.output_key,
+				],
 			};
 			units.push({
 				sources,
@@ -299,8 +322,18 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			durationMs: response.durationMs,
 			edges: [
 				{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
-				{ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: meta.coreOutputKey, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 },
-				{ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: CLASSIFY_PROMPT_HASH, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: 2 },
+				// The evidence trail: the dependency nodes this classification was
+				// built from. The frustration hits come first — a human mute silences
+				// a hit by marking it, and the conclusion drawn from a silenced hit
+				// has to be findable from the hit so that lifting the mute can hand
+				// the lineage head back to the conclusion that holds again (#325).
+				...meta.consumedOutputKeys.map((key, i) => ({
+					toRefKind: REF_KINDS.ANALYSIS_NODE,
+					toRefId: key,
+					edgeKind: EDGE_KINDS.CONSUMES,
+					ordinal: i + 1,
+				})),
+				{ toRefKind: REF_KINDS.PROMPT_VERSION, toRefId: CLASSIFY_PROMPT_HASH, edgeKind: EDGE_KINDS.USES_PROMPT, ordinal: meta.consumedOutputKeys.length + 1 },
 			],
 		};
 	},

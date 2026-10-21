@@ -40,6 +40,7 @@ import { getActiveAssertions, getMutedTerms, getMutedNodeIds, isTermMuted, listA
 import { verifyNodes } from "../../src/commands/verify.js";
 import { frictionAccumulationAnalyzer } from "../../src/analyze/analyzers/friction-accumulation/index.js";
 import { toolTrajectoryAnalyzer } from "../../src/analyze/analyzers/tool-trajectory/index.js";
+import { turnPairLLMAnalyzer } from "../../src/analyze/analyzers/turn-pair-llm/index.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
 const FRUSTRATED_TERMS = new Set(["putain", "wrong", "pénible"]);
@@ -48,6 +49,20 @@ async function build(db: AsyncDatabase) {
 	const llm = createMockLLM({
 		responder: (req: LLMRequest) => {
 			const term = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
+			// The classifier's prompt is the one that asks for a turn
+			// classification; the lexicon's asks about a term.
+			if (!term && req.user.includes("USER MESSAGE:")) {
+				return {
+					text: "x",
+					structured: {
+						sentiment: "frustrated",
+						friction_type: "wrong_approach",
+						is_genuine_correction: true,
+						severity: "high",
+						rationale: "r",
+					},
+				};
+			}
 			const frustrated = FRUSTRATED_TERMS.has(term);
 			return {
 				text: "x",
@@ -75,6 +90,30 @@ async function buildWithReaders(db: AsyncDatabase) {
 	await framework.register(toolTrajectoryAnalyzer);
 	await framework.register(frictionAccumulationAnalyzer);
 	return { framework, llm };
+}
+
+/**
+ * The same chain plus the classifier that a lexicon hit escalates a turn to.
+ *
+ * The classifier's unit identity does not name the hit node: it names the
+ * turn's core node, so the silenced hit changes the conclusion without moving
+ * the unit. That is what makes it the reader whose lineage head the unmute has
+ * to hand back.
+ */
+async function buildWithClassifier(db: AsyncDatabase) {
+	const { framework, llm } = await build(db);
+	await framework.register(turnPairLLMAnalyzer);
+	return { framework, llm };
+}
+
+/** The current classification nodes, with their parsed content and output key. */
+async function currentClassifierNodes(db: AsyncDatabase): Promise<Array<{ id: string; outputKey: string; props: { friction_type: string } }>> {
+	const nodes = await listAnalysisNodes(db, { analyzerId: "turn-pair-llm" });
+	return nodes.map((n) => ({
+		id: n.id,
+		outputKey: n.output_key,
+		props: JSON.parse(n.content_json) as { friction_type: string },
+	}));
 }
 
 async function tfProps(db: AsyncDatabase, sessionId: string): Promise<TurnFrustrationProperties[]> {
@@ -456,6 +495,44 @@ describe("a muted term's existing hits (#325)", () => {
 			assert.ok(
 				restored.turn_contributions.some((c) => c.frustration_weight > 0),
 				"unmuting restores the term's contribution",
+			);
+		} finally {
+			await close();
+		}
+	});
+
+	it("hands the pre-mute conclusion back to a reader whose source set does not name the hit", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithClassifier(db);
+			await framework.run("s1");
+
+			// The classifier ran because the lexicon hit escalated the turn.
+			const before = await currentClassifierNodes(db);
+			assert.equal(before.length, 1, "one current classification node");
+			assert.equal(before[0]!.props.friction_type, "wrong_approach", "the lexicon hit escalated the turn");
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+
+			// Under the mute the turn is no longer escalated, so the classifier drew
+			// a second conclusion that revises the first.
+			const muted = await currentClassifierNodes(db);
+			assert.equal(muted.length, 1, "one current classification node under the mute");
+			assert.notEqual(muted[0]!.outputKey, before[0]!.outputKey, "the mute-era conclusion is a new node");
+
+			// Unmuting must hand the head of the lineage back to the conclusion that
+			// holds again: the pre-mute one. The muted-era conclusion was drawn
+			// under a setup that no longer holds, so it must not stay current.
+			await unmuteTerm(db, "wrong");
+			const restored = await currentClassifierNodes(db);
+			assert.equal(
+				restored[0]!.outputKey,
+				before[0]!.outputKey,
+				"unmuting restores the pre-mute conclusion as the current one",
 			);
 		} finally {
 			await close();
