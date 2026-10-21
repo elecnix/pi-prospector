@@ -14,7 +14,7 @@ import { DEFAULT_TIME_ECONOMY_CONFIG } from "../../src/analyze/analyzers/time-ec
 import type { TimeEconomyConfig } from "../../src/analyze/analyzers/time-economy/config.js";
 import { measureTime } from "../../src/analyze/analyzers/time-economy/detect.js";
 import { findFailureMarkers, type PhaseSpan } from "../../src/analyze/analyzers/time-economy/spans.js";
-import { isCommitCommand, commitSubjectOf, isPreparationCommand, isFailedPreparation, isPullRequestSkill } from "../../src/analyze/analyzers/time-economy/spans.js";
+import { isCommitCommand, commitSubjectOf, isPreparationCommand, isFailedPreparation, isPullRequestSkill, isPrCreateCommand } from "../../src/analyze/analyzers/time-economy/spans.js";
 import { measurePhaseSpans, measureSkillSpans, type SpanRow } from "../../src/analyze/analyzers/time-economy/phases.js";
 import { extractBackgroundTasks, parseTaskNotification } from "../../src/sync/background-tasks.js";
 import type { BackgroundTaskRow } from "../../src/analyze/types.js";
@@ -401,6 +401,25 @@ describe("measurePhaseSpans", () => {
 		];
 	}
 
+	it("counts every turn the span reaches into", () => {
+		// The span starts in the first turn, at 150, and ends in the next, at
+		// 250. The first turn closed at 200, before the span ended, so the
+		// first clause cannot match it — and the second clause cannot either,
+		// because the turn opened before the span started. The span still
+		// covered that turn's work, so both turns count.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(150), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "npm test" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(200) }),
+			spanRow({ id: "u2", role: "user", timestamp: at(220) }),
+			spanRow({ id: "c2", role: "assistant", timestamp: at(250), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "git commit -m 'x'" } }]) }),
+		];
+		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand, commitSubject: commitSubjectOf });
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		assert.equal(preparation.turns, 2);
+	});
+
 	it("does not start a preparation at a test run that failed", () => {
 		// The host reported the run as an error: it left work to do, so it did
 		// not prepare the commit.
@@ -690,6 +709,14 @@ describe("measureSkillSpans", () => {
 		assert.equal(spans[0]?.end_reason, "pr_created");
 		// The span ends when the forge answered, not when the call was issued.
 		assert.equal(spans[0]?.seconds, 100);
+	});
+
+	it("does not end a pull-request skill at a command that only mentions a creation", () => {
+		// The agent echoes the command it is about to run, or writes it into
+		// a script. Neither creates a pull request, so neither ends the span.
+		assert.equal(isPrCreateCommand("echo 'gh pr create'"), false);
+		assert.equal(isPrCreateCommand("cat > /tmp/open.sh <<'EOF'\ngh pr create --title x\nEOF"), false);
+		assert.equal(isPrCreateCommand("gh pr create --title x"), true);
 	});
 
 	it("does not end a pull-request skill at a failed gh pr create", () => {

@@ -164,27 +164,30 @@ function sessionBounds(rows: readonly SpanRow[]): { firstMs: number | null; last
 /**
  * The number of turns a span covers.
  *
- * A turn counts when the span reaches into it: it opened before the span
- * started, or it opened inside it. A turn that opened after the span ended is
+ * A turn counts when the span reaches into it: the turn opened before the
+ * span started and the span began while the turn was still open, or the
+ * turn opened inside the span. A turn that opened after the span ended is
  * not counted, and neither is one that closed before the span began.
  *
  * A span that starts in the middle of a turn therefore counts that turn: the
  * work the agent did in it belongs to the turn, whether or not the span
- * covers the turn's opening message.
+ * covers the turn's opening message. A span that reaches across a turn
+ * boundary counts both turns, even when the first of them closed before the
+ * span ended.
  */
 function turnsBetween(startMs: number | null, endMs: number | null, turns: readonly Turn[]): number {
 	if (startMs === null || endMs === null) return 0;
 	let count = 0;
 	for (const turn of turns) {
 		if (turn.startMs === null) continue;
-		// The turn opened before the span began and closed after it ended: the
-		// span sits inside the turn.
-		if (turn.startMs <= startMs && turn.endMs !== null && turn.endMs >= endMs) {
+		// The turn opened inside the span.
+		if (turn.startMs >= startMs && turn.startMs <= endMs) {
 			count++;
 			continue;
 		}
-		// The turn opened inside the span.
-		if (turn.startMs >= startMs && turn.startMs <= endMs) count++;
+		// The turn opened before the span began and was still open when the
+		// span began: the span sits inside the turn.
+		if (turn.startMs <= startMs && turn.endMs !== null && turn.endMs >= startMs) count++;
 	}
 	return count;
 }

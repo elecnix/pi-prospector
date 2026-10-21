@@ -379,9 +379,16 @@ export function skillNameOf(args: Record<string, unknown>): string | null {
  */
 const PR_CREATE = /\bgh\s+pr\s+create\b/;
 
-/** Whether a shell command is a `gh pr create`. */
+/**
+ * Whether a shell command is a `gh pr create`.
+ *
+ * The command is read as a command, not as text: a heredoc body is a script
+ * the agent wrote, and a quoted string is an argument it passed. Neither
+ * creates a pull request, and a skill span that ended at one would report a
+ * duration the skill never occupied.
+ */
 export function isPrCreateCommand(command: string): boolean {
-	return PR_CREATE.test(command);
+	return PR_CREATE.test(stripCommandText(command));
 }
 
 /**
