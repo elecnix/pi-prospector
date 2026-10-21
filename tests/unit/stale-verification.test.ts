@@ -361,6 +361,36 @@ describe("buildProposals", () => {
 		assert.ok(unverified, proposals.map((p) => p.title).join(" | "));
 		assert.equal(unverified!.severity, "medium");
 	});
+
+	it("names the full check the corpus learned, rather than a generic check", () => {
+		const learned = new Map([["tools/ci/verify-all", { verdict: "full", confidence: 0.9, command: "tools/ci/verify-all" }]]);
+		const scan = findStaleVerifications(
+			[0, 1, 2].flatMap((i) => [
+				...sh(`v${i}`, "tools/ci/verify-all", i * 1000, 300),
+				...edit(`e${i}`, "src/a.ts", i * 1000 + 310),
+			]),
+			CONFIG,
+			new Set(learned.keys()),
+		);
+		const proposals = buildProposals(scan, CONFIG, learned);
+		const agent = proposals.find((p) => /the agent's own edits/.test(p.title));
+		assert.ok(agent, proposals.map((p) => p.title).join(" | "));
+		assert.match(agent!.detail, /tools\/ci\/verify-all/);
+	});
+
+	it("says nothing about a command the corpus has not judged", () => {
+		const scan = findStaleVerifications(
+			[0, 1, 2].flatMap((i) => [
+				...sh(`v${i}`, "npm test", i * 1000, 300),
+				...edit(`e${i}`, "src/a.ts", i * 1000 + 310),
+			]),
+			CONFIG,
+		);
+		const proposals = buildProposals(scan, CONFIG, {});
+		const agent = proposals.find((p) => /the agent's own edits/.test(p.title));
+		assert.ok(agent);
+		assert.doesNotMatch(agent!.detail, /npm test/);
+	});
 });
 
 describe("resolveConfig", () => {

@@ -116,9 +116,37 @@ function evidenceFor(scan: StaleScan, cause: StaleCause, cap: number): string {
 }
 
 /** The proposals a scan earns under the configured thresholds. */
-export function buildProposals(scan: StaleScan, config: StaleVerificationConfig): StaleVerificationRawProposal[] {
+export function buildProposals(
+	scan: StaleScan,
+	config: StaleVerificationConfig,
+	learned: ReadonlyMap<string, { verdict: string }> | Readonly<Record<string, { verdict: string }>> = new Map(),
+): StaleVerificationRawProposal[] {
 	const proposals: StaleVerificationRawProposal[] = [];
 	const count = (cause: StaleCause) => scan.stale_runs.filter((s) => s.cause === cause).length;
+	const verdictOf = (command: string): string | undefined => {
+		if (learned instanceof Map) return learned.get(command)?.verdict;
+		const entry = (learned as Readonly<Record<string, { verdict: string } | undefined>>)[command];
+		return entry?.verdict;
+	};
+
+	/**
+	 * The full checks among the stale runs, by the command line the corpus
+	 * judged to be a full check. A command the corpus has not judged is left
+	 * out: the advice names the check only when the corpus knows it is a full
+	 * one, and a pattern match alone does not say that.
+	 */
+	const fullCommands = [
+		...new Set(
+			scan.stale_runs
+				.filter((s) => verdictOf(s.command) === "full")
+				.map((s) => s.command),
+		),
+	];
+	const fullClause =
+		fullCommands.length > 0
+			? `The corpus judged ${fullCommands.slice(0, 3).map((c) => `\`${c}\``).join(", ")} a full check, so ` +
+				"run it once, after the last edit, rather than again after each change."
+			: "Run the slow checks (the full test suite, the gate script, the build) once, after the last edit.";
 
 	const agentSeconds = scan.stale_seconds_by_cause.agent;
 	if (agentSeconds >= config.proposalMinSeconds && count("agent") > 0) {
@@ -130,8 +158,8 @@ export function buildProposals(scan: StaleScan, config: StaleVerificationConfig)
 				`The agent edited files after ${n} passing ${plural(n, "run", "runs")} and before committing, ` +
 				`so ${minutes(agentSeconds)} min of verification no longer described the tree it committed.`,
 			detail:
-				"Run the slow checks (the full test suite, the gate script, the build) once, after the last edit. " +
-				"While still editing, run the narrow test for the code being changed. " +
+				fullClause +
+				" While still editing, run the narrow test for the code being changed. " +
 				"Finish follow-up edits such as docs, comments, and formatting before the slow run, not after it.",
 			evidence: `Stale runs, longest first: ${evidenceFor(scan, "agent", config.evidenceCap)}`,
 			confidence: 0.75,
@@ -228,7 +256,7 @@ export const staleVerificationAnalyzer: Analyzer = {
 		// to the corpus rather than to the session that first surfaced it.
 		const judged = verificationCommandsByCommand(await ctx.getGlobalDependencyNodes(VERIFICATION_COMMANDS_DEF.id));
 		const scan = findStaleVerifications(messages, config, new Set(judged.keys()));
-		const proposals = buildProposals(scan, config);
+		const proposals = buildProposals(scan, config, judged);
 		const properties: StaleVerificationProperties = { session_id: ctx.sessionId, ...scan, improvement_proposals: proposals };
 
 		// Anchor the session, each stale run, and the edit that made it stale.
