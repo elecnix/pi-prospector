@@ -40,6 +40,20 @@ describe("matchRebuttalCandidates", () => {
 		assert.equal(firstMatch("it failed"), "it failed");
 	});
 
+	it("matches a contractive negation as readily as the spelled-out one", () => {
+		// The patterns name the contraction ("doesn't", "didn't") and the
+		// spelled-out form ("does not", "did not") side by side, so both wordings
+		// of the same dispute have to reach the matcher. A pattern that only
+		// answered the spelled-out one would quietly miss half the disputes.
+		assert.equal(firstMatch("that doesn't exist"), "that doesn't exist");
+		assert.equal(firstMatch("that flag doesn't exist"), "that flag doesn't exist");
+		assert.equal(firstMatch("it doesn't work"), "it doesn't work");
+		assert.equal(firstMatch("the test doesn't pass"), "the test doesn't pass");
+		assert.equal(firstMatch("the build doesn't compile"), "the build doesn't compile");
+		assert.equal(firstMatch("that isn't true"), "that isn't true");
+		assert.equal(firstMatch("it isn't true"), "it isn't true");
+	});
+
 	it("does not match an instruction — 'I told you to use X' stays a correction", () => {
 		// The distinction the deterministic layer exists to keep: an instruction
 		// asks for different behaviour and leaves the assistant's stated fact
@@ -97,6 +111,14 @@ describe("matchApologyCandidates", () => {
 	it("matches the closings that concede without the word", () => {
 		assert.ok(matchApologyCandidates("you're right, it should be --repo").length > 0);
 		assert.ok(matchApologyCandidates("my error, sorry").length > 0);
+	});
+
+	it("matches a concession in either tense and either spelling", () => {
+		// "I'm wrong" and "I was wrong" are the same concession, so a matcher
+		// that answers only one of them answers half of them.
+		for (const text of ["I was wrong", "I am wrong", "I'm wrong", "I was mistaken", "I'm mistaken"]) {
+			assert.ok(matchApologyCandidates(text).length > 0, `"${text}" is a concession`);
+		}
 	});
 
 	it("does not match ordinary prose", () => {

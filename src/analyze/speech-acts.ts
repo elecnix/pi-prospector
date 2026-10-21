@@ -41,6 +41,18 @@ export interface SpeechActMatch {
 }
 
 /**
+ * The negation a rebuttal pattern accepts, in every wording a writer uses:
+ * "doesn't", "does not", "didn't", "did not", "don't", "do not".
+ *
+ * The contraction and the spelled-out form carry the same meaning, so a
+ * pattern that answers only one of them answers half the disputes. The
+ * spelling is the hard part: "doesn't" *is* the contraction of "does not",
+ * so a pattern that asks for "does" before the suffix never matches it. Each
+ * auxiliary is therefore listed in both forms.
+ */
+const NEGATION_SOURCE = "(?:does\\s*n[o']?t|does\\s+not|do\\s*n[o']?t|do\\s+not|did\\s*n[o']?t|did\\s+not|doesn\\u2019t|didn\\u2019t|don\\u2019t)";
+
+/**
  * Rebuttal patterns: wordings in which the user disputes whether something the
  * assistant said is true.
  *
@@ -62,15 +74,32 @@ const REBUTTAL_PATTERNS: RegExp[] = [
 	// "you are wrong", "you're wrong", "you were wrong"
 	/\byou(?:'re| are| were)\s+(?:wrong|incorrect|mistaken)\b/i,
 	// "that flag doesn't exist", "that doesn't exist"
-	/\bthat\s+(?:flag|option|argument|command|file|branch|field|parameter|method|function|api|endpoint|setting|config(?:uration)?|key|script|test|target)\b[^.?!]{0,40}\b(?:does\s*n[o']?t|does\s+not|do\s*n[o']?t|do\s+not)\s+exist\b/i,
+	new RegExp(
+		`\\bthat\\s+(?:flag|option|argument|command|file|branch|field|parameter|method|function|api|endpoint|setting|config(?:uration)?|key|script|test|target)\\b[^.?!]{0,40}\\b${NEGATION_SOURCE}\\s+exist\\b`,
+		"i",
+	),
+	// "that doesn't exist", "that does not exist" — the bare form, with no noun
+	// between "that" and the negation. The pattern above needs the noun, so
+	// without this one the plainest wording of the dispute never matched.
+	new RegExp(`\\bthat\\s+${NEGATION_SOURCE}\\s+exist\\b`, "i"),
 	// "there's no such option", "there is no such flag"
 	/\b(?:there(?:'s| is)\s+no|there\s+isn'?t)\s+(?:such\s+)?(?:flag|option|argument|command|file|branch|field|parameter|method|function|api|endpoint|setting|config(?:uration)?|key|script|test|target)\b/i,
 	// "the test didn't pass", "the build didn't compile", "the command didn't succeed"
-	/\b(?:it|that|the\s+test|the\s+build|the\s+command|the\s+check)\s+(?:did\s*n[o']?t|does\s+n[o']?t|did\s+not|does\s+not)\s+(?:pass|passes|passed|compile|compiles|work|works|succeed|succeeds|succeeded)\b/i,
+	new RegExp(
+		`\\b(?:it|that|the\\s+test|the\\s+build|the\\s+command|the\\s+check)\\s+${NEGATION_SOURCE}\\s+(?:pass|passes|passed|compile|compiles|work|works|succeed|succeeds|succeeded)\\b`,
+		"i",
+	),
 	// "it didn't work"
-	/\bit\s+(?:did\s*n[o']?t|does\s+n[o']?t|did\s+not|does\s+not)\s+work\b/i,
-	// "it's not true", "that is not true"
-	/\b(?:that'?s|it'?s|this\s+is)\s+not\s+true\b/i,
+	new RegExp(`\\bit\\s+${NEGATION_SOURCE}\\s+work\\b`, "i"),
+	// "it's not true", "that is not true", "that isn't true"
+	//
+	// "isn't true" and "is not true" are the same claim, but they are not the
+	// same words: the contraction carries the negation inside "isn't", so a
+	// pattern that asks for "not true" after it never matches. Both wordings
+	// are listed — and only the negated ones, so "that's true" (agreement) is
+	// never a rebuttal.
+	/\b(?:that'?s|it'?s|this\s+is|that\s+is|it\s+is)\s+not\s+true\b/i,
+	/\b(?:that|it)\s+isn'?t\s+true\b/i,
 	// "you're mistaken"
 	/\byou(?:'re| are)\s+mistaken\b/i,
 	// "it failed", "it errored", "it timed out", "it was rejected" — the outcome
@@ -95,8 +124,13 @@ const APOLOGY_PATTERNS: RegExp[] = [
 	/\bapolog(?:y|ies|ise[sd]?|ize[sd]?|ising|izing)\b/i,
 	// "my mistake", "that was my mistake"
 	/\bmy\s+mistake\b/i,
-	// "I was wrong", "I was mistaken"
-	/\bi\s+(?:was|were)\s+(?:wrong|mistaken)\b/i,
+	// "I was wrong", "I was mistaken", "I'm wrong", "I am wrong"
+	//
+	// "I'm wrong" and "I was wrong" are the same concession, so both wordings
+	// are listed. The contraction carries the "am" inside it, so a pattern that
+	// asks for "am" before it never matches.
+	/\bi\s+(?:was|were|am|are)\s+(?:wrong|mistaken)\b/i,
+	/\bi'?m\s+(?:wrong|mistaken)\b/i,
 	// "you're right", "you are right", "you're correct"
 	/\byou(?:'re| are)\s+(?:right|correct)\b/i,
 	// "my error", "that was my error"
