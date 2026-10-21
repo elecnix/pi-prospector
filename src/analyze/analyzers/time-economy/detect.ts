@@ -385,7 +385,8 @@ export function measureTime(
 				// A backgrounded call's output can hide a failure too: the same
 				// call can be a slow task and a failed one, and the branch that
 				// times a background call must not skip the output check.
-				findHiddenExitCode(inv, isShell, family, seconds, textById, config.failureMarkers, hiddenExitCodes);			}
+				findHiddenExitCode(inv, isShell, family, seconds, textById, config.failureMarkers, hiddenExitCodes);
+			}
 			continue;
 		}
 
@@ -427,10 +428,6 @@ export function measureTime(
 		// A call the harness called successful whose output says it failed: the
 		// exit code a pipe hid. `cmd 2>&1 | tail -40` returns tail's status, so
 		// the failure never reaches the exit code — only the output shows it.
-		//
-		// Only a *shell* call is examined. A read of a document that happens to
-		// contain the phrase "Permission denied" is not a failed command, and a
-		// non-shell tool has no exit code for a pipe to hide in the first place.
 		findHiddenExitCode(inv, isShell, family, seconds, textById, config.failureMarkers, hiddenExitCodes);
 
 		if (isShell) {
