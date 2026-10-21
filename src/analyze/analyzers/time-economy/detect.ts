@@ -30,6 +30,7 @@
 import { Type, type Static } from "typebox";
 import type { MessageRow } from "../../types.js";
 import { buildToolStream, singleResult } from "../../tool-stream.js";
+import { parseTime } from "../stale-verification/command-vocabulary.js";
 import type { TimeEconomyConfig } from "./config.js";
 
 export const FamilyTimeSchema = Type.Object({
@@ -205,12 +206,6 @@ function configRegExp(key: string, patterns: readonly string[], index: number, f
 
 function configRegExps(key: string, patterns: readonly string[], flags: string): RegExp[] {
 	return patterns.map((_, i) => configRegExp(key, patterns, i, flags));
-}
-
-function parseTime(ts: string | null): number | null {
-	if (!ts) return null;
-	const ms = Date.parse(ts);
-	return Number.isNaN(ms) ? null : ms;
 }
 
 /** Round to a tenth of a second, so node content stays stable and readable. */

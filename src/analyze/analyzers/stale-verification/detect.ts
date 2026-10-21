@@ -45,7 +45,7 @@ import { Type, type Static } from "typebox";
 import type { MessageRow } from "../../types.js";
 import { buildToolStream, singleResult } from "../../tool-stream.js";
 import type { StaleVerificationConfig } from "./config.js";
-import { commandSegments, normaliseCommand, normalisePath, workDir } from "./command-vocabulary.js";
+import { commandSegments, normaliseCommand, normalisePath, parseTime, workDir } from "./command-vocabulary.js";
 
 export const STALE_CAUSES = ["agent", "user", "subagent"] as const;
 export type StaleCause = (typeof STALE_CAUSES)[number];
@@ -166,12 +166,6 @@ export function classifyCall(
 function firstLine(text: string, max = 160): string {
 	const line = text.split("\n")[0] ?? "";
 	return line.length > max ? `${line.slice(0, max - 1)}…` : line;
-}
-
-function parseTime(ts: string | null): number | null {
-	if (!ts) return null;
-	const ms = Date.parse(ts);
-	return Number.isNaN(ms) ? null : ms;
 }
 
 /** Round to a tenth of a second, so node content stays stable and readable. */

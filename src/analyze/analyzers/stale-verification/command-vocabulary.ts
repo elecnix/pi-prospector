@@ -45,6 +45,18 @@ export function commandSegments(command: string): string[] {
 }
 
 /**
+ * A timestamp in epoch milliseconds, or null when it is absent or unparsable.
+ *
+ * An unparsable timestamp is null rather than zero, so a call the host did
+ * not time is counted as untimed and never as an instant run.
+ */
+export function parseTime(ts: string | null): number | null {
+	if (!ts) return null;
+	const ms = Date.parse(ts);
+	return Number.isNaN(ms) ? null : ms;
+}
+
+/**
  * A command line as a stable key: trimmed, with a leading `./` removed and
  * interior runs of whitespace collapsed. The same command under a different
  * directory is one entry, so the corpus pays for it once.
