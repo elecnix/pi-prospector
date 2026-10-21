@@ -104,7 +104,14 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// every existing hit node keeps its identity and nothing is recomputed. When
 	// a term and an extending phrase both match the same turn, both hits are
 	// emitted but the weight follows longest-match-preferred (see plan).
-	minor: 5,
+	// 1.6: the function-word guard applies to the lexicon as it is read, not only
+	// as it is written (issue #321). A verdict the corpus cached before the
+	// guard existed still says "frustration" for a bare negator; the guard is
+	// deterministic, so correcting it at the read costs no model call and
+	// spares the operator a re-adjudication whose answer is discarded. A
+	// stoplisted term now fires no hit, and its previous hit nodes go stale for
+	// the `minor` reason.
+	minor: 6,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };

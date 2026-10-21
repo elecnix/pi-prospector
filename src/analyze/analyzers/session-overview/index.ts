@@ -129,7 +129,14 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// signal) rather than with a fixed positional cap. phase-trajectory joins the
 	// declared dependencies and its node's output key folds into the source set.
 	// Minor: additive channel; the synthesis contract is otherwise unchanged.
-	minor: 10,
+	// 1.11: a muted lexicon term stops counting toward the digest (issue #321).
+	// The digest lists the frustration terms a turn carried and counts the turns
+	// that carried one, so a term the operator rejected must not appear in
+	// either. The hits are also read at their current generation, so an unmute,
+	// which leaves the muted-era hit live beside the new one, does not list the
+	// signal twice. Minor: the digest content narrows; the synthesis contract
+	// is otherwise unchanged.
+	minor: 11,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };

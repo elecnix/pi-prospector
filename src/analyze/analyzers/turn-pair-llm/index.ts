@@ -97,7 +97,12 @@ export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	// rendered into the prompt as a candidate, never as a conclusion. Prompt text
 	// changed, so the input_key (and hence node version) changes; recomputed on
 	// the next run.
-	minor: 6,
+	// 1.7: the frustration hits that shape the selection boost are read at their
+	// current generation (issue #321). A revise of the hit analyzer leaves the
+	// previous generation live beside the new one, and summing both would count
+	// the same signal twice in the boost. Minor: the selection ranking narrows
+	// to the current hits; the prompt and the unit's source set are unchanged.
+	minor: 7,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };

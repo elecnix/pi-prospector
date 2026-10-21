@@ -108,8 +108,13 @@ export const FRICTION_ACCUMULATION_VERSION: AnalyzerVersion = {
 	// 1.0 (issue #101): accumulation of per-turn deterministic friction signals,
 	// window-rate comparison with a recurrence gate, and a proposal earned only
 	// above a total-friction floor so noise around clean sessions stays quiet.
+	// 1.1: a muted lexicon term stops contributing to the accumulation (issue
+	// #321). The mute is the operator's judgement that the term is not a
+	// signal, so its hits must not count toward the score. The hits are also
+	// read at their current generation, so an unmute, which leaves the
+	// muted-era hit live beside the new one, does not count the signal twice.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/friction-accumulation/index.ts",
 };
