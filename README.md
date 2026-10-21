@@ -207,9 +207,35 @@ This analyzer closes the gap by learning the answer from your own corpus. It nom
 
 The command belongs to the corpus rather than to the session that first ran it, so the graph is the cache: the first session to run a command pays one model call, and every later session reuses the verdict for nothing. A command the shipped patterns already match is never nominated, so the model never pays for a verdict nobody needs.
 
-**The command lines are the only session text that leaves your machine**, and only when you configure a decision model. Without one the analyzer nominates nothing and the pattern list stands alone.
+The next section says exactly what leaves your machine when this analyzer is on.
 
-Source: [`verification-commands/index.ts`](./src/analyze/analyzers/verification-commands/index.ts) · the decision question in [`decision.ts`](./src/analyze/analyzers/verification-commands/decision.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/verification-commands/config.ts).
+Source: [`verification-commands/index.ts`](./src/analyze/analyzers/verification-commands/index.ts) · the decision question in [`decision.ts`](./src/analyze/analyzers/verification-commands/decision.ts) · redaction in [`redact.ts`](./src/analyze/analyzers/verification-commands/redact.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/verification-commands/config.ts).
+
+#### What leaves your machine
+
+`verification-commands` is the only analyzer in the project that sends anything from your sessions to a remote service. Here is the whole of it.
+
+**What is sent:** the distinct command lines a session ran, one per command, and nothing else. A command line is the text of a shell call, such as `tools/ci/verify-all` or `npm test -- --coverage`. The request carries that one line in a `command` field, together with the fixed question text the analyzer ships. No prompt, no reply, no file path, no timestamp, no tool result, and no message of any kind travels with it. A test in the suite asserts exactly that, and asserts it against a request that has been given extra session text to catch a regression.
+
+**Where it goes:** to the decision model you configured, at the endpoint that model names. The default `jev` provider posts to `https://api.typesafe.ai/v1/systemone`. The API key is read from `JEV_API_KEY` or `TYPESAFE_API_KEY` and travels in the `Authorization` header. A different provider is reachable through `decisionProviders` in `prospector.json`.
+
+**When:** only when you set `decisionModel` on the analyzer, and only for a command the shipped patterns do not already cover. A command `npm test` never leaves, because the pattern list already answers it.
+
+**How often:** once per distinct command for the whole corpus, not once per session. The verdict is cached in the graph, so the second session that runs the same command sends nothing.
+
+**Secrets are taken out first.** A command line can carry a credential, so the analyzer redacts the obvious ones before sending: a bearer token in an `Authorization` header, the value of an environment assignment whose name looks secret (`API_TOKEN=…`), the credentials in a URL, a provider token of a known shape, and a password given as a flag. The redaction replaces the secret with `<redacted>` and leaves the rest of the line, so the model still sees which command it is judging. A redaction is not a guarantee: a secret in a shape the redactor does not know passes through.
+
+**Turning it off.** Set `allowRemoteVerdicts` to false and no command line leaves your machine:
+
+```json
+{
+  "analyzers": {
+    "verification-commands": { "allowRemoteVerdicts": false }
+  }
+}
+```
+
+The analyzer then nominates nothing and makes no model call. `stale-verification` falls back to its local pattern list, so it keeps measuring the runners that list names and counts a project whose gate script of its own naming as zero. The switch is part of the config fingerprint, so turning it off marks the nodes drawn under it stale for `config`, and turning it back on revises them.
 
 ### stale-verification — verification runs a later edit threw away (deterministic)
 
@@ -625,7 +651,7 @@ Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one p
 
 The `jev` provider reads its key from `JEV_API_KEY` or `TYPESAFE_API_KEY`. `decisionProviders` adds other endpoints that serve the System One API, each with a `baseUrl`, the `apiKeyEnv` variables to read, and `inputUsdPerMtok` for the node's cost. The decision model and the question set are part of a node's identity, so switching marks earlier nodes stale for `config`. `assistant-cognition` still calls its `tier` model to copy the verbatim quote for a turn that shows surprise. The generative path stays the default.
 
-`verification-commands` has no generative path: it is a decision model or nothing. Set its `decisionModel` and it starts learning which commands verify your tree; leave it unset and it nominates nothing, so `stale-verification` falls back to its pattern list. The command lines it sends are the only session text that leaves your machine.
+`verification-commands` has no generative path: it is a decision model or nothing. Set its `decisionModel` and it starts learning which commands verify your tree; leave it unset and it nominates nothing, so `stale-verification` falls back to its pattern list. It is the only analyzer that sends anything from your sessions to a remote service: the distinct command lines and nothing else. The section [What leaves your machine](#what-leaves-your-machine) says exactly what goes where, and how to keep it on your machine with `allowRemoteVerdicts: false`.
 
 `scripts/measure-decision-model.ts` compares the two paths on up to 20 sessions already analysed, read-only, and prints agreement per field, time, and cost.
 
