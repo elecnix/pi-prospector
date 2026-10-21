@@ -16,7 +16,15 @@
 import type { MessageRow } from "../../types.js";
 import { buildToolStream } from "../../tool-stream.js";
 
-export const HEREDOC = /<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*?\n\1\b/g;
+/**
+ * A heredoc: its opening marker, its body, and its terminator.
+ *
+ * The body runs to a line that holds the marker alone. `<<-` lets the
+ * terminator be indented, and the terminator may carry trailing whitespace.
+ * A heredoc whose terminator never arrives runs to the end of the command,
+ * so its body is everything after the marker.
+ */
+export const HEREDOC = /<<-?\s*['"]?(\w+)['"]?[^\n]*\n(?:[\s\S]*?\n)?[ \t]*\1[ \t]*(?=\n|$)|<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*$/g;
 export const SEGMENT_SPLIT = /&&|\|\||[;|\n]/;
 const SEGMENT_PREFIX =
 	/^\s*(?:[({]\s*|[A-Za-z_][A-Za-z0-9_]*=\S*\s+|(?:timeout\s+(?:-\S+\s+)*\S+|time|npx|bunx|exec|nice|uv\s+run|poetry\s+run|python3?\s+-m|bash|sh)\s+)/;

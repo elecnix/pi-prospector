@@ -84,6 +84,20 @@ describe("classifyCall", () => {
 		assert.equal(shell("cat > run.sh <<'EOF'\nnpm test\nEOF").kind, "other");
 	});
 
+	it("ignores a heredoc body with no terminator and one with an indented terminator", () => {
+		// The body of a heredoc is text, whichever way it ends.
+		assert.equal(shell("cat > run.sh <<'EOF'\nnpm test").kind, "other");
+		assert.equal(shell("cat > run.sh <<-'EOF'\n\tnpm test\n\tEOF").kind, "other");
+	});
+
+	it("reads the real command after a heredoc, not the heredoc's body", () => {
+		// The heredoc body is text, not a run. A line that also runs a check
+		// after the heredoc is that check, and not the body.
+		const c = shell("cat > notes.md <<EOF\nnpm test\nEOF\nnpm test");
+		assert.equal(c.kind, "verification");
+		assert.equal(c.kind === "verification" && c.command, "npm test");
+	});
+
 	it("classifies a commit before verification, even when the message mentions a test command", () => {
 		assert.equal(shell('git commit -m "fix: make npm test pass"').kind, "commit");
 		assert.equal(shell("git -C /repo commit -F msg.txt").kind, "commit");
