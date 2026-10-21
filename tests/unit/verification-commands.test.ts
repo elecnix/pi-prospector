@@ -222,6 +222,15 @@ describe("redactCommandLine", () => {
 		assert.match(out, /npm test/, "the command itself survives");
 	});
 
+	it("redacts a secret-looking environment assignment whatever its case", () => {
+		// The name is what makes it a secret, and a name is not always
+		// uppercase in a shell line.
+		for (const line of ["api_token=abc123def456 npm test", "Api_Token=abc123def456 npm test", "password=abc123def456 npm test"]) {
+			const out = redactCommandLine(line);
+			assert.ok(!out.includes("abc123def456"), `the value is gone: ${line}`);
+		}
+	});
+
 	it("leaves an environment assignment that is not a secret", () => {
 		assert.equal(redactCommandLine("NODE_ENV=production npm test"), "NODE_ENV=production npm test");
 	});

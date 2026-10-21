@@ -156,6 +156,31 @@ describe("verification-commands component test", () => {
 		}
 	});
 
+	it("the node stores the redacted command, not the raw one", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "vc-8");
+			await insertMessages(db, "vc-8", [
+				call("v1", "bash", { command: "API_TOKEN=s3cretvalue123 tools/ci/verify-all" }, 10),
+				done("v1", "bash", 130),
+				call("c1", "bash", { command: "git commit -m 'chore: bump'" }, 140),
+				done("c1", "bash", 141),
+			]);
+			const { fw } = await framework(db, "jev/jev-1.13.0");
+			await fw.run("vc-8", {});
+
+			const nodes = (await db
+				.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'verification-commands'")
+				.all()) as Array<{ content_json: string }>;
+			assert.equal(nodes.length, 1);
+			const content = JSON.parse(nodes[0]!.content_json) as Record<string, unknown>;
+			assert.ok(!JSON.stringify(content).includes("s3cretvalue123"), "the node holds no secret");
+			assert.match(content["command"] as string, /API_TOKEN=<redacted>/);
+		} finally {
+			await close();
+		}
+	});
+
 	it("the off-switch keeps every command line on the machine", async () => {
 		const { db, close } = await tempDb();
 		try {

@@ -34,7 +34,8 @@ export const REDACTED = "<redacted>";
  * The name has to look like a secret on its own, so an ordinary assignment
  * keeps its value. The list is a name-shape test rather than a fixed list of
  * names, so `MY_API_KEY`, `CI_JOB_TOKEN`, and `DB_PASSWORD` all match while
- * `NODE_ENV` and `CI` do not.
+ * `NODE_ENV` and `CI` do not. The test is case-insensitive, because a shell
+ * line is free to spell a name in any case.
  */
 const SECRET_NAME = /(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|AUTH|SESSION|COOKIE|SIGNATURE|PRIVATE)/i;
 
@@ -55,8 +56,13 @@ const PROVIDER_TOKEN = [
 /** A bearer token in an `Authorization` header. */
 const BEARER = /(\bAuthorization\s*:\s*Bearer\s+)([^\s'"\\]+)/gi;
 
-/** An environment assignment: `NAME=value`, with the value quoted or bare. */
-const ENV_ASSIGNMENT = /\b([A-Z_][A-Z0-9_]*)(\s*=\s*)("([^"]*)"|'([^']*)'|([^\s;&|]+))/g;
+/**
+ * An environment assignment: `NAME=value`, with the value quoted or bare.
+ *
+ * The name is matched in any case, because a shell line is free to spell a
+ * name in lower case.
+ */
+const ENV_ASSIGNMENT = /\b([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)("([^"]*)"|'([^']*)'|([^\s;&|]+))/g;
 
 /** The credentials in a URL: `scheme://user:password@host`. */
 const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/)([^\s/:@]+):([^\s/@]+)@/gi;

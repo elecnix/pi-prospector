@@ -289,7 +289,10 @@ export const verificationCommandsAnalyzer: Analyzer = {
 		const verdict = parseVerificationDecision(decision);
 
 		const properties: VerificationCommandProperties = {
-			command: meta.command,
+			// The redacted line, so the node holds no secret either. The graph is
+			// read by people and by other analyzers, and a credential in a stored
+			// command would outlive the run that fetched it.
+			command: redactCommandLine(meta.command),
 			verdict: verdict.verdict,
 			confidence: verdict.confidence,
 			probabilities: verdict.probabilities,
