@@ -200,20 +200,37 @@ export async function retractConclusionsMadeUnder(
 	term: string,
 	now: string,
 ): Promise<number> {
-	// The mute's own lifetime: the assertion and its supersession.
+	// The mute's own lifetime: the assertion and the instance it created.
 	const assertion = (await prep(db, `
 		SELECT id, asserted_at, superseded_at FROM assertions
 		WHERE subject_kind = 'term' AND subject_key = ? AND verdict = 'muted'
 		ORDER BY asserted_at DESC LIMIT 1
 	`).get(term)) as { id: string; asserted_at: string; superseded_at: string | null } | undefined;
 	if (!assertion) return 0;
+	const instance = await muteInstanceOrdinal(db, assertion.id);
 
-	// The conclusions that read one of the hits *this* mute silenced, and were
-	// written while the mute was in force. The `consumes` edge names its target
-	// by the target's content-addressed output key, so the join goes through
-	// the node, and the `mutes` edge is constrained to this mute's assertion
-	// and to the mute instance that created it, so another term's silenced hits
-	// and a previous instance of this term's mute are not candidates.
+	// The conclusions that read one of the hits *this* mute silenced, and that
+	// the mute did not itself silence.
+	//
+	// The `consumes` edge names its target by the target's content-addressed
+	// output key, so the join goes through the node. The `mutes` edge is
+	// constrained to this mute's assertion and to the mute instance that created
+	// it, so another term's silenced hits and a previous instance of this term's
+	// mute are not candidates.
+	//
+	// The mark is what says which of the two is the mute-era conclusion. A
+	// conclusion that read a silenced hit *before* the mute was asserted carries
+	// the mark: the mute silenced it too, because it counted a term the
+	// operator has since disowned. A conclusion the framework recomputed *under*
+	// the mute carries no mark — it is the conclusion that holds while the mute
+	// is in force, and it is the one that has to be retired when the mute is
+	// lifted, because the term counts again. So the targets are the unmarked
+	// readers of a silenced hit.
+	//
+	// That distinction is exact, and it needs no clock: the earlier version of
+	// this query compared creation times against the mute's window, which
+	// misfired whenever a conclusion and the mute landed in the same
+	// millisecond.
 	const rows = (await prep(db, `
 		SELECT DISTINCT c.from_node_id AS id
 		FROM analysis_edges c
@@ -222,18 +239,29 @@ export async function retractConclusionsMadeUnder(
 		                   AND m.edge_kind = ?
 		                   AND m.to_ref_kind = ?
 		                   AND m.to_ref_id = ?
+		                   AND m.ordinal = ?
 		JOIN analysis_nodes conclusion ON conclusion.id = c.from_node_id
 		WHERE c.edge_kind = ? AND c.to_ref_kind = ?
-		  AND conclusion.created_at >= ? AND conclusion.created_at < ?
 		  AND conclusion.retracted_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM analysis_edges s
+		    WHERE s.from_node_id = conclusion.id
+		      AND s.edge_kind = ?
+		      AND s.to_ref_kind = ?
+		      AND s.to_ref_id = ?
+		      AND s.ordinal = ?
+		  )
 	`).all(
 		EDGE_KINDS.MUTES,
 		REF_KINDS.ASSERTION,
 		assertion.id,
+		instance,
 		EDGE_KINDS.CONSUMES,
 		REF_KINDS.ANALYSIS_NODE,
-		assertion.asserted_at,
-		assertion.superseded_at ?? now,
+		EDGE_KINDS.MUTES,
+		REF_KINDS.ASSERTION,
+		assertion.id,
+		instance,
 	)) as Array<{ id: string }>;
 	const targets = rows.map((r) => r.id);
 	if (targets.length === 0) return 0;
