@@ -152,10 +152,11 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		const frustrationBoost = new Map<string, number>();
 		const frustrationIds: string[][] = [];
 		// A muted term's hits are silenced (#325): a silenced hit must not
-		// escalate a turn. It stays an *input* — the source set is unchanged, so
-		// the unit keeps its identity — and it still marks a slice boundary: the
-		// turn happened, and shrinking an unrelated turn's evidence slice because
-		// a word was muted would be a change the operator never asked for.
+		// escalate a turn. It stays an *input* — the silenced hit is still in
+		// the source set, so it does not by itself re-identify the unit — and
+		// it still marks a slice boundary: the turn happened, and shrinking an
+		// unrelated turn's evidence slice because a word was muted would be a
+		// change the operator never asked for.
 		const muted = await getMutedNodeIds(ctx.db);
 		const hitOutputKeys: string[] = [];
 		for (const node of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {

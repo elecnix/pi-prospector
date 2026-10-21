@@ -156,10 +156,16 @@ async function gatherDependencies(
 	dependencyNodes: Record<string, AnalysisNodeRow[]>,
 ): Promise<DependencyInputs> {
 	// A muted term's hit nodes are silenced by a human assertion (#325). They
-	// stay live and inspectable, and they stay *inputs* — the source set is
-	// unchanged, so the unit keeps its identity and a recomputation is a
-	// revision of its predecessor rather than a sibling. What changes is the
-	// arithmetic: a silenced hit contributes no weight.
+	// stay live and inspectable, and they stay *inputs* — the silenced hit is
+	// still in the source set, so it does not by itself re-identify the unit.
+	// What changes is the arithmetic: a silenced hit contributes no weight.
+	//
+	// The source set can still move, for a reason that has nothing to do with
+	// the silenced hit: the mute is `config`, so the *other* terms' hits are
+	// recomputed under the new fingerprint and get new output keys, and this
+	// unit names them by output key. A plain config change moves the source
+	// set the same way. When it moves, the unit re-identifies and the
+	// recomputation starts a new lineage rather than revising its predecessor.
 	//
 	// That separation is what makes the mute reversible. The mute is `config`,
 	// so lifting it reverts the fingerprint, the unit's recipe matches the

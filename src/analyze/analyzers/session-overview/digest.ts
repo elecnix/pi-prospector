@@ -112,8 +112,9 @@ export interface BuildDigestInput {
 	frustrationNodes?: AnalysisNodeRow[];
 	/**
 	 * The ids of the frustration hit nodes a human mute silenced (#325). A
-	 * silenced hit stays an *input* — the source set is unchanged, so the unit
-	 * keeps its identity — but it contributes nothing to the digest.
+	 * silenced hit stays an *input* — it is still in the source set, so it does
+	 * not by itself re-identify the unit — but it contributes nothing to the
+	 * digest.
 	 */
 	mutedHitIds?: ReadonlySet<string>;
 	/** user-reply-acts classification nodes (custom analyzer). */
