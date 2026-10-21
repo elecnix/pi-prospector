@@ -28,8 +28,16 @@ import type {
 import { computeConfigHash, shortHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
+import type { AsyncDatabase } from "../../../db/async-db.js";
+import { getLatestNodesByAnalyzerAcrossSessions } from "../../../db/analysis-queries.js";
 import { DEFAULT_STALE_VERIFICATION_CONFIG, type StaleVerificationConfig } from "./config.js";
 import { StaleScanSchema, findStaleVerifications, type StaleCause, type StaleScan } from "./detect.js";
+import {
+	VERIFICATION_COMMANDS_DEF,
+	judgedSetFingerprint,
+	verificationCommandsByCommand,
+	type VerificationCommandProperties,
+} from "../verification-commands/index.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const StaleVerificationRawProposal = Type.Object({
@@ -57,7 +65,7 @@ export const STALE_VERIFICATION_DEF: AnalyzerDef = {
 	description:
 		"Finds passing test, lint, build, and gate runs that a later edit made stale before any commit used them, and says what caused the edit (the agent, a human prompt, or a subagent such as a reviewer) and what followed it (a rerun, or a commit with no rerun). Deterministic, no LLM. Proposes a change when the agent's own edits or subagent findings throw away more verification time than the threshold, or when commits repeatedly take unverified edits.",
 	anchorSpan: "full_session",
-	dependencies: [],
+	dependencies: [VERIFICATION_COMMANDS_DEF.id],
 	outputSchema: STALE_VERIFICATION_PROPERTIES,
 };
 
@@ -187,7 +195,23 @@ export const staleVerificationAnalyzer: Analyzer = {
 		label: "default",
 	},
 
-	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+	/**
+	 * The learned command set is part of this analyzer's config identity.
+	 *
+	 * A verdict the corpus learned changes which runs this analyzer can see,
+	 * so a conclusion drawn under the older set is stale rather than standing
+	 * unchallenged. Folding the set's fingerprint into the config fingerprint
+	 * marks the nodes for the `config` reason: a plain fill leaves them alone,
+	 * and `--revise config` recomputes them with lineage preserved.
+	 */
+	async identityExtrasAsync(db: AsyncDatabase): Promise<readonly string[]> {
+		const judged = verificationCommandsByCommand(
+			await getLatestNodesByAnalyzerAcrossSessions(db, VERIFICATION_COMMANDS_DEF.id),
+		);
+		return [`learned:${judgedSetFingerprint(judged)}`];
+	},
+
+	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		if (ctx.messages.length === 0) return [];
 		const fp = fingerprint(ctx.messages);
 		const sources: SourceRef[] = [{ kind: "session", id: `${ctx.sessionId}#stale=${fp}` }];
@@ -204,7 +228,13 @@ export const staleVerificationAnalyzer: Analyzer = {
 	async analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = resolveConfig(ctx.config.configJson);
 		const messages = await ctx.getSessionMessages(ctx.sessionId);
-		const scan = findStaleVerifications(messages, config);
+		// The commands the corpus judged to verify the tree, which the pattern list
+		// does not cover. Read across every session, because the judgement belongs
+		// to the corpus rather than to the session that first surfaced it.
+		const judged = verificationCommandsByCommand(
+			await getLatestNodesByAnalyzerAcrossSessions(ctx.db, VERIFICATION_COMMANDS_DEF.id),
+		);
+		const scan = findStaleVerifications(messages, config, new Set(judged.keys()));
 		const proposals = buildProposals(scan, config);
 		const properties: StaleVerificationProperties = { session_id: ctx.sessionId, ...scan, improvement_proposals: proposals };
 

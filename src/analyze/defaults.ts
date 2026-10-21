@@ -42,6 +42,7 @@ import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { prOpenedAnalyzer } from "./analyzers/pr-opened/index.js";
 import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { staleVerificationAnalyzer } from "./analyzers/stale-verification/index.js";
+import { verificationCommandsAnalyzer } from "./analyzers/verification-commands/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
 import { navigationEfficiencyAnalyzer } from "./analyzers/navigation-efficiency/index.js";
 import { similarityClusterAnalyzer } from "./analyzers/similarity-cluster/index.js";
@@ -72,6 +73,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"repetition-collapse",
 	"session-ending",
 	"time-economy",
+	"verification-commands",
 	"stale-verification",
 	"pr-opened",
 	"files-in-play",
@@ -217,6 +219,14 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// stream plus the host's message timestamps. Placed with the other
 	// session-level deterministic graders, before the synthesizer.
 	timeEconomyAnalyzer,
+	// Which shell commands verify the working tree, learned from the corpus
+	// (#280). It nominates the commands a session ran and asks a decision model
+	// once per distinct command, so a project whose gate script the pattern
+	// list does not cover still gets measured. Corpus-scoped and optional: with
+	// no decision model configured it nominates nothing, and the pattern list
+	// stands alone. Placed before stale-verification, which consumes its
+	// verdicts.
+	verificationCommandsAnalyzer,
 	// Passing test, lint, build, and gate runs that a later edit made stale
 	// before any commit used them, with the edit's cause (agent, human prompt,
 	// subagent) and what followed (a rerun, or a commit with no rerun).

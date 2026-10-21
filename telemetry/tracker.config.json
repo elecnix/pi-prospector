@@ -24,6 +24,7 @@
           "session-ending",
           "pr-opened",
           "time-economy",
+          "verification-commands",
           "stale-verification",
           "files-in-play",
           "navigation-efficiency",

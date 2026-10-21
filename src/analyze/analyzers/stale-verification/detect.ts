@@ -45,6 +45,7 @@ import { Type, type Static } from "typebox";
 import type { MessageRow } from "../../types.js";
 import { buildToolStream } from "../../tool-stream.js";
 import type { StaleVerificationConfig } from "./config.js";
+import { commandSegments, normaliseCommand, normalisePath, workDir } from "./command-vocabulary.js";
 
 export const STALE_CAUSES = ["agent", "user", "subagent"] as const;
 export type StaleCause = (typeof STALE_CAUSES)[number];
@@ -89,45 +90,6 @@ export type CallKind =
 
 const HEREDOC = /<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*?\n\1\b/g;
 const SEGMENT_SPLIT = /&&|\|\||[;|\n]/;
-const SEGMENT_PREFIX =
-	/^\s*(?:[({]\s*|[A-Za-z_][A-Za-z0-9_]*=\S*\s+|(?:timeout\s+(?:-\S+\s+)*\S+|time|npx|bunx|exec|nice|uv\s+run|poetry\s+run|python3?\s+-m|bash|sh)\s+)/;
-
-/**
- * The commands in a shell line, each with leading wrappers dropped: a subshell
- * paren, environment assignments, and `timeout`, `time`, `npx`, `python -m`,
- * `bash`, and similar launchers. Heredoc bodies are removed first, because a
- * command written into a file is text, not a run.
- */
-export function commandSegments(command: string): string[] {
-	return command
-		.replace(HEREDOC, "<<HEREDOC")
-		.split(SEGMENT_SPLIT)
-		.map((s) => {
-			for (let prev = ""; prev !== s; ) {
-				prev = s;
-				s = s.replace(SEGMENT_PREFIX, "");
-			}
-			return s.trim();
-		})
-		.filter(Boolean);
-}
-
-const CD = /^cd\s+['"]?((?:\/|~\/)[^\s'"]*)/;
-const HOME = /^\/(?:Users|home)\/[^/]+(?=\/|$)/;
-
-/** A path with a home directory prefix rewritten to `~`, and no trailing slash. */
-function normalisePath(path: string): string {
-	return path.replace(HOME, "~").replace(/\/+$/, "");
-}
-
-/** The first absolute or home-relative directory a shell line changes into, or null. */
-function workDir(command: string): string | null {
-	for (const seg of command.replace(HEREDOC, "<<HEREDOC").split(SEGMENT_SPLIT)) {
-		const m = CD.exec(seg.trim());
-		if (m) return m[1]!;
-	}
-	return null;
-}
 
 /** Whether an edit at `editPath` can change what a run in `runDir` checked. Unknown locations always can. */
 function editReaches(runDir: string | null, editPath: string | null): boolean {
@@ -162,7 +124,12 @@ function configRegExps(key: string, patterns: readonly string[], anchored: boole
 }
 
 /** Classify one tool call by what it does to the working tree. */
-export function classifyCall(name: string, args: Record<string, unknown>, config: StaleVerificationConfig): CallKind {
+export function classifyCall(
+	name: string,
+	args: Record<string, unknown>,
+	config: StaleVerificationConfig,
+	learned: ReadonlySet<string> = new Set(),
+): CallKind {
 	const tool = name.toLowerCase();
 	const ignored = configRegExps("ignoredPathPatterns", config.ignoredPathPatterns, false);
 
@@ -181,6 +148,12 @@ export function classifyCall(name: string, args: Record<string, unknown>, config
 	const verifications = configRegExps("verificationPatterns", config.verificationPatterns, true);
 	const matched = segments.find((s) => verifications.some((re) => re.test(s)));
 	if (matched !== undefined) return { kind: "verification", command: firstLine(matched), dir: workDir(command) };
+	// A command the corpus judged to verify the tree, which the pattern list does
+	// not cover. The judgement is on the whole command line, so it matches the
+	// line rather than one of its segments.
+	if (learned.has(normaliseCommand(command))) {
+		return { kind: "verification", command: firstLine(command), dir: workDir(command) };
+	}
 	const run = command.replace(HEREDOC, "<<HEREDOC");
 	const shellEdits = configRegExps("shellEditPatterns", config.shellEditPatterns, false);
 	const editing = run.split(SEGMENT_SPLIT).find((s) => shellEdits.some((re) => re.test(s)));
@@ -212,8 +185,18 @@ type Event =
 	| { at: number; kind: "edit"; messageId: string; target: string; location: string | null }
 	| { at: number; kind: "commit" | "subagent" };
 
-/** Find the passing verification runs that a later edit made stale. */
-export function findStaleVerifications(messages: readonly MessageRow[], config: StaleVerificationConfig): StaleScan {
+/**
+ * Find the passing verification runs that a later edit made stale.
+ *
+ * `learned` holds the command lines the corpus judged to verify the working
+ * tree, which the shipped pattern list does not cover. A command in that set
+ * counts as a verification run like any other.
+ */
+export function findStaleVerifications(
+	messages: readonly MessageRow[],
+	config: StaleVerificationConfig,
+	learned: ReadonlySet<string> = new Set(),
+): StaleScan {
 	const timeById = new Map<string, number | null>();
 	// A result row's text belongs to its call only when the row carries one
 	// result; the transcript joins several results' texts into one field.
@@ -239,7 +222,7 @@ export function findStaleVerifications(messages: readonly MessageRow[], config: 
 	}
 	let untimed = 0;
 	for (const inv of buildToolStream([...messages]).invocations) {
-		const c = classifyCall(inv.name, inv.args, config);
+		const c = classifyCall(inv.name, inv.args, config, learned);
 		if (c.kind === "other") continue;
 		const start = timeById.get(inv.messageId) ?? null;
 		const end = inv.outcome ? (timeById.get(inv.outcome.messageId) ?? null) : null;

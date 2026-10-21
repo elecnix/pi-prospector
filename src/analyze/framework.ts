@@ -731,6 +731,7 @@ export class AnalyzerFramework {
 			getTurnPairs: (sid) => this.turnPairsCached(cache, sid),
 			llm: this.deps.llm,
 			decide: this.deps.decide,
+			db,
 			config,
 			prompts,
 			modelTiers: this.deps.modelTiers,
@@ -813,6 +814,19 @@ export class AnalyzerFramework {
 		// Same category as the assertion set above: the user set it, so it is
 		// `config`, and changing it marks the nodes drawn under the old setup stale.
 		for (const fact of analyzer.identityExtras?.() ?? []) extra.push(fact);
+		// The async form, for a fact the analyzer reads from the graph rather
+		// than from the machine's setup — the corpus-wide set of learned
+		// verdicts, say. A change to it is a change of `config`, so the nodes
+		// drawn under the older set go stale and a `config` run revises them.
+		if (analyzer.identityExtrasAsync) {
+			try {
+				for (const fact of await analyzer.identityExtrasAsync(this.deps.db)) extra.push(fact);
+			} catch {
+				// An unreadable source of truth is a fact about the environment,
+				// not a failure of the run. State it on the node instead.
+				extra.push("graph:unknown");
+			}
+		}
 		const configFingerprint = computeConfigFingerprint(config.configHash, models, extra);
 		return { analyzer, config, promptBundleHash, configFingerprint };
 	}

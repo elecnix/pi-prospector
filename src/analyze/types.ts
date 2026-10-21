@@ -515,6 +515,12 @@ export interface AnalyzerRunContext {
 	 * config names a `decisionModel` sends its questions here instead of to `llm`.
 	 */
 	decide?: DecisionCaller;
+	/**
+	 * The database the run writes to. An analyzer reads a corpus-wide set
+	 * (the learned verdicts, say) through it, when the corpus scope is what
+	 * the set belongs to.
+	 */
+	db: AsyncDatabase;
 	config: AnalyzerConfig;
 	/** Prompt content keyed by prompt name. */
 	prompts: Record<string, string>;
@@ -577,6 +583,18 @@ export interface Analyzer {
 	 * analyzer states it on the node instead of failing the run.
 	 */
 	identityExtras?: () => readonly string[];
+	/**
+	 * The async form of {@link Analyzer.identityExtras}, for a fact the
+	 * analyzer can only read from the graph — the corpus-wide set of learned
+	 * verdicts, say. A change to it marks the analyzer's nodes stale for the
+	 * `config` reason, so a conclusion drawn under an older set is revised
+	 * rather than left standing unchallenged.
+	 *
+	 * Called during scan, so it must never throw: an unreadable source of truth
+	 * is a fact about the environment, and the analyzer states it on the node
+	 * instead of failing the run.
+	 */
+	identityExtrasAsync?: (db: AsyncDatabase) => Promise<readonly string[]>;
 	/**
 	 * Files this analyzer can render from the finished graph.
 	 *
