@@ -464,6 +464,43 @@ describe("a muted term's existing hits (#325)", () => {
 		}
 	});
 
+	it("counts the as-of stats over the same population the live stats count", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			const after = new Date(Date.now() + 1000).toISOString();
+
+			// The as-of branch binds two timestamps for the node's own window and
+			// two for each of the two current-generation predicates, so six
+			// placeholders take six values. A mismatch here is a parameter-count
+			// error, and the stats call throws instead of returning counts.
+			const asOf = await getAnalysisStats(db, after);
+			const live = await getAnalysisStats(db);
+			assert.equal(asOf.nodes, live.nodes, "the as-of count matches the live count");
+			assert.equal(
+				asOf.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0,
+				live.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0,
+				"the as-of per-analyzer count matches the live one",
+			);
+
+			// A mute silences the hit, and the as-of read honours that the same
+			// way the live read does.
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			const mutedAsOf = await getAnalysisStats(db, after);
+			assert.equal(
+				mutedAsOf.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0,
+				0,
+				"the muted hit is not a current node in the as-of read either",
+			);
+		} finally {
+			await close();
+		}
+	});
+
 	it("gives friction-accumulation a lexicon friction of 0 for a session whose only hits were the muted term", async () => {
 		const { db, close } = await tempDb();
 		try {
