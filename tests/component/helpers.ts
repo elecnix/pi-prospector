@@ -61,8 +61,13 @@ export function claudeSessionId(label: string): string {
  * A uuid-shaped token derived from a readable label, so a fixture can be named by
  * its scenario instead of carrying a literal uuid. Stable across runs, which is
  * what the cursor keys on.
+ *
+ * Exported so a fixture set in another file derives its ids the same way: two
+ * copies of this hash would give the same id for the same label in one file
+ * and a different one in the other, which is the kind of drift a test cannot
+ * see.
  */
-function fixtureUuid(label: string): string {
+export function fixtureUuid(label: string): string {
 	const hash = (seed: number): string => {
 		let x = seed >>> 0;
 		for (const ch of label) {
@@ -84,6 +89,20 @@ function fixtureUuid(label: string): string {
  * `"/nonexistent"` to be misread as an accident.
  */
 export const NO_CLAUDE_DIR = path.join(os.tmpdir(), "prospect-tests-no-claude-sessions");
+
+/**
+ * The sources a command's usage line names, read out of the line itself.
+ *
+ * A usage line and the parser behind it are one vocabulary: a source the line
+ * names must parse. The commands that print their own source list build it
+ * from the shared harness vocabulary, so this reads the same list the user
+ * sees.
+ */
+export function sourcesNamedBy(usage: string): string[] {
+	return [...usage.matchAll(/--source <([^>]+)>/g)]
+		.flatMap((m) => (m[1] ?? "").split("|"))
+		.filter(Boolean);
+}
 
 export interface TempDb {
 	db: AsyncDatabase;

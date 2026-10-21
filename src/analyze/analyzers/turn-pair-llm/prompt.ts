@@ -220,6 +220,11 @@ export const TurnPairLLMProperties = Type.Object({
 	severity: Type.String(),
 	rationale: Type.String(),
 	user_message_id: Type.String(),
+	/**
+	 * The decision model's distribution per field, when the decision-model path
+	 * produced the node (#338). It replaces the rationale as the evidence.
+	 */
+	probabilities: Type.Optional(Type.Record(Type.String(), Type.Record(Type.String(), Type.Number()))),
 });
 export type TurnPairLLMProperties = Static<typeof TurnPairLLMProperties>;
 

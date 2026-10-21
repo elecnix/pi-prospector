@@ -383,6 +383,52 @@ describe("user-reply-acts agentic retry", () => {
 		}
 	});
 
+	it("stores a reply with no act when the retry confirms it, instead of an error node", async () => {
+		const t: TempDb = await tempDb();
+		try {
+			const sid = "s-noact";
+			await insertSession(t.db, sid);
+			await insertMessages(t.db, sid, [
+				{ id: "u0", role: "user", text: "Do something" },
+				{ id: "a0", role: "assistant", text: "I propose X." },
+				{ id: "u1", role: "user", text: "hmm" },
+				{ id: "a1", role: "assistant", text: "Done." },
+			]);
+			const empty = { acceptances: [], refusals: [], questions: [], answers: [], commands: [], information_provisions: [], memories: [], continuation: false, other: false };
+			const mock = createMockLLM({
+				responder: (req: LLMRequest): MockLLMReply => {
+					if (req.tool?.name !== "classify_reply" && req.responseSchema?.name !== "classify_reply") return { text: "{}" };
+					// Both attempts answer with the empty verdict the prompt prescribes for
+					// a reply that carries no act. The retry also leaves out an empty array.
+					const isRetry = req.system?.includes("classifier_abstention") ?? false;
+					if (!isRetry) return { text: "", structured: empty };
+					const { acceptances: _omitted, ...rest } = empty;
+					return { text: "", structured: { ...rest, classifier_abstention: null } };
+				},
+				tokensPerCall: 10,
+				costPerCall: 0.0001,
+			});
+			const fw = new AnalyzerFramework({ db: t.db, llm: mock.caller, modelTiers: DEFAULT_MODEL_TIERS });
+			await registerAll(fw, { builtins: [turnPairCoreAnalyzer], paths: [ANALYZER_DIR] });
+			const summary = await fw.run(sid, { analyzerIds: ["user-reply-acts"] });
+			assert.equal(summary.errors.length, 0, summary.errors.join("; "));
+			assert.equal(mock.calls.length, 2);
+			const row = (await t.db.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = 'user-reply-acts' AND node_kind = 'classification'").get()) as { content_json: string } | undefined;
+			assert.ok(row, "the reply is classified");
+			const c = JSON.parse(row!.content_json) as UserReplyActsProperties;
+			assert.equal(c.attempt, 2);
+			assert.deepEqual(c.acceptances, []);
+			assert.equal(c.other, false);
+
+			// Classified means current: a later fill calls no model for it.
+			const rerun = await fw.run(sid, { analyzerIds: ["user-reply-acts"] });
+			assert.equal(rerun.nodesProduced, 0);
+			assert.equal(mock.calls.length, 2);
+		} finally {
+			await t.close();
+		}
+	});
+
 	it("does not retry when the first attempt succeeds", async () => {
 		const t: TempDb = await tempDb();
 		try {

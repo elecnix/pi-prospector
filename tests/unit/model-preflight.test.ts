@@ -33,3 +33,9 @@ describe("assertModelsResolve", () => {
 		);
 	});
 });
+
+describe("assertModelsResolve with a decision model", () => {
+	it("leaves decision-model identities to the decision client", async () => {
+		await assertModelsResolve(registryWith("a/x"), ["a/x", "decision:jev/jev-1.13.0#abc"]);
+	});
+});

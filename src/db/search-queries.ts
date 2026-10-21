@@ -73,7 +73,7 @@ export interface SearchResult {
 export interface SearchOptions {
 	kind?: SearchKind;
 	limit?: number;
-	/** Filter both record kinds by the harness source of their session (`pi` | `claude`). */
+	/** Filter both record kinds by the harness source of their session (`pi` | `claude` | `codex` | `opencode` | `cline`). */
 	source?: string;
 }
 

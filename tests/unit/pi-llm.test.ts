@@ -86,6 +86,14 @@ describe("toLLMResponse", () => {
 		assert.throws(() => toLLMResponse(msg, "m", 0), /boom/);
 	});
 
+	it("carries the HTTP status of a provider error so the retry layer can classify it", () => {
+		const msg = assistantMessage({ stopReason: "error", errorMessage: '500: {"message":"Internal Server Error","type":"api_error"}' });
+		assert.throws(
+			() => toLLMResponse(msg, "provider/model", 0),
+			(err: unknown) => (err as { status?: number }).status === 500 && /LLM error from provider\/model: 500/.test((err as Error).message),
+		);
+	});
+
 	it("throws an actionable error when the response is truncated at the output limit", () => {
 		const msg = assistantMessage({
 			content: [{ type: "text", text: '{"sentiment":"frus' }],

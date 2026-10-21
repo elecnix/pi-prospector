@@ -14,6 +14,7 @@ import {
 import { AnalyzerFramework } from "../analyze/framework.js";
 import { registerAll } from "../analyze/defaults.js";
 import { makePiLLMCaller } from "../analyze/pi-llm.js";
+import { makeDecisionCaller, type DecisionCaller } from "../analyze/decision-model.js";
 import { applyModelOverride } from "../analyze/model-tiers.js";
 import { assertModelsResolve } from "../analyze/model-preflight.js";
 import { parseReviseArg, reachLabel } from "../analyze/version.js";
@@ -31,6 +32,7 @@ import {
 	createSemaphore,
 	withTimeout,
 	callWithRetry,
+	LLMTimeoutError,
 	classifyRetryable,
 	DEFAULT_RETRY_POLICY,
 	DEFAULT_LLM_CONCURRENCY,
@@ -50,7 +52,7 @@ interface AnalyzeArgs {
 	/** Get the N most-recent sessions (by started_at DESC). */
 	recent?: number;
 	session?: string;
-	/** Restrict to sessions from one coding harness ("pi" | "claude"). */
+	/** Restrict to sessions from one coding harness ("pi" | "claude" | "codex" | "opencode" | "cline"). */
 	source?: string;
 	analyzer?: string;
 	model?: string;
@@ -98,17 +100,19 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 						withTimeout(
 							baseLlm(request),
 							llmTimeoutMs,
-							() =>
-								new Error(
-									`LLM call to ${request.model ?? "mid"} exceeded ${llmTimeoutMs}ms and was ` +
-									`aborted so the run can keep moving. The session is marked failed; re-run it ` +
-									`once the provider recovers, or raise the timeout (PROSPECTOR_LLM_TIMEOUT_MS).`,
-								),
+							() => new LLMTimeoutError(request.model ?? "mid", llmTimeoutMs),
 						),
 					retryPolicy,
 					retryStats,
 				),
 			);
+		// Decision-model requests (#338) share the LLM gate and retry policy: they are
+		// provider calls too, and a 429 from either should slow the run the same way.
+		const baseDecide = makeDecisionCaller({ providers: config.decisionProviders, signal: ctx.signal });
+		const decide: DecisionCaller = (request) =>
+			llmGate(() => callWithRetry(() => withTimeout(baseDecide(request), llmTimeoutMs, () => new Error(
+				`Decision model ${request.model} exceeded ${llmTimeoutMs}ms and was aborted.`,
+			)), retryPolicy, retryStats));
 		// Let one session reach the LLM gate on its own. Without this, fan-out is
 		// bounded by how many sessions happen to be issuing calls at the same moment,
 		// and a single-session run can never exceed concurrency 1. The semaphore above
@@ -116,6 +120,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 		const framework = new AnalyzerFramework({
 			db,
 			llm,
+			decide,
 			modelTiers,
 			configOverrides: getAnalyzerConfigOverrides(config),
 			unitConcurrency: llmConcurrency,

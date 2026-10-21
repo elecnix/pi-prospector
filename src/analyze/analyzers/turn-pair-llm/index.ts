@@ -41,10 +41,18 @@ import {
 	parseClassifyResponse,
 	parseClassifyObject,
 	TurnPairLLMProperties,
+	type ClassifyInput,
 	type SliceTurn,
 	type ToolCallEvidence,
 	type ToolResultEvidence,
 } from "./prompt.js";
+import {
+	TURN_DECISION_QUESTIONS,
+	TURN_DECISION_QUESTIONS_HASH,
+	buildTurnDecisionState,
+	parseTurnDecision,
+} from "./decision.js";
+import { decisionIdentity } from "../../decision-model.js";
 import { computeEnrichCap, DEFAULT_TURN_PAIR_LLM_CONFIG, type TurnPairLLMConfig } from "./config.js";
 
 export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
@@ -123,6 +131,9 @@ export const turnPairLLMAnalyzer: Analyzer = {
 
 	modelsForIdentity(config, modelTiers): string[] {
 		const cfg = (config as unknown as TurnPairLLMConfig) ?? DEFAULT_TURN_PAIR_LLM_CONFIG;
+		// The decision-model path calls no LLM: its identity is the decision model
+		// and the question set, so a switch between paths marks nodes stale.
+		if (cfg.decisionModel) return [decisionIdentity(cfg.decisionModel, TURN_DECISION_QUESTIONS_HASH)];
 		return [resolveModelSpec(cfg.tier, modelTiers)];
 	},
 
@@ -259,19 +270,22 @@ export const turnPairLLMAnalyzer: Analyzer = {
 	async analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = (ctx.config.configJson as unknown as TurnPairLLMConfig) ?? DEFAULT_TURN_PAIR_LLM_CONFIG;
 		const meta = unit.meta as unknown as EnrichMeta;
+		const input = {
+			userText: meta.userText,
+			assistantText: meta.assistantText,
+			correctionText: meta.correctionText,
+			rebuttalCandidate: meta.rebuttalCandidate,
+			toolCalls: meta.toolCalls,
+			toolResults: meta.toolResults,
+			priorTurns: meta.priorTurns,
+		};
+
+		if (config.decisionModel) return analyzeWithDecisionModel(unit, meta, input, config.decisionModel, ctx);
 
 		const response = await ctx.llm({
 			model: resolveModelSpec(config.tier, ctx.modelTiers),
 			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
-			user: buildClassifyPrompt({
-				userText: meta.userText,
-				assistantText: meta.assistantText,
-				correctionText: meta.correctionText,
-				rebuttalCandidate: meta.rebuttalCandidate,
-				toolCalls: meta.toolCalls,
-				toolResults: meta.toolResults,
-				priorTurns: meta.priorTurns,
-			}),
+			user: buildClassifyPrompt(input),
 			temperature: config.temperature,
 			maxTokens: 500,
 			tool: CLASSIFY_TOOL,
@@ -304,3 +318,39 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		};
 	},
 };
+
+/**
+ * One request carrying every question for the turn (#338). The node keeps the
+ * generative path's fields and edges, so consumers read it unchanged, and adds
+ * the probabilities as its evidence.
+ */
+async function analyzeWithDecisionModel(
+	unit: AnalysisUnit,
+	meta: EnrichMeta,
+	input: ClassifyInput,
+	model: string,
+	ctx: AnalyzerRunContext,
+): Promise<AnalysisResult> {
+	if (!ctx.decide) {
+		throw new Error(`turn-pair-llm is configured with decision model '${model}', but this run has no decision-model client.`);
+	}
+	const response = await ctx.decide({ model, state: buildTurnDecisionState(input), questions: TURN_DECISION_QUESTIONS });
+	const properties: TurnPairLLMProperties = { ...parseTurnDecision(response), user_message_id: unit.anchorRef };
+	return {
+		nodeKind: "classification",
+		contentJson: properties as unknown as Record<string, unknown>,
+		anchorKind: "message",
+		anchorRef: unit.anchorRef,
+		modelUsed: response.model,
+		costUsd: response.costUsd,
+		tokensUsed: response.inputTokens + response.outputTokens,
+		inputTokens: response.inputTokens,
+		cachedInputTokens: 0,
+		outputTokens: response.outputTokens,
+		durationMs: response.durationMs,
+		edges: [
+			{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
+			{ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: meta.coreOutputKey, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 },
+		],
+	};
+}
