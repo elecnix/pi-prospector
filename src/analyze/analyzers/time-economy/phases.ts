@@ -485,7 +485,13 @@ export function measureSkillSpans(
 		// Only a pull-request skill is a candidate: a `code-review` skill
 		// followed later by an unrelated `gh pr create` must end at its turn,
 		// not stretch across the gap to the PR.
-		const prEnd = isPullRequestSkill(call.skill) ? findPrCreateEnd(stream, call, next, timeById) : null;
+		//
+		// The creation has to fall inside the skill's own turn. A turn that
+		// closed before the creation is not the skill's work any more, and a
+		// span that ran thousands of seconds past its turn would report a
+		// duration the skill never occupied.
+		const turnEnd = turnEndMs.get(call.turn) ?? null;
+		const prEnd = isPullRequestSkill(call.skill) ? findPrCreateEnd(stream, call, next, turnEnd, timeById) : null;
 
 		let endMs: number | null;
 		let endReason: SkillSpan["end_reason"];
@@ -501,7 +507,6 @@ export function measureSkillSpans(
 			endMessageId = next.messageId;
 		} else {
 			// The end of the turn the skill ran in.
-			const turnEnd = turnEndMs.get(call.turn) ?? null;
 			const isLast = i === skillCalls.length - 1;
 			// The session's end is its latest message, not its last row: rows
 			// are not guaranteed to be in timestamp order.
@@ -536,8 +541,9 @@ export function measureSkillSpans(
  * The successful `gh pr create` that ends a PR skill, if there is one.
  *
  * The creation must fall inside the skill's own span: after the skill opened
- * and before the next skill opened. A `gh pr create` that failed is a retry,
- * not the end of the skill's work, so an errored call does not close the span.
+ * and before the next skill opened, and before the skill's turn closed. A
+ * `gh pr create` that failed is a retry, not the end of the skill's work, so
+ * an errored call does not close the span.
  *
  * The span ends at the *result*, not at the call: the pull request exists once
  * the forge answered, and that is the moment the skill's work was done.
@@ -546,6 +552,7 @@ function findPrCreateEnd(
 	stream: { invocations: Array<{ name: string; args: Record<string, unknown>; messageId: string; outcome: { messageId: string; isError: boolean } | null }> },
 	call: { messageId: string; ms: number | null },
 	next: { messageId: string; ms: number | null } | undefined,
+	turnEnd: number | null,
 	timeById: Map<string, number | null>,
 ): { messageId: string; ms: number | null } | null {
 	for (const inv of stream.invocations) {
@@ -568,6 +575,9 @@ function findPrCreateEnd(
 		const endedMs = timeById.get(inv.outcome.messageId) ?? null;
 		if (endedMs === null) continue;
 		if (next && (next.ms === null || endedMs > next.ms)) continue;
+		// The skill's turn closed before the forge answered. The creation
+		// belongs to a later turn, so the turn's end is the skill's end.
+		if (turnEnd !== null && endedMs > turnEnd) continue;
 		return { messageId: inv.outcome.messageId, ms: endedMs };
 	}
 	return null;

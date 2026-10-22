@@ -754,6 +754,25 @@ describe("measureSkillSpans", () => {
 		assert.equal(isPrCreateCommand("gh pr create --title x"), true);
 	});
 
+	it("does not end a pull-request skill at a later turn's gh pr create", () => {
+		// The skill's turn ended at 150. A creation in the next turn, at 5000,
+		// is not the skill's work: the turn closed, and whatever came after
+		// belongs to a later turn. The span ends at the turn, not at the
+		// creation.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "s1", role: "assistant", timestamp: at(100), tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "pr" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(150) }),
+			spanRow({ id: "u2", role: "user", timestamp: at(5000) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(5000), tool_calls: JSON.stringify([{ id: "gh1", name: "bash", arguments: { command: "gh pr create" } }]) }),
+			spanRow({ id: "r2", role: "toolResult", timestamp: at(5010), tool_results: JSON.stringify([{ toolCallId: "gh1", toolName: "bash", isError: false, textLength: 20 }]) }),
+		];
+		const spans = measureSkillSpans(rows);
+		assert.equal(spans.length, 1);
+		assert.equal(spans[0]?.end_reason, "turn_end");
+		assert.equal(spans[0]?.seconds, 50);
+	});
+
 	it("does not end a pull-request skill at a failed gh pr create", () => {
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
