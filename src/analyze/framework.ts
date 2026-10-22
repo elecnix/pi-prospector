@@ -734,6 +734,7 @@ export class AnalyzerFramework {
 			llm: this.deps.llm,
 			decide: this.deps.decide,
 			config,
+			db,
 			prompts,
 			modelTiers: this.deps.modelTiers,
 		};
@@ -874,6 +875,7 @@ export class AnalyzerFramework {
 		}
 		return out;
 	}
+
 }
 
 /** One unit that failed in a run, as the run record reports it. */

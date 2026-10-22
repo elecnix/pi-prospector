@@ -1,6 +1,6 @@
 import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
-import { NOT_REVISED_LIVE } from "./current-generation.js";
+import { NOT_REVISED_LIVE, NOT_MUTED_LIVE } from "./current-generation.js";
 
 /**
  * Schema for pi-prospector.
@@ -339,7 +339,7 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			node_kind TEXT NOT NULL,
 			content_json TEXT NOT NULL,
 			source_set_hash TEXT NOT NULL,
-			input_key TEXT NOT NULL UNIQUE,
+			input_key TEXT NOT NULL,
 			output_key TEXT NOT NULL DEFAULT '',
 			config_fingerprint TEXT NOT NULL DEFAULT '',
 			model_used TEXT,
@@ -435,6 +435,7 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	// Also clean up any partial migration artifacts.
 	await cleanupPartialMigrations(db);
 	await addMissingColumns(db);
+	await migrateAnalysisNodesRecipeUniqueness(db);
 
 	// Live-view for retraction: the append-only invariant is enforced by never
 	// deleting analysis nodes — retraction hides them from ordinary reads by
@@ -446,8 +447,14 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	// of its lineage chain. Supersession is the `revises` edge the recomputation
 	// wrote, not an inference from analyzer version or created_at. A retracted
 	// successor supersedes nothing, so its predecessor is current again.
+	//
+	// A node an ACTIVE mute silences (#325) is also not current: the operator has
+	// said this conclusion does not count, so it must leave every aggregate read
+	// (`prospect nodes`, `prospect stats`, the outputs) while staying live and
+	// verifiable. Unmuting supersedes the assertion, which makes the mute inert
+	// and the node current again.
 	await db.exec("DROP VIEW IF EXISTS current_nodes");
-	await db.exec(`CREATE VIEW current_nodes AS SELECT * FROM live_nodes n WHERE ${NOT_REVISED_LIVE}`);
+	await db.exec(`CREATE VIEW current_nodes AS SELECT * FROM live_nodes n WHERE ${NOT_REVISED_LIVE} AND ${NOT_MUTED_LIVE}`);
 
 	// Create indexes after schema evolution (they may reference new columns)
 	await db.exec(`
@@ -481,6 +488,25 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 		CREATE INDEX IF NOT EXISTS idx_edges_from ON analysis_edges(from_node_id);
 		CREATE INDEX IF NOT EXISTS idx_edges_to ON analysis_edges(to_ref_id, edge_kind);
 		CREATE INDEX IF NOT EXISTS idx_edges_kind ON analysis_edges(edge_kind);
+	`);
+
+	// Recipe identity is unique among the *live* nodes, and only among them.
+	//
+	// A node's identity is its recipe, so two live nodes with the same recipe
+	// never both exist. A *retracted* node is not live: it is a tombstone
+	// standing where a node used to be, and DESIGN.md says a retracted node is
+	// absent from scanning, so its unit classifies `missing` and is recomputed.
+	// A recomputation writes the same recipe again, so the uniqueness has to
+	// exempt the retracted rows — otherwise the recomputation collides with the
+	// tombstone of the very node it replaces, the insert is swallowed as a
+	// duplicate, and the unit stays missing forever.
+	//
+	// The index is partial (`WHERE retracted_at IS NULL`) rather than a table
+	// constraint, because SQLite cannot express a partial UNIQUE constraint on a
+	// column.
+	await db.exec(`
+		DROP INDEX IF EXISTS idx_nodes_input_key_unique;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_input_key_live ON analysis_nodes(input_key) WHERE retracted_at IS NULL;
 	`);
 
 	// Fold existing proposal_decisions and remediations onto the assertions
@@ -701,6 +727,86 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 	if (await hasColumn("prompt_registry", "full_hash")) {
 		await db.exec("ALTER TABLE prompt_registry DROP COLUMN full_hash");
 	}
+}
+
+/**
+ * Migrate `analysis_nodes` so recipe identity is unique among the *live* rows
+ * only.
+ *
+ * The table declared `input_key TEXT NOT NULL UNIQUE`, which made the
+ * uniqueness unconditional: a retracted node kept its recipe reserved, so the
+ * recomputation that DESIGN.md describes ("a retracted node is absent from
+ * scanning, so its unit classifies `missing` and is recomputed") collided with
+ * the tombstone of the very node it replaces. The insert lost the unique
+ * violation, the framework read it as a peer that had already done the same
+ * work, and the unit stayed missing forever.
+ *
+ * SQLite cannot express a partial UNIQUE constraint on a column, so the
+ * constraint becomes a partial unique index over the live rows. The table has
+ * to be rebuilt to drop the old constraint, so this runs once per database: the
+ * rows are copied, the old table is dropped, and the new one takes its place.
+ */
+async function migrateAnalysisNodesRecipeUniqueness(db: AsyncDatabase): Promise<void> {
+	const rows = (await db
+		.prepare("PRAGMA index_list(analysis_nodes)")
+		.all()) as Array<{ name: string; unique: number; origin: string }>;
+	// The table-level UNIQUE shows up as an auto-index ("sqlite_autoindex_…")
+	// with origin "u". A partial index shows up with origin "c".
+	const hasTableUnique = rows.some((r) => r.origin === "u");
+	if (!hasTableUnique) return;
+
+	// The table is rebuilt rather than renamed: SQLite rewrites a `REFERENCES`
+	// clause to name the renamed table, so renaming `analysis_nodes` would
+	// leave `analysis_edges` pointing at a table that is then dropped, and the
+	// next edge insert would fail. Copying into a new table and renaming that
+	// one leaves the edge table's foreign key naming `analysis_nodes`, which is
+	// the name the rebuilt table ends up with.
+	//
+	// The views are dropped first and recreated by the caller: they name
+	// `analysis_nodes`, and SQLite refuses to rename a table a view reads.
+	await db.exec("DROP VIEW IF EXISTS live_nodes");
+	await db.exec("DROP VIEW IF EXISTS current_nodes");
+	await db.exec("PRAGMA foreign_keys = OFF");
+	await db.exec(`
+		CREATE TABLE analysis_nodes_new (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			analyzer_id TEXT NOT NULL,
+			analyzer_version_id TEXT NOT NULL,
+			config_id TEXT NOT NULL,
+			run_id TEXT,
+			node_kind TEXT NOT NULL,
+			content_json TEXT NOT NULL,
+			source_set_hash TEXT NOT NULL,
+			input_key TEXT NOT NULL,
+			output_key TEXT NOT NULL DEFAULT '',
+			config_fingerprint TEXT NOT NULL DEFAULT '',
+			model_used TEXT,
+			cost_usd REAL,
+			tokens_used INTEGER,
+			input_tokens INTEGER,
+			cached_input_tokens INTEGER,
+			output_tokens INTEGER,
+			duration_ms INTEGER,
+			created_at TEXT NOT NULL,
+			retracted_at TEXT,
+			retracted_by_run TEXT,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		)`);
+	await db.exec(`INSERT INTO analysis_nodes_new (
+		id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind,
+		content_json, source_set_hash, input_key, output_key, config_fingerprint,
+		model_used, cost_usd, tokens_used, input_tokens, cached_input_tokens,
+		output_tokens, duration_ms, created_at, retracted_at, retracted_by_run
+	) SELECT
+		id, session_id, analyzer_id, analyzer_version_id, config_id, run_id, node_kind,
+		content_json, source_set_hash, input_key, output_key, config_fingerprint,
+		model_used, cost_usd, tokens_used, input_tokens, cached_input_tokens,
+		output_tokens, duration_ms, created_at, retracted_at, retracted_by_run
+		FROM analysis_nodes`);
+	await db.exec("DROP TABLE analysis_nodes");
+	await db.exec("ALTER TABLE analysis_nodes_new RENAME TO analysis_nodes");
+	await db.exec("PRAGMA foreign_keys = ON");
 }
 
 /**

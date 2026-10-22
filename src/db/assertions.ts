@@ -33,7 +33,17 @@ import { shortHash } from "../analyze/input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
 import { computeSourceSetHash } from "../analyze/input-hash.js";
 import { findLatestNodeBySourceSet, insertEdge, selectByKeyIn } from "./analysis-queries.js";
+import { MUTE_INSTANCE_ORDINAL_SQL, muteInstanceOrdinalSql } from "./current-generation.js";
+import { newGcRunId } from "./gc.js";
 import { FRUSTRATION_LEXICON_DEF } from "../analyze/analyzers/frustration-lexicon/index.js";
+
+/**
+ * The analyzer that emits one hit node per (turn, signal) pair.
+ *
+ * Named rather than imported: `turn-frustration` reads this module's mute list,
+ * so importing its definition here would close an import cycle between the two.
+ */
+const TURN_FRUSTRATION_ANALYZER_ID = "turn-frustration";
 
 /** The subject kinds an assertion can be about. Extensible. */
 export const ASSERTION_SUBJECT_KINDS = {
@@ -124,9 +134,55 @@ export async function upsertAssertion(
 }
 
 /**
+ * Record a term mute, keeping the *mute episode* intact.
+ *
+ * A mute episode is the span during which a mute has been in force without
+ * interruption. It starts when the mute is imposed and ends when it is
+ * lifted. The episode's start time is the mute *instance* that the `mutes`
+ * edges carry, so it must move exactly when the episode does:
+ *
+ *   - a mute imposed on an unmuted term starts an episode, so the instance is
+ *     the time of the mute;
+ *   - a mute re-imposed after an unmute starts a *new* episode, so the
+ *     instance is the time of the re-mute, and the previous episode's edges
+ *     stay inert;
+ *   - a mute restated while it is already in force continues the episode, so
+ *     the instance does not move. A restatement is not a new judgement, and
+ *     moving the instance would attach a second `mutes` edge to every node
+ *     the first one already marks, for no change in what is silenced.
+ *
+ * The reason and the author still refresh: the latest statement of *why* wins.
+ */
+export async function upsertMuteAssertion(
+	db: AsyncDatabase,
+	params: { term: string; reason?: string | null; assertedBy?: string | null },
+): Promise<string> {
+	const id = assertionId("term", params.term, "muted");
+	const existing = (await prep(db, `
+		SELECT asserted_at, superseded_at FROM assertions WHERE id = ?
+	`).get(id)) as { asserted_at: string; superseded_at: string | null } | undefined;
+	const inForce = existing !== undefined && existing.superseded_at === null;
+	return upsertAssertion(db, {
+		subjectKind: "term",
+		subjectKey: params.term,
+		verdict: "muted",
+		reason: params.reason ?? null,
+		// An episode in force keeps its start; a new one starts now.
+		assertedAt: inForce ? existing.asserted_at : new Date().toISOString(),
+		assertedBy: params.assertedBy ?? "operator",
+	});
+}
+
+/**
  * Unmute a subject: mark every currently-active matching assertion superseded.
  * Append-only via `superseded_at` — the original mute row stays inspectable
  * with its reason and asserted_at. Returns the number of rows superseded.
+ *
+ * Superseding a term mute makes the mute inert again: the `mutes` edges that
+ * carried it now point at a superseded assertion, so the nodes it silenced
+ * count once more (the edge is never deleted, so the mark's history stays
+ * inspectable). Nothing is retracted, so there is nothing to restore — the
+ * mute never removed a node from the graph, it only stopped counting it.
  */
 export async function supersedeAssertion(
 	db: AsyncDatabase,
@@ -141,6 +197,121 @@ export async function supersedeAssertion(
 		params.subjectKey,
 		params.verdict,
 	);
+	return res.changes;
+}
+
+/**
+ * Retract the conclusions that were drawn *under* a mute (#325).
+ *
+ * A mute is `config`: it changes the fingerprint of every analyzer that
+ * consults it, so a `--revise config` run recomputes those conclusions with
+ * the muted term excluded. Those recomputed nodes are correct for the muted
+ * setup and wrong for the unmuted one.
+ *
+ * Unmuting reverts the fingerprint, so the *pre-mute* node's recipe matches
+ * again — but the muted-era node revises it, so the pre-mute node stays
+ * superseded and the muted-era conclusion remains the current one. That is the
+ * mirror image of the problem the mute created, and it has the same fix: the
+ * conclusion drawn under a setup that no longer holds is retracted, so the
+ * conclusion that *does* hold becomes current again.
+ *
+ * A node is one of those conclusions when it *read* a silenced hit — the
+ * `consumes` edge says "this node was built from that node" — and was written
+ * while the mute was in force. Both conditions matter:
+ *
+ *   - the edge says the conclusion depends on the hit, so an unrelated
+ *     conclusion — a secret-leak finding, a trajectory node — is never touched,
+ *     even when it was written during the mute;
+ *   - the timing says the conclusion was drawn under the mute, which
+ *     distinguishes it from the pre-mute conclusion that read the very same
+ *     hit.
+ *
+ * The timing is what lets the mute-era conclusion be found when it landed in a
+ * *sibling* unit rather than a revision of the pre-mute one: a silenced hit
+ * leaves the readers' source set, so the unit that read it re-identifies and
+ * the mute-era conclusion starts a new lineage instead of revising the
+ * pre-mute one. There is no `revises` edge to walk back along, and the
+ * `consumes` edge is the only link.
+ *
+ * Retraction is the existing reversible one: the node stays in the graph, its
+ * content still verifies, and `prospect retract --undo` can bring it back.
+ */
+export async function retractConclusionsMadeUnder(
+	db: AsyncDatabase,
+	term: string,
+	now: string,
+): Promise<number> {
+	// The mute's own lifetime: the assertion and the instance it created.
+	const assertion = (await prep(db, `
+		SELECT id, asserted_at, superseded_at FROM assertions
+		WHERE subject_kind = 'term' AND subject_key = ? AND verdict = 'muted'
+		ORDER BY asserted_at DESC LIMIT 1
+	`).get(term)) as { id: string; asserted_at: string; superseded_at: string | null } | undefined;
+	if (!assertion) return 0;
+	const instance = await muteInstanceOrdinal(db, assertion.id);
+
+	// The conclusions that read one of the hits *this* mute silenced, and that
+	// the mute did not itself silence.
+	//
+	// The `consumes` edge names its target by the target's content-addressed
+	// output key, so the join goes through the node. The `mutes` edge is
+	// constrained to this mute's assertion and to the mute instance that created
+	// it, so another term's silenced hits and a previous instance of this term's
+	// mute are not candidates.
+	//
+	// The mark is what says which of the two is the mute-era conclusion. A
+	// conclusion that read a silenced hit *before* the mute was asserted carries
+	// the mark: the mute silenced it too, because it counted a term the
+	// operator has since disowned. A conclusion the framework recomputed *under*
+	// the mute carries no mark — it is the conclusion that holds while the mute
+	// is in force, and it is the one that has to be retired when the mute is
+	// lifted, because the term counts again. So the targets are the unmarked
+	// readers of a silenced hit.
+	//
+	// That distinction is exact, and it needs no clock: the earlier version of
+	// this query compared creation times against the mute's window, which
+	// misfired whenever a conclusion and the mute landed in the same
+	// millisecond.
+	const rows = (await prep(db, `
+		SELECT DISTINCT c.from_node_id AS id
+		FROM analysis_edges c
+		JOIN analysis_nodes hit ON hit.output_key = c.to_ref_id
+		JOIN analysis_edges m ON m.from_node_id = hit.id
+		                   AND m.edge_kind = ?
+		                   AND m.to_ref_kind = ?
+		                   AND m.to_ref_id = ?
+		                   AND m.ordinal = ?
+		JOIN analysis_nodes conclusion ON conclusion.id = c.from_node_id
+		WHERE c.edge_kind = ? AND c.to_ref_kind = ?
+		  AND conclusion.retracted_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM analysis_edges s
+		    WHERE s.from_node_id = conclusion.id
+		      AND s.edge_kind = ?
+		      AND s.to_ref_kind = ?
+		      AND s.to_ref_id = ?
+		      AND s.ordinal = ?
+		  )
+	`).all(
+		EDGE_KINDS.MUTES,
+		REF_KINDS.ASSERTION,
+		assertion.id,
+		instance,
+		EDGE_KINDS.CONSUMES,
+		REF_KINDS.ANALYSIS_NODE,
+		EDGE_KINDS.MUTES,
+		REF_KINDS.ASSERTION,
+		assertion.id,
+		instance,
+	)) as Array<{ id: string }>;
+	const targets = rows.map((r) => r.id);
+	if (targets.length === 0) return 0;
+
+	const marks = targets.map(() => "?").join(",");
+	const res = await prep(db, `
+		UPDATE analysis_nodes SET retracted_at = ?, retracted_by_run = ?
+		WHERE retracted_at IS NULL AND id IN (${marks})
+	`).run(now, newGcRunId(), ...targets);
 	return res.changes;
 }
 
@@ -374,23 +545,218 @@ export async function reconcileDecisionsMigration(db: AsyncDatabase): Promise<De
  * the assertion target is content-addressed, so after a wipe/recompute the
  * edge is re-established the next time the same term is muted. Idempotent: a
  * re-mute never duplicates the edge.
+ *
+ * The same edge is also attached from every *live* `turn-frustration` hit node
+ * the term produced (#325). Marking only the lexicon verdict left the hit nodes
+ * live and unmarked: every reader kept counting them, so a muted word's hits
+ * still added to a session's accumulated friction and still topped the
+ * "most frequent frustration" reports. A `mutes` edge from a hit node says
+ * "this conclusion is silenced by that human assertion" — exactly what the
+ * edge kind means — and it is the mark every reader filters on.
  */
 export async function attachMuteEdge(db: AsyncDatabase, term: string, assertionId: string): Promise<void> {
 	// Locate the term's frustration-lexicon node by its content-addressed source
 	// set (the term alone), the same identity turn-frustration consumes.
 	const sourceSetHash = computeSourceSetHash([{ kind: "term", id: term }]);
 	const node = await findLatestNodeBySourceSet(db, FRUSTRATION_LEXICON_DEF.id, sourceSetHash);
-	if (!node) return;
+	if (node) {
+		await attachMuteEdgeFrom(db, node.id, assertionId);
+	}
+	// …and from every live hit node the term produced. A lexicon hit's `signal`
+	// is the term itself; a paralinguistic hit's `signal` is a marker name, which
+	// can never be a muted lexicon term, so both are matched on the same field.
+	for (const hit of await findLiveLexiconHitNodes(db, term)) {
+		await attachMuteEdgeFrom(db, hit.id, assertionId);
+	}
+}
+
+/** Attach one `mutes` edge, unless it is already there. Idempotent. */
+async function attachMuteEdgeFrom(db: AsyncDatabase, nodeId: string, assertionId: string): Promise<void> {
+	// The edge carries the mute instance that created it, in its ordinal: the
+	// assertion's `asserted_at` at the moment of the mute. An assertion row is
+	// one logical judgement — (kind, key, verdict) — and a re-mute reactivates
+	// that same row, so without the instance a re-mute would revive the
+	// previous mute's edges and silence conclusions it never marked. The
+	// instance is what says "this edge belongs to the mute in force".
+	const instance = await muteInstanceOrdinal(db, assertionId);
 	const existing = await prep(db, `
 		SELECT 1 FROM analysis_edges
-		WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? LIMIT 1
-	`).get(node.id, assertionId, EDGE_KINDS.MUTES);
+		WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? AND ordinal = ?
+		LIMIT 1
+	`).get(nodeId, assertionId, EDGE_KINDS.MUTES, instance);
 	if (existing) return;
 	await insertEdge(db, {
-		fromNodeId: node.id,
+		fromNodeId: nodeId,
 		toRefKind: REF_KINDS.ASSERTION,
 		toRefId: assertionId,
 		edgeKind: EDGE_KINDS.MUTES,
-		ordinal: 0,
+		ordinal: instance,
 	});
+}
+
+/**
+ * The ordinal that identifies a mute instance: the assertion's `asserted_at`
+ * as a millisecond epoch.
+ *
+ * The edge table's `ordinal` is otherwise a position within a node's edge
+ * list, and the `mutes` edge has no siblings to order — it is a single
+ * relation — so the field is free to carry the instance marker. The mark is
+ * compared against the same expression in the `current_nodes` view, so the two
+ * always agree.
+ *
+ * The resolution is milliseconds, not seconds: two mutes inside one second are
+ * two different judgements, and a second-resolution instance would let the
+ * second mute claim the first mute's edges.
+ */
+async function muteInstanceOrdinal(db: AsyncDatabase, assertionId: string): Promise<number> {
+	const row = (await prep(db, `
+		SELECT ${muteInstanceOrdinalSql("assertions")} AS instance
+		FROM assertions WHERE id = ?
+	`).get(assertionId)) as { instance: number | null } | undefined;
+	return row?.instance ?? 0;
+}
+
+/**
+ * The live `turn-frustration` hit nodes a lexicon term produced (#325).
+ *
+ * A hit node's identity is its (turn, signal) pair and its content carries the
+ * matched `signal`; a lexicon hit's signal *is* the term. Only live nodes are
+ * returned: a retracted hit is already out of every live read, so marking it
+ * again would be noise.
+ */
+async function findLiveLexiconHitNodes(
+	db: AsyncDatabase,
+	term: string,
+): Promise<Array<{ id: string }>> {
+	return (await prep(db, `
+		SELECT id FROM live_nodes
+		WHERE analyzer_id = ?
+		  AND json_extract(content_json, '$.signal_source') = 'lexicon'
+		  AND json_extract(content_json, '$.signal') = ?
+	`).all(TURN_FRUSTRATION_ANALYZER_ID, term)) as Array<{ id: string }>;
+}
+
+/**
+ * The ids of the live nodes whose conclusion an *active* assertion silences
+ * (#325) — that is, the nodes carrying a `mutes` edge to an assertion that has
+ * not been superseded.
+ *
+ * An unmute supersedes the assertion (append-only via `superseded_at`), which
+ * makes the edge inert again: the node is no longer muted, so it counts once
+ * more. The edge is never deleted, so the mark's history stays inspectable.
+ *
+ * With `asOf`, the mute set is read as it stood at that instant: a mute that was
+ * asserted later does not silence anything yet, and a mute that was superseded
+ * later had not stopped counting yet. Reading the *current* set for a
+ * historical view would rewrite the past.
+ */
+export async function getMutedNodeIds(db: AsyncDatabase, asOf?: string): Promise<Set<string>> {
+	if (asOf) {
+		const rows = (await prep(db, `
+			SELECT DISTINCT e.from_node_id AS id
+			FROM analysis_edges e
+			JOIN assertions a ON a.id = e.to_ref_id
+			WHERE e.edge_kind = ?
+			  AND e.to_ref_kind = ?
+			  AND a.subject_kind = 'term'
+			  AND a.verdict = 'muted'
+			  AND a.asserted_at <= ?
+			  AND (a.superseded_at IS NULL OR a.superseded_at > ?)
+			  AND e.ordinal = ${MUTE_INSTANCE_ORDINAL_SQL}
+		`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION, asOf, asOf)) as Array<{ id: string }>;
+		return new Set(rows.map((r) => r.id));
+	}
+	const rows = (await prep(db, `
+		SELECT DISTINCT e.from_node_id AS id
+		FROM analysis_edges e
+		JOIN assertions a ON a.id = e.to_ref_id
+		WHERE e.edge_kind = ?
+		  AND e.to_ref_kind = ?
+		  AND a.subject_kind = 'term'
+		  AND a.verdict = 'muted'
+		  AND a.superseded_at IS NULL
+		  AND e.ordinal = ${MUTE_INSTANCE_ORDINAL_SQL}
+	`).all(EDGE_KINDS.MUTES, REF_KINDS.ASSERTION)) as Array<{ id: string }>;
+	return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * The pure half of {@link getMutedNodeIds}: drop the nodes an active mute
+ * silences, keeping the rest in their original order.
+ *
+ * Readers share this so "does this count a muted hit?" is answered the same
+ * way everywhere — a muted term's hits must not reach friction scores, digests,
+ * or reports, and each reader deciding for itself is how they drift apart.
+ */
+export function withoutMutedNodes<T extends { id: string }>(nodes: readonly T[], mutedIds: ReadonlySet<string>): T[] {
+	return nodes.filter((n) => !mutedIds.has(n.id));
+}
+
+/**
+ * Silence the conclusions a muted term's hits produced (#325).
+ *
+ * A reader that folds a hit into a conclusion draws that conclusion *from* the
+ * hit: the `consumes` edge says so. When the hit is silenced, the conclusion
+ * it produced is a conclusion about a term the operator said does not count, so
+ * it must leave the current generation too — otherwise the reader's old
+ * conclusion stays current and keeps counting the silenced hit.
+ *
+ * The conclusion is marked with the same `mutes` edge, so one predicate covers
+ * both the hit and what was drawn from it, and the mark is reversible: an
+ * unmute supersedes the assertion, which makes the edge inert again.
+ *
+ * Only *current* conclusions are marked. A superseded generation is already out
+ * of every aggregate read, and marking it would add a mark nothing reads.
+ */
+export async function silenceConclusionsOfSilencedHits(
+	db: AsyncDatabase,
+	assertionId: string,
+): Promise<number> {
+	// The conclusions that consumed a silenced hit. A `consumes` edge names its
+	// target by the target's content-addressed output key, while the `mutes`
+	// edge starts at the hit's row id — so the join goes through the node.
+	//
+	// The `mutes` edge is constrained to the mute instance in force, the same
+	// way the retraction query constrains it. A hit silenced by an earlier
+	// instance of this mute is not silenced by the one in force, so it is not a
+	// candidate, and neither are the conclusions that read it.
+	const instance = await muteInstanceOrdinal(db, assertionId);
+	const consumers = (await prep(db, `
+		SELECT DISTINCT c.from_node_id AS id
+		FROM analysis_edges c
+		JOIN analysis_nodes hit ON hit.output_key = c.to_ref_id
+		JOIN analysis_edges m ON m.from_node_id = hit.id
+		                   AND m.edge_kind = ?
+		                   AND m.to_ref_kind = ?
+		                   AND m.to_ref_id = ?
+		                   AND m.ordinal = ?
+		WHERE c.edge_kind = ? AND c.to_ref_kind = ?
+	`).all(
+		EDGE_KINDS.MUTES,
+		REF_KINDS.ASSERTION,
+		assertionId,
+		instance,
+		EDGE_KINDS.CONSUMES,
+		REF_KINDS.ANALYSIS_NODE,
+	)) as Array<{ id: string }>;
+	if (consumers.length === 0) return 0;
+
+	let marked = 0;
+	for (const consumer of consumers) {
+		const already = await prep(db, `
+			SELECT 1 FROM analysis_edges
+			WHERE from_node_id = ? AND to_ref_id = ? AND edge_kind = ? AND ordinal = ?
+			LIMIT 1
+		`).get(consumer.id, assertionId, EDGE_KINDS.MUTES, instance);
+		if (already) continue;
+		await insertEdge(db, {
+			fromNodeId: consumer.id,
+			toRefKind: REF_KINDS.ASSERTION,
+			toRefId: assertionId,
+			edgeKind: EDGE_KINDS.MUTES,
+			ordinal: instance,
+		});
+		marked++;
+	}
+	return marked;
 }

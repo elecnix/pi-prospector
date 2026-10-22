@@ -1009,14 +1009,21 @@ contain the new word have anything to compute.
   it is *verified by content* (a reconcile that proves every decision
   round-trips) rather than by "it ran", because decisions cannot be recomputed.
 - **Mute** — an assertion whose verdict is *muted*, applied today to a **lexicon
-  term** (`subject_kind='term'`): it stops a term from matching new turns while
-  leaving its existing hit nodes untouched and reachable as lineage. The mute
-  set is the user's `config`, so an analyzer that consults term mutes folds a
-  hash of the currently-active mute set into its **config fingerprint** —
-  muting therefore marks the affected nodes `stale/config`, a plain fill never
-  recomputes them silently, and `--revise config` cleanly recomputes them with
-  the old nodes preserved as lineage. Unmuting is append-only via
-  `superseded_at` — the mute row stays inspectable with its reason and time. The
+  term** (`subject_kind='term'`): it stops a term from matching new turns, and it
+  silences the hits the term already produced. The silence is a `mutes` edge from
+  each affected hit node to the assertion — the edge kind means exactly that, and
+  it is what every reader filters on, so a muted term's past hits stop counting
+  towards friction, digests and reports. The mute set is the user's `config`, so
+  an analyzer that consults term mutes folds a hash of the currently-active mute
+  set into its **config fingerprint** — muting therefore marks the affected nodes
+  `stale/config`, a plain fill never recomputes them silently, and `--revise
+  config` cleanly recomputes them with the old nodes preserved as lineage. A
+  silenced hit stays an *input*: the source set does not change, so a
+  recomputation is a revision of its predecessor rather than a sibling, and the
+  mute-era conclusion is retracted when the mute is lifted, handing the head of
+  the lineage back to the conclusion that holds again. Unmuting is append-only via
+  `superseded_at` — the mute row stays inspectable with its reason and time, and
+  the `mutes` edges it carried become inert, so the hits count once more. The
   mute corpus is operator judgement, and like the decision corpus it is natural
   training input for improving the classifier.
 

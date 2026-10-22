@@ -61,6 +61,7 @@ import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF, type ToolTrajectoryProperties } from "../tool-trajectory/index.js";
 import { REPETITION_COLLAPSE_DEF, type RepetitionCollapseProperties } from "../repetition-collapse/index.js";
 import { DEFAULT_ROUTING_CONFIG, type RoutingConfig } from "./config.js";
+import { getMutedNodeIds } from "../../../db/assertions.js";
 import { Type, type Static } from "typebox";
 
 export const RoutingVerdict = Type.Union([
@@ -246,6 +247,10 @@ export const routingOpportunityAnalyzer: Analyzer = {
 		label: "default",
 	},
 
+	// Term mutes are part of this analyzer's config: a muted term's hit must not
+	// mark a turn as frustrated for routing purposes (#325).
+	consultsAssertions: ["term"],
+
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const cfg = (ctx.config as unknown as RoutingConfig) ?? DEFAULT_ROUTING_CONFIG;
 
@@ -289,9 +294,29 @@ export const routingOpportunityAnalyzer: Analyzer = {
 			}
 		}
 
-		// Frustration by user_message_id from turn-frustration nodes.
+		// Frustration by user_message_id from turn-frustration nodes. A muted
+		// term's hits are silenced (#325) and do not mark a turn as frustrated.
+		//
+		// The hits this turn carries are recorded by output key, so the label can
+		// name them as evidence: the source set already names them (that is what
+		// makes the unit re-identify when a hit changes), and the *edge* is what
+		// lets a reader walk back from the label to the hits that produced it —
+		// including to a hit a human muted (#325).
 		const frustrationTurns = new Set<string>();
+		const frustrationKeysByUserMessageId = new Map<string, string[]>();
+		const muted = await getMutedNodeIds(ctx.db);
 		for (const n of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
+			try {
+				const c = JSON.parse(n.content_json) as { user_message_id?: string };
+				if (typeof c.user_message_id === "string") {
+					const keys = frustrationKeysByUserMessageId.get(c.user_message_id) ?? [];
+					keys.push(n.output_key);
+					frustrationKeysByUserMessageId.set(c.user_message_id, keys);
+				}
+			} catch {
+				/* skip */
+			}
+			if (muted.has(n.id)) continue;
 			try {
 				const c = JSON.parse(n.content_json) as { user_message_id?: string };
 				if (typeof c.user_message_id === "string") frustrationTurns.add(c.user_message_id);
@@ -342,6 +367,13 @@ export const routingOpportunityAnalyzer: Analyzer = {
 			// Part of the unit's identity: the turn's messages + the dependency
 			// nodes that fed the label (turn-pair-core + trajectory + frustration
 			// output keys), so a changed signal re-labels the turn.
+			//
+			// The frustration hits are deliberately *not* in the source set. The
+			// label depends on which turns carry a hit, not on which hit node says
+			// so, so naming the hit would re-identify the unit every time a hit is
+			// recomputed — churn with no change to the conclusion. The hit is
+			// recorded as a `consumes` edge instead, which is the relation a reader
+			// walks (#325).
 			const sources: SourceRef[] = [
 				...pair.messageIds.map((id) => ({ kind: "message" as const, id })),
 				...(ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? [])
@@ -364,7 +396,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "message",
 				anchorRef: pair.userMessageId,
-				meta: { properties },
+				meta: { properties, hitOutputKeys: frustrationKeysByUserMessageId.get(pair.userMessageId) ?? [] },
 			});
 		}
 		return units;
@@ -394,6 +426,20 @@ export const routingOpportunityAnalyzer: Analyzer = {
 			hard: false,
 			verdict: "neutral",
 		};
+		// The frustration hits the label was built from, by output key. They are
+		// not in the source set (the label depends on *which turns* carry a hit,
+		// not on which hit node says so), but the edge is the relation a reader
+		// walks: a human mute silences a hit by marking it, and a label drawn
+		// from a silenced hit has to be findable from the hit so that lifting the
+		// mute can hand the lineage head back to the label that holds again
+		// (#325).
+		const hitOutputKeys = (unit.meta?.["hitOutputKeys"] as string[] | undefined) ?? [];
+		const consumed = [
+			...unit.sources
+				.filter((src) => src.kind === "analysis_node")
+				.map((src) => src.id),
+			...hitOutputKeys,
+		];
 		return {
 			nodeKind: "metric",
 			contentJson: properties as unknown as Record<string, unknown>,
@@ -403,9 +449,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 				{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 				// The dependency nodes folded into this unit's identity are what the
 				// label was built from; record each as a consumes edge.
-				...unit.sources
-					.filter((src) => src.kind === "analysis_node")
-					.map((src, i) => ({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: src.id, edgeKind: EDGE_KINDS.CONSUMES, ordinal: i + 1 })),
+				...consumed.map((id, i) => ({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: id, edgeKind: EDGE_KINDS.CONSUMES, ordinal: i + 1 })),
 			],
 		};
 	},

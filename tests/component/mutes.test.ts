@@ -31,21 +31,40 @@ import {
 	TURN_FRUSTRATION_DEF,
 	type TurnFrustrationProperties,
 } from "../../src/analyze/analyzers/turn-frustration/index.js";
-import { getNodesByAnalyzer, getEdgesFrom } from "../../src/db/analysis-queries.js";
+import { getNodesByAnalyzer, getEdgesFrom, listAnalysisNodes, countAnalysisNodes, getAnalysisStats } from "../../src/db/analysis-queries.js";
 import {
 	muteTerm,
 	unmuteTerm,
 } from "../../src/commands/mutes.js";
-import { getActiveAssertions, getMutedTerms, isTermMuted, listAssertions, supersedeAssertion } from "../../src/db/assertions.js";
+import { getActiveAssertions, getMutedTerms, getMutedNodeIds, isTermMuted, listAssertions, supersedeAssertion } from "../../src/db/assertions.js";
 import { verifyNodes } from "../../src/commands/verify.js";
+import { frictionAccumulationAnalyzer } from "../../src/analyze/analyzers/friction-accumulation/index.js";
+import { renderOutputs } from "../../src/analyze/outputs.js";
+import type { AnalyzerOutputContext } from "../../src/analyze/types.js";
+import { toolTrajectoryAnalyzer } from "../../src/analyze/analyzers/tool-trajectory/index.js";
+import { turnPairLLMAnalyzer } from "../../src/analyze/analyzers/turn-pair-llm/index.js";
 import type { LLMRequest } from "../../src/analyze/types.js";
 
 const FRUSTRATED_TERMS = new Set(["putain", "wrong", "pénible"]);
 
-async function build(db: AsyncDatabase) {
+async function build(db: AsyncDatabase, configOverrides?: Record<string, Record<string, unknown>>) {
 	const llm = createMockLLM({
 		responder: (req: LLMRequest) => {
 			const term = String((req.user.match(/TERM:\s*(.*)/) ?? [])[1] ?? "").trim();
+			// The classifier's prompt is the one that asks for a turn
+			// classification; the lexicon's asks about a term.
+			if (!term && req.user.includes("USER MESSAGE:")) {
+				return {
+					text: "x",
+					structured: {
+						sentiment: "frustrated",
+						friction_type: "wrong_approach",
+						is_genuine_correction: true,
+						severity: "high",
+						rationale: "r",
+					},
+				};
+			}
 			const frustrated = FRUSTRATED_TERMS.has(term);
 			return {
 				text: "x",
@@ -59,7 +78,7 @@ async function build(db: AsyncDatabase) {
 			};
 		},
 	});
-	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
+	const framework = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS, configOverrides });
 	await framework.register(turnPairCoreAnalyzer);
 	await framework.register(lexiconCandidatesAnalyzer);
 	await framework.register(frustrationLexiconAnalyzer);
@@ -67,8 +86,57 @@ async function build(db: AsyncDatabase) {
 	return { framework, llm };
 }
 
+/** The same chain plus the readers that fold frustration hits into a session score. */
+async function buildWithReaders(db: AsyncDatabase, configOverrides?: Record<string, Record<string, unknown>>) {
+	const { framework, llm } = await build(db, configOverrides);
+	await framework.register(toolTrajectoryAnalyzer);
+	await framework.register(frictionAccumulationAnalyzer);
+	return { framework, llm };
+}
+
+/**
+ * The same chain plus the classifier that a lexicon hit escalates a turn to.
+ *
+ * The classifier's unit identity does not name the hit node: it names the
+ * turn's core node, so the silenced hit changes the conclusion without moving
+ * the unit. That is what makes it the reader whose lineage head the unmute has
+ * to hand back.
+ */
+async function buildWithClassifier(db: AsyncDatabase) {
+	const { framework, llm } = await build(db);
+	await framework.register(turnPairLLMAnalyzer);
+	return { framework, llm };
+}
+
+/** The current classification nodes, with their parsed content and output key. */
+async function currentClassifierNodes(db: AsyncDatabase): Promise<Array<{ id: string; outputKey: string; props: { friction_type: string } }>> {
+	const nodes = await listAnalysisNodes(db, { analyzerId: "turn-pair-llm" });
+	return nodes.map((n) => ({
+		id: n.id,
+		outputKey: n.output_key,
+		props: JSON.parse(n.content_json) as { friction_type: string },
+	}));
+}
+
 async function tfProps(db: AsyncDatabase, sessionId: string): Promise<TurnFrustrationProperties[]> {
 	return (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId)).map((n) => JSON.parse(n.content_json) as TurnFrustrationProperties);
+}
+
+/**
+ * The *current* accumulation node — the head of its lineage, which is what a
+ * reader sees. `listAnalysisNodes` reads the current generation, so this is the
+ * conclusion, not merely the newest one.
+ */
+async function readAccumulation(db: AsyncDatabase): Promise<{
+	accumulated_friction: number;
+	turn_contributions: Array<{ frustration_weight: number }>;
+}> {
+	const nodes = await listAnalysisNodes(db, { analyzerId: "friction-accumulation" });
+	assert.equal(nodes.length, 1, "exactly one current accumulation node");
+	return JSON.parse(nodes[0]!.content_json) as {
+		accumulated_friction: number;
+		turn_contributions: Array<{ frustration_weight: number }>;
+	};
 }
 
 describe("muting a lexicon term", () => {
@@ -127,7 +195,9 @@ describe("muting a lexicon term", () => {
 
 			// `--revise config` recomputes: the unmuted 'putain' gets a fresh node
 			// (a new version that revises the old), while the muted 'wrong' is not
-			// recreated and its old node stays as lineage.
+			// recreated. Its old node stays in the graph as lineage, but it is
+			// silenced: the mute marked it, so it is no longer a *current* finding
+			// and no reader counts it (#325).
 			const revise = await framework.run("s1", { revise: ["config"] });
 			assert.equal(revise.nodesRevised, 1, "only the unmuted term is revised");
 			const after = await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1");
@@ -263,6 +333,484 @@ describe("muting a lexicon term", () => {
 			const rows = await listAssertions(db, "term");
 			assert.equal(rows.length, 2, "both mutes are recorded");
 			assert.equal(rows.filter((r) => r.superseded_at === null).length, 1, "one remains active");
+		} finally {
+			await close();
+		}
+	});
+});
+
+describe("a muted term's existing hits (#325)", () => {
+	it("marks every live hit node of the term with a mutes edge", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong again" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			const hit = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!;
+
+			const result = await muteTerm(db, { term: "wrong", by: "operator" });
+			assert.equal(result.liveHits, 1, "the mute reports the live hit node it left behind");
+
+			// The hit node now carries the mute: the edge reaches the judgement
+			// from the analysed conclusion it silences.
+			const edges = await getEdgesFrom(db, hit.id);
+			const mutesEdge = edges.find((e) => e.edge_kind === "mutes");
+			assert.ok(mutesEdge, "the hit node carries a mutes edge");
+			assert.equal(mutesEdge!.to_ref_kind, "assertion");
+			assert.equal(mutesEdge!.to_ref_id, result.assertionId);
+
+			// And the reader helper agrees.
+			assert.ok((await getMutedNodeIds(db)).has(hit.id));
+
+			// The lexicon verdict node keeps its own mutes edge: judging a word is
+			// a corpus-wide conclusion, muting it is about matching.
+			const lexNodes = await getNodesByAnalyzer(db, "frustration-lexicon", "s1");
+			const lexEdges = (await Promise.all(lexNodes.flatMap((n) => getEdgesFrom(db, n.id)))).flat();
+			assert.ok(lexEdges.some((e) => e.edge_kind === "mutes"), "the lexicon verdict keeps its mutes edge");
+		} finally {
+			await close();
+		}
+	});
+
+	it("stops counting the muted term's hits in the surface and the stock outputs, and restores them on unmute", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong and putain" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			assert.equal(await countAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id }), 2);
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+
+			// The muted hit is no longer a current finding: the surface read that
+			// backs `prospect nodes` reports one hit, not two.
+			assert.equal(
+				await countAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id }),
+				1,
+				"the muted term's hit is not counted as a current finding",
+			);
+			const counted = await listAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id });
+			assert.deepEqual(
+				counted.map((n) => (JSON.parse(n.content_json) as TurnFrustrationProperties).signal),
+				["putain"],
+			);
+
+			// It is still in the graph — preserved as lineage, never deleted.
+			assert.equal(
+				(await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1")).length,
+				2,
+				"the muted hit is still live and inspectable",
+			);
+			assert.equal((await verifyNodes(db)).mismatches.length, 0, "the graph still verifies");
+
+			// Unmuting makes the mark inert again: the hit counts once more.
+			await unmuteTerm(db, "wrong");
+			assert.equal(await countAnalysisNodes(db, { analyzerId: TURN_FRUSTRATION_DEF.id }), 2);
+			assert.equal((await getMutedNodeIds(db)).size, 0, "no node is muted any more");
+		} finally {
+			await close();
+		}
+	});
+
+	it("reads the mute set as of the render's instant, not today's", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+
+			// A moment before the mute: the hit is live and counted.
+			const before = new Date(Date.now() - 60_000).toISOString();
+			assert.equal((await getMutedNodeIds(db, before)).size, 0, "nothing was muted a minute ago");
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			assert.equal((await getMutedNodeIds(db, before)).size, 0, "the later mute does not reach back into the past");
+			// Two nodes carry the mark: the term's lexicon verdict and the hit
+			// node it produced.
+			assert.equal((await getMutedNodeIds(db)).size, 2, "and it silences the hit now");
+		} finally {
+			await close();
+		}
+	});
+
+	it("does not report a muted node as a superseded generation", async () => {		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			const before = await getAnalysisStats(db);
+			// The one `turn-frustration` node is current; the other three are the
+			// lexicon chain's, which the mute does not touch.
+			const beforeTf = before.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0;
+			assert.equal(beforeTf, 1, "one current turn-frustration node");
+			assert.equal(before.supersededNodes, 0, "nothing supersedes anything");
+
+			// The mute silences the hit. Nothing *revises* it — the operator said
+			// it does not count — so it must not be reported as a superseded
+			// generation either: the two populations the difference is computed
+			// between have to agree on what "current" means.
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			const after = await getAnalysisStats(db);
+			assert.equal(after.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0, 0, "the muted hit is not a current node");
+			assert.equal(after.supersededNodes, 0, "and it is not a superseded generation either");
+		} finally {
+			await close();
+		}
+	});
+
+	it("filters a per-call as-of read with that instant's mute set", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+
+			// The instant the hit was written: the graph as it stood before the
+			// mute, since the mute comes after. The mute is a moment later, so
+			// the two instants do not collapse into one.
+			const hit = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!;
+			const before = hit.created_at;
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			await muteTerm(db, { term: "wrong", by: "operator" });
+
+			// An output that asks for the graph as it stood before the mute gets
+			// the hit, because the mute had not been asserted yet. The mute set
+			// has to come from the same instant as the rows it filters.
+			const reads: Array<{ rows: number; muted: number }> = [];
+			const probe = {
+				def: { id: "probe", label: "Probe", description: "d" },
+				render: async (ctx: AnalyzerOutputContext) => {
+					const rows = await ctx.getNodes(TURN_FRUSTRATION_DEF.id, before);
+					reads.push({ rows: rows.length, muted: (await getMutedNodeIds(db, before)).size });
+					return [];
+				},
+			};
+			await renderOutputs(
+				[{ analyzer: turnFrustrationAnalyzer, output: probe as never, address: "probe" }],
+				{ db },
+			);
+			assert.equal(reads.length, 1, "the output ran");
+			assert.equal(reads[0]!.rows, 1, "the hit is there as it stood before the mute");
+			assert.equal(reads[0]!.muted, 0, "and nothing was muted at that instant");
+		} finally {
+			await close();
+		}
+	});
+
+	it("counts the as-of stats over the same population the live stats count", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await build(db);
+			await framework.run("s1");
+			const after = new Date(Date.now() + 1000).toISOString();
+
+			// The as-of branch binds two timestamps for the node's own window and
+			// two for each of the two current-generation predicates, so six
+			// placeholders take six values. A mismatch here is a parameter-count
+			// error, and the stats call throws instead of returning counts.
+			const asOf = await getAnalysisStats(db, after);
+			const live = await getAnalysisStats(db);
+			assert.equal(asOf.nodes, live.nodes, "the as-of count matches the live count");
+			assert.equal(
+				asOf.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0,
+				live.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0,
+				"the as-of per-analyzer count matches the live one",
+			);
+
+			// A mute silences the hit, and the as-of read honours that the same
+			// way the live read does.
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			const mutedAsOf = await getAnalysisStats(db, after);
+			assert.equal(
+				mutedAsOf.nodesByAnalyzer[TURN_FRUSTRATION_DEF.id] ?? 0,
+				0,
+				"the muted hit is not a current node in the as-of read either",
+			);
+		} finally {
+			await close();
+		}
+	});
+
+	it("gives friction-accumulation a lexicon friction of 0 for a session whose only hits were the muted term", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+
+			// Before the mute, the hit's weight is part of the session's friction.
+			const before = await readAccumulation(db);
+			assert.ok(
+				before.turn_contributions.some((c) => c.frustration_weight > 0),
+				"the lexicon hit contributes friction before the mute",
+			);
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+
+			// A plain fill leaves the stale accumulation alone; the revise
+			// recomputes it, and the muted hit no longer contributes.
+			await framework.run("s1", { revise: ["config"] });
+			const after = await readAccumulation(db);
+			assert.equal(
+				after.turn_contributions.every((c) => c.frustration_weight === 0),
+				true,
+				"the muted term contributes no lexicon friction after the revise",
+			);
+
+			// Unmuting restores the count: the mute was config, so unmuting
+			// reverts the fingerprint and the next revise brings the hit back.
+			await unmuteTerm(db, "wrong");
+			await framework.run("s1", { revise: ["config"] });
+			const restored = await readAccumulation(db);
+			assert.ok(
+				restored.turn_contributions.some((c) => c.frustration_weight > 0),
+				"unmuting restores the term's contribution",
+			);
+		} finally {
+			await close();
+		}
+	});
+
+	it("hands the pre-mute conclusion back to a reader whose source set does not name the hit", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithClassifier(db);
+			await framework.run("s1");
+
+			// The classifier ran because the lexicon hit escalated the turn.
+			const before = await currentClassifierNodes(db);
+			assert.equal(before.length, 1, "one current classification node");
+			assert.equal(before[0]!.props.friction_type, "wrong_approach", "the lexicon hit escalated the turn");
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+
+			// Under the mute the turn is no longer escalated, so the classifier drew
+			// a second conclusion that revises the first.
+			const muted = await currentClassifierNodes(db);
+			assert.equal(muted.length, 1, "one current classification node under the mute");
+			assert.notEqual(muted[0]!.outputKey, before[0]!.outputKey, "the mute-era conclusion is a new node");
+
+			// Unmuting must hand the head of the lineage back to the conclusion that
+			// holds again: the pre-mute one. The muted-era conclusion was drawn
+			// under a setup that no longer holds, so it must not stay current.
+			await unmuteTerm(db, "wrong");
+			const restored = await currentClassifierNodes(db);
+			assert.equal(
+				restored[0]!.outputKey,
+				before[0]!.outputKey,
+				"unmuting restores the pre-mute conclusion as the current one",
+			);
+		} finally {
+			await close();
+		}
+	});
+
+	it("leaves one current conclusion in a session that also carries an unmuted term's hit", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong and putain" }, { role: "assistant", text: "ok" }]);
+
+			// The default cap (0.5) hides the difference: one hit alone already
+			// reaches it. Raising it lets both terms' weights show, so the
+			// assertion can tell the muted term's weight apart from the live one's.
+			const { framework } = await buildWithReaders(db, {
+				"friction-accumulation": { frustrationWeightCap: 5 },
+			});
+			await framework.run("s1");
+
+			// Before the mute: one conclusion, counting both terms' hits.
+			const before = await readAccumulation(db);
+			assert.equal(
+				before.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0),
+				1,
+				"both terms' hits contribute before the mute",
+			);
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+
+			// After the mute and the revise: the conclusion the muted term's hit
+			// produced is not a finding any more, and the recomputed one replaces
+			// it. Exactly one conclusion is current, and the muted term's weight
+			// is not in it.
+			const after = await readAccumulation(db);
+			assert.equal(
+				after.turn_contributions.reduce((sum, c) => sum + c.frustration_weight, 0),
+				0.5,
+				"the current conclusion counts the unmuted term's hit only",
+			);
+		} finally {
+			await close();
+		}
+	});
+
+	it("leaves the other muted term's conclusion alone", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "wrong and putain" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db, {
+				"friction-accumulation": { frustrationWeightCap: 5 },
+			});
+			await framework.run("s1");
+
+			// A second session that carries only one of the two terms. Its
+			// conclusion rests on that term's hit alone.
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "wrong" }, { role: "assistant", text: "ok" }]);
+			await framework.run("s2");
+
+			// Two terms muted at once. Each silence is its own assertion, and a
+			// conclusion drawn from one term's hit is not the other term's
+			// business.
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await muteTerm(db, { term: "putain", by: "operator" });
+
+			// Recompute the second session's conclusion while both mutes are in
+			// force. It is written inside the 'putain' mute's window and it
+			// consumed 'wrong's silenced hit.
+			await framework.run("s2", { revise: ["config"] });
+			const other = await listAnalysisNodes(db, { analyzerId: "friction-accumulation", sessionId: "s2" });
+			assert.equal(other.length, 1, "the second session has its own conclusion");
+
+			// Lifting the 'putain' mute says nothing about 'wrong's silenced
+			// hit, so the second session's conclusion is not its business.
+			await unmuteTerm(db, "putain");
+			const after = await listAnalysisNodes(db, { analyzerId: "friction-accumulation", sessionId: "s2" });
+			assert.equal(after.length, 1, "the other term's conclusion is still current");
+			assert.equal(after[0]!.output_key, other[0]!.output_key, "and it is the same node");
+		} finally {
+			await close();
+		}
+	});
+
+	it("leaves a conclusion that never read the muted term alone", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			// A second session, analysed while the mute is in force. It never
+			// matched the muted term, so its conclusion says nothing about it.
+			await insertSession(db, "s2");
+			await insertMessages(db, "s2", [{ role: "user", text: "another turn" }, { role: "assistant", text: "ok" }]);
+			await framework.run("s2");
+
+			const other = await listAnalysisNodes(db, { analyzerId: "friction-accumulation", sessionId: "s2" });
+			assert.equal(other.length, 1, "the second session has its own conclusion");
+
+			// Unmuting lifts the conclusions drawn under the mute. The second
+			// session's conclusion was not drawn under the mute, so it stays.
+			await unmuteTerm(db, "wrong");
+			const after = await listAnalysisNodes(db, { analyzerId: "friction-accumulation", sessionId: "s2" });
+			assert.equal(after.length, 1, "the unrelated conclusion is still current");
+			assert.equal(after[0]!.output_key, other[0]!.output_key, "and it is the same node");
+		} finally {
+			await close();
+		}
+	});
+
+	it("survives a mute → unmute → re-mute cycle", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+			const muted = await readAccumulation(db);
+			assert.equal(
+				muted.turn_contributions.every((c) => c.frustration_weight === 0),
+				true,
+				"the muted term contributes no friction",
+			);
+
+			await unmuteTerm(db, "wrong");
+			const restored = await readAccumulation(db);
+			assert.ok(
+				restored.turn_contributions.some((c) => c.frustration_weight > 0),
+				"unmuting restores the term's contribution",
+			);
+
+			// Muting again must reach the same state as the first mute. The
+			// assertion row is one logical judgement, so a re-mute reactivates
+			// that same row — and the mute-era conclusion it left behind must
+			// not block the recomputation.
+			await muteTerm(db, { term: "wrong", by: "operator" });
+			await framework.run("s1", { revise: ["config"] });
+			const remuted = await readAccumulation(db);
+			assert.equal(
+				remuted.turn_contributions.every((c) => c.frustration_weight === 0),
+				true,
+				"the re-muted term contributes no friction",
+			);
+		} finally {
+			await close();
+		}
+	});
+
+	it("treats a restated mute as the same episode, and a re-imposed mute as a new one", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "that is wrong" }, { role: "assistant", text: "ok" }]);
+
+			const { framework } = await buildWithReaders(db);
+			await framework.run("s1");
+			const hit = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1"))[0]!;
+
+			// A restatement while the mute is in force continues the episode: the
+			// mute instance does not move, so the same `mutes` edge still marks the
+			// hit. A second edge would say the term was muted twice, for the same
+			// silence.
+			const first = await muteTerm(db, { term: "wrong", by: "operator" });
+			const restated = await muteTerm(db, { term: "wrong", by: "operator" });
+			assert.equal(restated.assertionId, first.assertionId, "the assertion row is the same");
+			const muteEdges = (await getEdgesFrom(db, hit.id)).filter((e) => e.edge_kind === "mutes");
+			assert.equal(muteEdges.length, 1, "a restated mute leaves one mark on the hit");
+
+			// A mute re-imposed after an unmute is a new episode: the instance
+			// moves, so the new mark replaces the old one rather than reviving
+			// the conclusions the first episode left alone.
+			await unmuteTerm(db, "wrong");
+			const reimposed = await muteTerm(db, { term: "wrong", by: "operator" });
+			const afterEdges = (await getEdgesFrom(db, hit.id)).filter((e) => e.edge_kind === "mutes");
+			assert.equal(afterEdges.length, 2, "a re-imposed mute adds a mark for the new episode");
+			const instances = new Set(afterEdges.map((e) => e.ordinal));
+			assert.equal(instances.size, 2, "the two episodes carry different instances");
+			assert.ok(
+				(await getMutedNodeIds(db)).has(hit.id),
+				"the hit is muted under the new episode",
+			);
+			assert.equal(reimposed.assertionId, first.assertionId, "still the same assertion row");
 		} finally {
 			await close();
 		}

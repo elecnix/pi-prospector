@@ -110,6 +110,13 @@ export interface BuildDigestInput {
 	/** failure-modes metric/proposal nodes for this session. */
 	failureNodes?: AnalysisNodeRow[];
 	frustrationNodes?: AnalysisNodeRow[];
+	/**
+	 * The ids of the frustration hit nodes a human mute silenced (#325). A
+	 * silenced hit stays an *input* — it is still in the source set, so it does
+	 * not by itself re-identify the unit — but it contributes nothing to the
+	 * digest.
+	 */
+	mutedHitIds?: ReadonlySet<string>;
 	/** user-reply-acts classification nodes (custom analyzer). */
 	replyActsNodes?: AnalysisNodeRow[];
 	/** assistant-cognition classification nodes for this session. */
@@ -202,8 +209,11 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	}
 
 	// Group learned-lexicon and lexicon-free hits by the turn they landed on.
+	// A hit a human mute silenced is skipped: the term is not a signal for this
+	// corpus, so it must not colour the digest (#325).
 	const frustrationByUser = new Map<string, TurnFrustrationProperties[]>();
 	for (const node of input.frustrationNodes ?? []) {
+		if (input.mutedHitIds?.has(node.id)) continue;
 		const props = safeParse<TurnFrustrationProperties>(node.content_json);
 		if (!props?.user_message_id) continue;
 		const list = frustrationByUser.get(props.user_message_id) ?? [];
