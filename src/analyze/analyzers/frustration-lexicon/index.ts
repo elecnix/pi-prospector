@@ -96,11 +96,18 @@ export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	// permanently, the top-ranked frustration terms on a real corpus became `do`
 	// (254 hits), `no` (191), `do not` (172), `never` (152), `cannot` (129) and
 	// `still` (90) — ordinary instruction words that appear in nearly every
-	// prompt. They dominated the ranking and buried the real signal. A single-token
-	// term in the stoplist is now forced to neutral/none whatever the model
-	// answered; a multi-word term is not covered, because a phrase is judged as a
-	// unit and can be a pointed complaint.
-	minor: 5,
+	// prompt. Superseded by 1.6.
+	// 1.6: the guard is gone (issue #321). A hand-written list of English function
+	// words fixed an English symptom: it could not reach any other language, and
+	// it decided by spelling a property the corpus measures for itself. The terms
+	// above were not noise because they are English, but because a large share of
+	// turns carry them — and that share is measurable for `do`, `putain`, and
+	// `まだ` alike. The verdict now records exactly what the model judged; the
+	// readers price a term by its document share (`term-specificity.ts`). The prompt
+	// is unchanged — it always asked the model to judge meaning, and the guard was
+	// applied to the parsed answer — so a verdict cached under the guard keeps its
+	// stored polarity and is simply no longer overridden on the way out.
+	minor: 6,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };

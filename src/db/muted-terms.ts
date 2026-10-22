@@ -43,18 +43,7 @@
  */
 
 import { type AsyncDatabase } from "./async-db.js";
-import { getMutedTerms } from "./assertions.js";
 import type { AnalysisNodeRow } from "../analyze/types.js";
-
-/**
- * The corpus's currently-muted terms, normalised the way the lexicon keys them.
- *
- * A mute whose key is not in the lexicon still matters: it is a statement that
- * the term is not a signal, and it must not contribute to any count.
- */
-export async function mutedTerms(db: AsyncDatabase): Promise<Set<string>> {
-	return new Set((await getMutedTerms(db)).map((t) => t.trim().toLowerCase()));
-}
 
 /**
  * The signal of one frustration hit, or `null` when the node does not carry one.
@@ -76,28 +65,6 @@ export function hitSignal(node: AnalysisNodeRow): string | null {
 	const signal = typeof props["signal"] === "string" ? (props["signal"] as string) : "";
 	if (signal.length === 0) return null;
 	return source === "lexicon" ? signal.toLowerCase() : `paralinguistic:${signal}`;
-}
-
-/**
- * The frustration hits of a set of nodes with the muted terms removed.
- *
- * Returns the nodes that still count, in the order they were given, so a reader
- * keeps its own ordering. A node that cannot be parsed, or that carries no
- * readable signal, is **kept**: it cannot be checked against the mute list, and
- * a mute says "not that term", never "this node does not exist". A hit with no
- * signal contributes no weight to anything, so keeping it costs the reader
- * nothing.
- */
-export function unmutedHits(nodes: readonly AnalysisNodeRow[], muted: ReadonlySet<string>): AnalysisNodeRow[] {
-	if (muted.size === 0) return [...nodes];
-	return nodes.filter((node) => {
-		const signal = hitSignal(node);
-		// A node with no readable signal cannot be checked against the mute list, so
-		// it is left alone: a mute says "not that term", never "this node does not
-		// exist".
-		if (signal === null) return true;
-		return !muted.has(signal);
-	});
 }
 
 /**

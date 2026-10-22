@@ -68,7 +68,7 @@ import {
 	versionIdOf,
 } from "./version.js";
 import { EDGE_KINDS, REF_KINDS, validateEdge } from "./edge-kinds.js";
-import { getAssertionsForKinds, computeAssertionFingerprint } from "../db/assertions.js";
+import { getActiveAssertionsForKinds, computeAssertionFingerprint } from "../db/assertions.js";
 import {
 	createRun,
 	finishRun,
@@ -735,7 +735,6 @@ export class AnalyzerFramework {
 			llm: this.deps.llm,
 			decide: this.deps.decide,
 			config,
-			db,
 			prompts,
 			modelTiers: this.deps.modelTiers,
 		};
@@ -814,7 +813,7 @@ export class AnalyzerFramework {
 		// `current`, and skip the recomputation.
 		// Content-addressed, so the fingerprint survives a wipe/recompute.
 		if (analyzer.consultsAssertions?.length) {
-			const assertions = await getAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
+			const assertions = await getActiveAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
 			extra.push(`assertions:${computeAssertionFingerprint(assertions)}`);
 		}
 		// Setup the analyzer reads but does not own (what the host has installed, …).

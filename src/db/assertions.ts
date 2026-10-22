@@ -320,20 +320,14 @@ export async function getActiveAssertions(db: AsyncDatabase): Promise<AssertionR
 	return (await prep(db, `SELECT ${ASSERTION_COLS} FROM assertions WHERE superseded_at IS NULL ORDER BY subject_kind ASC, subject_key ASC, verdict ASC`).all()) as AssertionRow[];
 }
 
-/**
- * Every assertion of the given subject kinds, active or superseded.
- *
- * The fingerprint that feeds an analyzer's config identity is computed over
- * *this* set, not over the active one, so that an unmute is a distinct recipe
- * rather than a return to the one the mute already replaced. See
- * {@link computeAssertionFingerprint}.
- */
-export async function getAssertionsForKinds(db: AsyncDatabase, subjectKinds: readonly string[]): Promise<AssertionRow[]> {
+/** Currently-active assertions restricted to the given subject kinds. */
+export async function getActiveAssertionsForKinds(db: AsyncDatabase, subjectKinds: readonly string[]): Promise<AssertionRow[]> {
 	return selectByKeyIn<AssertionRow>(db, {
 		table: "assertions",
 		columns: ASSERTION_COLS,
 		keyColumn: "subject_kind",
 		keys: subjectKinds,
+		where: "superseded_at IS NULL",
 		orderBy: "subject_key ASC, verdict ASC",
 	});
 }
@@ -368,27 +362,16 @@ export async function listAssertions(db: AsyncDatabase, subjectKind?: string): P
 // ───────────────────────────── decision assertions ─────────────────────────────
 
 /**
- * A hash of the assertion set (subject kind + key + verdict + whether it is
- * still active), order-independent. Folded into an analyzer's config
- * fingerprint, so muting marks the nodes of any analyzer that consults those
- * assertions stale for the `config` reason — a plain fill leaves them alone,
- * `--revise config` cleanly recomputes them, and old nodes stay preserved as
- * lineage.
- *
- * The *active* state is part of the hash, not just the set of keys. That makes
- * every transition a distinct recipe: no mute, muted, and unmuted are three
- * different fingerprints, so each produces its own node version rather than
- * colliding with an older one.
- *
- * Without the active flag, unmuting would restore the fingerprint of the
- * state *before* the mute — a recipe whose node had already been revised away
- * by the mute's own revision. The framework would then find that older node by
- * its input key, classify it `current`, and skip the recomputation, leaving
- * the muted version as the answer: an unmute that silently did nothing.
+ * A hash of the active assertion set (subject kind + key + verdict), order-
+ * independent. Folded into an analyzer's config fingerprint, so muting marks
+ * the nodes of any analyzer that consults those assertions stale for the
+ * `config` reason — a plain fill leaves them alone, `--revise config` cleanly
+ * recomputes them, and old nodes stay preserved as lineage.
  */
 export function computeAssertionFingerprint(rows: readonly AssertionRow[]): string {
-	const canonical = rows
-		.map((r) => `${r.subject_kind}|${r.subject_key}|${r.verdict}|${r.superseded_at === null ? "active" : "superseded"}`)
+	const active = rows.filter((r) => r.superseded_at === null);
+	const canonical = active
+		.map((r) => `${r.subject_kind}|${r.subject_key}|${r.verdict}`)
 		.sort()
 		.join("\n");
 	return shortHash(`assertions(${canonical})`);

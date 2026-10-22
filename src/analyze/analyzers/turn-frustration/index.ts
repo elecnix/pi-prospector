@@ -54,7 +54,6 @@ import {
 	type FrustrationLexiconProperties,
 } from "../frustration-lexicon/index.js";
 import { hasLoneExclamation } from "../lexicon-candidates/tokenize.js";
-import { isStoplistedTerm } from "../frustration-lexicon/stoplist.js";
 import { DEFAULT_TURN_FRUSTRATION_CONFIG, type TurnFrustrationConfig } from "./config.js";
 import { getMutedTerms } from "../../../db/assertions.js";
 import { Type, type Static } from "typebox";
@@ -104,14 +103,17 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// every existing hit node keeps its identity and nothing is recomputed. When
 	// a term and an extending phrase both match the same turn, both hits are
 	// emitted but the weight follows longest-match-preferred (see plan).
-	// 1.6: the function-word guard applies to the lexicon as it is read, not only
-	// as it is written (issue #321). A verdict the corpus cached before the
-	// guard existed still says "frustration" for a bare negator; the guard is
-	// deterministic, so correcting it at the read costs no model call and
-	// spares the operator a re-adjudication whose answer is discarded. A
-	// stoplisted term now fires no hit, and its previous hit nodes go stale for
-	// the `minor` reason.
-	minor: 6,
+	// 1.6: the function-word guard applied to the lexicon as it is read, not only
+	// as it was written (issue #321). Superseded by 1.7.
+	// 1.7: the guard is gone. A hand-written list of English function words could
+	// not reach any language but English and decided by spelling what the corpus
+	// can measure. Whether a term is background is now priced by the share of
+	// analysed turns that carry it, in the readers (see `term-specificity.ts`),
+	// so this analyzer fires a hit for every learned term the turn contains —
+	// `do` included — and the reading decides that it is worth nothing. No
+	// verdict is discarded here any more, so nothing about a term's *meaning*
+	// depends on this build.
+	minor: 7,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
@@ -132,13 +134,11 @@ interface HitMeta extends TurnFrustrationProperties {
 /**
  * The usable lexicon: confident, non-neutral verdicts, newest per term.
  *
- * The function-word guard is applied **here**, at the read, as well as at the
- * write in `frustration-lexicon`. Applying it at the read is what makes the
- * guard take effect on a verdict the corpus cached before the guard existed:
- * the guard is deterministic, so a cached "frustration" verdict for a function
- * word is corrected to neutral without spending a model call to re-adjudicate
- * a word whose answer is discarded anyway. Without this, the corpus keeps
- * ranking `do` and `no` until the operator pays to re-judge every term.
+ * A word being *background* is deliberately not decided here. Whether a term is
+ * ordinary vocabulary is a function of the corpus — the share of turns that
+ * carry it — and the corpus grows, so the answer changes after this analyzer has
+ * run. Deciding it here would freeze it into the hit node. The readers price it
+ * instead (`hit-reading.ts`), which is the only place the corpus is current.
  */
 function usableLexicon(
 	nodes: readonly AnalysisNodeRow[],
@@ -153,7 +153,6 @@ function usableLexicon(
 			continue;
 		}
 		if (!props.term) continue;
-		if (isStoplistedTerm(props.term)) continue;
 		if (props.polarity === "neutral") continue;
 		if (props.polarity === "praise" && !config.includePraise) continue;
 		if (props.confidence < config.minConfidence) continue;

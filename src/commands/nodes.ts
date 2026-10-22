@@ -42,7 +42,7 @@ import { getDbPath } from "../config.js";
 import { parseTimestamp, resolveTimepoint } from "../timepoint.js";
 import { findAnalyzerDef } from "./analyzers.js";
 import { NodeKind } from "../analyze/types.js";
-import { currentHits, currentNodesKeepingErrors, mutedTerms, unmutedHits } from "../db/muted-terms.js";
+import { pricedHits } from "../analyze/hit-reading.js";
 import { TURN_FRUSTRATION_DEF } from "../analyze/analyzers/turn-frustration/index.js";
 import type { AnalysisEdgeRow, AnalysisNodeRow, AnalyzerDef, MessageRow } from "../analyze/types.js";
 
@@ -374,27 +374,28 @@ export async function readNodes(db: AsyncDatabase, q: NodesQuery): Promise<Nodes
 	const totalBeforeFilters = await countAnalysisNodes(db, filter);
 	let rows = await listAnalysisNodes(db, filter);
 
-	// A muted lexicon term stops counting, so a frustration hit the operator
-	// rejected must not appear in the listing or in a count over one. The hit
-	// nodes stay in the graph as lineage; this is a read filter, not a
-	// retraction.
+	// A frustration hit that no reader counts must not appear in the listing or in
+	// a count over one: the operator muted that term, or the corpus carries it in so
+	// many turns that it cannot distinguish one from another. The hit nodes stay in
+	// the graph as lineage; this is a read filter, not a retraction.
 	//
-	// An as-of read is left alone: it reconstructs the graph as it stood at a
-	// past instant, and the mute set belongs to *now*.
+	// The listing asks for the graph's lineage, so it keeps the error nodes, and it
+	// keeps every generation when `--all-versions` asked for them. It still prices,
+	// because a background word is not lineage anyone asked to see.
+	//
+	// An as-of read is left alone: it reconstructs the graph as it stood at a past
+	// instant, and both the mute set and the corpus's document share belong to *now*.
 	if (!asOf) {
-		const muted = await mutedTerms(db);
 		// The rows are filtered in place, so the listing keeps the order the query
 		// returned (newest first).
 		const isFrustration = (row: AnalysisNodeRow): boolean => row.analyzer_id === TURN_FRUSTRATION_DEF.id;
 		const frustrationRows = rows.filter(isFrustration);
-		// The hits are read at their current generation, so a signal whose hit was
-		// recomputed (an unmute produces a new one) is listed once rather than
-		// once per generation. Under --all-versions every generation is asked
-		// for, so none is collapsed.
-		const current = q.allVersions
-			? frustrationRows
-			: currentNodesKeepingErrors(frustrationRows);
-		const keptIds = new Set(unmutedHits(current, muted).map((row) => row.id));
+		const keptIds = new Set(
+			(await pricedHits(db, frustrationRows, {
+				keepGenerations: q.allVersions,
+				keepErrorNodes: true,
+			})).map((row) => row.id),
+		);
 		rows = rows.filter((row) => !isFrustration(row) || keptIds.has(row.id));
 	}
 

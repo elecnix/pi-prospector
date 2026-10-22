@@ -16,7 +16,6 @@
 
 import { shortHash } from "../../input-hash.js";
 import { extractJsonObject } from "../turn-pair-llm/prompt.js";
-import { isStoplistedTerm } from "./stoplist.js";
 import { Type, type Static } from "typebox";
 
 export const CLASSIFY_TERM_PROMPT = `You judge single words for a multilingual lexicon used to detect
@@ -153,24 +152,23 @@ export function parseClassifyTermObject(obj: Record<string, unknown>): ClassifyT
 }
 
 /**
- * The verdict for one term, with the function-word guard applied.
+ * The verdict for one term, as the model answered it.
  *
- * The guard is **deterministic and unconditional**: a single-token term in the
- * stoplist comes back `neutral` / `none` whatever the model answered. Prompt
- * wording alone did not hold — the prompt already said "ordinary grammar is
- * NEVER a signal", and a cheap model asked about a bare `no` still answered
- * "frustration" / "negation", because a bare negator *is* a negation marker in
- * isolation. Since a verdict is cached corpus-wide and permanently, one such
- * reply put `do`, `no`, `never` and `cannot` at the top of the ranking and
- * buried the real signal.
+ * Nothing is corrected here. A cheap model asked about a bare `no` does answer
+ * "frustration" / "negation" — a bare negator genuinely reads as a negation
+ * marker in isolation — and an earlier version overrode it with a hand-written
+ * list of English function words. The list was the wrong instrument: it could
+ * not reach any language but English, and it decided by spelling what the corpus
+ * can measure for itself. Whether a word is background is now a question for the
+ * reader, which prices each hit by the share of turns that carry the term (see
+ * `term-specificity.ts`). The verdict stays exactly what the model judged, which
+ * is what makes it worth caching.
  *
- * A multi-word term is not covered: a phrase is judged as a unit and can be a
- * pointed complaint even when its words are individually ordinary.
+ * `term` is unused but kept in the signature: it names what the verdict is
+ * about, and the call sites read as what they are.
  */
-export function parseClassifyTermVerdict(term: string, obj: Record<string, unknown>): ClassifyTermResult {
-	const parsed = parseClassifyTermObject(obj);
-	if (!isStoplistedTerm(term)) return parsed;
-	return { ...parsed, polarity: "neutral", category: "none" };
+export function parseClassifyTermVerdict(_term: string, obj: Record<string, unknown>): ClassifyTermResult {
+	return parseClassifyTermObject(obj);
 }
 
 function pickString(value: unknown, allowed: Set<string>, fallback: string): string {

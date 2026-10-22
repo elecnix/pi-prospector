@@ -756,27 +756,35 @@ list — the system **learns the vocabulary from the corpus**.
   list, no stemming, since either would quietly privilege the languages we
   happened to think of. Only *shape* is filtered: code, paths, URLs, and
   identifiers are not vocabulary.
-- **Function-word stoplist** — the set of single-token entries that can never
-  be a frustration signal: bare auxiliaries and modals (`do`, `will`, `must`),
-  bare negations and their contractions (`no`, `never`, `cannot`, `don't`),
-  conjunctions, and ordinary pronouns. It is enforced by a **deterministic
-  guard** applied to the parsed verdict, not by prompt wording alone: asked
-  about a bare `no` in isolation, a cheap model genuinely does see a negation
-  marker, and a verdict is cached corpus-wide and permanently, so the top-ranked
-  frustration terms on a real corpus became `do`, `no`, `do not`, `never`,
-  `cannot` and `still` — ordinary instruction words that appear in nearly every
-  prompt — and buried the real signal. The guard forces a stoplisted term's
-  polarity to *neutral* and its category to *none*, whatever the model
-  answered. A **multi-word** term is never covered: a phrase is judged as a
-  unit and can be a pointed complaint even when each of its words is
-  individually ordinary. The list is English because the failure it fixes was
-  measured on an English-dominant corpus; it is a stoplist of a known failure
-  mode, not a general stopword list, and nomination stays language-blind.
-  The guard runs at two points: on the verdict as it is written, and again when
-  a verdict is read. The second point is what reaches a term the corpus judged
-  before the guard existed. The guard is deterministic, so it needs no model
-  call to reach that verdict, and paying one would buy nothing: the model's
-  answer is discarded.
+- **Term specificity** — how much a term's presence tells you, measured as the
+  share of the corpus's analysed turns that carry it. A word in nearly every turn
+  cannot distinguish one turn from another, so it contributes no weight however
+  often it appears. Specificity is 1 for a term no other turn carries, falls
+  linearly to 0 at `DEFAULT_MAX_DOCUMENT_SHARE` (a tenth of the corpus by
+  default), and stays 0 above it, and it is refused altogether below
+  `MIN_DOCUMENTS`, where a share is noise.
+  This replaces a hand-written **function-word stoplist** of English auxiliaries,
+  negations, conjunctions and pronouns, which forced a listed term's verdict to
+  *neutral* / *none* whatever the model answered. That list reached the right
+  answer — `do`, `no`, `do not`, `never`, `cannot` and `still` had buried the real
+  signal — by the wrong instrument: it could not reach any language but English,
+  and it decided by spelling a property the corpus measures for itself. The terms
+  above were not noise because they are English but because a large share of
+  turns carries them, and that share is measurable for `do`, `putain`, and `まだ`
+  alike. A verdict is now stored exactly as the model judged it, and the reading
+  prices it, so the lexicon is language-blind end to end: nomination judges
+  *shape*, the model judges *meaning*, and the corpus decides *background*.
+  The price is applied when a number is computed, never stored in a hit node.
+  A hit node is written once and reused while its source set and recipe hold, so
+  a share frozen into it would keep pricing a word by the corpus as it stood when
+  the word was first seen — `do` would cost nothing on a corpus of five turns and
+  go on costing nothing after five thousand. Folding the share into the node's
+  identity instead would re-identify every hit on every new session. So the share
+  is a query (`termPrevalence`), evaluated per read, and a hit's stored `weight`
+  is its *intrinsic* weight; a reader scales it (`pricedHits`).
+  Pricing at zero is what removes a word, and a decay would not: a ranking totals
+  each term's weight over the turns it fired on, so a small positive price still
+  wins on volume — 250 turns at 0.4 beats 20 turns at 0.9.
 - **Mute** — the operator's content-addressed judgement that a term is not a
   signal. It is external human input, never an analysis node, and it has two
   halves: a muted term stops *matching* new turns, and its existing hits stop

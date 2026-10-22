@@ -24,7 +24,6 @@ import {
 	sliceStartIndex,
 } from "../../evidence-slices.js";
 import { buildTurnPairs, type TurnPair } from "../turn-pair-core/build.js";
-import { currentHits } from "../../../db/muted-terms.js";
 
 /** Properties stored in a user-reply-acts classification node. */
 interface ReplyActProperties {
@@ -110,14 +109,15 @@ export interface BuildDigestInput {
 	trajectoryNodes: AnalysisNodeRow[];
 	/** failure-modes metric/proposal nodes for this session. */
 	failureNodes?: AnalysisNodeRow[];
-	frustrationNodes?: AnalysisNodeRow[];
 	/**
-	 * The ids of the frustration hit nodes a human mute silenced (#325). A
-	 * silenced hit stays an *input* — it is still in the source set, so it does
-	 * not by itself re-identify the unit — but it contributes nothing to the
-	 * digest.
+	 * The frustration hits that count, already priced by the caller.
+	 *
+	 * Deliberately not the raw dependency list. Whether a hit counts depends on its
+	 * generation, on the operator's mutes, and on the term's document share, and all
+	 * three are the caller's to resolve (`pricedHits`). The digest renders the
+	 * numbers it is given, so two readers cannot disagree about which hits exist.
 	 */
-	mutedHitIds?: ReadonlySet<string>;
+	frustrationNodes?: AnalysisNodeRow[];
 	/** user-reply-acts classification nodes (custom analyzer). */
 	replyActsNodes?: AnalysisNodeRow[];
 	/** assistant-cognition classification nodes for this session. */
@@ -213,12 +213,12 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	// A hit a human mute silenced is skipped: the term is not a signal for this
 	// corpus, so it must not colour the digest (#325).
 	//
-	// The hits are read at their *current* generation first: a revise leaves the
-	// superseded node live beside the new one, so taking every live hit would list
-	// the same signal twice.
+	// `input.frustrationNodes` is what the caller decided counts — current
+	// generation, unmuted, and priced by document share. Grouping is all that is
+	// left to do: a term carried by most of the corpus's turns never reaches this
+	// loop, so the digest cannot list it or count the turn that carried it.
 	const frustrationByUser = new Map<string, TurnFrustrationProperties[]>();
-	for (const node of currentHits(input.frustrationNodes ?? [])) {
-		if (input.mutedHitIds?.has(node.id)) continue;
+	for (const node of input.frustrationNodes ?? []) {
 		const props = safeParse<TurnFrustrationProperties>(node.content_json);
 		if (!props?.user_message_id) continue;
 		const list = frustrationByUser.get(props.user_message_id) ?? [];

@@ -64,17 +64,18 @@ describe("lexicon-candidates", () => {
 });
 
 describe("frustration-lexicon", () => {
-	it("never lets a function word into the lexicon, whatever the model says (issue #321)", async () => {
+	it("stores the model's verdict unchanged instead of overriding it with a word list (issue #321)", async () => {
 		const { db, close } = await tempDb();
 		try {
 			await insertSession(db, "s1");
-			// The instruction words that dominated a real corpus's ranking.
+			// The instruction words that once dominated a real corpus's ranking.
 			await insertMessages(db, "s1", [
 				{ role: "user", text: "do not mock the database, never push to main, and no, do not touch the schema" },
 			]);
 
-			// A model that calls every bare negator a frustration signal — the exact
-			// failure the guard exists to stop.
+			// A model that calls every bare negator a frustration signal: a bare `no`
+			// genuinely reads as a negation marker in isolation, so this is what a cheap
+			// model answers.
 			const llm = createMockLLM({
 				responder: (req: LLMRequest) => ({
 					text: "x",
@@ -97,65 +98,16 @@ describe("frustration-lexicon", () => {
 				}),
 			);
 
+			// Nothing rewrites these. An earlier version forced a hand-written list of
+			// English function words to neutral here; whether a word is background is a
+			// question about the corpus (how many turns carry it), not about its
+			// spelling, and the readers answer it per corpus in any language. The stored
+			// verdict is therefore exactly what the model judged, which is what makes it
+			// worth caching corpus-wide.
 			for (const term of ["do", "not", "never", "no"]) {
-				assert.equal(verdicts.get(term)?.polarity, "neutral", `'${term}' is a function word, never a signal`);
-				assert.equal(verdicts.get(term)?.category, "none", `'${term}' carries no signal category`);
+				assert.equal(verdicts.get(term)?.polarity, "frustration", `'${term}' keeps the verdict the model gave it`);
+				assert.equal(verdicts.get(term)?.category, "negation", `'${term}' keeps the category the model gave it`);
 			}
-		} finally {
-			await close();
-		}
-	});
-
-	it("keeps a function word out of the hits even when its cached verdict says frustration", async () => {
-		// A verdict cached before the guard existed still says "frustration" for a
-		// bare negator. The guard is deterministic, so it must apply at the read
-		// too: the corpus stops ranking the word without the operator paying to
-		// re-adjudicate every term — and without a model call whose answer would
-		// be discarded anyway.
-		const { db, close } = await tempDb();
-		try {
-			await insertSession(db, "s1");
-			await insertMessages(db, "s1", [{ role: "user", text: "no, do not mock the database" }]);
-
-			const llm = createMockLLM({
-				responder: (req: LLMRequest) => ({
-					text: "x",
-					structured: {
-						polarity: "frustration",
-						category: "negation",
-						language: "en",
-						confidence: 0.9,
-						rationale: "r",
-					},
-				}),
-			});
-			const framework = await frameworkFor(db, llm);
-			await framework.run("s1");
-
-			// Rewrite the stored verdict for `no` back to what the model answered,
-			// as it would be in a corpus judged before the guard existed.
-			const verdict = (await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).find(
-				(n) => (JSON.parse(n.content_json) as FrustrationLexiconProperties).term === "no",
-			);
-			assert.ok(verdict, "the term was judged");
-			const patched = JSON.stringify({
-				...(JSON.parse(verdict.content_json) as FrustrationLexiconProperties),
-				polarity: "frustration",
-				category: "negation",
-			});
-			await db.prepare("UPDATE analysis_nodes SET content_json = ? WHERE id = ?").run(patched, verdict.id);
-
-			// A fresh framework reads the patched verdict.
-			const hits = new AnalyzerFramework({ db, llm: llm.caller, modelTiers: DEFAULT_MODEL_TIERS });
-			await hits.register(turnPairCoreAnalyzer);
-			await hits.register(lexiconCandidatesAnalyzer);
-			await hits.register(frustrationLexiconAnalyzer);
-			await hits.register(turnFrustrationAnalyzer);
-			await hits.run("s1", { revise: ["minor"] });
-
-			const hitNodes = await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, "s1");
-			const signals = hitNodes.map((n) => (JSON.parse(n.content_json) as { signal: string }).signal);
-			assert.ok(!signals.includes("no"), `a function word never fires a hit: ${signals.join(", ")}`);
 		} finally {
 			await close();
 		}
