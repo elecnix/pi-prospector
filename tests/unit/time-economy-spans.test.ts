@@ -455,6 +455,34 @@ describe("measurePhaseSpans", () => {
 		assert.equal(preparation.turns, 2);
 	});
 
+	it("reads the configured failure markers when it measures the spans", () => {
+		// The plan context carries the analyzer's config JSON, so the markers
+		// the spans are measured against are the configured ones. A user who
+		// narrows the catalogue must not have the spans measured against the
+		// defaults.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			// A test run whose failure a pipe hid. With the default markers it
+			// is a failed run, so it does not start the preparation.
+			spanRow({ id: "c1", role: "assistant", timestamp: at(10), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "npm test 2>&1 | tail -40" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(100), content_text: "--- FAIL: test_x (0.02s)", tool_results: JSON.stringify([{ toolCallId: "t1", toolName: "bash", isError: false, textLength: 20 }]) }),
+			spanRow({ id: "c2", role: "assistant", timestamp: at(200), tool_calls: JSON.stringify([{ id: "t2", name: "bash", arguments: { command: "git commit -m 'x'" } }]) }),
+		];
+		const opts = {
+			isCommit: isCommitCommand,
+			isPreparation: isPreparationCommand,
+			commitSubject: commitSubjectOf,
+			isFailedPreparation,
+		};
+		const withDefaults = measurePhaseSpans(rows, { ...opts, failureMarkers: CONFIG.failureMarkers });
+		const withNone = measurePhaseSpans(rows, { ...opts, failureMarkers: [] });
+		// With the default markers the run failed, so the preparation starts
+		// at the session's start.
+		assert.equal(withDefaults.find((s) => s.kind === "commit_preparation")?.start_message_id, "u1");
+		// With no markers the run did not fail, so it starts the preparation.
+		assert.equal(withNone.find((s) => s.kind === "commit_preparation")?.start_message_id, "c1");
+	});
+
 	it("does not start a preparation at a test run that failed", () => {
 		// The host reported the run as an error: it left work to do, so it did
 		// not prepare the commit.

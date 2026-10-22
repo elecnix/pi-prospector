@@ -24,6 +24,7 @@ import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { timeEconomyAnalyzer } from "../../src/analyze/analyzers/time-economy/index.js";
+import { DEFAULT_TIME_ECONOMY_CONFIG } from "../../src/analyze/analyzers/time-economy/config.js";
 import { claudeSessionFileName, claudeSessionId } from "./helpers.js";
 
 const T0 = Date.parse("2026-03-01T10:00:00.000Z");
@@ -299,6 +300,53 @@ describe("time-economy: background calls, hidden exit codes, phase and skill spa
 			assert.equal(hidden.severity, "friction");
 		} finally {
 			await close();
+			fixture.cleanup();
+		}
+	});
+
+	it("measures the spans with the configured failure markers", async () => {
+		// The plan context carries the analyzer's config JSON, so a user's
+		// configured markers are the ones the spans are measured against. A
+		// user who narrows the catalogue must not have the spans measured
+		// against the defaults.
+		const fixture = writeFixture();
+		try {
+			const claudeDir = path.join(fixture.root, ".claude", "projects");
+			// A fresh database per measurement: a changed config makes the
+			// earlier node stale rather than replacing it, so a shared database
+			// would hold both.
+			const measure = async (failureMarkers: string[]) => {
+				const { db, close } = await tempDb();
+				try {
+					await runSync(db, [new ClaudeFileSource(claudeDir)], {});
+					const fw = new AnalyzerFramework({
+						db,
+						llm: createMockLLM({ responder: () => "unused by this analyzer" }).caller,
+						modelTiers: DEFAULT_MODEL_TIERS,
+						configOverrides: { "time-economy": { failureMarkers } },
+					});
+					await fw.register(timeEconomyAnalyzer);
+					await fw.run(fixture.sessionId, {});
+					const rows = (await db
+						.prepare("SELECT content_json FROM analysis_nodes WHERE analyzer_id = ?")
+						.all("time-economy")) as Array<{ content_json: string }>;
+					assert.equal(rows.length, 1);
+					const content = JSON.parse(rows[0]!.content_json) as Record<string, any>;
+					const spans = content["phase_spans"] as Array<Record<string, any>>;
+					return spans.find((s) => s.kind === "commit_preparation")?.start_message_id;
+				} finally {
+					await close();
+				}
+			};
+
+			// The fixture's piped test run at second 320 failed. With the
+			// default markers the run is a failed one, so it does not start
+			// the preparation and the PR skill at second 400 does.
+			assert.equal(await measure(DEFAULT_TIME_ECONOMY_CONFIG.failureMarkers), "a-3");
+			// With no markers the run did not fail, so the preparation starts
+			// at the failing run itself.
+			assert.equal(await measure([]), "a-2");
+		} finally {
 			fixture.cleanup();
 		}
 	});
