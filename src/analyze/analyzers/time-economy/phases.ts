@@ -363,7 +363,7 @@ export function measurePhaseSpans(
 		const startMs = preparation ? (preparation.ms ?? null) : previousCommitMs ?? firstMs;
 		const startMessageId = preparation
 			? preparation.messageId
-			: previousCommitId ?? rows[0]?.id ?? "";
+			: previousCommitId ?? firstRow?.id ?? rows[0]?.id ?? "";
 		const endMs = commitMs;
 		spans.push({
 			kind: "commit_preparation",

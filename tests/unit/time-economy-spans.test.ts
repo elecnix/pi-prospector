@@ -680,6 +680,23 @@ describe("measurePhaseSpans", () => {
 		assert.equal(isPreparationCommand("echo 'use the skill for pr'"), false);
 	});
 
+	it("names the row that carries a preparation span's start time", () => {
+		// The span starts at the session's earliest message, so its start id
+		// must name that message. Rows are not guaranteed to be in timestamp
+		// order, so the first row is not necessarily the earliest one.
+		const rows = [
+			spanRow({ id: "r0", role: "user", timestamp: at(500) }),
+			spanRow({ id: "r1", role: "assistant", timestamp: at(100) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(600), tool_calls: JSON.stringify([{ id: "t1", name: "bash", arguments: { command: "git commit -m 'x'" } }]) }),
+		];
+		const spans = measurePhaseSpans(rows, { isCommit: isCommitCommand, isPreparation: isPreparationCommand, commitSubject: commitSubjectOf });
+		const preparation = spans.find((s) => s.kind === "commit_preparation");
+		assert.ok(preparation);
+		// The span starts at the earliest message, at 100.
+		assert.equal(preparation.seconds, 500);
+		assert.equal(preparation.start_message_id, "r1");
+	});
+
 	it("measures a commit with no preparation marker from the previous commit, not from zero", () => {
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
