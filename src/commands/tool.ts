@@ -189,11 +189,21 @@ export async function executeProspectTool(
 			case "mute": {
 				if (!params.term) return text("term required for mute", {});
 				const term = params.term as string;
-				const { assertionId, liveHits } = await muteTerm(db, {
-					term,
-					reason: (params.reason as string | undefined) ?? null,
-					by: "agent",
-				});
+				let outcome: { assertionId: string; liveHits: number };
+				try {
+					outcome = await muteTerm(db, {
+						term,
+						reason: (params.reason as string | undefined) ?? null,
+						by: "agent",
+					});
+				} catch (err) {
+					// Never report a mute that was not recorded.
+					return text(
+						`Could not mute '${normaliseTerm(term)}': ${err instanceof Error ? err.message : String(err)}`,
+						{ ok: false },
+					);
+				}
+				const { assertionId, liveHits } = outcome;
 				return text(
 					`Muted '${normaliseTerm(term)}'. It will stop matching new turns, and its existing hit nodes are silenced: ` +
 						`they stay in the graph as lineage but no longer count towards friction, digests or reports. ` +

@@ -709,6 +709,7 @@ export class AnalyzerFramework {
 
 		return {
 			sessionId,
+			db,
 			getMessage: (id) => getMessage(db, id),
 			getNode: (id) => getNode(db, id),
 			// Derived from the cached per-session node set, so a dependency is read once
@@ -734,7 +735,6 @@ export class AnalyzerFramework {
 			llm: this.deps.llm,
 			decide: this.deps.decide,
 			config,
-			db,
 			prompts,
 			modelTiers: this.deps.modelTiers,
 		};
@@ -802,15 +802,22 @@ export class AnalyzerFramework {
 		// reason and a re-run recomputes them — no manual version bump while authoring.
 		// Built-in analyzers leave `contentHash` undefined and are unaffected.
 		const extra = analyzer.contentHash ? [`code:${analyzer.contentHash}`] : [];
-		// The active assertion set (operator mutes) is `config` too: an analyzer that
-		// consults a subject kind folds a hash of the currently-active assertions for
-		// those kinds into its config fingerprint. Mutating marks its nodes stale for
-		// the `config` reason, a plain fill leaves them untouched, and unmuting
-		// reverts to the prior fingerprint so the old nodes classify `current` again.
+		// The assertion set (operator mutes) is `config` too: an analyzer that
+		// consults a subject kind folds a hash of the *active* assertions for those
+		// kinds into its config fingerprint. Muting marks its nodes stale for the
+		// `config` reason, a plain fill leaves them untouched, and `--revise config`
+		// recomputes them under the new recipe.
+		//
+		// An unmute therefore returns to the pre-mute fingerprint, by design. That is
+		// safe because the mute-era conclusion is retracted when the mute is lifted
+		// (#325), so the pre-mute node is the head of its lineage again; classification
+		// finds it, reports `current`, and there is nothing to recompute. Hashing the
+		// superseded rows as well would instead give the unmute a fingerprint of its
+		// own, growing a new recipe for every mute/unmute cycle.
 		// Content-addressed, so the fingerprint survives a wipe/recompute.
 		if (analyzer.consultsAssertions?.length) {
-			const active = await getActiveAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
-			extra.push(`assertions:${computeAssertionFingerprint(active)}`);
+			const assertions = await getActiveAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
+			extra.push(`assertions:${computeAssertionFingerprint(assertions)}`);
 		}
 		// Setup the analyzer reads but does not own (what the host has installed, …).
 		// Same category as the assertion set above: the user set it, so it is

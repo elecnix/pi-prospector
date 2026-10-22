@@ -58,6 +58,11 @@ Guidance:
 - Ordinary grammar is NEVER a signal. Conjunctions, prepositions, quantifiers and
   comparatives — "but", "without", "already", "same", "over", "non", "re" — carry
   no feeling on their own, however often they appear near friction.
+- A bare negator is NOT a signal. "do", "no", "not", "none", "never", "cannot",
+  "nor", "neither" and their contractions are ordinary instruction words: "do
+  not mock the database", "never push to main". As single words they are
+  "neutral" with category "none". A negator inside a *pointed phrase* is
+  different — a two-word entry is judged as a unit, and can carry frustration.
 - A verb that merely reports what happened is NOT frustration. "pushed",
   "stopped", "cancels", "interrupted", "retracting", "buried", "canned" describe
   an action or a state; they say nothing about how the person feels about it.
@@ -144,6 +149,26 @@ export function parseClassifyTermObject(obj: Record<string, unknown>): ClassifyT
 		confidence: Math.max(0, Math.min(1, rawConfidence)),
 		rationale: typeof obj["rationale"] === "string" ? (obj["rationale"] as string).slice(0, 300) : "",
 	};
+}
+
+/**
+ * The verdict for one term, as the model answered it.
+ *
+ * Nothing is corrected here. A cheap model asked about a bare `no` does answer
+ * "frustration" / "negation" — a bare negator genuinely reads as a negation
+ * marker in isolation — and an earlier version overrode it with a hand-written
+ * list of English function words. The list was the wrong instrument: it could
+ * not reach any language but English, and it decided by spelling what the corpus
+ * can measure for itself. Whether a word is background is now a question for the
+ * reader, which prices each hit by the share of turns that carry the term (see
+ * `term-specificity.ts`). The verdict stays exactly what the model judged, which
+ * is what makes it worth caching.
+ *
+ * `term` is unused but kept in the signature: it names what the verdict is
+ * about, and the call sites read as what they are.
+ */
+export function parseClassifyTermVerdict(_term: string, obj: Record<string, unknown>): ClassifyTermResult {
+	return parseClassifyTermObject(obj);
 }
 
 function pickString(value: unknown, allowed: Set<string>, fallback: string): string {

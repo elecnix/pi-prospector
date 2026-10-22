@@ -756,6 +756,46 @@ list — the system **learns the vocabulary from the corpus**.
   list, no stemming, since either would quietly privilege the languages we
   happened to think of. Only *shape* is filtered: code, paths, URLs, and
   identifiers are not vocabulary.
+- **Term specificity** — how much a term's presence tells you, measured as the
+  share of the corpus's analysed turns that carry it. A word in nearly every turn
+  cannot distinguish one turn from another, so it contributes no weight however
+  often it appears. Specificity is 1 for a term no other turn carries, falls
+  linearly to 0 at `DEFAULT_MAX_DOCUMENT_SHARE` (a tenth of the corpus by
+  default), and stays 0 above it, and it is refused altogether below
+  `MIN_DOCUMENTS`, where a share is noise.
+  This replaces a hand-written function-word stoplist of English auxiliaries,
+  negations, conjunctions and pronouns, which forced a listed term's verdict to
+  *neutral* / *none* whatever the model answered. That list reached the right
+  answer — `do`, `no`, `do not`, `never`, `cannot` and `still` had buried the real
+  signal — by the wrong instrument: it could not reach any language but English,
+  and it decided by spelling a property the corpus measures for itself. The terms
+  above were not noise because they are English but because a large share of
+  turns carries them, and that share is measurable for `do`, `putain`, and `まだ`
+  alike. A verdict is now stored exactly as the model judged it, and the reading
+  prices it, so the lexicon is language-blind end to end: nomination judges
+  *shape*, the model judges *meaning*, and the corpus decides *background*.
+  The price is applied when a number is computed, never stored in a hit node.
+  A hit node is written once and reused while its source set and recipe hold, so
+  a share frozen into it would keep pricing a word by the corpus as it stood when
+  the word was first seen — `do` would cost nothing on a corpus of five turns and
+  go on costing nothing after five thousand. Folding the share into the node's
+  identity instead would re-identify every hit on every new session. So the share
+  is a query (`termPrevalence`), evaluated per read, and a hit's stored `weight`
+  is its *intrinsic* weight; a reader scales it (`pricedHits`).
+  Pricing at zero is what removes a word, and a decay would not: a ranking totals
+  each term's weight over the turns it fired on, so a small positive price still
+  wins on volume — 250 turns at 0.4 beats 20 turns at 0.9.
+- **Mute** — the operator's content-addressed judgement that a term is not a
+  signal. It is external human input, never an analysis node, and it has two
+  halves: a muted term stops *matching* new turns, and its existing hits stop
+  *counting*. The hit nodes themselves stay in the graph as append-only
+  lineage — the graph is never mutated — so the count is filtered at the point
+  the number is computed, which makes unmuting symmetric: the term returns to
+  the counts with nothing recomputed. A reader takes the hits at their
+  *current* generation, because an unmute produces a new hit node and leaves
+  the muted-era one live beside it, and a reader that took both would report
+  the signal twice. Retracting the hit nodes themselves is a separate,
+  deliberate act.
 - **Hit** — one (turn, signal) pair: a node recording that a turn's user text
   carried a particular signal. Identity is the turn plus that one signal, which
   makes growth **purely additive** — learning a new word adds nodes to the turns
@@ -1023,9 +1063,11 @@ contain the new word have anything to compute.
   mute-era conclusion is retracted when the mute is lifted, handing the head of
   the lineage back to the conclusion that holds again. Unmuting is append-only via
   `superseded_at` — the mute row stays inspectable with its reason and time, and
-  the `mutes` edges it carried become inert, so the hits count once more. The
-  mute corpus is operator judgement, and like the decision corpus it is natural
-  training input for improving the classifier.
+  the `mutes` edges it carried become inert, so the hits count once more. A
+  reader takes the hits at their **current generation**: a revise leaves the
+  superseded node live beside its replacement, so summing every live hit would
+  count one signal twice. The mute corpus is operator judgement, and like the
+  decision corpus it is natural training input for improving the classifier.
 
 ---
 

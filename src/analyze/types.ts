@@ -502,6 +502,13 @@ export interface AnalyzerPlanContext {
 /** Context handed to `analyzer.analyze()` while producing a single node. */
 export interface AnalyzerRunContext {
 	sessionId: string;
+	/**
+	 * The database, for the reads an analyzer needs that are not conversation
+	 * rows and not graph nodes — the active assertion set (operator mutes), for
+	 * instance. `AnalyzerPlanContext` exposes the same handle, so an analyzer
+	 * reads the same way in both phases.
+	 */
+	db: AsyncDatabase;
 	getMessage: (id: string) => Promise<MessageRow | undefined>;
 	getNode: (id: string) => Promise<AnalysisNodeRow | undefined>;
 	/** Nodes from a declared dependency. Throws if the dependency was not declared. */
@@ -543,8 +550,6 @@ export interface AnalyzerRunContext {
 	 */
 	decide?: DecisionCaller;
 	config: AnalyzerConfig;
-	/** The database the run writes to — for a reader that needs a corpus-wide view a dependency read cannot give. */
-	db: AsyncDatabase;
 	/** Prompt content keyed by prompt name. */
 	prompts: Record<string, string>;
 	modelTiers: ModelTierConfig;

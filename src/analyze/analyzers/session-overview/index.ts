@@ -15,6 +15,7 @@ import type {
 	AnalyzerRunContext,
 	AnalyzerVersion,
 	AnalysisResult,
+	AnalysisNodeRow,
 	AnalysisUnit,
 	PromptVersion,
 	SourceRef,
@@ -28,11 +29,12 @@ import { TURN_PAIR_LLM_DEF } from "../turn-pair-llm/index.js";
 import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
 import { FAILURE_MODES_DEF } from "../failure-modes/index.js";
 import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
-import { getMutedNodeIds } from "../../../db/assertions.js";
 import { ASSISTANT_COGNITION_DEF } from "../assistant-cognition/index.js";
 import { PLAN_COMPLIANCE_DEF } from "../plan-compliance/index.js";
 import { PHASE_TRAJECTORY_DEF } from "../phase-trajectory/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
+import { currentHits } from "../../../db/muted-terms.js";
+import { pricedHits } from "../../hit-reading.js";
 import { MAP_PROMPT, MAP_PROMPT_HASH, MAP_TOOL, buildMapPrompt, parseMapResponse, parseMapObject, type MapSummary } from "./prompt-map.js";
 import {
 	REDUCE_PROMPT,
@@ -129,7 +131,20 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// signal) rather than with a fixed positional cap. phase-trajectory joins the
 	// declared dependencies and its node's output key folds into the source set.
 	// Minor: additive channel; the synthesis contract is otherwise unchanged.
-	minor: 10,
+	// 1.11: a muted lexicon term stops counting toward the digest (issue #321).
+	// The digest lists the frustration terms a turn carried and counts the turns
+	// that carried one, so a term the operator rejected must not appear in
+	// either. The hits are also read at their current generation, so an unmute,
+	// which leaves the muted-era hit live beside the new one, does not list the
+	// signal twice.
+	// 1.12: a term carried by more than a tenth of the corpus's turns stops
+	// counting too, which retires the hand-written list of English function words
+	// that used to do it (issue #321). The digest is handed the priced reading and
+	// no longer resolves mutes or generations itself, so it cannot disagree with
+	// the other readers about which signals exist. The source set names the current
+	// generation of each upstream rather than every live one. Minor: the digest
+	// content narrows; the synthesis contract is otherwise unchanged.
+	minor: 12,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -161,16 +176,24 @@ export const sessionOverviewAnalyzer: Analyzer = {
 	},
 
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
-		const core = (ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
+		// A source set names each upstream's *current* conclusion, not its whole
+		// lineage. A revise leaves the superseded node live beside its replacement,
+		// so folding in every live node would make this unit's identity depend on how
+		// many times an upstream happened to be revised rather than on what it
+		// concluded — and a reader below draws only on the current generation.
+		const current = (nodes: readonly AnalysisNodeRow[] | undefined): AnalysisNodeRow[] =>
+			currentHits(nodes ?? []).sort((a, b) => a.id.localeCompare(b.id));
+
+		const core = current(ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id]);
 		if (core.length === 0) return [];
-		const llm = (ctx.dependencyNodes[TURN_PAIR_LLM_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-		const traj = (ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-		const failures = (ctx.dependencyNodes[FAILURE_MODES_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-		const frustration = (ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-		const replyActs = (ctx.dependencyNodes["user-reply-acts"] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-		const cognition = (ctx.dependencyNodes[ASSISTANT_COGNITION_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-		const compliance = (ctx.dependencyNodes[PLAN_COMPLIANCE_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
-		const phases = (ctx.dependencyNodes[PHASE_TRAJECTORY_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
+		const llm = current(ctx.dependencyNodes[TURN_PAIR_LLM_DEF.id]);
+		const traj = current(ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id]);
+		const failures = current(ctx.dependencyNodes[FAILURE_MODES_DEF.id]);
+		const frustration = current(ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id]);
+		const replyActs = current(ctx.dependencyNodes["user-reply-acts"]);
+		const cognition = current(ctx.dependencyNodes[ASSISTANT_COGNITION_DEF.id]);
+		const compliance = current(ctx.dependencyNodes[PLAN_COMPLIANCE_DEF.id]);
+		const phases = current(ctx.dependencyNodes[PHASE_TRAJECTORY_DEF.id]);
 
 		const sources: SourceRef[] = [
 			...core.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
@@ -221,12 +244,18 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const frustrationNodes = await ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id);
 		// A muted term's hits are silenced (#325): they stay inputs — the source
 		// set is unchanged — but they do not reach the digest or the synthesis.
-		const mutedHitIds = await getMutedNodeIds(ctx.db);
 		const replyActsNodes = await ctx.getDependencyNodes("user-reply-acts");
 		const cognitionNodes = await ctx.getDependencyNodes(ASSISTANT_COGNITION_DEF.id);
 		const complianceNodes = await ctx.getDependencyNodes(PLAN_COMPLIANCE_DEF.id);
 		const phaseNodes = await ctx.getDependencyNodes(PHASE_TRAJECTORY_DEF.id);
 		const messages = await ctx.getSessionMessages(ctx.sessionId);
+
+		// The digest is handed the hits that count, not the whole dependency list:
+		// the current generation, the operator's mutes honoured, and each term priced
+		// by the share of turns that carry it. Resolving it in one place is what keeps
+		// the digest, the accumulated friction, and the ranking from disagreeing about
+		// which signals exist.
+		const countedFrustrationNodes = await pricedHits(ctx.db, frustrationNodes);
 
 		const digest = buildDigest({
 			sessionId: ctx.sessionId,
@@ -236,8 +265,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			llmNodes,
 			trajectoryNodes,
 			failureNodes,
-			frustrationNodes,
-			mutedHitIds,
+			frustrationNodes: countedFrustrationNodes,
 			replyActsNodes,
 			cognitionNodes,
 			complianceNodes,

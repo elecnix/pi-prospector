@@ -36,6 +36,11 @@ function output(ctx: ExtensionCommandContext, text: string, level: "info" | "war
  * Split a leading term from the rest of the arguments. A term in single or
  * double quotes is read whole, so a multi-word term survives; an unquoted term
  * runs up to the first `--` flag. An unterminated quote gives no term.
+ *
+ * The term is read whole either way — quoted or not — so `mute do not` and
+ * `mute "do not"` record the same key, `do not`, which is how the lexicon keys
+ * a phrase. Reading only the first token would record a term that can never
+ * match, while reporting success.
  */
 function splitTerm(args: string): { term: string | undefined; rest: string } {
 	const text = (args ?? "").trim();
@@ -92,12 +97,21 @@ export function normaliseTerm(raw: string): string {
  * `turn-frustration` hit node the term produced is marked the same way (#325),
  * so no reader keeps counting a silenced hit. Returns the recorded outcome for
  * reuse by the tool and tests.
+ *
+ * Throws when the term is empty. A mute of nothing would record an assertion
+ * with an empty key and report success — a lie the caller has no way to detect.
  */
 export async function muteTerm(
 	db: AsyncDatabase,
 	args: { term: string; reason?: string | null; by?: string | null },
 ): Promise<{ muted: boolean; assertionId: string; liveHits: number }> {
 	const term = normaliseTerm(args.term);
+	if (term.length === 0) {
+		throw new Error(
+			`Cannot mute an empty term. Give the term to mute, quoting it if it contains a space: ` +
+			`mute "do not".`,
+		);
+	}
 	const assertionId = await upsertMuteAssertion(db, {
 		term,
 		reason: args.reason ?? null,
@@ -177,10 +191,12 @@ export async function prospectMute(args: string, ctx: ExtensionCommandContext): 
 				: "";
 		output(
 			ctx,
-			`Muted '${normaliseTerm(term)}'. It will stop matching new turns; its existing hit nodes stay as stale/config lineage.${hitNote}` +
-				`\n  Run '/prospect-analyze --revise config' to recompute the nodes that consulted it.` +
+			`Muted '${normaliseTerm(term)}'. It stops matching new turns, and its existing hits stop counting toward the frustration rankings and the accumulated friction. ` +
+				`\n  Its hit nodes stay in the graph as lineage. Run '/prospect-analyze --revise config' to recompute the nodes that consulted it.${hitNote}` +
 				`\n  Assertion ${assertionId}${note}`,
 		);
+	} catch (err) {
+		output(ctx, `Could not mute: ${err instanceof Error ? err.message : String(err)}`, "warning");
 	} finally {
 		await db.close();
 	}

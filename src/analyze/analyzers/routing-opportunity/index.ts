@@ -61,7 +61,8 @@ import { TURN_FRUSTRATION_DEF } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF, type ToolTrajectoryProperties } from "../tool-trajectory/index.js";
 import { REPETITION_COLLAPSE_DEF, type RepetitionCollapseProperties } from "../repetition-collapse/index.js";
 import { DEFAULT_ROUTING_CONFIG, type RoutingConfig } from "./config.js";
-import { getMutedNodeIds } from "../../../db/assertions.js";
+import { currentHits } from "../../../db/muted-terms.js";
+import { pricedHits } from "../../hit-reading.js";
 import { Type, type Static } from "typebox";
 
 export const RoutingVerdict = Type.Union([
@@ -115,7 +116,11 @@ export const ROUTING_OPPORTUNITY_VERSION: AnalyzerVersion = {
 	major: 1,
 	// 1.2 (#278): a step that collapsed into repetition escalates its turn, and
 	// every dependency node folded into a unit's identity is a consumes edge.
-	minor: 2,
+	// 1.3: the per-turn `frustration` label reads the hits that count — current
+	// generation, the operator's mutes, and each term priced by the share of turns
+	// that carry it — instead of every live hit node. A background word, or a term
+	// the operator rejected, no longer marks a turn as frustrated.
+	minor: 3,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/routing-opportunity/index.ts",
 };
@@ -295,17 +300,22 @@ export const routingOpportunityAnalyzer: Analyzer = {
 		}
 
 		// Frustration by user_message_id from turn-frustration nodes. A muted
-		// term's hits are silenced (#325) and do not mark a turn as frustrated.
+		// term's hits are silenced (#325) and do not mark a turn as frustrated, and
+		// neither does a term carried by so many of the corpus's turns that it cannot
+		// distinguish one from another.
 		//
 		// The hits this turn carries are recorded by output key, so the label can
 		// name them as evidence: the source set already names them (that is what
 		// makes the unit re-identify when a hit changes), and the *edge* is what
 		// lets a reader walk back from the label to the hits that produced it —
-		// including to a hit a human muted (#325).
+		// including to a hit a human muted (#325). `pricedHits` decides only which
+		// hits count; every current-generation hit stays an input and an edge.
 		const frustrationTurns = new Set<string>();
 		const frustrationKeysByUserMessageId = new Map<string, string[]>();
-		const muted = await getMutedNodeIds(ctx.db);
-		for (const n of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
+		const countedIds = new Set(
+			(await pricedHits(ctx.db, ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? [])).map((n) => n.id),
+		);
+		for (const n of currentHits(ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? [])) {
 			try {
 				const c = JSON.parse(n.content_json) as { user_message_id?: string };
 				if (typeof c.user_message_id === "string") {
@@ -316,7 +326,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 			} catch {
 				/* skip */
 			}
-			if (muted.has(n.id)) continue;
+			if (!countedIds.has(n.id)) continue;
 			try {
 				const c = JSON.parse(n.content_json) as { user_message_id?: string };
 				if (typeof c.user_message_id === "string") frustrationTurns.add(c.user_message_id);

@@ -27,6 +27,8 @@ import {
 import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import { TURN_FRUSTRATION_DEF, type TurnFrustrationProperties } from "../turn-frustration/index.js";
 import { TOOL_TRAJECTORY_DEF, type ToolTrajectoryProperties } from "../tool-trajectory/index.js";
+import { currentHits } from "../../../db/muted-terms.js";
+import { pricedHits } from "../../hit-reading.js";
 import {
 	EVIDENCE_SLICE_CEILING,
 	buildMessageIdToPairIndex,
@@ -54,7 +56,6 @@ import {
 } from "./decision.js";
 import { decisionIdentity } from "../../decision-model.js";
 import { computeEnrichCap, DEFAULT_TURN_PAIR_LLM_CONFIG, type TurnPairLLMConfig } from "./config.js";
-import { getMutedNodeIds } from "../../../db/assertions.js";
 
 export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 	id: "turn-pair-llm",
@@ -96,7 +97,16 @@ export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	// rendered into the prompt as a candidate, never as a conclusion. Prompt text
 	// changed, so the input_key (and hence node version) changes; recomputed on
 	// the next run.
-	minor: 6,
+	// 1.7: the frustration hits that shape the selection boost are read at their
+	// current generation (issue #321). Superseded by 1.8.
+	// 1.8: the boost reads the hits that *count* — current generation, unmuted, and
+	// priced by the share of turns that carry each term — and the source set names
+	// the current generation of every upstream rather than every live one. A
+	// background word no longer promotes a turn into the expensive classifier, and
+	// the unit's identity no longer folds in conclusions the graph has superseded.
+	// The analyzer also declares that it consults term mutes, so muting a term
+	// re-identifies the units its boost shaped.
+	minor: 8,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };
@@ -169,6 +179,13 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		// markers. This *widens* selection: a turn whose only evidence is a French
 		// correction or a row of question marks scores near zero deterministically,
 		// and would never otherwise reach the classifier that can name its friction type.
+		//
+		// The boost reads the hits that *count*, through the same helper every other
+		// reader uses: current generation (a revise of the hit analyzer leaves the
+		// previous generation live beside the new one, and summing both would count
+		// the same signal twice), the operator's mutes, and each term priced by the
+		// share of turns that carry it. A background word therefore cannot promote a
+		// turn into the expensive classifier either.
 		const frustrationBoost = new Map<string, number>();
 		const frustrationIds: string[][] = [];
 		// A muted term's hits are silenced (#325): a silenced hit must not
@@ -177,9 +194,17 @@ export const turnPairLLMAnalyzer: Analyzer = {
 		// it still marks a slice boundary: the turn happened, and shrinking an
 		// unrelated turn's evidence slice because a word was muted would be a
 		// change the operator never asked for.
-		const muted = await getMutedNodeIds(ctx.db);
+		//
+		// The arithmetic comes from `pricedHits`, the same reading every other
+		// reader uses: the current generation, the silenced hits removed, and each
+		// remaining term priced by the share of turns that carry it. A hit either
+		// judgement excludes contributes no weight, but it still marks its slice
+		// boundary, so the loop below walks every current hit and looks the priced
+		// ones up by id.
+		const countedHits = await pricedHits(ctx.db, ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []);
+		const countedById = new Map(countedHits.map((node) => [node.id, node]));
 		const hitOutputKeys: string[] = [];
-		for (const node of ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []) {
+		for (const node of currentHits(ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? [])) {
 			let hit: TurnFrustrationProperties;
 			try {
 				hit = JSON.parse(node.content_json) as TurnFrustrationProperties;
@@ -189,9 +214,11 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			if (!hit.user_message_id) continue;
 			frustrationIds.push([hit.user_message_id]);
 			hitOutputKeys.push(node.output_key);
-			if (muted.has(node.id)) continue;
+			const counted = countedById.get(node.id);
+			if (!counted) continue;
 			if (hit.polarity !== "frustration") continue;
-			frustrationBoost.set(hit.user_message_id, (frustrationBoost.get(hit.user_message_id) ?? 0) + hit.weight);
+			const countedWeight = (JSON.parse(counted.content_json) as TurnFrustrationProperties).weight;
+			frustrationBoost.set(hit.user_message_id, (frustrationBoost.get(hit.user_message_id) ?? 0) + countedWeight);
 		}
 
 		// Trajectory-signal trigger points (issue #118): each signal carries the
@@ -262,14 +289,21 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				}
 				return out.slice(-EVIDENCE_SLICE_CEILING);
 			})();
-			// Sources fold in every node whose conclusion shaped this unit: the escalated
-			// turn's core metrics, plus the trajectory and frustration nodes whose signals
-			// selected it and bound its slice. A changed upstream output re-identifies the
-			// unit and forces honest recomputation.
+			// Sources fold in the conclusion of each upstream this unit drew on: the
+			// escalated turn's core metrics, plus the current trajectory and frustration
+			// generations whose signals selected it and bound its slice.
+			//
+			// **Current generation only.** A revise leaves the superseded node live
+			// beside its replacement, so naming every live node would put a conclusion
+			// the graph no longer holds — and that this unit never read — into its
+			// identity. The identity would then depend on how many times an upstream was
+			// revised rather than on what it said, and a revise of the hit analyzer would
+			// re-identify units whose boost did not change. The analysis above reads the
+			// same generations, so the source set names exactly what shaped it.
 			const sources: SourceRef[] = [
 				{ kind: "analysis_node", id: node.output_key },
-				...(ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? []).map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
-				...(ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []).map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+				...currentHits(ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? []).map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+				...currentHits(ctx.dependencyNodes[TURN_FRUSTRATION_DEF.id] ?? []).map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			];
 			const meta: EnrichMeta = {
 				userText: pair.userText,

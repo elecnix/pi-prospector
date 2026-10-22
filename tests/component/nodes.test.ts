@@ -188,6 +188,35 @@ describe("prospect nodes (surface read)", () => {
 		assert.match(text, /note: 2 node\(s\) lack 'term'/);
 	});
 
+	it("keeps a frustration hit's error node in the listing", async () => {
+		// The listing reads the frustration hits at their current generation, and
+		// a failed unit leaves an error node. The listing is where the operator
+		// sees the failure, so the collapse must not swallow it.
+		await insertNode(db, {
+			id: "tf-error",
+			sessionId: "s1",
+			analyzerId: "turn-frustration",
+			analyzerVersionId: "turn-frustration-v1",
+			configId: "cfg",
+			runId: null,
+			nodeKind: "error",
+			contentJson: JSON.stringify({ error: "the model is unavailable" }),
+			sourceSetHash: "sset-tf-error",
+			inputKey: "ik-tf-error",
+			outputKey: "ok-tf-error",
+			createdAt: "2026-03-01T00:00:00.000Z",
+		});
+		try {
+			const { rows } = await readNodes(db, { analyzerId: "turn-frustration", filters: [] });
+			assert.ok(
+				rows.some((r) => r.id === "tf-error"),
+				"the listing shows the error node",
+			);
+		} finally {
+			await db.prepare("DELETE FROM analysis_nodes WHERE id = ?").run("tf-error");
+		}
+	});
+
 	it("--limit/--offset page through the matches", async () => {
 		const all = await readNodes(db, { analyzerId: "turn-pair-core", filters: [] });
 		assert.equal(all.rows.length, 2);

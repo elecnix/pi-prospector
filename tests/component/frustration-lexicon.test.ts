@@ -19,6 +19,10 @@ import {
 	type FrustrationLexiconProperties,
 } from "../../src/analyze/analyzers/frustration-lexicon/index.js";
 import { getNodesByAnalyzer } from "../../src/db/analysis-queries.js";
+import { createMockLLM } from "../../src/analyze/mock-llm.js";
+import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
+import { turnFrustrationAnalyzer, TURN_FRUSTRATION_DEF } from "../../src/analyze/analyzers/turn-frustration/index.js";
+import type { LLMRequest } from "../../src/analyze/types.js";
 
 /** Terms our stub model calls frustration; everything else comes back neutral. */
 const FRUSTRATED_TERMS = new Set(["putain", "faux", "wrong", "🤬"]);
@@ -60,6 +64,55 @@ describe("lexicon-candidates", () => {
 });
 
 describe("frustration-lexicon", () => {
+	it("stores the model's verdict unchanged instead of overriding it with a word list (issue #321)", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			// The instruction words that once dominated a real corpus's ranking.
+			await insertMessages(db, "s1", [
+				{ role: "user", text: "do not mock the database, never push to main, and no, do not touch the schema" },
+			]);
+
+			// A model that calls every bare negator a frustration signal: a bare `no`
+			// genuinely reads as a negation marker in isolation, so this is what a cheap
+			// model answers.
+			const llm = createMockLLM({
+				responder: (req: LLMRequest) => ({
+					text: "x",
+					structured: {
+						polarity: "frustration",
+						category: "negation",
+						language: "en",
+						confidence: 0.9,
+						rationale: "r",
+					},
+				}),
+			});
+			const framework = await frameworkFor(db, llm);
+			await framework.run("s1");
+
+			const verdicts = new Map(
+				(await getNodesByAnalyzer(db, FRUSTRATION_LEXICON_DEF.id, "s1")).map((n) => {
+					const p = JSON.parse(n.content_json) as FrustrationLexiconProperties;
+					return [p.term, p];
+				}),
+			);
+
+			// Nothing rewrites these. An earlier version forced a hand-written list of
+			// English function words to neutral here; whether a word is background is a
+			// question about the corpus (how many turns carry it), not about its
+			// spelling, and the readers answer it per corpus in any language. The stored
+			// verdict is therefore exactly what the model judged, which is what makes it
+			// worth caching corpus-wide.
+			for (const term of ["do", "not", "never", "no"]) {
+				assert.equal(verdicts.get(term)?.polarity, "frustration", `'${term}' keeps the verdict the model gave it`);
+				assert.equal(verdicts.get(term)?.category, "negation", `'${term}' keeps the category the model gave it`);
+			}
+		} finally {
+			await close();
+		}
+	});
+
 	it("adjudicates each term once and stores the verdict as a node", async () => {
 		const { db, close } = await tempDb();
 		try {

@@ -61,7 +61,7 @@ import {
 	WindowRate,
 	DeclineVerdict,
 } from "./detect.js";
-import { getMutedNodeIds } from "../../../db/assertions.js";
+import { pricedHits } from "../../hit-reading.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const FrictionAccumulationRawProposal = Type.Object({
@@ -107,8 +107,19 @@ export const FRICTION_ACCUMULATION_VERSION: AnalyzerVersion = {
 	// 1.0 (issue #101): accumulation of per-turn deterministic friction signals,
 	// window-rate comparison with a recurrence gate, and a proposal earned only
 	// above a total-friction floor so noise around clean sessions stays quiet.
+	// 1.1: a muted lexicon term stops contributing to the accumulation (issue
+	// #321). The mute is the operator's judgement that the term is not a
+	// signal, so its hits must not count toward the score. The hits are also
+	// read at their current generation, so an unmute, which leaves the
+	// muted-era hit live beside the new one, does not count the signal twice.
+	// 1.2: a term carried by more than a tenth of the corpus's turns contributes
+	// nothing either (issue #321). The earlier fix kept background vocabulary out
+	// with a hand-written list of English function words; the share of turns that
+	// carry a term is the same judgement, measured from the corpus, and it works in
+	// any language. Hits now arrive already priced from `pricedHits`, so the sum
+	// below cannot count a background word. Minor: the score narrows.
 	major: 1,
-	minor: 0,
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/friction-accumulation/index.ts",
 };
@@ -147,14 +158,11 @@ interface DependencyInputs {
 	coreNodes: AnalysisNodeRow[];
 	frustrationNodes: AnalysisNodeRow[];
 	trajectoryNodes: AnalysisNodeRow[];
-	/** The ids of the hit nodes a human mute silenced (#325). */
-	mutedHitIds: ReadonlySet<string>;
 }
 
-async function gatherDependencies(
-	db: AsyncDatabase,
+function gatherDependencies(
 	dependencyNodes: Record<string, AnalysisNodeRow[]>,
-): Promise<DependencyInputs> {
+): DependencyInputs {
 	// A muted term's hit nodes are silenced by a human assertion (#325). They
 	// stay live and inspectable, and they stay *inputs* — the silenced hit is
 	// still in the source set, so it does not by itself re-identify the unit.
@@ -171,7 +179,6 @@ async function gatherDependencies(
 	// so lifting it reverts the fingerprint, the unit's recipe matches the
 	// pre-mute one again, and the conclusion drawn under the mute is retracted
 	// so the pre-mute conclusion becomes current again.
-	const muted = await getMutedNodeIds(db);
 	return {
 		coreNodes: latestByKey(dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? [], (p) =>
 			typeof p["user_message_id"] === "string" ? (p["user_message_id"] as string) : null),
@@ -182,7 +189,6 @@ async function gatherDependencies(
 			return `${p["user_message_id"] as string}\u0000${source}\u0000${signal}`;
 		}),
 		trajectoryNodes: latestByKey(dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? [], () => "session"),
-		mutedHitIds: muted,
 	};
 }
 
@@ -238,6 +244,13 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 	// the active mute set into the fingerprint marks this analyzer's nodes stale
 	// for the `config` reason, so `--revise config` recomputes them with the
 	// muted hits excluded.
+	/**
+	 * The accumulated friction depends on which terms the operator has muted, so
+	 * the active mute set folds into this analyzer's config fingerprint: muting
+	 * marks its nodes stale for the `config` reason, and `--revise config`
+	 * recomputes them with the muted term's weight gone. Without this the
+	 * accumulation would keep counting a term the operator rejected.
+	 */
 	consultsAssertions: ["term"],
 
 	/**
@@ -254,7 +267,7 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 	 * no turns to accumulate, and inventing an all-zero one would lie).
 	 */
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
-		const { coreNodes, frustrationNodes, trajectoryNodes, mutedHitIds } = await gatherDependencies(ctx.db, ctx.dependencyNodes);
+		const { coreNodes, frustrationNodes, trajectoryNodes } = gatherDependencies(ctx.dependencyNodes);
 		if (coreNodes.length === 0) return [];
 
 		const consumed = [...coreNodes, ...frustrationNodes, ...trajectoryNodes];
@@ -271,7 +284,7 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 
 	async analyze(_unit: AnalysisUnit, ctx: AnalyzerRunContext): Promise<AnalysisResult> {
 		const config = resolveConfig(ctx.config.configJson);
-		const { coreNodes, frustrationNodes, trajectoryNodes, mutedHitIds } = await gatherDependencies(ctx.db, {
+		const { coreNodes, frustrationNodes, trajectoryNodes } = gatherDependencies({
 			[TURN_PAIR_CORE_DEF.id]: await ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id),
 			[TURN_FRUSTRATION_DEF.id]: await ctx.getDependencyNodes(TURN_FRUSTRATION_DEF.id),
 			[TOOL_TRAJECTORY_DEF.id]: await ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id),
@@ -296,9 +309,15 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 		// Frustration hit weights summed per turn, from the per-(turn, signal) nodes.
 		// A hit a human mute silenced contributes no weight (#325): the term is
 		// not a signal for this corpus, so its hits must not accumulate friction.
+		//
+		// `pricedHits` supplies the three judgements a reader must not make for
+		// itself: the current generation (a revise leaves the superseded hit live),
+		// the operator's mutes (a rejected term stops counting), and the corpus's
+		// document share (a word carried by most turns is background, whatever
+		// language it is written in). It returns each hit already priced, so the sum
+		// below cannot forget one of them.
 		const frustrationWeightByTurnId = new Map<string, number>();
-		for (const node of frustrationNodes) {
-			if (mutedHitIds.has(node.id)) continue;
+		for (const node of await pricedHits(ctx.db, frustrationNodes)) {
 			try {
 				const c = JSON.parse(node.content_json) as { user_message_id?: string; weight?: number };
 				if (typeof c.user_message_id !== "string") continue;

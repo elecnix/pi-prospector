@@ -259,6 +259,23 @@ describe("muting a lexicon term", () => {
 		}
 	});
 
+	it("refuses an empty term rather than recording one", async () => {
+		const { db, close } = await tempDb();
+		try {
+			// A mute of nothing would record an assertion with an empty key and
+			// report success — a lie the caller cannot detect.
+			await assert.rejects(
+				() => muteTerm(db, { term: "   " }),
+				/Cannot mute an empty term/,
+				"the command refuses an empty term",
+			);
+			await assert.rejects(() => muteTerm(db, { term: '""' }), /Cannot mute an empty term/);
+			assert.deepEqual(await getMutedTerms(db), [], "and records nothing");
+		} finally {
+			await close();
+		}
+	});
+
 	it("keys a quoted multi-word mute the way the lexicon keys the phrase, and unmutes it", async () => {
 		const { db, close } = await tempDb();
 		try {

@@ -42,6 +42,8 @@ import { getDbPath } from "../config.js";
 import { parseTimestamp, resolveTimepoint } from "../timepoint.js";
 import { findAnalyzerDef } from "./analyzers.js";
 import { NodeKind } from "../analyze/types.js";
+import { pricedHits } from "../analyze/hit-reading.js";
+import { TURN_FRUSTRATION_DEF } from "../analyze/analyzers/turn-frustration/index.js";
 import type { AnalysisEdgeRow, AnalysisNodeRow, AnalyzerDef, MessageRow } from "../analyze/types.js";
 
 // ─────────────────────────── argument parsing ───────────────────────────
@@ -371,6 +373,31 @@ export async function readNodes(db: AsyncDatabase, q: NodesQuery): Promise<Nodes
 	};
 	const totalBeforeFilters = await countAnalysisNodes(db, filter);
 	let rows = await listAnalysisNodes(db, filter);
+
+	// A frustration hit that no reader counts must not appear in the listing or in
+	// a count over one: the operator muted that term, or the corpus carries it in so
+	// many turns that it cannot distinguish one from another. The hit nodes stay in
+	// the graph as lineage; this is a read filter, not a retraction.
+	//
+	// The listing asks for the graph's lineage, so it keeps the error nodes, and it
+	// keeps every generation when `--all-versions` asked for them. It still prices,
+	// because a background word is not lineage anyone asked to see.
+	//
+	// An as-of read is left alone: it reconstructs the graph as it stood at a past
+	// instant, and both the mute set and the corpus's document share belong to *now*.
+	if (!asOf) {
+		// The rows are filtered in place, so the listing keeps the order the query
+		// returned (newest first).
+		const isFrustration = (row: AnalysisNodeRow): boolean => row.analyzer_id === TURN_FRUSTRATION_DEF.id;
+		const frustrationRows = rows.filter(isFrustration);
+		const keptIds = new Set(
+			(await pricedHits(db, frustrationRows, {
+				keepGenerations: q.allVersions,
+				keepErrorNodes: true,
+			})).map((row) => row.id),
+		);
+		rows = rows.filter((row) => !isFrustration(row) || keptIds.has(row.id));
+	}
 
 	// Typed filters over the analyzer's declared outputSchema; best-effort when
 	// the analyzer declares none or is not registered locally.
