@@ -39,7 +39,7 @@ import { prep } from "./prepared.js";
 export interface TermPrevalence {
 	/** Analysed turns in the corpus — the denominator of a document share. */
 	documents: number;
-	/** Distinct turns each lexicon signal fired on, keyed by the signal. */
+	/** Distinct turns each lexicon signal fired on, keyed by its lowercased spelling. */
 	hitDocuments: Map<string, number>;
 }
 
@@ -62,8 +62,14 @@ export async function termPrevalence(
 			AND json_extract(content_json, '$.user_message_id') IS NOT NULL
 	`).all(documentAnalyzerId)) as Array<{ documents: number | null }>;
 
+	// Grouped on the *lowercased* signal, because that is the spelling a reader
+	// looks the term up under (`hitSignal`): a term is a corpus-wide key, so `Do`
+	// and `do` are one word and must share one bucket. Grouping on the stored
+	// spelling would leave the uppercase bucket unreachable from the reader, and a
+	// miss there is indistinguishable from a term that never fired — the background
+	// word would quietly keep full weight.
 	const rows = (await prep(db, `
-		SELECT json_extract(content_json, '$.signal') AS signal,
+		SELECT LOWER(json_extract(content_json, '$.signal')) AS signal,
 			COUNT(DISTINCT json_extract(content_json, '$.user_message_id')) AS hit_documents
 		FROM live_nodes
 		WHERE analyzer_id = ? AND node_kind <> 'error'

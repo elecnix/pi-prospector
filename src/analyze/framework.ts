@@ -803,14 +803,17 @@ export class AnalyzerFramework {
 		// Built-in analyzers leave `contentHash` undefined and are unaffected.
 		const extra = analyzer.contentHash ? [`code:${analyzer.contentHash}`] : [];
 		// The assertion set (operator mutes) is `config` too: an analyzer that
-		// consults a subject kind folds a hash of the assertions for those kinds into
-		// its config fingerprint. Muting marks its nodes stale for the `config`
-		// reason, a plain fill leaves them untouched, and `--revise config`
-		// recomputes them under the new recipe. The hash covers the assertions'
-		// active state as well as their keys, so an unmute is a *distinct* recipe
-		// rather than a return to the one the mute already replaced — otherwise the
-		// unmute would find the pre-mute node by its input key, classify it
-		// `current`, and skip the recomputation.
+		// consults a subject kind folds a hash of the *active* assertions for those
+		// kinds into its config fingerprint. Muting marks its nodes stale for the
+		// `config` reason, a plain fill leaves them untouched, and `--revise config`
+		// recomputes them under the new recipe.
+		//
+		// An unmute therefore returns to the pre-mute fingerprint, by design. That is
+		// safe because the mute-era conclusion is retracted when the mute is lifted
+		// (#325), so the pre-mute node is the head of its lineage again; classification
+		// finds it, reports `current`, and there is nothing to recompute. Hashing the
+		// superseded rows as well would instead give the unmute a fingerprint of its
+		// own, growing a new recipe for every mute/unmute cycle.
 		// Content-addressed, so the fingerprint survives a wipe/recompute.
 		if (analyzer.consultsAssertions?.length) {
 			const assertions = await getActiveAssertionsForKinds(this.deps.db, analyzer.consultsAssertions);
