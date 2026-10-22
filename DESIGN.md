@@ -763,7 +763,7 @@ list — the system **learns the vocabulary from the corpus**.
   linearly to 0 at `DEFAULT_MAX_DOCUMENT_SHARE` (a tenth of the corpus by
   default), and stays 0 above it, and it is refused altogether below
   `MIN_DOCUMENTS`, where a share is noise.
-  This replaces a hand-written **function-word stoplist** of English auxiliaries,
+  This replaces a hand-written function-word stoplist of English auxiliaries,
   negations, conjunctions and pronouns, which forced a listed term's verdict to
   *neutral* / *none* whatever the model answered. That list reached the right
   answer — `do`, `no`, `do not`, `never`, `cannot` and `still` had buried the real

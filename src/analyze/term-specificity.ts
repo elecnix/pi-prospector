@@ -65,7 +65,7 @@ export function termSpecificity(
 	if (!Number.isFinite(hitDocuments) || hitDocuments <= 0) return 1;
 	// A non-positive cut prices every term at zero, which would silently disable
 	// the lexicon; treat it as "no cut" instead.
-    if (!(maxDocumentShare > 0)) return 1;
+	if (!(maxDocumentShare > 0)) return 1;
 	const share = hitDocuments / documents;
 	if (share >= maxDocumentShare) return 0;
 	return 1 - share / maxDocumentShare;
