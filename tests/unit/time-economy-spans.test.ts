@@ -773,6 +773,23 @@ describe("measureSkillSpans", () => {
 		assert.equal(spans[0]?.seconds, 50);
 	});
 
+	it("does not end a pull-request skill at a creation it cannot place inside its turn", () => {
+		// A bound that cannot be placed excludes the candidate, the same as
+		// every other bound in the function: a span that does not know where
+		// its turn ended cannot claim a creation it is not known to contain.
+		// The skill's own row carries no timestamp, so its turn has no placeable
+		// end either, and the creation is not claimed.
+		const rows = [
+			spanRow({ id: "u1", role: "user", timestamp: at(0) }),
+			spanRow({ id: "s1", role: "assistant", timestamp: null, tool_calls: JSON.stringify([{ id: "sk1", name: "Skill", arguments: { skill: "pr" } }]) }),
+			spanRow({ id: "c1", role: "assistant", timestamp: at(300), tool_calls: JSON.stringify([{ id: "gh1", name: "bash", arguments: { command: "gh pr create" } }]) }),
+			spanRow({ id: "r1", role: "toolResult", timestamp: at(310), tool_results: JSON.stringify([{ toolCallId: "gh1", toolName: "bash", isError: false, textLength: 20 }]) }),
+		];
+		const spans = measureSkillSpans(rows);
+		assert.equal(spans.length, 1);
+		assert.notEqual(spans[0]?.end_reason, "pr_created");
+	});
+
 	it("does not end a pull-request skill at a failed gh pr create", () => {
 		const rows = [
 			spanRow({ id: "u1", role: "user", timestamp: at(0) }),

@@ -577,7 +577,11 @@ function findPrCreateEnd(
 		if (next && (next.ms === null || endedMs > next.ms)) continue;
 		// The skill's turn closed before the forge answered. The creation
 		// belongs to a later turn, so the turn's end is the skill's end.
-		if (turnEnd !== null && endedMs > turnEnd) continue;
+		//
+		// A turn end that cannot be placed excludes the candidate, the same as
+		// every other bound here: a span that does not know where its turn
+		// ended cannot claim a creation it is not known to contain.
+		if (turnEnd === null || endedMs > turnEnd) continue;
 		return { messageId: inv.outcome.messageId, ms: endedMs };
 	}
 	return null;
