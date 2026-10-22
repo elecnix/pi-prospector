@@ -208,6 +208,23 @@ export const AssistantGenerationRow = Type.Pick(MessageRow, [
 export type AssistantGenerationRow = Static<typeof AssistantGenerationRow>;
 
 /**
+ * One row of `background_tasks`: a backgrounded tool call's completion, as the
+ * host recorded it. The tool-use id is the join key to the call that was
+ * backgrounded; `completed_at` is when the work really finished, as opposed to
+ * when the call returned its acknowledgement.
+ */
+export const BackgroundTaskRow = Type.Object({
+	session_id: Type.String(),
+	tool_use_id: Type.String(),
+	task_id: Type.Union([Type.String(), Type.Null()]),
+	completed_at: Type.String(),
+	/** The host's verdict, verbatim: completed | failed | killed | … */
+	status: Type.Union([Type.String(), Type.Null()]),
+	summary: Type.Union([Type.String(), Type.Null()]),
+});
+export type BackgroundTaskRow = Static<typeof BackgroundTaskRow>;
+
+/**
  * One row of `subagent_runs`: a child-agent run's artifact metadata, ingested
  * from `<project-dir>/subagent-artifacts/<runId>_<agent>_meta.json`. The JSON
  * columns stay strings here; parsing them is the consumer's business, so a
@@ -503,6 +520,16 @@ export interface AnalyzerRunContext {
 	 * alongside the transcript.
 	 */
 	getSubagentRuns: (sessionId: string) => Promise<SubagentRunRow[]>;
+	/**
+	 * A session's background-task completions, keyed by the backgrounded call's
+	 * tool-use id.
+	 *
+	 * A call the host ran in the background returns at once, so the transcript's
+	 * tool result for it is an acknowledgement, not the end of the work. These
+	 * rows carry the real end, which is what makes a background call's duration
+	 * measurable at all (issue #306).
+	 */
+	getBackgroundTasks: (sessionId: string) => Promise<BackgroundTaskRow[]>;
 	/**
 	 * A session's turn pairs, computed once by the framework and keyed by session
 	 * id — see {@link AnalyzerPlanContext.getTurnPairs}. Session-keyed so sibling

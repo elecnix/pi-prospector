@@ -16,55 +16,9 @@ import {
 } from "../../src/analyze/analyzers/time-economy/detect.js";
 import { buildProposals, resolveConfig } from "../../src/analyze/analyzers/time-economy/index.js";
 import type { MessageRow } from "../../src/analyze/types.js";
+import { at, result, row, shell } from "./time-economy-fixtures.js";
 
 const CONFIG: TimeEconomyConfig = { ...DEFAULT_TIME_ECONOMY_CONFIG };
-
-const T0 = Date.parse("2026-01-01T00:00:00.000Z");
-/** An ISO timestamp `s` seconds after the fixture's start. */
-function at(s: number): string {
-	return new Date(T0 + s * 1000).toISOString();
-}
-
-let seq = 0;
-function row(partial: Partial<MessageRow> & { role: string }): MessageRow {
-	const id = partial.id ?? `row-${seq++}`;
-	return {
-		id,
-		session_id: "s",
-		parent_id: null,
-		timestamp: null,
-		content_text: null,
-		content_thinking: null,
-		tool_calls: null,
-		tool_results: null,
-		model: null,
-		cost_usd: null,
-		stop_reason: null,
-		error_message: null,
-		...partial,
-	};
-}
-
-/** An assistant row issuing one shell call at second `s`. */
-function shell(id: string, command: string, s: number | null): MessageRow {
-	return row({
-		id: `call-${id}`,
-		role: "assistant",
-		timestamp: s === null ? null : at(s),
-		tool_calls: JSON.stringify([{ id, name: "bash", arguments: { command } }]),
-	});
-}
-
-/** The tool-result row answering call `id` at second `s`. */
-function result(id: string, s: number | null, isError = false, text: string | null = null): MessageRow {
-	return row({
-		id: `res-${id}`,
-		role: "toolResult",
-		timestamp: s === null ? null : at(s),
-		content_text: text,
-		tool_results: JSON.stringify([{ toolCallId: id, toolName: "bash", isError, textLength: text?.length ?? 10 }]),
-	});
-}
 
 // ─────────────────────────── command families ───────────────────────────
 
@@ -287,6 +241,8 @@ function scanWith(partial: Partial<TimeScan>): TimeScan {
 		in_call_waits: { call_count: 0, seconds: 0, longest_seconds: 0, message_ids: [] },
 		self_matching_waits: [],
 		timed_out_calls: { call_count: 0, seconds: 0, message_ids: [] },
+		background_calls: { timed_call_count: 0, seconds: 0, untimed_call_count: 0, calls: [] },
+		hidden_exit_codes: [],
 		...partial,
 	};
 }

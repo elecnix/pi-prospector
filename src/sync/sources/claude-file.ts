@@ -10,6 +10,7 @@ import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
 import type { DiscoveredSession } from "../../types.js";
 import type { SessionInsert, MessageInsert } from "../../db/queries.js";
 import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../parser.js";
+import { extractBackgroundTasks } from "../background-tasks.js";
 import { walkSessionDir } from "../scanner.js";
 
 /**
@@ -150,6 +151,11 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 		return {
 			session,
 			messages,
+			// A backgrounded call's completion is a separate record, not a message:
+			// it carries no turn and sits between two messages in the file. Read
+			// from ALL lines (not just the resume point) so a completion that
+			// straddles the cursor is still found on an incremental sync.
+			backgroundTasks: extractBackgroundTasks(lines, sessionId),
 			processedCount: lines.length,
 			processedTimestamp: disc.mtime,
 			forksResolved: 0,

@@ -11,6 +11,7 @@ import { NOT_REVISED_LIVE } from "./current-generation.js";
  *
  * Tables:
  *   sessions, messages, messages_fts   — the read-only session index
+ *   background_tasks                   — when a backgrounded tool call really finished
  *   proposals_fts                      — full-text over the proposal store (search)
  *   subagent_runs                      — child-run artifact metadata, joined by project
  *   proposals                          — materialised, user-reviewable proposals
@@ -78,6 +79,31 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			-- is an analyzer's job, not the ingest layer's.
 			stop_reason TEXT,
 			error_message TEXT,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+
+		-- ───────────────────────── background tasks ─────────────────────────
+		-- When a tool call is run in the background (run_in_background Bash, a
+		-- Workflow, an Agent), the transcript's tool result for it is only an
+		-- acknowledgement: the call returns at once and the work continues. The
+		-- real end is a separate "queue-operation" record carrying a
+		-- <task-notification> that names the backgrounded call's tool-use id.
+		-- Without this row a background call times as near-instant, and the wait
+		-- on it is invisible (issue #306).
+		--
+		-- One row per (session, tool_use_id). The tool-use id is the join key to
+		-- the call; the harness's own task id is kept beside it because a task
+		-- id is what a human reads. "status" is the harness's verdict verbatim
+		-- (completed | failed | killed | …) — whether a "completed" task
+		-- *succeeded* is a separate question this table does not answer.
+		CREATE TABLE IF NOT EXISTS background_tasks (
+			session_id TEXT NOT NULL,
+			tool_use_id TEXT NOT NULL,
+			task_id TEXT,
+			completed_at TEXT NOT NULL,
+			status TEXT,
+			summary TEXT,
+			PRIMARY KEY (session_id, tool_use_id),
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
@@ -429,6 +455,7 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
 		CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+		CREATE INDEX IF NOT EXISTS idx_background_tasks_session ON background_tasks(session_id);
 		CREATE INDEX IF NOT EXISTS idx_sessions_file ON sessions(file_path);
 		CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 

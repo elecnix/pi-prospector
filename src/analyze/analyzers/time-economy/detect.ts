@@ -28,9 +28,11 @@
  */
 
 import { Type, type Static } from "typebox";
-import type { MessageRow } from "../../types.js";
+import type { BackgroundTaskRow, MessageRow } from "../../types.js";
 import { buildToolStream, singleResult } from "../../tool-stream.js";
 import { parseTime } from "../stale-verification/command-vocabulary.js";
+import { completionTime, indexBackgroundTasks, isBackgroundCall } from "./background.js";
+import { findFailureMarkers, HiddenExitCodeSchema, roundSeconds as r, type HiddenExitCode } from "./spans.js";
 import type { TimeEconomyConfig } from "./config.js";
 
 export const FamilyTimeSchema = Type.Object({
@@ -73,6 +75,36 @@ export const TimedOutCallsSchema = Type.Object({
 });
 export type TimedOutCalls = Static<typeof TimedOutCallsSchema>;
 
+/** A backgrounded call whose real end the host recorded. */
+export const BackgroundCallSchema = Type.Object({
+	/** The message that issued the call. */
+	message_id: Type.String(),
+	/** The tool's name. */
+	tool: Type.String(),
+	/** The command family the call belongs to. */
+	family: Type.String(),
+	/** How long the background work really took, in seconds. */
+	seconds: Type.Number(),
+	/** The host's verdict, verbatim: completed | failed | killed | … */
+	status: Type.Union([Type.String(), Type.Null()]),
+});
+export type BackgroundCall = Static<typeof BackgroundCallSchema>;
+
+export const BackgroundCallsSchema = Type.Object({
+	/** Backgrounded calls whose real end is known. */
+	timed_call_count: Type.Number(),
+	/** Total seconds of backgrounded work. */
+	seconds: Type.Number(),
+	/**
+	 * Backgrounded calls whose completion was never recorded. Their duration is
+	 * unknown, so it is never counted as zero.
+	 */
+	untimed_call_count: Type.Number(),
+	/** The timed calls, longest first, capped. */
+	calls: Type.Array(BackgroundCallSchema),
+});
+export type BackgroundCalls = Static<typeof BackgroundCallsSchema>;
+
 export const TimeScanSchema = Type.Object({
 	timed_call_count: Type.Number(),
 	untimed_call_count: Type.Number(),
@@ -84,6 +116,10 @@ export const TimeScanSchema = Type.Object({
 	self_matching_waits: Type.Array(SelfMatchingWaitSchema),
 	/** Calls whose result says the harness stopped waiting for them. */
 	timed_out_calls: TimedOutCallsSchema,
+	/** Backgrounded calls, timed by their real completion. */
+	background_calls: BackgroundCallsSchema,
+	/** Successful calls whose output says the work failed anyway. */
+	hidden_exit_codes: Type.Array(HiddenExitCodeSchema),
 });
 export type TimeScan = Static<typeof TimeScanSchema>;
 
@@ -208,9 +244,50 @@ function configRegExps(key: string, patterns: readonly string[], flags: string):
 	return patterns.map((_, i) => configRegExp(key, patterns, i, flags));
 }
 
-/** Round to a tenth of a second, so node content stays stable and readable. */
-function r(seconds: number): number {
-	return Math.round(seconds * 10) / 10;
+/**
+ * The host's verdict on a background task that is a failure.
+ *
+ * The host records the outcome verbatim: `completed`, `failed`, `killed`,
+ * `stopped`, … A `completed` task is not a failure — the host finished the
+ * work, and whether the work *succeeded* is a separate question this analyzer
+ * does not answer from the status alone.
+ */
+export function isFailedBackgroundStatus(status: string | null): boolean {
+	if (!status) return false;
+	return status === "failed" || status === "killed" || status === "stopped" || status === "error";
+}
+
+/**
+ * Record a hidden exit code, when the call's output carries one.
+ *
+ * A call the host called successful whose output says it failed: the exit
+ * code a pipe hid. `cmd 2>&1 | tail -40` returns tail's status, so the
+ * failure never reaches the exit code — only the output shows it.
+ *
+ * Only a *shell* call is examined. A read of a document that happens to
+ * contain the phrase "Permission denied" is not a failed command, and a
+ * non-shell tool has no exit code for a pipe to hide in the first place.
+ *
+ * The check runs for a backgrounded call as well as a synchronous one: the
+ * same call can be a slow task and a failed one, and the branch that times a
+ * background call must not skip it.
+ */
+function findHiddenExitCode(
+	inv: { messageId: string; outcome: { messageId: string; isError: boolean } | null },
+	isShell: boolean,
+	family: string,
+	seconds: number | null,
+	textById: ReadonlyMap<string, string>,
+	failureMarkers: readonly string[],
+	out: HiddenExitCode[],
+): void {
+	if (!isShell || !inv.outcome || inv.outcome.isError) return;
+	const resultText = textById.get(inv.outcome.messageId) ?? "";
+	if (!resultText) return;
+	const markers = findFailureMarkers(resultText, failureMarkers);
+	if (markers.length > 0) {
+		out.push({ message_id: inv.messageId, family, seconds: seconds === null ? null : r(seconds), markers });
+	}
 }
 
 /** Total length of a set of [start, end] intervals, counting overlaps once. */
@@ -232,8 +309,19 @@ function unionLength(intervals: Array<[number, number]>): number {
 	return total;
 }
 
-/** Measure where a session's time went. */
-export function measureTime(messages: readonly MessageRow[], config: TimeEconomyConfig): TimeScan {
+/**
+ * Measure where a session's time went.
+ *
+ * `backgroundTasks` are the host's records of when a backgrounded call really
+ * finished. A backgrounded call's own result is an acknowledgement, so its
+ * duration comes from the completion record instead; a call with neither a
+ * completion nor a usable result is untimed, never zero.
+ */
+export function measureTime(
+	messages: readonly MessageRow[],
+	config: TimeEconomyConfig,
+	backgroundTasks: readonly BackgroundTaskRow[] = [],
+): TimeScan {
 	const timeById = new Map<string, number | null>();
 	// A result row's text belongs to its call only when the row carries one
 	// result; the transcript joins several results' texts into one field.
@@ -250,12 +338,72 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 	const intervals: Array<[number, number]> = [];
 	const waits: Array<{ messageId: string; seconds: number }> = [];
 	const selfMatching: SelfMatchingWait[] = [];
+	const backgroundCalls: BackgroundCall[] = [];
+	let untimedBackground = 0;
+	const hiddenExitCodes: HiddenExitCode[] = [];
 	let timed = 0;
 	let untimed = 0;
 	let toolSeconds = 0;
 
+	const completions = indexBackgroundTasks(backgroundTasks);
+
 	for (const inv of buildToolStream([...messages]).invocations) {
 		const start = timeById.get(inv.messageId) ?? null;
+		const isShell = shellNames.has(inv.name.toLowerCase());
+		const command = isShell && typeof inv.args["command"] === "string" ? (inv.args["command"] as string) : "";
+		const family = isShell ? commandFamily(command, config.familyWords) : inv.name;
+
+		// A backgrounded call's real end is the host's completion record, not
+		// the acknowledgement the transcript recorded for it.
+		const completion = inv.callId ? completions.get(inv.callId) : undefined;
+		if (completion) {
+			const completedMs = completionTime(completion);
+			if (start === null || completedMs === null || completedMs < start) {
+				untimedBackground++;
+			} else {
+				const seconds = (completedMs - start) / 1000;
+				toolSeconds += seconds;
+				intervals.push([start, completedMs]);
+				backgroundCalls.push({
+					message_id: inv.messageId,
+					tool: inv.name,
+					family,
+					seconds: r(seconds),
+					status: completion.status,
+				});
+				const f = families.get(family) ?? { family, calls: 0, seconds: 0, max_seconds: 0, error_count: 0 };
+				f.calls++;
+				f.seconds += seconds;
+				f.max_seconds = Math.max(f.max_seconds, seconds);
+				// The host's own verdict on the background task. A task that
+				// completed is not a failure; one the host recorded as failed or
+				// killed is, and the family row must say so — otherwise the
+				// family understates failures for exactly the calls this
+				// analyzer makes measurable.
+				if (isFailedBackgroundStatus(completion.status)) f.error_count++;
+				families.set(family, f);
+				// A backgrounded call's output can hide a failure too: the same
+				// call can be a slow task and a failed one, and the branch that
+				// times a background call must not skip the output check.
+				findHiddenExitCode(inv, isShell, family, seconds, textById, config.failureMarkers, hiddenExitCodes);
+			}
+			continue;
+		}
+
+		// A call the host ran in the background whose completion was never
+		// recorded. Its acknowledgement says nothing about how long the work
+		// took, so timing it by the acknowledgement would report the
+		// near-instant the change exists to remove. It is untimed background:
+		// the duration is unknown, never zero.
+		if (isBackgroundCall(inv.args)) {
+			untimedBackground++;
+			// The output still says whether the work failed, even though the
+			// duration is unknown. A failed background test run is worth
+			// knowing about, and its duration is not what the finding is about.
+			findHiddenExitCode(inv, isShell, family, null, textById, config.failureMarkers, hiddenExitCodes);
+			continue;
+		}
+
 		const end = inv.outcome ? (timeById.get(inv.outcome.messageId) ?? null) : null;
 		if (start === null || end === null || end < start) {
 			untimed++;
@@ -266,9 +414,6 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 		toolSeconds += seconds;
 		intervals.push([start, end]);
 
-		const isShell = shellNames.has(inv.name.toLowerCase());
-		const command = isShell && typeof inv.args["command"] === "string" ? (inv.args["command"] as string) : "";
-		const family = isShell ? commandFamily(command, config.familyWords) : inv.name;
 		const f = families.get(family) ?? { family, calls: 0, seconds: 0, max_seconds: 0, error_count: 0 };
 		f.calls++;
 		f.seconds += seconds;
@@ -279,6 +424,11 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 		const resultText = inv.outcome ? (textById.get(inv.outcome.messageId) ?? "") : "";
 		const harnessTimedOut = timeoutPatterns.some((p) => p.test(resultText));
 		if (harnessTimedOut) timedOut.push({ messageId: inv.messageId, seconds });
+
+		// A call the harness called successful whose output says it failed: the
+		// exit code a pipe hid. `cmd 2>&1 | tail -40` returns tail's status, so
+		// the failure never reaches the exit code — only the output shows it.
+		findHiddenExitCode(inv, isShell, family, seconds, textById, config.failureMarkers, hiddenExitCodes);
 
 		if (isShell) {
 			const w = classifyWait(command, config);
@@ -312,6 +462,7 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 		.map((f) => ({ ...f, seconds: r(f.seconds), max_seconds: r(f.max_seconds) }));
 
 	const longestFirst = [...waits].sort((a, b) => b.seconds - a.seconds);
+	const backgroundLongestFirst = [...backgroundCalls].sort((a, b) => b.seconds - a.seconds);
 	return {
 		timed_call_count: timed,
 		untimed_call_count: untimed,
@@ -331,6 +482,12 @@ export function measureTime(messages: readonly MessageRow[], config: TimeEconomy
 			seconds: r(timedOut.reduce((s, t) => s + t.seconds, 0)),
 			message_ids: timedOut.slice(0, config.evidenceCap).map((t) => t.messageId),
 		},
+		background_calls: {
+			timed_call_count: backgroundCalls.length,
+			seconds: r(backgroundCalls.reduce((s, b) => s + b.seconds, 0)),
+			untimed_call_count: untimedBackground,
+			calls: backgroundLongestFirst.slice(0, config.evidenceCap),
+		},
+		hidden_exit_codes: hiddenExitCodes.slice(0, config.evidenceCap),
 	};
 }
-

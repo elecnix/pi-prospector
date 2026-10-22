@@ -6,13 +6,22 @@
  * wrapping, and cursor updates — the adapter owns only source-specific logic.
  */
 import type { DiscoveredSession } from "../types.js";
-import type { SessionInsert, MessageInsert } from "../db/queries.js";
+import type { SessionInsert, MessageInsert, BackgroundTaskInsert } from "../db/queries.js";
 
 export interface ParsedSession {
 	/** Ready for upsertSessions(). */
 	session: SessionInsert;
 	/** Ready for insertMessage(). */
 	messages: MessageInsert[];
+	/**
+	 * Background-task completions this source recorded, ready for
+	 * `upsertBackgroundTask()`. Empty for sources that record none.
+	 *
+	 * A backgrounded call returns at once and the transcript's tool result for
+	 * it is only an acknowledgement, so the real end of the work is a separate
+	 * record. Without it a background call times as near-instant (issue #306).
+	 */
+	backgroundTasks?: BackgroundTaskInsert[];
 	/** Number of source units processed (lines for files, rows for DB sources). */
 	processedCount: number;
 	/** Timestamp to record in the cursor after successful insert. */

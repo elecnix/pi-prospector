@@ -1,5 +1,5 @@
 import { type AsyncDatabase } from "../db/async-db.js";
-import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages } from "../db/queries.js";
+import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages, upsertBackgroundTask } from "../db/queries.js";
 import type { DiscoverOptions } from "./scanner.js";
 import { ingestSubagentArtifacts } from "./subagent-artifacts.js";
 import type { SyncResult } from "../types.js";
@@ -75,6 +75,12 @@ export async function runSync(
 					await upsertSession(db, parsed.session);
 					for (const m of parsed.messages) {
 						await insertMessage(db, m);
+					}
+					// A backgrounded call's completion record, when the source has one.
+					// Same transaction as the messages: the completion is a fact
+					// about a call in this session, so it lands with it or not at all.
+					for (const t of parsed.backgroundTasks ?? []) {
+						await upsertBackgroundTask(db, t);
 					}
 					await updateCursor(db, parsed.session.id, parsed.processedCount, parsed.processedTimestamp);
 					const total = await countMessages(db, parsed.session.id);

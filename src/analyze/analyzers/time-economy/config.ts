@@ -53,6 +53,38 @@ export const TimeEconomyConfig = Type.Object({
 	timeoutProposalMinCalls: Type.Integer({ minimum: 1 }),
 	/** A self-matching wait loop that ran at least this long earns a proposal. */
 	selfMatchProposalMinSeconds: Type.Number({ minimum: 0 }),
+	/**
+	 * Regex sources matched against a *successful* shell call's output to find
+	 * a failure the exit code hid. A pipe (`cmd 2>&1 | tail -40`) returns the
+	 * pipe's status, so a failing command reads as a pass; only the output
+	 * shows it failed.
+	 *
+	 * Each pattern is either a test runner's own way of saying it failed, or
+	 * the shell's own diagnostic shape. A generic "error" would match every
+	 * log line ever printed, and a detector that fires on ordinary output is
+	 * worse than no detector — so a pattern is anchored to the start of a line
+	 * and to a shape the runner or the shell actually prints. A grep hit that
+	 * happens to contain the phrase, and a document that quotes it, do not
+	 * match.
+	 *
+	 * The patterns are compiled with the `m` flag, so `^` means the start of
+	 * a line: a runner prints its failure line in the middle of a long
+	 * output.
+	 */
+	failureMarkers: Type.Array(Type.String()),
+	/**
+	 * How many calls whose exit code hid a failure earn a proposal. One is a
+	 * slip; a run of them is a habit the agent should be told about.
+	 */
+	hiddenExitProposalMinCalls: Type.Integer({ minimum: 1 }),
+	/**
+	 * A commit whose preparation took at least this long earns a proposal.
+	 */
+	phaseSpanProposalMinSeconds: Type.Number({ minimum: 0 }),
+	/**
+	 * A skill span that took at least this long earns a proposal.
+	 */
+	skillSpanProposalMinSeconds: Type.Number({ minimum: 0 }),
 	/** How many message ids a node keeps as evidence for one finding. */
 	evidenceCap: Type.Integer({ minimum: 1 }),
 });
@@ -79,5 +111,52 @@ export const DEFAULT_TIME_ECONOMY_CONFIG: TimeEconomyConfig = {
 	waitProposalMinSeconds: 600,
 	timeoutProposalMinCalls: 3,
 	selfMatchProposalMinSeconds: 60,
+	failureMarkers: [
+		// A runner's own failure line, at the start of a line: pytest and
+		// unittest print "--- FAIL: test_x (0.01s)".
+		"^--- (FAIL|ERROR):",
+		// go test and jest name the file or suite that failed, at the start of
+		// a line: "FAIL src/thing.test.ts".
+		"^(FAIL|FAILED)\\b",
+		// A summary shape: a count of failures next to the count that passed.
+		// pytest prints "3 failed, 12 passed", jest "1 failed, 2 passed, 3
+		// total". A bare "3 errors" in prose is not a summary and does not
+		// match.
+		"\\b[1-9][0-9]* failed\\b.*\\b(passed|passing|total)\\b",
+		// mocha's own shape, on its own line: "  3 failing".
+		"^\\s*[1-9][0-9]* failing\\b",
+		// A type-checker's diagnostic, which names its own error code. tsc
+		// prints it with a file and position prefix — "src/x.ts(3,5): error
+		// TS2322: …" — so a grep hit that merely mentions the code is not a
+		// diagnostic.
+		"^\\S+\\.\\w+\\(\\d+,\\d+\\): error TS[0-9]+\\b",
+		"^\\S+\\.\\w+:\\d+:\\d+: error TS[0-9]+\\b",
+		"^error TS[0-9]+\\b",
+		// Python's own failure shapes. pytest prints the exception on its own
+		// line, indented under the "E" marker; a bare traceback prints it at
+		// the start of a line. Both are anchored, so a grep over the source
+		// that happens to print the class name is not a failure.
+		"^E\\s+AssertionError\\b",
+		"^AssertionError\\b",
+		"^Traceback \\(most recent call last\\):",
+		// The shell's own errors. They reach the output only when a pipe has
+		// hidden the exit code, which is the very thing this detector looks
+		// for — and only a shell call's output is examined at all.
+		//
+		// Anchored to the shell's own diagnostic shape: a program name, a
+		// colon, the operand, a colon, and the message — "cat: notes.txt:
+		// Permission denied". A grep hit that happens to print the phrase, or
+		// a file that quotes it, has no such prefix, so it does not match.
+		// The program's own name may be a path, so it is matched loosely.
+		"^\\S+: \\S+: command not found$",
+		"^\\S+: \\S+: No such file or directory$",
+		"^\\S+: \\S+: Permission denied$",
+		"^\\S+: command not found$",
+		"^\\S+: Permission denied$",
+		"^Segmentation fault\\b",
+	],
+	hiddenExitProposalMinCalls: 3,
+	phaseSpanProposalMinSeconds: 1800,
+	skillSpanProposalMinSeconds: 600,
 	evidenceCap: 10,
 };

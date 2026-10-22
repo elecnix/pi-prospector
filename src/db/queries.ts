@@ -21,7 +21,7 @@ import type {
 	Remediation,
 } from "../types.js";
 import { getAnalysisStats } from "./analysis-queries.js";
-import type { AssistantGenerationRow, SubagentRunRow } from "../analyze/types.js";
+import type { AssistantGenerationRow, SubagentRunRow, BackgroundTaskRow } from "../analyze/types.js";
 import { uuidv7 } from "../analyze/input-hash.js";
 import type { TokenStats, SourceTokenStats } from "../types.js";
 
@@ -189,6 +189,49 @@ export async function getSubagentRunsForSession(db: AsyncDatabase, sessionId: st
 		"FROM subagent_runs r JOIN sessions s ON s.project = r.project " +
 		"WHERE s.id = ? ORDER BY r.run_id ASC",
 	).all(sessionId)) as SubagentRunRow[];
+}
+
+// ── Background tasks ──
+
+export interface BackgroundTaskInsert {
+	session_id: string;
+	tool_use_id: string;
+	task_id: string | null;
+	completed_at: string;
+	status: string | null;
+	summary: string | null;
+}
+
+/**
+ * Upsert a background task's completion.
+ *
+ * The primary key is (session, tool_use_id) and a task completes once, so
+ * reaching the same key twice means the transcript was re-read — the newer
+ * reading wins. Nothing is ever deleted: a completion that a later transcript
+ * no longer carries stays as it was, because a background task did finish then.
+ */
+export async function upsertBackgroundTask(db: AsyncDatabase, t: BackgroundTaskInsert): Promise<void> {
+	await prep(db, `
+		INSERT INTO background_tasks (session_id, tool_use_id, task_id, completed_at, status, summary)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id, tool_use_id) DO UPDATE SET
+			task_id=excluded.task_id, completed_at=excluded.completed_at,
+			status=excluded.status, summary=excluded.summary
+	`).run(t.session_id, t.tool_use_id, t.task_id, t.completed_at, t.status, t.summary);
+}
+
+/**
+ * Every background-task completion recorded for a session, keyed by the
+ * backgrounded call's tool-use id.
+ *
+ * The read is a plain session-scoped query: the completion is a property of
+ * the call that was backgrounded, so it belongs to the session that issued it.
+ */
+export async function getBackgroundTasksForSession(db: AsyncDatabase, sessionId: string): Promise<BackgroundTaskRow[]> {
+	return (await prep(db,
+		"SELECT session_id, tool_use_id, task_id, completed_at, status, summary " +
+		"FROM background_tasks WHERE session_id = ? ORDER BY completed_at ASC",
+	).all(sessionId)) as BackgroundTaskRow[];
 }
 
 // ── Messages ──
