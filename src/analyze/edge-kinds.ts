@@ -18,6 +18,8 @@
  *   contrasts_with node → session                   cross-session contrast: this node
  *                                                   used the target (smooth sibling)
  *                                                   session as a negative example
+ *   recalls      node → message                    raw earlier-session window shown to the
+ *                                                   synthesiser as a prior occurrence
  *   mutes        node → assertion                  this node's conclusion is muted by
  *                                                   the target (human) assertion
  */
@@ -42,6 +44,7 @@ export const EDGE_KINDS = {
 	PRODUCES: "produces",
 	REVISES: "revises",
 	CONTRASTS_WITH: "contrasts_with",
+	RECALLS: "recalls",
 	MUTES: "mutes",
 } as const;
 
@@ -59,6 +62,7 @@ const VALID_TARGETS: Record<EdgeKind, ReadonlySet<RefKind>> = {
 	[EDGE_KINDS.PRODUCES]: new Set([REF_KINDS.PROPOSAL]),
 	[EDGE_KINDS.REVISES]: new Set([REF_KINDS.ANALYSIS_NODE]),
 	[EDGE_KINDS.CONTRASTS_WITH]: new Set([REF_KINDS.SESSION]),
+	[EDGE_KINDS.RECALLS]: new Set([REF_KINDS.MESSAGE]),
 	[EDGE_KINDS.MUTES]: new Set([REF_KINDS.ASSERTION]),
 };
 

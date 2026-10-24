@@ -32,6 +32,22 @@ export const SessionOverviewConfig = Type.Object({
 	 * up to the cap, and long sessions stay bounded.
 	 */
 	maxCognitionEntries: Type.Number(),
+	/**
+	 * Recall raw text from EARLIER sessions that resembles this session's friction
+	 * turns and hand it to the reduce step (see recall.ts). Off by default: it adds
+	 * sources to the unit, so enabling it re-identifies overviews that have matches.
+	 */
+	recallPriorOccurrences: Type.Boolean(),
+	/** Friction turns (highest friction first) used as recall queries. */
+	recallMaxQueries: Type.Number(),
+	/** Messages bm25 returns per query, before the overlap rerank. */
+	recallCandidates: Type.Number(),
+	/** Windows kept across all queries, handed to the synthesiser chronologically. */
+	recallTopK: Type.Number(),
+	/** Window size in characters (1024 ≈ 256 tokens). */
+	recallWindowChars: Type.Number(),
+	/** Overlap between consecutive windows in characters (128 ≈ 32 tokens). */
+	recallOverlapChars: Type.Number(),
 });
 export type SessionOverviewConfig = Static<typeof SessionOverviewConfig>;
 
@@ -41,6 +57,12 @@ export interface CrossSessionContrastConfig {
 	maxContrastSiblings: number;
 	minSiblingPairs: number;
 }
+
+/** The recall knobs, as consumed by the selection helper. */
+export type RecallConfig = Pick<
+	SessionOverviewConfig,
+	"recallPriorOccurrences" | "recallMaxQueries" | "recallCandidates" | "recallTopK" | "recallWindowChars" | "recallOverlapChars"
+>;
 
 export const DEFAULT_SESSION_OVERVIEW_CONFIG: SessionOverviewConfig = {
 	mapTier: "cheap",
@@ -55,4 +77,10 @@ export const DEFAULT_SESSION_OVERVIEW_CONFIG: SessionOverviewConfig = {
 	// Same shape as turn-pair-llm's maxPairsHardCeiling: full coverage below it,
 	// hard bound above it.
 	maxCognitionEntries: 50,
+	recallPriorOccurrences: false,
+	recallMaxQueries: 5,
+	recallCandidates: 40,
+	recallTopK: 8,
+	recallWindowChars: 1024,
+	recallOverlapChars: 128,
 };

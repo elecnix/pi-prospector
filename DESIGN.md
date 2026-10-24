@@ -303,7 +303,7 @@ path could reach would vanish the moment a run chose the other.
 - **Verification** — recomputing every node's output key from its stored content
   and confirming it matches, **and** validating every edge's referential
   integrity (each `consumes`/`revises` target resolves to a real output key, each
-  `anchors`/`uses_*`/produces/contrasts_with target resolves to a real entity).
+  `anchors`/`uses_*`/produces/contrasts_with/recalls target resolves to a real entity).
   Because identities are content-addressed, any drift reveals out-of-band
   tampering or corruption; because relationships live only in typed edges, a
   dangling edge is the one damage that content hashing cannot see — so it is
@@ -986,6 +986,16 @@ contain the new word have anything to compute.
   default. The follow-up that bounds it is a per-`cwd` smoothness cache so the
   candidate scan is not repeated per session; consolidation/dedup of the resulting
   proposals remains explicitly out of scope.
+
+  **Prior-occurrence recall** (`recallPriorOccurrences`, off by default) is the raw
+  counterpart: instead of a distilled sibling digest, the synthesiser is shown raw
+  windows of *earlier* sessions that resemble this session's friction turns
+  (`session-overview/recall.ts`, after arXiv:2610.30755). Same identity discipline —
+  derived from raw messages, never analysis nodes; each window folds into the source
+  set as a `message` ref carrying a hash of the window text; a `recalls` edge
+  (node → message) records provenance. "Earlier" is by timestamp against the target
+  session's first message, so a session synced later never re-identifies an older
+  overview; a session with no timestamps recalls nothing rather than guess.
 - **Materialisation** — the step that lifts proposals out of a summary node into
   the fast, reviewable proposal store, attaching the evidence trail via
   *produces* and *anchors* edges. That trail is browsable after the fact: from a

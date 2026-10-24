@@ -33,6 +33,7 @@ import { ASSISTANT_COGNITION_DEF } from "../assistant-cognition/index.js";
 import { PLAN_COMPLIANCE_DEF } from "../plan-compliance/index.js";
 import { PHASE_TRAJECTORY_DEF } from "../phase-trajectory/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
+import type { AsyncDatabase } from "../../../db/async-db.js";
 import { currentHits } from "../../../db/muted-terms.js";
 import { pricedHits } from "../../hit-reading.js";
 import { MAP_PROMPT, MAP_PROMPT_HASH, MAP_TOOL, buildMapPrompt, parseMapResponse, parseMapObject, type MapSummary } from "./prompt-map.js";
@@ -53,6 +54,7 @@ import {
 	type SiblingContrast,
 	type CwdSmoothnessCache,
 } from "./cross-session.js";
+import { selectPriorOccurrences, formatRecallContext, type RecalledWindow, type RecallQuery } from "./recall.js";
 
 export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	id: "session-overview",
@@ -144,7 +146,13 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// the other readers about which signals exist. The source set names the current
 	// generation of each upstream rather than every live one. Minor: the digest
 	// content narrows; the synthesis contract is otherwise unchanged.
-	minor: 12,
+	// 1.13: prior-occurrence recall (RAW-RAG, arXiv:2610.30755) — opt-in via
+	// `recallPriorOccurrences`. Raw windows of earlier sessions that resemble this
+	// session's friction turns are folded into the source set (message ref + window
+	// hash) and handed to the reduce step as PRIOR OCCURRENCES, with a `recalls` edge
+	// per message. Off by default, so the source set and the synthesis are unchanged
+	// until it is enabled. Minor: additive channel.
+	minor: 13,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -224,13 +232,26 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const contrast = await selectCrossSessionContrast(ctx.db, ctx.sessionId, cfg, (sid) => ctx.getTurnPairs(sid), cwdCache);
 		sources.push(...contrast.sourceRefs);
 
+		// Prior-occurrence recall: raw windows from earlier sessions that resemble this
+		// session's friction turns (recall.ts). Folded into the source set like the
+		// contrast siblings, so identity commits to the exact text shown.
+		const recallQueries = await frictionQueries(ctx.db, collectHighSignalMessageIds(core), cfg.recallMaxQueries);
+		const recall = await selectPriorOccurrences(ctx.db, ctx.sessionId, recallQueries, cfg);
+		sources.push(...recall.sourceRefs);
+
 		return [
 			{
 				sources,
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "session",
 				anchorRef: ctx.sessionId,
-				meta: contrast.siblings.length > 0 ? { crossSessionContrast: contrast.siblings } : undefined,
+				meta:
+					contrast.siblings.length > 0 || recall.windows.length > 0
+						? {
+								...(contrast.siblings.length > 0 ? { crossSessionContrast: contrast.siblings } : {}),
+								...(recall.windows.length > 0 ? { priorOccurrences: recall.windows } : {}),
+							}
+						: undefined,
 			},
 		];
 	},
@@ -336,11 +357,13 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		// smooth sibling sessions already folded into this unit's source set.
 		const siblings = (unit.meta?.["crossSessionContrast"] as SiblingContrast[] | undefined) ?? [];
 		const contrastContext = formatContrastContext(siblings);
+		const recalled = (unit.meta?.["priorOccurrences"] as RecalledWindow[] | undefined) ?? [];
+		const recallContext = formatRecallContext(recalled);
 
 		const reduceRes = await ctx.llm({
 			model: resolveModelSpec(config.reduceTier, ctx.modelTiers),
 			system: ctx.prompts["reduce"] ?? REDUCE_PROMPT,
-			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals, contrastContext }),
+			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals, contrastContext, recallContext }),
 			temperature: config.temperature,
 			maxTokens: 2000,
 			tool: REDUCE_TOOL,
@@ -397,6 +420,11 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			edges.push({ toRefKind: REF_KINDS.SESSION, toRefId: sibling.sessionId, edgeKind: EDGE_KINDS.CONTRASTS_WITH, ordinal: ordinal++ });
 		}
 
+		// Provenance for the recalled windows: a `recalls` edge to each earlier message.
+		for (const w of recalled) {
+			edges.push({ toRefKind: REF_KINDS.MESSAGE, toRefId: w.messageId, edgeKind: EDGE_KINDS.RECALLS, ordinal: ordinal++ });
+		}
+
 		return {
 			nodeKind: "summary",
 			contentJson: properties as unknown as Record<string, unknown>,
@@ -412,6 +440,17 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		};
 	},
 };
+
+/** The text of the given friction turns, in the order given, capped at `max`; ids that no longer resolve are dropped. */
+async function frictionQueries(db: AsyncDatabase, messageIds: readonly string[], max: number): Promise<RecallQuery[]> {
+	const stmt = db.prepare("SELECT content_text FROM messages WHERE id = ?");
+	const queries: RecallQuery[] = [];
+	for (const id of messageIds.slice(0, Math.max(0, max))) {
+		const row = (await stmt.get(id)) as { content_text: string | null } | undefined;
+		if (row?.content_text && row.content_text.trim().length > 0) queries.push({ messageId: id, text: row.content_text });
+	}
+	return queries;
+}
 
 /**
  * The high-signal turns' user-message ids, highest friction first. This is the
