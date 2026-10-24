@@ -12,24 +12,45 @@
  * ────────────────────────────────
  * Bao et al., "Is Complex Agentic Memory Always Needed? Naive RAG Is Stronger
  * Than We Thought" (arXiv:2610.30755), compare a naive baseline — fixed-size
- * overlapping windows of raw history, a first-stage retrieval, a rerank, and the
- * survivors handed to the reader in chronological order — against extraction,
- * summary and graph memories. The baseline ranks first in six of seven settings,
- * and each memory-management addition they bolt onto it lowers accuracy. Their
- * diagnosis is that information discarded or distorted at ingestion cannot be
- * recovered by retrieval, and that useful evidence includes the order and
- * dependencies around a value, not only the value. So: no extraction, no
- * summary, no new table. The index is `messages_fts`, which already exists.
+ * overlapping windows of raw history, a first-stage retrieval, a cross-encoder
+ * rerank, and the survivors handed to the reader in chronological order, each
+ * window expanded to the complete turns it overlaps — against extraction,
+ * summary and graph memories. On four conversation-QA benchmarks it ranks first in
+ * six of seven benchmark–model settings. On MemoryAgentBench, adding atomic-fact
+ * extraction, summaries or graph expansion to it lowered accuracy (-19.6, -5.8,
+ * -5.8 points). Their diagnosis is that information discarded or distorted at
+ * ingestion is hard to recover by retrieval, and that useful evidence includes
+ * the order and dependencies around a value. So: no extraction, no summary, no
+ * new table. The index is `messages_fts`, which already exists.
+ *
+ * What the paper does not show, and this module does not claim
+ * ────────────────────────────────────────────────────────────
+ * - It measures question answering over conversation histories. Using retrieved
+ *   history as prompt context for proposal synthesis is a different task, and
+ *   nothing here has been measured against it.
+ * - Its own limits: offline public benchmarks only; a full-context reader beat
+ *   RAW-RAG by ~20 points on MEME with one reader; and RAW-RAG is weak on
+ *   aggregation (19-21% on MEME) — which is what *counting* recurrences is. The
+ *   windows handed to the synthesiser are therefore the best matches, never a
+ *   census, and the prompt block says so.
  *
  * Differences from the paper, stated rather than hidden
  * ─────────────────────────────────────────────────────
  * - First stage is FTS5 bm25, not dense embeddings; second stage is a
  *   deterministic distinct-query-term overlap, not a cross-encoder. Both are
  *   local, need no model call and no new dependency, and are reproducible —
- *   which a content-addressed node requires. They are weaker than the paper's
- *   retrievers; this module makes no claim about their accuracy.
+ *   which a content-addressed node requires. The paper's ablation says reranking
+ *   matters (removing it cost 3.9 points); this rerank is far weaker than theirs.
+ * - The query is the friction turn's terms (FTS needs terms); the paper sends the
+ *   question verbatim to the encoder and the reranker.
  * - Windows are in characters (1024 ≈ 256 tokens, 128 ≈ 32 tokens), and a
  *   message is windowed at read time, so no window is ever stored.
+ * - Turn expansion: a selected window is shown as its complete message, as in the
+ *   paper's default. A message longer than `recallMaxMessageChars` is shown as
+ *   its best window instead — the paper's own fallback when evidence is over
+ *   budget (Appendix C.4), where disabling expansion cost nothing measurable.
+ * - Retrieval is over all earlier sessions; the paper's index is one
+ *   conversation's history.
  *
  * Content-addressing
  * ──────────────────
@@ -52,8 +73,10 @@ export const RecalledWindow = Type.Object({
 	sessionId: Type.String(),
 	role: Type.String(),
 	timestamp: Type.String(),
-	/** The exact raw text of the window. */
+	/** The exact raw text shown: the complete message, or its best window when the message is over budget. */
 	text: Type.String(),
+	/** True when `text` is the complete message; false when only the best window of an over-budget message. */
+	expanded: Type.Boolean(),
 	/** Hash of `text`; embedded in the source ref so identity commits to the content. */
 	contentHash: Type.String(),
 	/** Share of the query's distinct terms the window contains (the rerank score). */
@@ -177,16 +200,21 @@ export async function selectPriorOccurrences(
 				if (top === null || overlap > top.overlap) top = { text: w, overlap };
 			}
 			if (top === null || top.overlap === 0) continue;
-			const key = `${row.id}:${shortHash(top.text)}`;
-			const prior = best.get(key);
+			// A window ranks; the reader sees the complete message when it fits.
+			const expanded = row.content_text.length <= config.recallMaxMessageChars;
+			const shown = expanded ? row.content_text : top.text;
+			// One entry per message: the same message matched by two friction turns is
+			// shown once, at its best overlap.
+			const prior = best.get(row.id);
 			if (prior && prior.overlap >= top.overlap) continue;
-			best.set(key, {
+			best.set(row.id, {
 				messageId: row.id,
 				sessionId: row.session_id,
 				role: row.role,
 				timestamp: row.timestamp,
-				text: top.text,
-				contentHash: shortHash(top.text),
+				text: shown,
+				expanded,
+				contentHash: shortHash(shown),
 				overlap: top.overlap,
 				rank: row.rank,
 			});
@@ -208,6 +236,7 @@ export function formatRecallContext(windows: readonly RecalledWindow[]): string 
 	if (windows.length === 0) return "";
 	const lines = [
 		"Raw text from EARLIER sessions that resembles this session's friction turns, oldest first.",
+		"These are the best matches found, NOT every occurrence: do not count them or state how often something happened.",
 		"If an earlier turn shows the same correction or failure, this is a recurrence: say so, cite the session,",
 		"and prefer a standing-instruction proposal over a one-off remark. Do not claim recurrence the text does not show.",
 		"",

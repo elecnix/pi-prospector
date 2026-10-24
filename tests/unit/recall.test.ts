@@ -43,9 +43,10 @@ describe("recall context", () => {
 	it("is empty when nothing was recalled and cites session and time otherwise", () => {
 		assert.equal(formatRecallContext([]), "");
 		const out = formatRecallContext([
-			{ messageId: "m1", sessionId: "abcdef123456", role: "user", timestamp: "2026-01-01T00:00:00Z", text: "use auth", contentHash: "h", overlap: 1 },
+			{ messageId: "m1", sessionId: "abcdef123456", role: "user", timestamp: "2026-01-01T00:00:00Z", text: "use auth", expanded: true, contentHash: "h", overlap: 1 },
 		]);
 		assert.match(out, /session abcdef12 · 2026-01-01T00:00:00Z · user/);
 		assert.match(out, /use auth/);
+		assert.match(out, /NOT every occurrence: do not count them/);
 	});
 });

@@ -55,6 +55,44 @@ describe("selectPriorOccurrences", () => {
 		}
 	});
 
+	it("shows a complete message, and only the best window of one over the budget", async () => {
+		const { db, close } = await tempDb();
+		try {
+			const filler = "lorem ipsum dolor sit amet ".repeat(80);
+			const short = "first line\nuse the authentication module\nlast line";
+			const long = `${filler}use the authentication module ${filler}`;
+			await seedEarlier(db, "short-one", 2, short);
+			await seedEarlier(db, "long-one", 3, long);
+			await seedTarget(db, "target", 10);
+
+			const r = await selectPriorOccurrences(db, "target", QUERY, ON);
+			const byId = new Map(r.windows.map((w) => [w.messageId, w]));
+			assert.equal(byId.get("short-one-u")?.text, short, "whole message, not a clipped window");
+			assert.equal(byId.get("short-one-u")?.expanded, true);
+			const over = byId.get("long-one-u");
+			assert.equal(over?.expanded, false);
+			assert.ok(over && over.text.length <= ON.recallWindowChars && over.text.includes("authentication module"), "best window of the over-budget message");
+		} finally {
+			await close();
+		}
+	});
+
+	it("shows a message once even when two friction turns match it", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seedEarlier(db, "old", 2, "the authentication module handles login and the session token");
+			await seedTarget(db, "target", 10);
+			const two = [
+				{ messageId: "q1", text: "use the authentication module" },
+				{ messageId: "q2", text: "the session token is wrong" },
+			];
+			const r = await selectPriorOccurrences(db, "target", two, ON);
+			assert.deepEqual(r.windows.map((w) => w.messageId), ["old-u"]);
+		} finally {
+			await close();
+		}
+	});
+
 	it("is off unless enabled, and says so loudly when it cannot run", async () => {
 		const { db, close } = await tempDb();
 		try {
@@ -117,6 +155,7 @@ describe("session-overview with recall", () => {
 			assert.ok(reduce, "reduce call made");
 			assert.match(reduce.user, /PRIOR OCCURRENCES:/);
 			assert.match(reduce.user, /the authentication module is the right place/);
+			assert.match(reduce.user, /NOT every occurrence/);
 
 			const edges = (await db.prepare("SELECT to_ref_kind, to_ref_id FROM analysis_edges WHERE from_node_id = ? AND edge_kind = 'recalls'").all(nodeId)) as Array<{ to_ref_kind: string; to_ref_id: string }>;
 			assert.deepEqual(edges, [{ to_ref_kind: "message", to_ref_id: "old-u" }]);

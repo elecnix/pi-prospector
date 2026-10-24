@@ -48,6 +48,8 @@ export const SessionOverviewConfig = Type.Object({
 	recallWindowChars: Type.Number(),
 	/** Overlap between consecutive windows in characters (128 ≈ 32 tokens). */
 	recallOverlapChars: Type.Number(),
+	/** A message up to this many characters is shown whole; a longer one is shown as its best window. */
+	recallMaxMessageChars: Type.Number(),
 });
 export type SessionOverviewConfig = Static<typeof SessionOverviewConfig>;
 
@@ -61,7 +63,7 @@ export interface CrossSessionContrastConfig {
 /** The recall knobs, as consumed by the selection helper. */
 export type RecallConfig = Pick<
 	SessionOverviewConfig,
-	"recallPriorOccurrences" | "recallMaxQueries" | "recallCandidates" | "recallTopK" | "recallWindowChars" | "recallOverlapChars"
+	"recallPriorOccurrences" | "recallMaxQueries" | "recallCandidates" | "recallTopK" | "recallWindowChars" | "recallOverlapChars" | "recallMaxMessageChars"
 >;
 
 export const DEFAULT_SESSION_OVERVIEW_CONFIG: SessionOverviewConfig = {
@@ -83,4 +85,5 @@ export const DEFAULT_SESSION_OVERVIEW_CONFIG: SessionOverviewConfig = {
 	recallTopK: 8,
 	recallWindowChars: 1024,
 	recallOverlapChars: 128,
+	recallMaxMessageChars: 4000,
 };
