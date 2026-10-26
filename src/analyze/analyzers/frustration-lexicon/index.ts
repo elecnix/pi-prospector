@@ -43,7 +43,7 @@ import {
 } from "./prompt.js";
 import { TERM_DECISION_QUESTIONS, TERM_DECISION_QUESTIONS_HASH, parseTermDecision } from "./decision.js";
 import { decisionIdentity } from "../../decision-model.js";
-import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, type FrustrationLexiconConfig } from "./config.js";
+import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, DEFAULT_FRUSTRATION_LEXICON_MAX_TOKENS, type FrustrationLexiconConfig } from "./config.js";
 import { Type, type Static } from "typebox";
 
 /** The stored verdict for one term. */
@@ -233,14 +233,8 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			system: ctx.prompts["classify_term"] ?? CLASSIFY_TERM_PROMPT,
 			user: buildClassifyTermPrompt(term),
 			temperature: config.temperature,
-			// Enough room for a verdict and its rationale. 300 truncated a small share
-			// of adjudications on models that write fuller rationales, and a truncated
-			// reply yields no verdict at all: the term stays missing, is retried on the
-			// next run, and truncates again on the same prompt. Since the budget only
-			// decides whether an answer is cut short — the temperature is 0, so a reply
-			// that already fit is unaffected — raising it costs nothing on the calls
-			// that were fine and turns the failing ones into verdicts.
-			maxTokens: 700,
+			// Room for the verdict and its rationale — see the budget's note in config.ts.
+			maxTokens: config.maxTokens ?? DEFAULT_FRUSTRATION_LEXICON_MAX_TOKENS,
 			reasoning: config.reasoning,
 			tool: CLASSIFY_TERM_TOOL,
 		});

@@ -45,12 +45,33 @@ export const FrustrationLexiconConfig = Type.Object({
 		Type.Literal("high"),
 	]),
 	/**
+	 * Output budget for one adjudication: the forced tool call that carries the
+	 * verdict and its rationale.
+	 *
+	 * 700 by default, and worth raising for a model that writes longer rationales.
+	 * The budget only decides whether an answer is cut short, so raising it costs
+	 * nothing on a reply that already fits — while a budget too small for the
+	 * model's rationale is not a slightly worse verdict, it is *no* verdict: the
+	 * reply is truncated, the unit stays missing, and the next run retries the same
+	 * prompt and truncates in the same place. Measured at 300 on a model with fuller
+	 * rationales, 1-2% of adjudications failed that way.
+	 *
+	 * Optional, and absent from the default config on purpose: the hashed config is
+	 * part of a node's identity, so an unset budget resolved in code keeps every
+	 * existing verdict's fingerprint intact. Setting it is an ordinary config change
+	 * and marks the analyzer's nodes `config`-stale, as any other override does.
+	 */
+	maxTokens: Type.Optional(Type.Number()),
+	/**
 	 * A decision model (`provider/model`, e.g. `jev/jev-1.13.0`) that judges the
 	 * term as three Choices in one request (#338). Absent by default.
 	 */
 	decisionModel: Type.Optional(Type.String()),
 });
 export type FrustrationLexiconConfig = Static<typeof FrustrationLexiconConfig>;
+
+/** Output budget for one adjudication when the config sets none. */
+export const DEFAULT_FRUSTRATION_LEXICON_MAX_TOKENS = 700;
 
 export const DEFAULT_FRUSTRATION_LEXICON_CONFIG: FrustrationLexiconConfig = {
 	tier: "cheap",
