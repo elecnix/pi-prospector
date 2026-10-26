@@ -233,7 +233,14 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			system: ctx.prompts["classify_term"] ?? CLASSIFY_TERM_PROMPT,
 			user: buildClassifyTermPrompt(term),
 			temperature: config.temperature,
-			maxTokens: 300,
+			// Enough room for a verdict and its rationale. 300 truncated a small share
+			// of adjudications on models that write fuller rationales, and a truncated
+			// reply yields no verdict at all: the term stays missing, is retried on the
+			// next run, and truncates again on the same prompt. Since the budget only
+			// decides whether an answer is cut short — the temperature is 0, so a reply
+			// that already fit is unaffected — raising it costs nothing on the calls
+			// that were fine and turns the failing ones into verdicts.
+			maxTokens: 700,
 			reasoning: config.reasoning,
 			tool: CLASSIFY_TERM_TOOL,
 		});
