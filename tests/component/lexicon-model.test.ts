@@ -138,3 +138,60 @@ describe("lexicon model selection", () => {
 		}
 	});
 });
+
+/**
+ * The output budget for one adjudication.
+ *
+ * A truncated reply carries no verdict, and the analyzer rejects it rather than
+ * guessing one. So a budget smaller than a model's rationale does not produce a
+ * slightly worse verdict: it produces no verdict, retried forever against the same
+ * prompt. The budget is therefore configurable, defaults to 700, and — because an
+ * unset budget resolves in code rather than entering the hashed config — raising
+ * the default left every existing verdict's identity intact.
+ */
+describe("lexicon output budget", () => {
+	it("budgets 700 output tokens by default", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+
+			const { framework, llm } = await frameworkWith(db, structuredNeutral);
+			await framework.run("s1");
+
+			const adjudications = llm.calls.filter((c) => c.tool?.name === "classify_term");
+			assert.ok(adjudications.length > 0, "the term was adjudicated");
+			for (const call of adjudications) {
+				assert.equal(call.maxTokens, 700, "the verdict and its rationale have room to finish");
+			}
+		} finally {
+			await close();
+		}
+	});
+
+	it("takes the budget from config when one is set", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", [{ role: "user", text: "putain" }]);
+
+			const { framework, llm } = await frameworkWith(db, structuredNeutral, {
+				"frustration-lexicon": { maxTokens: 1200 },
+			});
+			await framework.run("s1");
+
+			const adjudications = llm.calls.filter((c) => c.tool?.name === "classify_term");
+			assert.ok(adjudications.length > 0, "the term was adjudicated");
+			for (const call of adjudications) {
+				assert.equal(call.maxTokens, 1200, "an explicit budget wins over the default");
+			}
+		} finally {
+			await close();
+		}
+	});
+
+	it("keeps an unset budget out of the hashed config, so old verdicts stay current", () => {
+		const hashed = frustrationLexiconAnalyzer.defaultConfig.configJson;
+		assert.equal("maxTokens" in hashed, false, "the default budget is resolved in code, not baked into identity");
+	});
+});

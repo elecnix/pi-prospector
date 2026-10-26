@@ -43,7 +43,7 @@ import {
 } from "./prompt.js";
 import { TERM_DECISION_QUESTIONS, TERM_DECISION_QUESTIONS_HASH, parseTermDecision } from "./decision.js";
 import { decisionIdentity } from "../../decision-model.js";
-import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, type FrustrationLexiconConfig } from "./config.js";
+import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, DEFAULT_FRUSTRATION_LEXICON_MAX_TOKENS, type FrustrationLexiconConfig } from "./config.js";
 import { Type, type Static } from "typebox";
 
 /** The stored verdict for one term. */
@@ -233,7 +233,8 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			system: ctx.prompts["classify_term"] ?? CLASSIFY_TERM_PROMPT,
 			user: buildClassifyTermPrompt(term),
 			temperature: config.temperature,
-			maxTokens: 300,
+			// Room for the verdict and its rationale — see the budget's note in config.ts.
+			maxTokens: config.maxTokens ?? DEFAULT_FRUSTRATION_LEXICON_MAX_TOKENS,
 			reasoning: config.reasoning,
 			tool: CLASSIFY_TERM_TOOL,
 		});
