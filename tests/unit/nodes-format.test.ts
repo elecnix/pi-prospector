@@ -3,15 +3,13 @@ import assert from "node:assert/strict";
 import { Type } from "typebox";
 import {
 	parseNodeArgs,
-	parseFilterSpec,
-	valueMatches,
-	contentMatchesFilters,
 	countsByProp,
 	latestPerKey,
 	summarizeContent,
 	formatNodeLine,
 	nodesUsage,
 } from "../../src/commands/nodes.js";
+import { parseFilterSpec, valueMatches, contentMatchesFilters } from "../../src/analyze/content-filter.js";
 import type { AnalyzerDef, AnalysisNodeRow } from "../../src/analyze/types.js";
 
 // ─────────────────────────── fixtures (synthetic) ───────────────────────────

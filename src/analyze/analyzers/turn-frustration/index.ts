@@ -113,7 +113,12 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// `do` included — and the reading decides that it is worth nothing. No
 	// verdict is discarded here any more, so nothing about a term's *meaning*
 	// depends on this build.
-	minor: 7,
+	// 1.8: a hit copies its term's category when it is drawn, and frustration-lexicon
+	// 1.7 split `insult` out of profanity. The hit's identity is the turn and the
+	// term, not the verdict, so a re-judged term leaves its hits current under the
+	// old category. The bump makes them stale, and `--revise minor --revise-where
+	// category=profanity` redraws only the hits that copied profanity.
+	minor: 8,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };

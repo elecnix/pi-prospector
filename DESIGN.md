@@ -369,6 +369,16 @@ path could reach would vanish the moment a run chose the other.
   no recomputing to an intermediate state, so a unit revised for one reason
   absorbs every pending change for that same unit at once and you never get a
   half-updated node.
+- **Revise filter** — a further narrowing of the selection: a stale unit is
+  selected only when its *prior* node's content matches every filter (for
+  example, only the lexicon terms whose current verdict is `category=profanity`).
+  It is selection, never recompute: a selected unit is still recomputed to the
+  current recipe in full, a *missing* unit has no prior node and is always filled,
+  and every unit the filter leaves out stays stale for a later, wider run. It
+  exists for a version bump that can only change some conclusions — a category
+  split in two can only move the verdicts filed under the old category — so the
+  run pays for those and nothing else. The filter is run input, not config: it
+  never enters a recipe, and the run records it beside its reasons.
 - **Lineage** — the chain of versioned alternatives for one subject, connected by
   *revises* edges. Because analysis is append-only, recomputing does not replace
   the old conclusion; it adds a newer one beside it, and both remain navigable
@@ -704,9 +714,11 @@ list — the system **learns the vocabulary from the corpus**.
 
 - **Lexicon term** — one normalised word or emoji, judged once for the entire
   corpus. A term's verdict carries a **polarity** (*frustration*, *praise*, or
-  *neutral*), a **category** (profanity, negation, correction, repetition,
-  urgency, confusion, dissatisfaction, praise), a language, a confidence, and a
-  rationale. Praise is collected alongside frustration because it feeds
+  *neutral*), a **category** (profanity, insult, negation, correction,
+  repetition, urgency, confusion, dissatisfaction, praise), a language, a
+  confidence, and a rationale. An *insult* names or demeans the assistant or its
+  work; *profanity* is swearing that names no one, and a word that is both is an
+  insult. Praise is collected alongside frustration because it feeds
   reinforcement proposals.
 - **Frustration lexicon** — the body of those verdicts. It is **derived analysis,
   not configuration**: config is what the *user* sets, and a learned vocabulary is

@@ -413,7 +413,7 @@ The built-in `PiFileSource`, `ClaudeFileSource`, `CodexFileSource`, `OpenCodeDbS
 
 Reference implementations: [`src/sync/sources/pi-file.ts`](./src/sync/sources/pi-file.ts) (file-based), [`src/sync/sources/codex-file.ts`](./src/sync/sources/codex-file.ts) (a date-organised tree) and [`src/sync/sources/pi-subagent.ts`](./src/sync/sources/pi-subagent.ts) (nested discovery). The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
 
-### `/prospect-analyze [--revise <reasons>] [--source pi|claude|codex|opencode|cline] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
+### `/prospect-analyze [--revise <reasons>] [--revise-where key=value] [--source pi|claude|codex|opencode|cline] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
 
 Build the analysis graph over synced sessions and materialise proposals. By default it does the cheapest useful thing: it **fills only missing work**. Nodes that are already current are skipped; nodes that are out of date are left alone unless you ask for them with `--revise`.
 
@@ -424,6 +424,12 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
   - `all` — every reason; combinable as a list, e.g. `--revise minor,config`
 
   Reasons only *select* which out-of-date nodes a run touches. A selected node is always recomputed to the **current recipe in full** (latest version, latest config, latest resolved model), and the new node is linked to its predecessor by a `revises` edge so lineage stays navigable. A plain fill scans only not-yet-analysed sessions; any `--revise` reason re-scans every session so stale work can be found.
+- `--revise-where key=value` — narrow a revise to the stale nodes whose **prior** content matches every filter (repeatable; needs `--revise`). Missing work is still filled, and every other stale node stays stale for a later, wider revise. Use it when a version bump can only change some conclusions. frustration-lexicon 1.7 split `insult` out of `profanity`, so only the terms filed under profanity need a new verdict. turn-frustration 1.8 lets their hits pick up the new category. Run the lexicon first, so that every term is re-judged before any hit copies its category:
+
+  ```
+  prospect analyze --analyzer frustration-lexicon --revise minor --revise-where category=profanity
+  prospect analyze --analyzer turn-frustration --revise minor --revise-where category=profanity
+  ```
 - `--limit N` — cap how many sessions are scanned
 - `--session ID` — analyse a single session
 - `--analyzer ID` — run a single analyzer (`turn-pair-core`, `turn-pair-llm`, `tool-trajectory`, `secret-leak`, or `session-overview`) and its dependencies. This runs the analyzer even when `defaultAnalyzers` or `disabledAnalyzers` leaves it out of plain runs.

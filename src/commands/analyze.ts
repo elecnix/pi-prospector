@@ -41,9 +41,12 @@ import {
 	type RetryStats,
 } from "../analyze/concurrency.js";
 import type { ReviseReason, LLMCaller } from "../analyze/types.js";
+import { parseFilterSpec, type FilterSpec } from "../analyze/content-filter.js";
 
 interface AnalyzeArgs {
 	revise: ReviseReason[];
+	/** `--revise-where key=value`: revise only the stale nodes whose prior content matches every filter. */
+	reviseWhere: FilterSpec[];
 	/** Plain-fill every session, not just the not-yet-analysed ones. */
 	all?: boolean;
 	/** Run only the analyzers each analysed session is missing (#195). */
@@ -62,11 +65,11 @@ interface AnalyzeArgs {
 }
 
 export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
-	const args = parseArgs(rawArgs ?? "");
+	const args = parseAnalyzeArgs(rawArgs ?? "");
 	// A --source typo fails loudly (throws) rather than silently matching nothing.
 	parseHarnessSource(args.source);
 	const reviseActive = args.revise.length > 0;
-	const reach = reachLabel(args.revise);
+	const reach = reachLabel(args.revise, args.reviseWhere);
 	const config = loadConfig();
 	// A --model override pins every tier to that one model for this run. The
 	// same effective tiers feed both the LLM caller and the framework, so the
@@ -265,6 +268,7 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			try {
 				const summary = await framework.run(session.id, {
 					revise: args.revise,
+					reviseWhere: args.reviseWhere,
 					// Targeted backfill: only the analyzers this session is actually
 					// missing (dependencies are re-added by the framework's topological
 					// order). Everything else stays untouched.
@@ -390,8 +394,9 @@ function out(ctx: ExtensionCommandContext, text: string, level: string): void {
 	console.log(text);
 }
 
-function parseArgs(raw: string): AnalyzeArgs {
-	const result: AnalyzeArgs = { revise: [], analyzerPaths: [] };
+/** Parse `prospect analyze` arguments. Throws an Error with a user-facing message on a malformed filter. */
+export function parseAnalyzeArgs(raw: string): AnalyzeArgs {
+	const result: AnalyzeArgs = { revise: [], reviseWhere: [], analyzerPaths: [] };
 	const parts = raw.trim().split(/\s+/).filter((p) => p.length > 0);
 	for (let i = 0; i < parts.length; i++) {
 		const p = parts[i];
@@ -399,6 +404,8 @@ function parseArgs(raw: string): AnalyzeArgs {
 			for (const r of parseReviseArg(parts[++i]!)) {
 				if (!result.revise.includes(r)) result.revise.push(r);
 			}
+		} else if (p === "--revise-where" && parts[i + 1]) {
+			result.reviseWhere.push(parseFilterSpec(parts[++i]!, "--revise-where"));
 		} else if (p === "--limit" && parts[i + 1]) {
 			const n = parseInt(parts[++i]!, 10);
 			if (!Number.isNaN(n)) result.limit = n;
@@ -419,6 +426,11 @@ function parseArgs(raw: string): AnalyzeArgs {
 			const n = parseInt(parts[++i]!, 10);
 			if (!Number.isNaN(n) && n >= 1) result.analyzerConcurrency = n;
 		}
+	}
+	// A filter only narrows which stale nodes a revise touches. With no reason there
+	// is no revise to narrow, and the run would quietly be a plain fill.
+	if (result.reviseWhere.length > 0 && result.revise.length === 0) {
+		throw new Error("--revise-where narrows a revise: pass --revise <reasons> too, e.g. --revise minor --revise-where category=profanity.");
 	}
 	return result;
 }

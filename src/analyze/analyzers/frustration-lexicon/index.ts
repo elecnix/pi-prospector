@@ -107,7 +107,13 @@ export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	// is unchanged — it always asked the model to judge meaning, and the guard was
 	// applied to the parsed answer — so a verdict cached under the guard keeps its
 	// stored polarity and is simply no longer overridden on the way out.
-	minor: 6,
+	// 1.7: an `insult` category, apart from profanity. An insult names or demeans
+	// the assistant or its work ("idiot", "moron"); profanity is swearing that names
+	// no one. Before, both landed under profanity, so insults aimed at the assistant
+	// could not be counted on their own. Only a verdict filed under profanity can
+	// move, so re-judge just those with `--revise minor --revise-where
+	// category=profanity`; every other verdict stays valid and stale.
+	minor: 7,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };

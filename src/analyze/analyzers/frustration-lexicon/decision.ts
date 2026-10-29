@@ -48,8 +48,8 @@ export const TERM_DECISION_QUESTIONS: Record<string, DecisionQuestion> = {
 				examples: ["bug", "error", "git", "but", "already", "stopped", "pushed", "successfully", "✅"],
 			},
 			frustration: {
-				what: "Profanity, negation or correction markers, repetition markers, impatience, angry emoji",
-				examples: ["wrong", "nope", "again", "still", "stop", "wtf", "🤬"],
+				what: "Profanity, insults, negation or correction markers, repetition markers, impatience, angry emoji",
+				examples: ["wrong", "nope", "again", "still", "stop", "wtf", "idiot", "🤬"],
 			},
 			praise: {
 				what: "Thanks, approval, or praise directed at the assistant, celebratory emoji",
@@ -62,7 +62,11 @@ export const TERM_DECISION_QUESTIONS: Record<string, DecisionQuestion> = {
 		instructions: "Which kind of signal is `term`, if it is a frustration or praise signal at all?",
 		criteria: {
 			none: { what: "Not a signal: ordinary vocabulary", examples: ["file", "but", "pushed"] },
-			profanity: { what: "A swear word or crude insult", examples: ["fuck", "merde"] },
+			profanity: { what: "A swear word that names no one", examples: ["fuck", "merde", "damn"] },
+			insult: {
+				what: "A word that names or demeans the assistant or its work; a swear word that does both is an insult",
+				examples: ["idiot", "moron", "stupid", "dumbass"],
+			},
 			negation: { what: "A word that says no or rejects", examples: ["no", "nope", "non"] },
 			correction: { what: "A word that says something is wrong", examples: ["wrong", "faux", "incorrect"] },
 			repetition: { what: "A word that says something happened before", examples: ["again", "encore", "still"] },
