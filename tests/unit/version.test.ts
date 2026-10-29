@@ -79,4 +79,11 @@ describe("reachLabel", () => {
 		assert.equal(reachLabel(["config", "major"]), "revise:config+major");
 		assert.equal(reachLabel(new Set(["major", "minor"])), "revise:major+minor");
 	});
+
+	it("names the filters of a narrowed revise", () => {
+		assert.equal(
+			reachLabel(["major", "minor"], [{ key: "category", raw: "profanity" }]),
+			"revise:major+minor where category=profanity",
+		);
+	});
 });

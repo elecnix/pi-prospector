@@ -26,6 +26,10 @@
  *     versions coexist "at the same level" and the lineage is navigable. The
  *     reasons only *select* units; a selected unit is always recomputed to the
  *     current recipe in full — latest version, config, and resolved model.
+ *   - `reviseWhere` narrows that selection further: a stale unit is revised only
+ *     when its prior node's content matches every filter (for example, only the
+ *     lexicon terms whose current verdict is `category=profanity`). It never
+ *     touches `missing` work, which has no prior node to match.
  *
  * There is no crash-recovery bookkeeping. Idempotency is structural: a finished
  * node is `current` (skipped on the next run); an unfinished unit is still
@@ -34,6 +38,7 @@
  */
 
 import { Type, type Static } from "typebox";
+import { contentMatchesFilters, type FilterSpec } from "./content-filter.js";
 import { type AsyncDatabase } from "../db/async-db.js";
 import type {
 	Analyzer,
@@ -213,14 +218,16 @@ export class AnalyzerFramework {
 	/**
 	 * Run analysis for a session. With no revise reasons only missing units are
 	 * produced; reasons (`major`/`minor`/`config`) additionally recompute matching
-	 * stale units into new versions linked by `revises` edges.
+	 * stale units into new versions linked by `revises` edges. `reviseWhere`
+	 * keeps only the stale units whose prior node's content matches every filter.
 	 */
 	async run(
 		sessionId: string,
-		opts: { revise?: ReviseReason[]; analyzerIds?: string[]; modelSpec?: string } = {},
+		opts: { revise?: ReviseReason[]; reviseWhere?: FilterSpec[]; analyzerIds?: string[]; modelSpec?: string } = {},
 	): Promise<RunSummary> {
 		const revise = opts.revise ?? [];
 		const requested = expandReviseReasons(revise);
+		const reviseWhere = opts.reviseWhere ?? [];
 		const order = this.topologicalSort(opts.analyzerIds);
 
 		const summary: RunSummary = {
@@ -242,7 +249,7 @@ export class AnalyzerFramework {
 		// can never cross-contaminate each other's cached input.
 		const cache = newSessionInputCache();
 		for (const analyzerId of order) {
-			const result = await this.runAnalyzer(analyzerId, sessionId, requested, opts.modelSpec, summary, cache);
+			const result = await this.runAnalyzer(analyzerId, sessionId, requested, reviseWhere, opts.modelSpec, summary, cache);
 			summary.analyzerResults.push(result);
 		}
 
@@ -253,6 +260,7 @@ export class AnalyzerFramework {
 		analyzerId: string,
 		sessionId: string,
 		requested: ReadonlySet<ReviseReason>,
+		reviseWhere: readonly FilterSpec[],
 		modelSpec: string | undefined,
 		summary: RunSummary,
 		cache: SessionInputCache,
@@ -278,7 +286,8 @@ export class AnalyzerFramework {
 		const seenInputKeys = new Set<string>();
 		const todo = classified.filter((c) => {
 			const selected =
-				c.status === "missing" || (c.status === "stale" && c.reasons.some((r) => requested.has(r)));
+				c.status === "missing" ||
+				(c.status === "stale" && c.reasons.some((r) => requested.has(r)) && priorMatches(c, reviseWhere));
 			if (!selected) return false;
 			if (seenInputKeys.has(c.inputKey)) return false;
 			seenInputKeys.add(c.inputKey);
@@ -292,7 +301,7 @@ export class AnalyzerFramework {
 			analyzerVersionId: versionIdOf(analyzer.version),
 			configId: config.id,
 			sessionId,
-			mode: reachLabel(requested),
+			mode: reachLabel(requested, reviseWhere),
 			promptBundleHash,
 			modelSpec,
 		});
@@ -426,7 +435,16 @@ export class AnalyzerFramework {
 		const prior = await findLatestNodeBySourceSet(this.deps.db, analyzer.def.id, unit.sourceSetHash);
 		if (prior) {
 			const reasons = this.gradeStale(resolved, prior);
-			return { analyzerId: analyzer.def.id, unit, status: "stale", inputKey, priorNodeId: prior.id, priorOutputKey: prior.output_key, reasons };
+			return {
+				analyzerId: analyzer.def.id,
+				unit,
+				status: "stale",
+				inputKey,
+				priorNodeId: prior.id,
+				priorOutputKey: prior.output_key,
+				priorContentJson: prior.content_json,
+				reasons,
+			};
 		}
 
 		return { analyzerId: analyzer.def.id, unit, status: "missing", inputKey, reasons: [] };
@@ -883,6 +901,28 @@ export class AnalyzerFramework {
 		return out;
 	}
 
+}
+
+/**
+ * Whether a stale unit's prior node passes the run's `reviseWhere` filters.
+ *
+ * Matching is the untyped comparison, not the analyzer's declared schema. One
+ * run walks many analyzers, and a filter that names a property one analyzer
+ * declares under another type, or does not declare at all, means "this node does
+ * not match", not "the run is malformed". A prior node with unreadable content
+ * matches nothing, so the filter can only narrow a revise, never widen it.
+ */
+function priorMatches(unit: ClassifiedUnit, reviseWhere: readonly FilterSpec[]): boolean {
+	if (reviseWhere.length === 0) return true;
+	if (unit.priorContentJson === undefined) return false;
+	let content: unknown;
+	try {
+		content = JSON.parse(unit.priorContentJson);
+	} catch {
+		return false;
+	}
+	if (content === null || typeof content !== "object" || Array.isArray(content)) return false;
+	return contentMatchesFilters(content as Record<string, unknown>, [...reviseWhere], undefined);
 }
 
 /** One unit that failed in a run, as the run record reports it. */

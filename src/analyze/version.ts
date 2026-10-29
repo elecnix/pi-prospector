@@ -12,6 +12,7 @@
  */
 
 import type { ReviseReason } from "./types.js";
+import type { FilterSpec } from "./content-filter.js";
 
 export interface SemVer {
 	major: number;
@@ -75,9 +76,18 @@ export function parseReviseArg(value: string): ReviseReason[] {
 	return [...out];
 }
 
-/** A run's human-readable reach label, for run provenance and command output. */
-export function reachLabel(reasons: ReadonlySet<ReviseReason> | readonly ReviseReason[]): string {
+/**
+ * A run's human-readable reach label, for run provenance and command output.
+ * A narrowed revise names its filters, so the run record says which stale nodes
+ * it was allowed to touch: `revise:major+minor where category=profanity`.
+ */
+export function reachLabel(
+	reasons: ReadonlySet<ReviseReason> | readonly ReviseReason[],
+	reviseWhere: readonly FilterSpec[] = [],
+): string {
 	const set = reasons instanceof Set ? reasons : new Set(reasons);
 	if (set.size === 0) return "fill";
-	return `revise:${[...set].sort().join("+")}`;
+	const label = `revise:${[...set].sort().join("+")}`;
+	if (reviseWhere.length === 0) return label;
+	return `${label} where ${reviseWhere.map((f) => `${f.key}=${f.raw}`).join(",")}`;
 }

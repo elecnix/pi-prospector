@@ -77,6 +77,7 @@ export async function executeProspectTool(
 				const parts: string[] = [];
 				const revise = params.revise as string[] | undefined;
 				if (revise && revise.length > 0) parts.push(`--revise ${revise.join(",")}`);
+				for (const spec of (params.revise_where as string[] | undefined) ?? []) parts.push(`--revise-where ${spec}`);
 				if (params.all === true) parts.push("--all");
 				if (typeof params.limit === "number") parts.push(`--limit ${params.limit}`);
 				if (typeof params.recent === "number") parts.push(`--recent ${params.recent}`);
