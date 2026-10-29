@@ -171,6 +171,39 @@ Frustration lexicon: learned 12 new term(s).
 
 `--all` plain-fills every session rather than only unanalysed ones. It stays cheap: scanning is fingerprint lookups, and only turns that actually contain a newly learned word have anything to compute.
 
+#### Your own frustration dictionary
+
+You can file your own words and phrases under a category, in `lexicon` in `~/.pi/agent/prospector.json`. `turn-frustration` matches them the same way it matches learned terms. A phrase of two or more words matches when its words appear in that order within one sentence.
+
+```json
+{
+  "lexicon": {
+    "mode": "both",
+    "dictionary": [
+      { "term": "laisse tomber", "category": "dissatisfaction", "language": "fr" },
+      { "term": "not again", "category": "repetition", "language": "en" },
+      { "term": "nickel", "category": "praise" }
+    ]
+  }
+}
+```
+
+`mode` sets where lexicon hits come from:
+
+| Mode | Hits from | Model calls |
+|------|-----------|-------------|
+| `model` (default) | the learned lexicon | `frustration-lexicon` judges each new term |
+| `dictionary` | your entries only | none: `frustration-lexicon` plans no work |
+| `both` | the learned lexicon and your entries | as in `model` |
+
+Each entry needs a `term` and a `category`. The shipped categories are `profanity`, `insult`, `negation`, `correction`, `repetition`, `urgency`, `confusion`, `dissatisfaction`, and `praise`, and you can use your own. `polarity` is `praise` for the `praise` category and `frustration` otherwise, unless you set it. `language` is an ISO 639-1 code, `und` when you leave it out. `dictionary` can also be the path to a JSON file that holds the same array. A relative path resolves against the directory of `prospector.json`.
+
+Every lexicon hit records `lexicon_source`, `model` or `dictionary`, so a report can tell them apart. In `both` mode, your entry wins when the model has also judged the same term: you wrote the entry for your own sessions, and the model judged the word in general. The model still judges the term, so its verdict is ready if you remove the entry.
+
+Prospector normalises each term the way it tokenises your messages: lowercase, with single spaces between words. It refuses an entry that could never match as written, such as `v2` (a digit) or `à bout` (a one-letter word), and a term listed twice. A muted term stays muted, whichever source filed it.
+
+The mode and the dictionary are part of the `turn-frustration` config, so editing an entry marks the hits drawn under the old dictionary stale for `config`. `--revise config` redraws them. The default `model` mode adds nothing to any config, so every existing node keeps its fingerprint. `dictionary` mode leaves the verdicts you already have in the graph, and switching back to `model` uses them again.
+
 Source: [`lexicon-candidates/index.ts`](./src/analyze/analyzers/lexicon-candidates/index.ts) · tokeniser + paralinguistic markers in [`tokenize.ts`](./src/analyze/analyzers/lexicon-candidates/tokenize.ts) · [`frustration-lexicon/index.ts`](./src/analyze/analyzers/frustration-lexicon/index.ts) · term prompt in [`prompt.ts`](./src/analyze/analyzers/frustration-lexicon/prompt.ts) · [`turn-frustration/index.ts`](./src/analyze/analyzers/turn-frustration/index.ts).
 
 ### tool-trajectory — tool-call patterns (deterministic)
@@ -655,6 +688,7 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 | `modelTiers` | Claude haiku-4-5 / sonnet-4-5 / opus-4-1 | Maps the abstract tiers analyzers request (`cheap`/`mid`/`expensive`) to concrete `provider/model` strings. Each must be a model Pi has credentials for. Override every tier for a single run with `--model`. |
 | `defaultAnalyzers` | every registered analyzer | The analyzers `/prospect-analyze` runs when you don't pass `--analyzer`. |
 | `disabledAnalyzers` | `[]` | Analyzers to take out of that default set, for example one you want to try on a few sessions before running it everywhere. |
+| `lexicon` | `{ "mode": "model" }` | Your own frustration dictionary, and whether lexicon hits come from the learned lexicon, the dictionary, or both. See [Your own frustration dictionary](#your-own-frustration-dictionary). |
 
 Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. Any model Pi supports works. The deterministic `turn-pair-core` layer needs no model.
 

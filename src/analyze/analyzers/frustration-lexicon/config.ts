@@ -67,6 +67,13 @@ export const FrustrationLexiconConfig = Type.Object({
 	 * term as three Choices in one request (#338). Absent by default.
 	 */
 	decisionModel: Type.Optional(Type.String()),
+	/**
+	 * `false` plans no unit, so the analyzer judges no term and calls no model.
+	 * Set by `lexicon.mode: "dictionary"` in prospector.json, where the user's
+	 * dictionary replaces the learned lexicon. Absent by default, so every
+	 * existing verdict keeps its fingerprint.
+	 */
+	adjudicate: Type.Optional(Type.Boolean()),
 });
 export type FrustrationLexiconConfig = Static<typeof FrustrationLexiconConfig>;
 
