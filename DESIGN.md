@@ -762,6 +762,20 @@ list — the system **learns the vocabulary from the corpus**.
   (existence stays additive) but weight follows **longest-match-preferred**: a
   shorter hit fully covered by longer matches carries weight 0, so overlapping
   spans are never counted twice toward ranking.
+- **User dictionary** — words and phrases the user files under a category in
+  `lexicon.dictionary`. It is configuration, not derived analysis, so it enters
+  turn-frustration's config and a hit's recipe through it. `lexicon.mode` picks
+  the hit sources: `model` (the learned lexicon, the default), `dictionary`
+  (the user's entries only, and frustration-lexicon plans no unit), or `both`.
+  Each lexicon hit records its **lexicon source**, `model` or `dictionary`. When
+  both sources know a term, the user's entry takes precedence, because the user
+  wrote it for their own corpus and a verdict judges the word in general. The
+  model still judges that term in `both` mode, so frustration-lexicon's
+  fingerprint does not depend on the dictionary and a removed entry falls back
+  to a verdict already in the graph. Entries go through the turn tokeniser, so
+  an entry matches what the same term would match had the model learned it, and
+  a phrase can be of any length. The default mode adds no config field, so it
+  leaves every existing fingerprint unchanged.
 - **Nomination** — the deterministic first stage: tokenise a session's user
   messages and put forward the distinct terms worth judging, ranked by frequency
   and capped per session. Nomination is language-blind by design — no stopword

@@ -142,11 +142,18 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 
 	modelsForIdentity(config, modelTiers): string[] {
 		const cfg = (config as unknown as FrustrationLexiconConfig) ?? DEFAULT_FRUSTRATION_LEXICON_CONFIG;
+		// No adjudication means no model to resolve, so a dictionary-only setup
+		// needs no credentials for this analyzer.
+		if (cfg.adjudicate === false) return [];
 		if (cfg.decisionModel) return [decisionIdentity(cfg.decisionModel, TERM_DECISION_QUESTIONS_HASH)];
 		return [resolveModelSpec(cfg.tier, modelTiers)];
 	},
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+		// `lexicon.mode: "dictionary"`: the user's dictionary replaces the learned
+		// lexicon, so nothing is judged and no model is called.
+		if ((ctx.config as unknown as FrustrationLexiconConfig | undefined)?.adjudicate === false) return [];
+
 		// This session's nominations, kept in the frequency order nomination chose.
 		// Nodes are read in a fixed order and a duplicate keeps its first position, so
 		// this list is reproducible.

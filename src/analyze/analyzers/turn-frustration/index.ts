@@ -10,6 +10,9 @@
  *     phrase is just a longer corpus-keyed subject, matched over the same
  *     token stream as a word by a windowed n-gram compare within sentence
  *     segments.
+ *     The user's own dictionary (`lexicon.dictionary`) files entries the same
+ *     way, beside or instead of the learned lexicon per `lexicon.mode`, and
+ *     each lexicon hit records which source filed it in `lexicon_source`.
  *   - **paralinguistic** — the turn shouts, piles on punctuation, or holds a
  *     letter down. These need neither a lexicon nor a language.
  *
@@ -56,6 +59,7 @@ import {
 import { hasLoneExclamation } from "../lexicon-candidates/tokenize.js";
 import { DEFAULT_TURN_FRUSTRATION_CONFIG, type TurnFrustrationConfig } from "./config.js";
 import { getMutedTerms } from "../../../db/assertions.js";
+import { LexiconSource } from "./dictionary.js";
 import { Type, type Static } from "typebox";
 
 /** Where a hit came from. */
@@ -71,6 +75,13 @@ export const TurnFrustrationProperties = Type.Object({
 	polarity: Type.String(),
 	category: Type.String(),
 	language: Type.String(),
+	/**
+	 * Which source filed the term, on a lexicon hit: `model` (a verdict of the
+	 * learned lexicon) or `dictionary` (the user's own entry). Absent on a
+	 * paralinguistic hit, and on lexicon hits drawn before turn-frustration 1.9,
+	 * which all came from the model.
+	 */
+	lexicon_source: Type.Optional(LexiconSource),
 	/** Occurrences within the turn (always 1 for a paralinguistic marker). */
 	count: Type.Number(),
 	/** Friction weight this hit contributes. */
@@ -118,7 +129,12 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// term, not the verdict, so a re-judged term leaves its hits current under the
 	// old category. The bump makes them stale, and `--revise minor --revise-where
 	// category=profanity` redraws only the hits that copied profanity.
-	minor: 8,
+	// 1.9: a user dictionary (`lexicon.mode` and `lexicon.dictionary` in
+	// prospector.json). Every lexicon hit now records `lexicon_source`, `model` or
+	// `dictionary`, and in `both` mode the user's entry wins over the model's
+	// verdict for the same term. The default mode draws the same hits as 1.8 plus
+	// `lexicon_source: "model"`, so a hit drawn by 1.8 is stale only for that field.
+	minor: 9,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
@@ -133,8 +149,46 @@ export function paralinguisticSourceId(marker: string): string {
 }
 
 interface HitMeta extends TurnFrustrationProperties {
-	/** Output key of the lexicon node that justified a lexicon hit. */
+	/** Output key of the lexicon node that justified a lexicon hit; null for a dictionary entry or a marker. */
 	termOutputKey: string | null;
+}
+
+/** One usable lexicon entry, from either source. */
+interface LexiconEntry {
+	polarity: string;
+	category: string;
+	language: string;
+	source: LexiconSource;
+	/** The verdict node behind a model entry; null for a dictionary entry. */
+	outputKey: string | null;
+}
+
+/**
+ * The lexicon this run matches, per `lexiconMode`. In `both` mode the user's
+ * entry replaces the model's verdict for the same term: the user wrote it for
+ * their own corpus, and a verdict is the model's guess about the word in general.
+ */
+function activeLexicon(
+	verdicts: readonly AnalysisNodeRow[],
+	config: TurnFrustrationConfig,
+): Map<string, LexiconEntry> {
+	const mode = config.lexiconMode ?? "model";
+	const out = new Map<string, LexiconEntry>();
+	if (mode !== "dictionary") {
+		for (const [term, { props, outputKey }] of usableLexicon(verdicts, config)) {
+			out.set(term, { polarity: props.polarity, category: props.category, language: props.language, source: "model", outputKey });
+		}
+	}
+	if (mode !== "model") {
+		for (const entry of config.dictionary ?? []) {
+			if (entry.polarity === "praise" && !config.includePraise) {
+				out.delete(entry.term);
+				continue;
+			}
+			out.set(entry.term, { polarity: entry.polarity, category: entry.category, language: entry.language, source: "dictionary", outputKey: null });
+		}
+	}
+	return out;
 }
 /**
  * The usable lexicon: confident, non-neutral verdicts, newest per term.
@@ -187,8 +241,12 @@ export const turnFrustrationAnalyzer: Analyzer = {
 
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const config = (ctx.config as unknown as TurnFrustrationConfig) ?? DEFAULT_TURN_FRUSTRATION_CONFIG;
-		// The lexicon is corpus-wide: a term learned in any session applies here.
-		const lexicon = usableLexicon(await ctx.getGlobalDependencyNodes(FRUSTRATION_LEXICON_DEF.id), config);
+		// The learned lexicon is corpus-wide: a term learned in any session applies
+		// here. The user's dictionary joins or replaces it, per `lexiconMode`.
+		const lexicon = activeLexicon(
+			config.lexiconMode === "dictionary" ? [] : await ctx.getGlobalDependencyNodes(FRUSTRATION_LEXICON_DEF.id),
+			config,
+		);
 		// The operator-muted terms (config, not derived). A muted term stops matching
 		// new turns; its existing hit nodes stay and become stale/config lineage.
 		const muted = new Set(await getMutedTerms(ctx.db));
@@ -246,9 +304,10 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						pair_index: pair.index,
 						signal_source: "lexicon",
 						signal: term,
-						polarity: entry.props.polarity,
-						category: entry.props.category,
-						language: entry.props.language,
+						polarity: entry.polarity,
+						category: entry.category,
+						language: entry.language,
+						lexicon_source: entry.source,
 						count: occurrences.length,
 						weight: subsumed ? 0 : config.lexiconHitWeight * exclamationMultiplier,
 						termOutputKey: entry.outputKey,
@@ -272,9 +331,10 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						pair_index: pair.index,
 						signal_source: "lexicon",
 						signal: phrase,
-						polarity: entry.props.polarity,
-						category: entry.props.category,
-						language: entry.props.language,
+						polarity: entry.polarity,
+						category: entry.category,
+						language: entry.language,
+						lexicon_source: entry.source,
 						count: phraseCounts.get(phrase) ?? 1,
 						weight: config.lexiconHitWeight * exclamationMultiplier,
 						termOutputKey: entry.outputKey,
