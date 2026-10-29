@@ -138,6 +138,20 @@ export async function getSessionScope(db: AsyncDatabase, sessionId: string): Pro
 	return (await prep(db, "SELECT source, cwd FROM sessions WHERE id = ?").get(sessionId)) as SessionScope | undefined;
 }
 
+export const SessionLineage = Type.Object({
+	/** The coding harness that wrote the session. */
+	source: Type.String(),
+	/** The session this one forked from (pi) or was spawned by (a child agent), or null. */
+	parent_session: Type.Union([Type.String(), Type.Null()]),
+	started_at: Type.Union([Type.String(), Type.Null()]),
+});
+export type SessionLineage = Static<typeof SessionLineage>;
+
+/** Where a session came from: its harness, its parent link, and when it started. */
+export async function getSessionLineage(db: AsyncDatabase, sessionId: string): Promise<SessionLineage | undefined> {
+	return (await prep(db, "SELECT source, parent_session, started_at FROM sessions WHERE id = ?").get(sessionId)) as SessionLineage | undefined;
+}
+
 // ── Subagent runs ──
 
 export interface SubagentRunInsert {

@@ -1,0 +1,7 @@
+{"type":"session","version":3,"id":"0190aaaa-0000-7000-8000-000000000002","timestamp":"2026-03-01T11:00:00.000Z","cwd":"/home/user/demo","parentSession":"--home-user--demo/2026-03-01T10-00-00-000Z_0190aaaa-0000-7000-8000-000000000001.jsonl"}
+{"type":"message","id":"p01","parentId":null,"timestamp":"2026-03-01T10:00:01.000Z","message":{"role":"user","content":"this is wrong"}}
+{"type":"message","id":"f02","parentId":"p01","timestamp":"2026-03-01T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"message","id":"f03","parentId":"f02","timestamp":"2026-03-01T10:00:11.000Z","message":{"role":"user","content":"this is terrible"}}
+{"type":"message","id":"f04","parentId":"f03","timestamp":"2026-03-01T10:00:12.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"message","id":"f05","parentId":"f04","timestamp":"2026-03-01T11:00:30.000Z","message":{"role":"user","content":"that was stupid"}}
+{"type":"message","id":"f06","parentId":"f05","timestamp":"2026-03-01T11:00:31.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}

@@ -158,6 +158,14 @@ The correction patterns in `turn-pair-core` are English regexes. Write `putain, 
 2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it. The verdict is stored exactly as the model judged it, and the **readers** decide what a verdict is worth: a term is priced by **term specificity**, the share of the corpus's analysed turns that carry it. A word in nearly every turn cannot distinguish one turn from another, so it contributes no weight however often it appears — which is what keeps `do`, `no`, and `never` out of the ranking. The share is measured from the corpus, so the rule needs no word list and works in any language; it is applied when a number is computed, never frozen into a hit node, so it stays current as the corpus grows.
 3. **turn-frustration** (deterministic) matches each turn against the learned lexicon, emitting one node per (turn, signal). A hit promotes the turn into `turn-pair-llm` enrichment even when the deterministic score missed it, and lands in the `session-overview` digest as `frustration=[term:category/lang]`.
 
+Each hit also records the **text origin** of the words it matched. A user message often carries text the person did not type. It may hold a pasted log or a quoted line. Another agent or the harness may have written it, or a fork may have copied it from its parent. The hit's `origin` is `typed` when any occurrence is in typed text, `origins` gives the occurrences per label, and `typed_count` counts the typed ones. The count and the weight stay as before. To list the hits on typed text only:
+
+```
+prospect nodes --analyzer turn-frustration --filter origin=typed
+```
+
+[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them.
+
 Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
 
 **The lexicon widens detection; it never gates it.** Everything that worked before — tool failures, re-asking, empty replies, wasted output, trajectory signals — is untouched. `turn-frustration` also detects frustration carried with *no vocabulary at all*: shouting, repeated punctuation (`???`), and elongation (`nooooo`), which need neither a lexicon nor a language.

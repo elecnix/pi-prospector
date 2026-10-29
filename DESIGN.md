@@ -828,6 +828,16 @@ list — the system **learns the vocabulary from the corpus**.
   containing it and disturbs nothing else in the corpus. A node holding *all* of a
   turn's matches would instead rewrite its own source set every time a word was
   learned, stranding its predecessor as neither revised nor superseded.
+- **Text origin**: the label on a piece of user text that says who wrote it:
+  `typed` (the person), `pasted`, `quoted`, `agent` (another agent wrote or
+  relayed it), `notification` (the harness injected it), or `fork-copy` (a fork
+  copied it from its parent session). Hosts file all of these under the user
+  role, so a frustration word in a pasted log or a relayed prompt would
+  otherwise count as the person's own. A turn-frustration hit records the origin of the text
+  it matched and its occurrences per origin, so a report can count typed text
+  only. The label is a property of the hit, never part of its identity: adding
+  it left each hit's source set unchanged, and the occurrences per origin add
+  up to the hit's count. The rules are in `src/analyze/text-origin.ts`.
 - **Paralinguistic marker** — frustration carried by *form* rather than
   vocabulary: shouting, repeated punctuation, a held-down letter. These need
   neither a lexicon nor a language, and they exist so that a user whose words the
