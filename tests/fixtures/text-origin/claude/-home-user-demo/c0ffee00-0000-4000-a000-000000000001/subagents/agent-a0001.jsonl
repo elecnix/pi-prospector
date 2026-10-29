@@ -1,0 +1,2 @@
+{"type":"user","uuid":"a01","parentUuid":null,"timestamp":"2026-03-02T09:00:20.000Z","sessionId":"c0ffee00-0000-4000-a000-000000000001","cwd":"/home/user/demo","message":{"role":"user","content":"the parent says this is stupid"},"isSidechain":true}
+{"type":"assistant","uuid":"a02","parentUuid":"a01","timestamp":"2026-03-02T09:00:21.000Z","sessionId":"c0ffee00-0000-4000-a000-000000000001","cwd":"/home/user/demo","message":{"role":"assistant","id":"msg_7","model":"test-model","content":[{"type":"text","text":"ok"}]},"isSidechain":true}

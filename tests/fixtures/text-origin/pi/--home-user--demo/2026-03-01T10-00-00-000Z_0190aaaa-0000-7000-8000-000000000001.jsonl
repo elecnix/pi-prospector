@@ -1,0 +1,15 @@
+{"type":"session","version":3,"id":"0190aaaa-0000-7000-8000-000000000001","timestamp":"2026-03-01T10:00:00.000Z","cwd":"/home/user/demo"}
+{"type":"message","id":"p01","parentId":null,"timestamp":"2026-03-01T10:00:01.000Z","message":{"role":"user","content":"this is wrong"}}
+{"type":"message","id":"p02","parentId":"p01","timestamp":"2026-03-01T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"message","id":"p03","parentId":"p02","timestamp":"2026-03-01T10:00:03.000Z","message":{"role":"user","content":"> the build is broken\nplease look again"}}
+{"type":"message","id":"p04","parentId":"p03","timestamp":"2026-03-01T10:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"message","id":"p05","parentId":"p04","timestamp":"2026-03-01T10:00:05.000Z","message":{"role":"user","content":"here is the log:\n\n10:00:01 INFO start\n10:00:02 INFO load\n10:00:03 WARN slow disk\n10:00:04 ERROR garbage collector failed\n10:00:05 INFO retry\n10:00:06 INFO load\n10:00:07 INFO done\n10:00:08 INFO exit"}}
+{"type":"message","id":"p06","parentId":"p05","timestamp":"2026-03-01T10:00:06.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"message","id":"p07","parentId":"p06","timestamp":"2026-03-01T10:00:07.000Z","message":{"role":"user","content":"the tests are useless\n\n— swift-koala-42"}}
+{"type":"message","id":"p08","parentId":"p07","timestamp":"2026-03-01T10:00:08.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"custom_message","id":"p09","parentId":"p08","timestamp":"2026-03-01T10:00:09.000Z","customType":"reminder","content":"an awful reminder","display":false}
+{"type":"message","id":"p10","parentId":"p09","timestamp":"2026-03-01T10:00:10.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"message","id":"p11","parentId":"p10","timestamp":"2026-03-01T10:00:11.000Z","message":{"role":"user","content":"this is terrible"}}
+{"type":"message","id":"p12","parentId":"p11","timestamp":"2026-03-01T10:00:12.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"message","id":"p13","parentId":"p12","timestamp":"2026-03-01T10:00:13.000Z","message":{"role":"user","content":"> it is broken\nthat is wrong"}}
+{"type":"message","id":"p14","parentId":"p13","timestamp":"2026-03-01T10:00:14.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}

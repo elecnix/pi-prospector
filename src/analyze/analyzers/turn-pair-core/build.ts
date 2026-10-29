@@ -21,7 +21,7 @@ import type { MessageRow } from "../../types.js";
  * boundary definition (`user` and `bashExecution` messages, plus `branch_summary`
  * and `custom_message` entries). Compaction summaries are deliberately excluded.
  */
-const TURN_START_ROLES = new Set<string>(["user", "bashExecution", "branch_summary", "custom_message"]);
+export const TURN_START_ROLES: ReadonlySet<string> = new Set<string>(["user", "bashExecution", "branch_summary", "custom_message"]);
 
 export interface PairToolCall {
 	name: string;
