@@ -2,7 +2,7 @@ import type { ExtensionCommandContext, ToolResult } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
-import { buildAdapters } from "./sync.js";
+import { runProspectSync } from "./sync.js";
 import { getStats, listProposals, acceptProposal, rejectProposal, acceptProposalsBulk, rejectProposalsBulk, acceptProposalsWithRemediation, getLatestDecision, getSessionLabels } from "../db/queries.js";
 import type { DecisionInput } from "../db/queries.js";
 import { rankProposals, conciseEntry, sessionGroupHeader } from "./proposals.js";
@@ -64,7 +64,7 @@ export async function executeProspectTool(
 	try {
 		switch (params.action) {
 			case "sync": {
-				const result = await runSync(db, buildAdapters(), {
+				const result = await runProspectSync(db, {
 					project: params.project as string | undefined,
 					source: parseHarnessSource(params.source as string | undefined),
 				});
