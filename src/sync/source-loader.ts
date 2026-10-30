@@ -138,14 +138,24 @@ function findSourceFile(paths: string[], name: string): string | undefined {
 	return undefined;
 }
 
-/** Dynamically import a source module with an mtime cache-busting query. */
+/**
+ * Dynamically import a source module with an mtime cache-busting query.
+ *
+ * The documented export is a class (the README's example) or a ready adapter
+ * object; both load. A class is instantiated with no arguments — a source that
+ * needs settings resolves them itself, the way the analyzer loader's modules do.
+ */
 async function importSource(file: string): Promise<SessionSourceAdapter> {
 	const mtime = fs.statSync(file).mtimeMs;
 	const url = `${pathToFileURL(file).href}?v=${mtime}`;
 	const mod = (await import(url)) as { default?: unknown };
 	const candidate = mod.default;
+	if (typeof candidate === "function") {
+		const Ctor = candidate as new () => SessionSourceAdapter;
+		return new Ctor();
+	}
 	if (!candidate || typeof candidate !== "object") {
-		throw new Error("module must default-export a session source (an object with discover and read)");
+		throw new Error("module must default-export a session source (a class or an adapter object with discover and read)");
 	}
 	return candidate as SessionSourceAdapter;
 }

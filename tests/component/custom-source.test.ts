@@ -127,6 +127,24 @@ describe("loadCustomSources", () => {
 		assert.match(result.errors[0]!.message, /same source tag|conflicts/);
 	});
 
+	it("instantiates a default-exported class with no arguments", async () => {
+		const dir = path.join(root, "classy");
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(
+			path.join(dir, "index.mjs"),
+			`export default class ClassySource {
+				source = "classy";
+				async discover() { return []; }
+				async read() { throw new Error("not reached"); }
+			};
+`,
+		);
+		const result = await loadCustomSources({ names: ["classy"], paths: [root] });
+		assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+		assert.equal(result.loaded.length, 1);
+		assert.equal(result.loaded[0]!.source, "classy");
+	});
+
 	it("re-imports an edited source file instead of returning the cached module", async () => {
 		writeSource("echo", "echo-v1");
 		const first = await loadCustomSources({ names: ["echo"], paths: [root] });

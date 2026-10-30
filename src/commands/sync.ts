@@ -88,6 +88,12 @@ export function buildAdapters(): SessionSourceAdapter[] {
 /** Sync the built-in adapters plus any custom sources config `sources` names, surfacing load errors in the result. */
 export async function runProspectSync(db: AsyncDatabase, opts?: { project?: string; source?: HarnessSource }): Promise<SyncResult> {
 	const { adapters, errors } = await buildCustomAdapters();
+	// A source that reads local evidence (dedup against this very index)
+	// declares a writable `db` field and gets the sync's own handle. The field
+	// is optional: sources without it never see the database.
+	for (const a of adapters) {
+		if ("db" in a) (a as { db: unknown }).db = db;
+	}
 	const result = await runSync(db, [...adapters, ...buildAdapters()], opts);
 	// A custom source that failed to load is a sync error like any other, but
 	// it produces no session rows, so surface it even when every adapter ran.
