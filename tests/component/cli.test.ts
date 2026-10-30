@@ -7,7 +7,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { FIXTURES } from "./helpers.js";
+import { Check } from "typebox/value";
 import { main } from "../../src/cli.js";
+import { Fingerprint } from "../../src/fingerprint/schema.js";
 import type { ModelRegistry } from "../../src/pi-stubs.js";
 
 /**
@@ -93,6 +95,25 @@ describe("prospect CLI", () => {
 		const stats = await capture(["stats"]);
 		assert.equal(stats.code, 0);
 		assert.match(stats.out, /Sessions/i);
+	});
+
+	it("prints a fingerprint as JSON, writes one to a file, and fails on a bad flag", async () => {
+		await capture(["sync"]);
+		const printed = await capture(["fingerprint", "--as-of", "2030-01-01"]);
+		assert.equal(printed.code, 0);
+		const fingerprint = JSON.parse(printed.out);
+		assert.equal(fingerprint.kind, "corpus-fingerprint");
+		assert.equal(fingerprint.asOf, "2030-01-01");
+		assert.ok(fingerprint.sessions.count > 0);
+		assert.ok(Check(Fingerprint, fingerprint), "the printed JSON does not match the schema");
+
+		const file = path.join(tmpDir, "fingerprint.json");
+		const written = await capture(["fingerprint", "--out", file, "--source", "pi"]);
+		assert.equal(written.code, 0);
+		assert.equal(JSON.parse(fs.readFileSync(file, "utf-8")).filter.sources[0], "pi");
+
+		const bad = await capture(["fingerprint", "--source", "vim"]);
+		assert.equal(bad.code, 1);
 	});
 
 	it("passes the remaining arguments to the command", async () => {

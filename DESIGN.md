@@ -866,6 +866,15 @@ reports how many terms it learned and the user asks for a full plain fill. The
 back-fill stays frugal: scanning is cheap, and only the turns that actually
 contain the new word have anything to compute.
 
+### Corpus fingerprint (an output, shareable)
+
+A fingerprint describes a body of sessions to someone who must not see them.
+
+- **Corpus fingerprint**: an output (see *Output*) that states numbers about a corpus: the sessions of chosen sources and a date range, read as of a day. It carries a schema version, the as-of day, the filter that was asked for, and the session count, and it neither writes to the graph nor runs analysis. When an analyzer has not run on enough sessions, the fingerprint withholds that section instead of filling it.
+- **Shareable value**: a value a fingerprint may contain. It is a number, a day, or a member of a fixed list such as a source, a failure class from the catalogue, a lexicon category, or a friction type. Session ids, paths, titles, project names, message text, matched words, and the ids of custom analyzers are not shareable, and the schema has no field for them.
+- **Objective and inferred figures**: an *objective* figure is counted or timed from the transcript, or found by a deterministic analyzer. An *inferred* figure rests on a language model's judgement. The fingerprint files it in its own section, so a reader treats it as an estimate. A frustration signal is inferred even though matching it is deterministic, because a model judged the word.
+- **Minimum group size**: the fewest sessions any published figure may rest on (5). A histogram bucket under it merges into its smaller neighbour. A breakdown group under it folds into `other`, which is published only when `other` reaches the minimum too. A section built on fewer sessions is withheld. Merging buckets, instead of hiding one, stops a reader from recovering a small count by subtracting from the total. The session count is the exception: the fingerprint states it whatever its size.
+
 ### Language-model access
 
 - **Model tier** — an abstract quality/cost band (**cheap**, **mid**,
