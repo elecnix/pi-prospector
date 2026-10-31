@@ -323,6 +323,11 @@ Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · cr
 Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
 
 Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+### activity-windows — when each session was running (deterministic)
+
+Records the stretches a session was active, from the host's own timestamps. Each gap between two messages counts up to an idle cap (300 seconds by default, the same cap as `time-economy`), and each timed tool call counts for its whole span, because a ten-minute test run was running even though nobody wrote anything. The stretches are merged into non-overlapping windows on one session-anchored metric node, with the total and a count of messages that had no timestamp. How many sessions ran at once is a corpus question, so no node stores it. The `concurrency` output folds every session's windows at read time into one row per hour or day with the distinct sessions, the peak number active at the same moment, and the summed active minutes. Those minutes are agent time, not the operator's. Render it with `prospect output activity-windows:concurrency`, which takes `--bucket hour|day` and `--day YYYY-MM-DD`. The analyzer doesn't call a model and proposes nothing.
+
+Source: [`activity-windows/index.ts`](./src/analyze/analyzers/activity-windows/index.ts) · windows in [`detect.ts`](./src/analyze/analyzers/activity-windows/detect.ts) · the fold in [`concurrency.ts`](./src/analyze/analyzers/activity-windows/concurrency.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 

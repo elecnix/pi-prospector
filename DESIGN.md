@@ -894,6 +894,11 @@ contain the new word have anything to compute.
 
 - **Skill load** (a skill brought into the agent's context) is a call to the host's skill tool, or a read of the skill's `SKILL.md` on a host that has no such tool. One load is one call.
 - **Skill use** is the list of skills a session loaded, each with its name, how many times it was loaded, and how many of those calls failed. It records what the agent loaded, never what was available. The instruction corpus is read from disk as it is now, so the skills installed during a past session cannot be recovered. A session that loaded none gets an empty list and still has a record, so a rate over sessions keeps its denominator.
+### Activity and concurrency (deterministic)
+
+- **Activity window** is a stretch of wall-clock time in which a session was running. Each gap between two messages counts up to the idle cap, and each timed tool call counts for its whole span. Overlapping stretches merge, so a session's windows never overlap. A message without a timestamp doesn't add to a window, and the node counts it.
+- **Concurrency** is how many sessions were active at the same moment. It belongs to the corpus, so no node stores it: a session's node would change whenever another session was added. It is a read-time fold of the sessions' activity windows (the `concurrency` output), which keeps rendering a pure read and the graph append-only.
+- **Agent time** is the sum of sessions' active time. With concurrent agents it exceeds the operator's own time, so a total of it is never read as hours the operator worked.
 
 ### Language-model access
 
