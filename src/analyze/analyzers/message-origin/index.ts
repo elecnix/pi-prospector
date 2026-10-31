@@ -35,7 +35,6 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { decisionIdentity } from "../../decision-model.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { getSessionLineage } from "../../../db/queries.js";
 import { classifyMessageOrigin, MessageOrigin, OriginRule, OriginSuspicion, OriginVerdict } from "../../message-origin.js";
 import { DEFAULT_MESSAGE_ORIGIN_CONFIG, type MessageOriginConfig } from "./config.js";
@@ -68,7 +67,7 @@ export const MESSAGE_ORIGIN_DEF: AnalyzerDef = {
 	description:
 		"Labels each turn-starting user-role message with who wrote it: typed (a person composed it), pasted (a person sent copied material), agent (an agent or script wrote it) or notification (the harness injected it). Named rules decide almost every message; a message with only a weak sign of machine authorship goes to a decision model when one is configured.",
 	anchorSpan: "pair",
-	dependencies: [TURN_PAIR_CORE_DEF.id],
+	dependencies: [],
 	outputSchema: MessageOriginProperties,
 };
 
