@@ -841,8 +841,12 @@ list — the system **learns the vocabulary from the corpus**.
 - **Message origin**: the label on a whole user-role message that says who wrote
   it. There are four, a closed list. `typed` means the person composed or
   dictated the words. `pasted` means the person sent material they copied, such
-  as a log, a terminal capture or a bare link. `agent` means an agent or a script
-  wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
+  as a log, a terminal capture or a bare link, with few words of their own
+  beside it. A paste with sentences beside it is not decided by its layout. Neither
+  is a long run of short lines that reads as sentences, because a person who
+  presses return often writes eight lines, and an agent's brief looks the same.
+  Those messages are undecided and go to the decision model. `agent` means
+  an agent or a script wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
   a message relayed from a peer session, a one-shot probe. `notification` means
   the harness or an extension injected it: a monitor event, a task notification,
   a slash command with no arguments, a tool result filed under the user role.

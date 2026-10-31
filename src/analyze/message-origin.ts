@@ -85,6 +85,7 @@ export const OriginSuspicion = Type.Union([
 	Type.Literal("agent-handle"),
 	Type.Literal("field-list"),
 	Type.Literal("pasted-wrapper"),
+	Type.Literal("paste-with-prose"),
 ]);
 export type OriginSuspicion = Static<typeof OriginSuspicion>;
 
@@ -120,8 +121,12 @@ const PI_ENTRY_ROLES = new Set(["custom_message", "branch_summary", "bashExecuti
 /** A tool result arrives within this many seconds of its call. Measured on a corpus: 95% of messages that follow a call land inside it. */
 export const TOOL_RESULT_WINDOW_SECONDS = 120;
 
-/** Prose of at least this many characters beside a paste makes the message the person's own. */
-export const TYPED_PROSE_MIN_CHARS = 200;
+/**
+ * A paste with fewer than this many characters of other text is a pure paste. With
+ * more, the person's sentences may be the message and the paste its attachment, and
+ * the label depends on those sentences.
+ */
+export const PURE_PASTE_MAX_PROSE_CHARS = 40;
 
 /** A probe prompt is short. */
 const PROBE_MAX_CHARS = 200;
@@ -264,6 +269,8 @@ function strongAgentRule(body: string): OriginRule | null {
 	// A person rarely opens a prompt with a markdown title and then writes a page of sections.
 	if (/^# \S/.test(text) && text.length >= 1000 && markdownStructure(text) >= 3) return "brief";
 	if (/^# \S[^\n]*\n+(?:Worktree|Work in)\b/.test(text)) return "brief";
+	// A person does not hand themselves a worktree path.
+	if (/^Worktree(?: for your work)?:\s+\//m.test(text)) return "brief";
 	if (SHELF_ITEM_RE.test(text)) return "shelf-item";
 	if (ROLE_PREAMBLE_RE.test(text) && text.length >= 300) return "role-preamble";
 	// A short test prompt that dictates its own reply is a probe, not a request.
@@ -298,16 +305,46 @@ function weakSigns(body: string): OriginSuspicion[] {
 /** Signs that machine output carries, which a paste of output carries too. */
 const MACHINE_SIGNS: ReadonlySet<OriginSuspicion> = new Set(["machine-text", "sha-and-path", "long-structured"]);
 
-/** The rule that makes `text` copied material, or null when it reads as the person's own words. */
-function pastedVerdict(text: string): OriginRule | null {
-	if (LINK_ONLY_RE.test(text.trim())) return "link-only";
-	// A paste with a few words of the person's own is the paste; a paste attached to a page of prose is the prose.
-	// A quoted line is a way of replying, not material the person did not write.
+/**
+ * Whether lines read as sentences a person wrote: most are five words or more, and
+ * nearly all of each line's words are plain words, not paths, numbers or symbols.
+ * A person who presses return often writes eight short lines, and a log never reads this way.
+ */
+function proseLike(text: string): boolean {
+	const lines = text.split("\n").map((l) => l.replace(/^\s*(?:[-*•▎>]|\d+[.)])\s+/u, "").trim()).filter(Boolean);
+	if (lines.length === 0) return false;
+	const sentence = lines.filter((l) => {
+		const words = l.split(/\s+/);
+		return words.length >= 5 && words.filter((w) => /^[\p{L}'’]+[.,;:?!]?$/u.test(w)).length / words.length >= 0.8;
+	});
+	return sentence.length / lines.length >= 0.6;
+}
+
+/** A span the labeller took for a paste only because it runs to eight lines or more. */
+function isLongParagraph(span: TextSpan): boolean {
+	return !/^\s*(?:```|~~~|<pasted_content|\[Pasted text)/.test(span.text);
+}
+
+/** What the copied-material test found. `mixed` is a paste with the person's own words beside it. */
+type PasteFinding = OriginRule | "mixed" | null;
+
+/** The rule that makes `text` copied material, `mixed` when it also has the person's words, or null. */
+function pastedFinding(text: string, skillExpansion: boolean): PasteFinding {
+	// A link is what the person typed into a skill command, and a paste anywhere else.
+	if (LINK_ONLY_RE.test(text.trim())) return skillExpansion ? null : "link-only";
 	const content = nonSpace(text);
-	const copied = charsByOrigin(labelUserText(text, { role: "user", childAgent: false, forkCopy: false })).get("pasted") ?? 0;
-	const share = content > 0 ? copied / content : 0;
-	if (share >= 0.8 || (share >= 0.5 && content - copied < TYPED_PROSE_MIN_CHARS)) return "pasted-block";
-	if (TERMINAL_RE.test(text.trimStart()) && text.split("\n").length >= 3) return "terminal-output";
+	const spans = labelUserText(text, { role: "user", childAgent: false, forkCopy: false });
+	const copied = charsByOrigin(spans).get("pasted") ?? 0;
+	// A long paragraph that reads as sentences may be the person's own prompt or an agent's brief, so it is no paste.
+	const sentences = spans
+		.filter((span) => span.origin === "pasted" && isLongParagraph(span) && proseLike(span.text))
+		.reduce((sum, span) => sum + nonSpace(span.text), 0);
+	const share = content > 0 ? (copied - sentences) / content : 0;
+	// A quoted line is a way of replying, not material the person did not write.
+	if (share >= 0.5) return content - (copied - sentences) < PURE_PASTE_MAX_PROSE_CHARS ? "pasted-block" : "mixed";
+	if ((copied) / content >= 0.5 && sentences > 0) return "mixed";
+	// A Claude Code prompt echo (`❯ please fix the build`) is the person's sentence, not a shell prompt.
+	if (TERMINAL_RE.test(text.trimStart()) && text.split("\n").length >= 3 && !proseLike(text.trimStart().split("\n")[0]!.replace(/^❯\s*/u, ""))) return "terminal-output";
 	return null;
 }
 
@@ -364,7 +401,8 @@ export function classifyMessageOrigin(rawText: string, ctx: MessageOriginContext
 	// Copied material, judged on the text with the paste wrapper removed. Claude Code
 	// wraps any inserted text in `<pasted_content>`, and dictation tools insert what the
 	// person said the same way, so the wrapper alone says nothing about authorship.
-	const pasted = pastedVerdict(unwrapped);
+	const pasted = pastedFinding(unwrapped, text !== rawText);
+	if (pasted === "mixed") return verdict("typed", "undecided", ["paste-with-prose", ...weakSigns(unwrapped).filter((sign) => !MACHINE_SIGNS.has(sign))]);
 	if (pasted) {
 		// Pasted output after a tool call that never got its result is that call's output,
 		// however late. A bare link is more likely the person's, so it stays a paste.
