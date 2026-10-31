@@ -304,7 +304,7 @@ function pastedVerdict(text: string): OriginRule | null {
 	// A paste with a few words of the person's own is the paste; a paste attached to a page of prose is the prose.
 	// A quoted line is a way of replying, not material the person did not write.
 	const content = nonSpace(text);
-	const copied = charsByOrigin(labelUserText(text, { role: "user", childAgent: false, forkCopy: false })).get("pasted") ?? 0;
+	const copied = charsByOrigin(labelUserText(text, { forkCopy: false })).get("pasted") ?? 0;
 	const share = content > 0 ? copied / content : 0;
 	if (share >= 0.8 || (share >= 0.5 && content - copied < TYPED_PROSE_MIN_CHARS)) return "pasted-block";
 	if (TERMINAL_RE.test(text.trimStart()) && text.split("\n").length >= 3) return "terminal-output";
@@ -339,11 +339,10 @@ export function classifyMessageOrigin(rawText: string, ctx: MessageOriginContext
 	if (NUMBERED_LISTING_RE.test(lead)) return verdict("notification", "tool-result");
 	if (SLASH_COMMAND_RE.test(lead) || EMPTY_COMMAND_RE.test(lead)) return verdict("notification", "slash-command");
 
-	// The span labeller also claims a signed message whole, so test the signature first.
 	if (SIGNATURE_RE.test(text.trimEnd())) return verdict("agent", "signature");
 
 	// Spans come from the span labeller with its whole-message rules switched off.
-	const spans = labelUserText(text, { role: "user", childAgent: false, forkCopy: false });
+	const spans = labelUserText(text, { forkCopy: false });
 	const chars = charsByOrigin(spans);
 	const notification = chars.get("notification") ?? 0;
 	const agentBlock = chars.get("agent") ?? 0;

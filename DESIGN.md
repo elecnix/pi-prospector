@@ -837,7 +837,15 @@ list — the system **learns the vocabulary from the corpus**.
   it matched and its occurrences per origin, so a report can count typed text
   only. The label is a property of the hit, never part of its identity: adding
   it left each hit's source set unchanged, and the occurrences per origin add
-  up to the hit's count. The rules are in `src/analyze/text-origin.ts`.
+  up to the hit's count. The rules are in `src/analyze/text-origin.ts`. Text
+  origin labels the spans inside a message. A turn-frustration hit also reads the
+  **message origin** (below) of its turn: when that node is decided and is not
+  `typed`, every occurrence in the message takes its label, so a brief an
+  orchestrator wrote or a short terminal capture is not the person's words. A
+  `typed` or undecided message keeps the span labels, because a typed message can
+  hold a pasted block or a quoted line. The message-level rules (child agent,
+  signature, pi entry, compaction) live only in `message-origin.ts`. The span
+  labeller keeps `fork-copy`, which compares a turn with the parent session's turns.
 - **Message origin**: the label on a whole user-role message that says who wrote
   it. There are four, a closed list. `typed` means the person composed or
   dictated the words. `pasted` means the person sent material they copied, such
@@ -851,7 +859,11 @@ list — the system **learns the vocabulary from the corpus**.
   serves a frustration hit. Message origin labels the whole message and serves any
   analyzer that must count only what a person wrote. Both read the harness
   blocks that `text-origin.ts` knows, and a report joins a hit to its message's
-  node through the message anchor.
+  node through the message anchor, and turn-frustration records the node as an
+  input by a `consumes` edge. The edge is a record and the hit's identity does not
+  include the node, the way the lexicon verdict a hit copies is not part of it: a
+  new origin node makes a hit stale for the next `--revise minor`, and the hit
+  never becomes a second subject beside its predecessor.
 - **Origin rule**: the test that decided a message's origin, such as
   `child-session`, `signature`, `tool-result` or `pasted-block`. Every node
   records its rule, so a reader can see why a message got its label. A strong
