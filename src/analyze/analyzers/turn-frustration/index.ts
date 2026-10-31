@@ -59,8 +59,10 @@ import {
 import { hasLoneExclamation } from "../lexicon-candidates/tokenize.js";
 import { DEFAULT_TURN_FRUSTRATION_CONFIG, type TurnFrustrationConfig } from "./config.js";
 import { getMutedTerms } from "../../../db/assertions.js";
+import { currentHits } from "../../../db/muted-terms.js";
 import { LexiconSource } from "./dictionary.js";
 import { getSessionLineage } from "../../../db/queries.js";
+import { MESSAGE_ORIGIN_DEF, type MessageOriginProperties } from "../message-origin/index.js";
 import { getSessionMessageRows } from "../../../db/analysis-queries.js";
 import { TURN_START_ROLES } from "../turn-pair-core/build.js";
 import {
@@ -123,7 +125,7 @@ export const TURN_FRUSTRATION_DEF: AnalyzerDef = {
 	description:
 		"Matches each turn's user text against the corpus-wide learned lexicon — single terms and two-word phrases — and against lexicon-free markers (shouting, repeated punctuation, elongation), emitting one node per (turn, signal). A lone `!` acts as a weight modulator rather than a signal. Each hit records the origin of the text it matched (typed, pasted, quoted, agent, notification, fork-copy). No LLM. Detects verbal frustration in any language, including from users whose vocabulary the lexicon has never seen.",
 	anchorSpan: "pair",
-	dependencies: [TURN_PAIR_CORE_DEF.id, FRUSTRATION_LEXICON_DEF.id],
+	dependencies: [TURN_PAIR_CORE_DEF.id, FRUSTRATION_LEXICON_DEF.id, MESSAGE_ORIGIN_DEF.id],
 	outputSchema: TurnFrustrationProperties,
 };
 
@@ -170,7 +172,16 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// (`</pasted_content id="4a2f">`, how Claude Code writes every paste) is now
 	// labelled `pasted`. Before, the labeller found no closing tag, so a hit inside
 	// a real paste kept the label `typed`. Only the origin fields can move.
-	minor: 11,
+	// 1.12: a hit reads the message-origin node of its turn. A message that node
+	// labels `agent`, `notification` or `pasted` (decided) gives every occurrence in
+	// it that label, so a brief an orchestrator wrote or a short terminal capture no
+	// longer counts as the person's words. A message labelled `typed`, or undecided,
+	// keeps the span labels. The node is an input by a `consumes` edge and stays out
+	// of the hit's source set, as the lexicon verdict does, so a hit keeps its
+	// identity and `--revise minor` redraws it beside its predecessor. The
+	// whole-message rules that text-origin.ts had (child agent, signature, pi entry,
+	// compaction) moved to message-origin and are gone from the span labeller.
+	minor: 12,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
@@ -187,6 +198,8 @@ export function paralinguisticSourceId(marker: string): string {
 interface HitMeta extends TurnFrustrationProperties {
 	/** Output key of the lexicon node that justified a lexicon hit; null for a dictionary entry or a marker. */
 	termOutputKey: string | null;
+	/** Output key of the message-origin node the labels came from; null when the turn has none. */
+	originOutputKey: string | null;
 }
 
 /** One usable lexicon entry, from either source. */
@@ -296,6 +309,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 			// The turn's text, split by where each part came from. Each hit below
 			// counts its occurrences per span, so the label never changes the count.
 			const spans = origins.spansOf(pair.userMessageId, pair.userText, pair.timestamp);
+			const originOutputKey = origins.keyOf(pair.userMessageId);
 			const spanTokens = spans.map((span) => tokenize(span.text));
 
 			// The turn's modulator multiplier, computed once and applied to every hit
@@ -355,6 +369,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						weight: subsumed ? 0 : config.lexiconHitWeight * exclamationMultiplier,
 						...originFields(spans, spans.map((_, i) => spanTokens[i]!.filter((t) => t === term).length), occurrences.length),
 						termOutputKey: entry.outputKey,
+						originOutputKey,
 					}),
 				);
 			}
@@ -387,6 +402,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 							phraseCounts.get(phrase) ?? 1,
 						),
 						termOutputKey: entry.outputKey,
+						originOutputKey,
 					}),
 				);
 			}
@@ -406,6 +422,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 						weight: config.paralinguisticWeight * exclamationMultiplier,
 						...markerOrigin(spans, marker),
 						termOutputKey: null,
+						originOutputKey,
 					}),
 				);
 			}
@@ -415,7 +432,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 
 	analyze(unit: AnalysisUnit, _ctx: AnalyzerRunContext): AnalysisResult {
 		const meta = unit.meta as unknown as HitMeta;
-		const { termOutputKey, ...properties } = meta;
+		const { termOutputKey, originOutputKey, ...properties } = meta;
 
 		const edges: AnalysisResult["edges"] = [
 			{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
@@ -426,6 +443,14 @@ export const turnFrustrationAnalyzer: Analyzer = {
 				toRefId: termOutputKey,
 				edgeKind: EDGE_KINDS.CONSUMES,
 				ordinal: 1,
+			});
+		}
+		if (originOutputKey) {
+			edges.push({
+				toRefKind: REF_KINDS.ANALYSIS_NODE,
+				toRefId: originOutputKey,
+				edgeKind: EDGE_KINDS.CONSUMES,
+				ordinal: 2,
 			});
 		}
 
@@ -531,6 +556,8 @@ function markerOrigin(spans: readonly TextSpan[], marker: string): OriginFields 
 /** Labels a session's turns. Built once per plan. */
 interface OriginLabeller {
 	spansOf: (messageId: string, text: string, timestamp: string | null) => TextSpan[];
+	/** Output key of the turn's message-origin node, or null when it has none. */
+	keyOf: (messageId: string) => string | null;
 }
 
 /**
@@ -546,10 +573,8 @@ interface OriginLabeller {
  * `typed` on the copied turn until a revise redraws it.
  */
 async function originContext(ctx: AnalyzerPlanContext): Promise<OriginLabeller> {
-	const roles = new Map(ctx.messages.map((m) => [m.id, m.role]));
 	const lineage = await getSessionLineage(ctx.db, ctx.sessionId);
 	const parent = lineage?.parent_session ?? null;
-	const childAgent = parent !== null && lineage?.source !== "pi";
 	const parentTurns: OriginMessage[] =
 		parent === null
 			? []
@@ -557,12 +582,27 @@ async function originContext(ctx: AnalyzerPlanContext): Promise<OriginLabeller> 
 					.filter((m) => TURN_START_ROLES.has(m.role) && m.content_text)
 					.map((m) => ({ text: m.content_text ?? "", timestamp: m.timestamp }));
 	const startedAt = lineage?.started_at || null;
+
+	// The message-origin node of each turn, newest per message. A message with no
+	// node (the analyzer did not run on it) keeps the span labels.
+	const nodes = new Map<string, { origin: MessageOriginProperties["origin"]; decided: boolean; outputKey: string }>();
+	for (const node of currentHits(ctx.dependencyNodes[MESSAGE_ORIGIN_DEF.id] ?? [])) {
+		try {
+			const props = JSON.parse(node.content_json) as MessageOriginProperties;
+			nodes.set(props.user_message_id, { origin: props.origin, decided: props.decided, outputKey: node.output_key });
+		} catch {
+			continue;
+		}
+	}
 	return {
-		spansOf: (messageId, text, timestamp) =>
-			labelUserText(text, {
-				role: roles.get(messageId) ?? "user",
-				childAgent,
-				forkCopy: parentTurns.length > 0 && isForkCopy({ text, timestamp }, startedAt, parentTurns),
-			}),
+		keyOf: (messageId) => nodes.get(messageId)?.outputKey ?? null,
+		spansOf: (messageId, text, timestamp) => {
+			if (parentTurns.length > 0 && isForkCopy({ text, timestamp }, startedAt, parentTurns)) return labelUserText(text, { forkCopy: true });
+			// A decided label for the whole message is final unless the person typed it.
+			// `typed` and an undecided message keep the finer span labels.
+			const node = nodes.get(messageId);
+			if (node?.decided && node.origin !== "typed" && text.trim()) return [{ origin: node.origin, text }];
+			return labelUserText(text, { forkCopy: false });
+		},
 	};
 }

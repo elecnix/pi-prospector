@@ -59,8 +59,8 @@ export const DEFAULT_ANALYZER_IDS = [
 	"turn-pair-core",
 	"lexicon-candidates",
 	"frustration-lexicon",
-	"turn-frustration",
 	"message-origin",
+	"turn-frustration",
 	"attention-gaps",
 	"turn-pair-llm",
 	"assistant-cognition",
@@ -113,9 +113,10 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// turn-pair-llm because a lexicon hit can promote a turn into enrichment.
 	lexiconCandidatesAnalyzer,
 	frustrationLexiconAnalyzer,
-	turnFrustrationAnalyzer,
 	// Who wrote each user-role message: rules first, a decision model for the undecided.
+	// Before turn-frustration, which reads these nodes to label a hit.
 	messageOriginAnalyzer,
+	turnFrustrationAnalyzer,
 	// How long the agent waited for a person, from the typed messages message-origin settled.
 	attentionGapsAnalyzer,
 	turnPairLLMAnalyzer,
