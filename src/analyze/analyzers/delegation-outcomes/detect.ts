@@ -59,7 +59,11 @@ export function scanDelegations(
 	const tools = new Set(config.delegationToolNames.map((n) => n.toLowerCase()));
 	const failed = new Set(config.failedBackgroundStatuses.map((s) => s.toLowerCase()));
 	const killed = new Set(config.killedBackgroundStatuses.map((s) => s.toLowerCase()));
-	const background = new Map(backgroundTasks.map((t) => [t.tool_use_id, (t.status ?? "").toLowerCase()]));
+	// A completion record with no status says nothing about how the work ended, so it
+	// does not decide: the call falls through to the result's own flags.
+	const background = new Map(
+		backgroundTasks.filter((t) => (t.status ?? "").trim() !== "").map((t) => [t.tool_use_id, t.status!.trim().toLowerCase()]),
+	);
 
 	const { invocations } = buildToolStream(messages);
 	const events: DelegationEvent[] = [];
