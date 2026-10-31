@@ -44,6 +44,17 @@ describe("deliveryKindsOf", () => {
 		assert.deepEqual(deliveryKindsOf("gh pr merge 12 --auto --squash"), []);
 	});
 
+	it("ignores an unquoted mention of a command that does not run it", () => {
+		assert.deepEqual(deliveryKindsOf("echo git commit"), []);
+		assert.deepEqual(deliveryKindsOf("grep -l git push notes.txt"), []);
+		assert.deepEqual(deliveryKindsOf("echo gh pr merge 12"), []);
+	});
+
+	it("reads a command behind a wrapper, an environment assignment, or a leading cd", () => {
+		assert.deepEqual(deliveryKindsOf("cd /repo && GIT_AUTHOR_NAME=a git commit -m x"), ["commit"]);
+		assert.deepEqual(deliveryKindsOf("timeout 60 git push origin x"), ["push"]);
+	});
+
 	it("counts git commit -n, which is --no-verify", () => {
 		assert.deepEqual(deliveryKindsOf(`git commit -n -m x`), ["commit"]);
 	});

@@ -20,6 +20,7 @@
 import type { MessageRow } from "../../types.js";
 import { buildToolStream } from "../../tool-stream.js";
 import { commandSegments, gitSubcommand, stripCommandText } from "../time-economy/spans.js";
+import { commandFamily } from "../time-economy/detect.js";
 import { DEFAULT_SESSION_DELIVERY_CONFIG, type SessionDeliveryConfig } from "./config.js";
 
 export type DeliveryKind = "commit" | "push" | "pr_merge";
@@ -39,12 +40,15 @@ export interface DeliveryEvent {
 export function deliveryKindsOf(command: string): DeliveryKind[] {
 	const kinds: DeliveryKind[] = [];
 	for (const segment of commandSegments(stripCommandText(command))) {
-		const sub = gitSubcommand(segment);
+		// The program must sit at command position: `echo git commit` and
+		// `grep -l git push` mention a command without running it.
+		const program = commandFamily(segment, 1);
+		const sub = program === "git" ? gitSubcommand(segment) : null;
 		// `-n` is a dry run for push but `--no-verify` for commit.
 		if (/\s--dry-run\b/.test(segment) || (sub === "push" && /\s-n\b/.test(segment))) continue;
 		if (sub === "commit") kinds.push("commit");
 		else if (sub === "push") kinds.push("push");
-		else if (/\bgh\s+pr\s+merge\b/.test(segment) && !/\s--(auto|merge-queue)\b/.test(segment)) kinds.push("pr_merge");
+		else if (commandFamily(segment, 3) === "gh pr merge" && !/\s--(auto|merge-queue)\b/.test(segment)) kinds.push("pr_merge");
 	}
 	return kinds;
 }
