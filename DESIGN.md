@@ -916,6 +916,56 @@ contain the new word have anything to compute.
   place and never reimplemented here. In tests it is replaced by a deterministic
   stand-in so the suite needs no network and no API key.
 
+### Measurement and comparability
+
+Every number a report prints comes from a node or from the messages. A reader
+can check it only if the number has a stated meaning, a stated method, and
+stated limits. Each analyzer declares those for its metrics next to its code,
+and `prospect metrics` prints them. These terms are the vocabulary of those
+definitions.
+
+- **Metric**: a number derived from the index: stored in a node, or computed by
+  a read over nodes and messages. A metric has a name, a one-sentence
+  definition, a measurement class, a unit, a denominator, and known limits.
+- **Measurement class**: how a value was decided. A **counted** value is counted
+  or timed from the transcript with no judgement. A **rule-based** value comes
+  from a deterministic analyzer applying a hand-written rule or catalogue: the
+  same input always gives the same output, but the rule can be wrong. An
+  **inferred** value was judged by a language model or a decision model and is an
+  estimate. A report keeps the three apart.
+- **Denominator**: the population a rate is a share of. Every rate states it,
+  because the population moves. The turns a classifier judged are the turns its
+  version chose to escalate, not all turns, so a share of classified turns
+  describes that selection.
+- **Coverage**: the share of a denominator that an analyzer actually read. A
+  figure with low coverage describes the sessions it read, and a month with
+  different coverage describes different sessions.
+- **Capture era**: the span of sessions indexed while the sync layer stored a
+  named field. A field added later is unknown in earlier sessions until they are
+  synced again, and unknown never reads as zero. The call id, the stop reason,
+  the billed cost, the recorded model, and the tool inventory each started a
+  capture era.
+- **Series break**: a point where a metric changes meaning or population: a new
+  analyzer version, a new resolved model, a new capture era, or a change of
+  harness. A comparison across a series break compares two measurements, not one
+  trend. The repair is to recompute the whole window to the current recipe with a
+  revise run (graded by the analyzer's version move). Until then, compare only
+  inside an unbroken stretch.
+- **Session ending**: how a session stopped, read from the last events of its
+  transcript. The session-ending analyzer decides it with rules and no model.
+- **Ending label**: the session ending reduced to one of five values, listed in
+  the order the rules are tried. **errored**: the last recorded events are
+  failures. **abandoned**: the transcript stops with work unfinished (the operator
+  aborted the last generation, a tool result nobody answered, a user message the
+  agent never replied to, or an assistant step still issuing tool calls).
+  **handed-off**: the last message is a short closure from the user, such as
+  "thanks". **resolved**: the agent wrote a substantive final summary and the most
+  recent verification-class command succeeded (or, with no such command, the last
+  tool result succeeded). **unclear**: everything else. The label is a coarse
+  ranking input and never gates detection. It reads outcomes from the action
+  stream, so a session whose calls and results could not be paired cannot be
+  labelled **resolved**.
+
 ### Proposals (the product)
 
 - **Proposal** — a single, concrete, reviewable suggestion to improve a steering
@@ -1023,9 +1073,10 @@ contain the new word have anything to compute.
   baseline, and SWE-Replay (2026) *discards* trajectories whose outcome was bad
   before mining them, on the grounds that their intermediate steps mislead —
   worth about four points in their ablation. The second of those marks a gap we
-  still carry: a session's **outcome** is not something this system labels, so
-  friction from a session that succeeded anyway is mined identically to friction
-  from one that was abandoned. In pi-prospector the contrast works
+  still carry: a session's **ending label** is coarse and no proposal is weighted
+  by it yet, so friction from a session that succeeded anyway is mined
+  identically to friction from one that was abandoned. In pi-prospector the
+  contrast works
   at two scopes: **within-session** (a clean pair versus a friction pair in the
   same session) and **cross-session** (a session is handed a compact digest of up
   to N *smooth* sibling sessions in the same repo/`cwd` as negative examples —
@@ -1602,8 +1653,8 @@ only our own reasoning, and where the literature says we are still short.
   outcome before mining them; a cheap deterministic selector beat an
   LLM-as-a-judge at lower cost. → *Deterministic first*; success/failure
   contrast.
-  **Where it says we are short:** we assign no outcome label to a session, so
-  we cannot filter or weight by it.
+  **Where it says we are short:** a session's ending label is coarse and
+  rule-based, and nothing filters or weights proposals by it yet.
 
 - **Chen et al. (2026), Process-Centric Analysis of Agentic Software Systems
   (Graphectory)**, OOPSLA

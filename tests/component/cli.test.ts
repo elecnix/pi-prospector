@@ -95,6 +95,17 @@ describe("prospect CLI", () => {
 		assert.match(stats.out, /Sessions/i);
 	});
 
+	it("prints one analyzer's metric definitions and lists the analyzers that have none", async () => {
+		const one = await capture(["metrics", "--analyzer", "session-ending"]);
+		assert.equal(one.code, 0);
+		assert.match(one.out, /Session ending label/);
+		assert.match(one.out, /version \d+\.\d+, deterministic/);
+		const gaps = await capture(["metrics", "--gaps"]);
+		assert.equal(gaps.code, 0);
+		assert.match(gaps.out, /navigation-efficiency/);
+		assert.equal((await capture(["metrics", "--analyzer", "nope"])).code, 1);
+	});
+
 	it("passes the remaining arguments to the command", async () => {
 		const { code, out } = await capture(["analyzers", "list"]);
 		assert.equal(code, 0);
