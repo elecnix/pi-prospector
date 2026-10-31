@@ -897,8 +897,8 @@ contain the new word have anything to compute.
 ### Repository identity (deterministic, session-level)
 
 - **Repository key** is the one name a session's repository goes by, whatever the worktree or the spelling. It is the directory right below a repository root in the session's working directory, lowercased, without a trailing `.git`. The bare-repository-plus-worktrees layout and a plain clone give the same key.
-- **Placement** says where a session ran relative to a repository root: in a **repo**, in a **temp** directory, **unplaced** (outside every root), or **unknown** (the host recorded no directory). Only a session in a repo has a key. The others carry null, because a guessed key would count the session under the wrong repository.
-- **Checkout** is the first directory below the repository: a worktree's name in the worktrees layout, otherwise a subdirectory.
+- **Placement** says where a session ran relative to a repository root: in a **repo**, in a **temp** directory, **unplaced** (outside every root), or **unknown** (the host didn't record a directory). Only a session in a repo has a key. The others have a null key, because a guessed key would count the session under the wrong repository.
+- **Checkout** is the first directory below the repository. In the worktrees layout it is a worktree's name, otherwise a subdirectory.
 
 ### Language-model access
 
