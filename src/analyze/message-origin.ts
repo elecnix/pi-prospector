@@ -366,8 +366,9 @@ export function classifyMessageOrigin(rawText: string, ctx: MessageOriginContext
 	// person said the same way, so the wrapper alone says nothing about authorship.
 	const pasted = pastedVerdict(unwrapped);
 	if (pasted) {
-		// A paste right after a tool call that never got its result is that call's output.
-		if (ctx.secondsAfterToolCall !== null) return verdict("notification", "tool-result");
+		// Pasted output after a tool call that never got its result is that call's output,
+		// however late. A bare link is more likely the person's, so it stays a paste.
+		if (ctx.secondsAfterToolCall !== null && pasted !== "link-only") return verdict("notification", "tool-result");
 		// A paste that reads like a brief an agent wrote is not settled by its shape alone.
 		const signs = weakSigns(unwrapped).filter((sign) => !MACHINE_SIGNS.has(sign));
 		return signs.length > 0 ? verdict("typed", "undecided", signs) : verdict("pasted", pasted);

@@ -15,7 +15,7 @@ export const MessageOriginConfig = Type.Object({
 	 * for the message to count as settled. Below it the node stays undecided and
 	 * keeps the model's distribution, so a reader can see how close the call was.
 	 */
-	minConfidence: Type.Number(),
+	minConfidence: Type.Number({ minimum: 0, maximum: 1 }),
 });
 export type MessageOriginConfig = Static<typeof MessageOriginConfig>;
 

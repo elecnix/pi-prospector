@@ -157,6 +157,10 @@ describe("classifyMessageOrigin: pasted", () => {
 		assert.equal(label(out, { role: "user", childAgent: false, secondsAfterToolCall: 900 }), "notification/tool-result");
 	});
 
+	it("keeps a bare link a paste when it follows an unanswered tool call late", () => {
+		assert.equal(label("https://example.invalid/acme/widgets/pull/12", { role: "user", childAgent: false, secondsAfterToolCall: 900 }), "pasted/link-only");
+	});
+
 	it("sends a paste that reads like an agent's brief to the model instead of calling it a paste", () => {
 		const brief = Array.from({ length: 9 }, (_, i) => `Worktree: /work/repo-${i}\nBranch: fix/thing-${i}`).join("\n");
 		assert.equal(classifyMessageOrigin(brief, USER).decided, false);
