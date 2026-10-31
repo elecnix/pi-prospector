@@ -6,40 +6,48 @@
  * quotes, and harness envelopes out of a typed message, so a prompt with a log
  * pasted under it is measured by the sentence the person wrote.
  *
- * The kinds are language-blind on purpose, matching the rest of the system. A
- * prompt is a **correction** when `turn-pair-core` marked it one, a **question**
- * when its own words carry a question mark (`?`, `？`, `¿`) and it is not a
- * correction, and an **instruction** otherwise. A question without a mark reads
- * as an instruction: the kind is a floor on questions, never a ceiling.
+ * The kind of a prompt (question, instruction, correction, other) is a
+ * classifier answer from `message-answers`, read in any language. A prompt with
+ * no answer, or an answer below the configured confidence, has the kind
+ * `unknown`: not a guess, and not zero.
  */
 
+import { Type, type Static } from "typebox";
 import { labelUserText } from "../../text-origin.js";
 import { DEFAULT_PROMPT_FORM_CONFIG, type PromptFormConfig } from "./config.js";
 
-export type PromptKind = "question" | "instruction" | "correction";
+export const PromptKindOrUnknown = Type.Union([
+	Type.Literal("question"),
+	Type.Literal("instruction"),
+	Type.Literal("correction"),
+	Type.Literal("other"),
+	Type.Literal("unknown"),
+]);
+export type PromptKindOrUnknown = Static<typeof PromptKindOrUnknown>;
 
 /** What the scan needs to know about one typed prompt. */
-export interface TypedPrompt {
+export const TypedPrompt = Type.Object({
 	/** The message's full text. */
-	text: string;
-	/** Whether `turn-pair-core` marked the turn a correction. */
-	correction: boolean;
-}
+	text: Type.String(),
+	/** The classifier's kind, or `unknown`. */
+	kind: PromptKindOrUnknown,
+});
+export type TypedPrompt = Static<typeof TypedPrompt>;
 
-export interface PromptShape {
-	kind: PromptKind;
-	chars: number;
+export const PromptShape = Type.Object({
+	kind: PromptKindOrUnknown,
+	chars: Type.Number(),
 	/** The person's own words held a bullet or numbered list of at least the configured size. */
-	has_list: boolean;
+	has_list: Type.Boolean(),
 	/** The person's own words held a markdown heading. */
-	has_heading: boolean;
+	has_heading: Type.Boolean(),
 	/** The message held a fenced code block, whoever wrote it. */
-	has_code_block: boolean;
-}
+	has_code_block: Type.Boolean(),
+});
+export type PromptShape = Static<typeof PromptShape>;
 
 const LIST_LINE = /^\s*(?:[-*•]|\d+[.)])\s+\S/;
 const HEADING_LINE = /^\s{0,3}#{1,6}\s+\S/;
-const QUESTION_MARK = /[?？¿]/;
 
 /** The shape of one typed prompt, or null when none of its words were the person's own. */
 export function shapeOf(prompt: TypedPrompt, config: PromptFormConfig = DEFAULT_PROMPT_FORM_CONFIG): PromptShape | null {
@@ -51,7 +59,7 @@ export function shapeOf(prompt: TypedPrompt, config: PromptFormConfig = DEFAULT_
 	if (own === "") return null;
 	const lines = own.split("\n");
 	return {
-		kind: prompt.correction ? "correction" : QUESTION_MARK.test(own) ? "question" : "instruction",
+		kind: prompt.kind,
 		chars: own.length,
 		has_list: lines.filter((l) => LIST_LINE.test(l)).length >= config.listMinLines,
 		has_heading: lines.some((l) => HEADING_LINE.test(l)),
@@ -59,29 +67,31 @@ export function shapeOf(prompt: TypedPrompt, config: PromptFormConfig = DEFAULT_
 	};
 }
 
-export interface LengthBucket {
+export const LengthBucket = Type.Object({
 	/** Upper bound in characters, or null for the overflow bucket. */
-	le_chars: number | null;
-	count: number;
-}
+	le_chars: Type.Union([Type.Number(), Type.Null()]),
+	count: Type.Number(),
+});
+export type LengthBucket = Static<typeof LengthBucket>;
 
-export interface PromptFormScan {
+export const PromptFormScan = Type.Object({
 	/** Messages settled as typed. */
-	typed_message_count: number;
+	typed_message_count: Type.Number(),
 	/** Typed messages with none of the person's own words after pasted and quoted text is cut. */
-	no_own_words_count: number;
+	no_own_words_count: Type.Number(),
 	/** Messages whose origin is provisional; their form is not read. */
-	undecided_message_count: number;
-	kinds: Record<PromptKind, number>;
-	sum_chars: number;
-	median_chars: number | null;
-	p90_chars: number | null;
-	max_chars: number | null;
-	length_buckets: LengthBucket[];
-	list_count: number;
-	heading_count: number;
-	code_block_count: number;
-}
+	undecided_message_count: Type.Number(),
+	kinds: Type.Record(PromptKindOrUnknown, Type.Number()),
+	sum_chars: Type.Number(),
+	median_chars: Type.Union([Type.Number(), Type.Null()]),
+	p90_chars: Type.Union([Type.Number(), Type.Null()]),
+	max_chars: Type.Union([Type.Number(), Type.Null()]),
+	length_buckets: Type.Array(LengthBucket),
+	list_count: Type.Number(),
+	heading_count: Type.Number(),
+	code_block_count: Type.Number(),
+});
+export type PromptFormScan = Static<typeof PromptFormScan>;
 
 function nearestRank(sorted: readonly number[], p: number): number | null {
 	if (sorted.length === 0) return null;
@@ -101,7 +111,7 @@ export function scanPromptForm(
 		if (shape === null) noOwn++;
 		else shapes.push(shape);
 	}
-	const kinds: Record<PromptKind, number> = { question: 0, instruction: 0, correction: 0 };
+	const kinds: Record<PromptKindOrUnknown, number> = { question: 0, instruction: 0, correction: 0, other: 0, unknown: 0 };
 	for (const s of shapes) kinds[s.kind]++;
 
 	const chars = shapes.map((s) => s.chars).sort((a, b) => a - b);

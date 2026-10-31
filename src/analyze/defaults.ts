@@ -23,6 +23,8 @@ import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { messageOriginAnalyzer } from "./analyzers/message-origin/index.js";
+import { attentionGapsAnalyzer } from "./analyzers/attention-gaps/index.js";
+import { messageAnswersAnalyzer } from "./analyzers/message-answers/index.js";
 import { promptFormAnalyzer } from "./analyzers/prompt-form/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
@@ -61,6 +63,8 @@ export const DEFAULT_ANALYZER_IDS = [
 	"frustration-lexicon",
 	"turn-frustration",
 	"message-origin",
+	"attention-gaps",
+	"message-answers",
 	"prompt-form",
 	"turn-pair-llm",
 	"assistant-cognition",
@@ -116,8 +120,11 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	turnFrustrationAnalyzer,
 	// Who wrote each user-role message: rules first, a decision model for the undecided.
 	messageOriginAnalyzer,
-	// The shape of what a person typed: kind, length, and structure. Reads message-origin
-	// and turn-pair-core, so it sits after both.
+	// How long the agent waited for a person, from the typed messages message-origin settled.
+	attentionGapsAnalyzer,
+	// The classifier questions analyzers registered about a message, asked in one request each.
+	// Without a decisionModel it plans nothing. prompt-form reads its answers.
+	messageAnswersAnalyzer,
 	promptFormAnalyzer,
 	turnPairLLMAnalyzer,
 	// The assistant's own cognitive state, per turn: confusion, indecision, and

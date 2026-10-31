@@ -323,11 +323,31 @@ Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · cr
 Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
 
 Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
-### prompt-form — the shape of what a person typed (deterministic)
+### message-answers, classifier questions about a message
 
-Measures the form of the prompts a person typed, one session-anchored node per session. The node counts questions, instructions and corrections, gives the length of the prompts (sum, median, 90th percentile, maximum, and buckets that add across sessions), and counts the prompts that held a list, a heading or a code block, so a monthly series is a sum of nodes. It reads `message-origin` and only messages settled as `typed`, and it measures the person's own words after pasted and quoted text is cut. A correction is a turn `turn-pair-core` marked one. A question is a prompt whose own words hold a question mark and that isn't a correction. The kinds don't depend on a language, so a question without a mark reads as an instruction. A message whose origin is undecided is counted apart and its form isn't read. A session with no typed message has every count at zero. No model is called and nothing is proposed.
+Several analyzers want a small judgement about the same message, such as the kind of prompt it is. `message-answers` is the shared layer that asks. An analyzer registers a question (an id, a version, the origins it applies to, and a Choice, Score or Noul question). The layer writes one node per message and stores the answer to every registered question on it. A request to the decision model includes all the questions the message has no answer for, so the message is sent once however many analyzers ask. The model reads the person's own words, with pasted and quoted text and harness blocks cut out.
 
-Source: [`prompt-form/index.ts`](./src/analyze/analyzers/prompt-form/index.ts) · the measures in [`detect.ts`](./src/analyze/analyzers/prompt-form/detect.ts) · length buckets in [`config.ts`](./src/analyze/analyzers/prompt-form/config.ts).
+A question that has an answer is never sent again. Adding a question, or raising a question's version, moves the registered set, so the nodes go stale for `config`. `prospect analyze --analyzer message-answers --revise config` then writes a revised node for each message. The revised node keeps every answer whose question is unchanged, and the model answers only the new one. The analyzer plans nothing until you configure a model:
+
+```json
+{ "analyzers": { "message-answers": { "decisionModel": "jev/jev-1.13.0" } } }
+```
+
+Source: [`message-answers/index.ts`](./src/analyze/analyzers/message-answers/index.ts) · the registry in [`message-questions.ts`](./src/analyze/message-questions.ts).
+
+### prompt-form, the form of the prompts a person typed
+
+Measures the form of the prompts a person typed, one session-anchored node per session. The node counts questions, instructions, corrections and other prompts, gives the length of the prompts (sum, median, 90th percentile, maximum, and buckets that add across sessions), and counts the prompts with a list, a heading or a code block, so a monthly series is a sum of nodes. It reads `message-origin` and only messages settled as `typed`, and it measures the person's own words after pasted and quoted text is cut.
+
+The kind of a prompt is the classifier's answer from `message-answers`, so it doesn't depend on a question mark or a language. A prompt with no answer is counted as `unknown`, not as zero, and without a configured decision model every typed prompt is unknown. A message whose origin is undecided is counted apart and its form isn't read. A session with no typed message has every count at zero. The analyzer never calls a model itself, and it proposes nothing.
+
+Source: [`prompt-form/index.ts`](./src/analyze/analyzers/prompt-form/index.ts) · the measures in [`detect.ts`](./src/analyze/analyzers/prompt-form/detect.ts) · the question in [`question.ts`](./src/analyze/analyzers/prompt-form/question.ts).
+
+### attention-gaps — how long the agent waited for a person (deterministic)
+
+Measures the time from the agent's last activity to each message a person typed. The analyzer reads the `message-origin` nodes and counts only messages settled as `typed`, so a prompt another agent wrote or a harness notification isn't attention. A message whose origin is undecided keeps a provisional `typed` label, and its gap is counted apart and kept out of the statistics. The node, one per session, stores the typed message count, the count, median, 90th percentile and maximum of the gaps, buckets from seconds to hours, and the longest gaps with their messages. A first turn or a message without a timestamp has no gap and is counted, never measured as zero. A session with no typed message has every count at zero, so the share of sessions that wait on a person has a denominator. No model is called and nothing is proposed.
+
+Source: [`attention-gaps/index.ts`](./src/analyze/analyzers/attention-gaps/index.ts) · the scan in [`detect.ts`](./src/analyze/analyzers/attention-gaps/detect.ts) · bucket bounds in [`config.ts`](./src/analyze/analyzers/attention-gaps/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 
