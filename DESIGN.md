@@ -894,6 +894,11 @@ contain the new word have anything to compute.
 
 - **Skill load** (a skill brought into the agent's context) is a call to the host's skill tool, or a read of the skill's `SKILL.md` on a host that has no such tool. One load is one call.
 - **Skill use** is the list of skills a session loaded, each with its name, how many times it was loaded, and how many of those calls failed. It records what the agent loaded, never what was available. The instruction corpus is read from disk as it is now, so the skills installed during a past session cannot be recovered. A session that loaded none gets an empty list and still has a record, so a rate over sessions keeps its denominator.
+### Delegation (deterministic, session-level)
+
+- **Delegation** is a call that hands work to a child agent. The child's own transcript is a separate session that records the parent.
+- **Delegation outcome** is how the host recorded the end of a delegation: **completed** (the host didn't report a failure), **failed**, **killed** (stopped before it finished), **revived** (the call resumed an earlier run), **unanswered** (no result ever arrived), or **other** (a background status the analyzer doesn't know). A background-task completion decides first, because the call itself only acknowledged the start. **Completed** never says the child's work was right.
+- **Work moved to children** is the child sessions that name a session as their parent, with the messages they contain, beside the parent's own message count. It is a measure of volume, not of value.
 
 ### Language-model access
 

@@ -205,6 +205,25 @@ export async function getSubagentRunsForSession(db: AsyncDatabase, sessionId: st
 	).all(sessionId)) as SubagentRunRow[];
 }
 
+/** How much work the child sessions of one parent session hold. */
+export interface ChildSessionStats {
+	child_session_count: number;
+	child_message_count: number;
+}
+
+/**
+ * The sessions that name a session as their parent, and how many messages they
+ * hold. A parent's own `message_count` is read from its row, so a caller can
+ * state the share of the work that went to children.
+ */
+export async function getChildSessionStats(db: AsyncDatabase, sessionId: string): Promise<ChildSessionStats & { own_message_count: number }> {
+	const children = (await prep(db,
+		"SELECT COUNT(*) AS child_session_count, COALESCE(SUM(message_count), 0) AS child_message_count FROM sessions WHERE parent_session = ?",
+	).get(sessionId)) as ChildSessionStats;
+	const own = (await prep(db, "SELECT message_count FROM sessions WHERE id = ?").get(sessionId)) as { message_count?: number } | undefined;
+	return { ...children, own_message_count: own?.message_count ?? 0 };
+}
+
 // ── Background tasks ──
 
 export interface BackgroundTaskInsert {

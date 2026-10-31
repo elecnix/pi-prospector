@@ -323,6 +323,11 @@ Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · cr
 Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
 
 Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+### delegation-outcomes — how hand-offs to child agents ended (deterministic)
+
+Records how each call that hands work to a child agent ended: `completed`, `failed`, `killed`, `revived`, `unanswered`, or `other`. The outcome comes from the host's records. A missing result means `unanswered`. Otherwise a background-task completion decides, then the error flag on the result, then Pi's orchestration classification. `completed` means the host didn't report a failure. It doesn't say the child's work was right. The node also stores the per-outcome counts, the child sessions that name this session as their parent, and the messages they contain, so a reader can state what share of the work moved to children. A session that delegated nothing has every count at zero and keeps its place in a rate's denominator. No model is called and nothing is proposed.
+
+Source: [`delegation-outcomes/index.ts`](./src/analyze/analyzers/delegation-outcomes/index.ts) · the outcome order in [`detect.ts`](./src/analyze/analyzers/delegation-outcomes/detect.ts) · tool names and statuses in [`config.ts`](./src/analyze/analyzers/delegation-outcomes/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 
