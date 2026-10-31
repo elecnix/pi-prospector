@@ -120,7 +120,10 @@ export const ROUTING_OPPORTUNITY_VERSION: AnalyzerVersion = {
 	// generation, the operator's mutes, and each term priced by the share of turns
 	// that carry it — instead of every live hit node. A background word, or a term
 	// the operator rejected, no longer marks a turn as frustrated.
-	minor: 3,
+	// 1.4: the frustration hits it reads count the person's own words only (`pricedHits`
+	// scales a hit by its typed share and drops one with none), and turn-pair-core no
+	// longer marks a correction in a message another agent or the harness wrote.
+	minor: 4,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/routing-opportunity/index.ts",
 };
