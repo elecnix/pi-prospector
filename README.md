@@ -323,6 +323,11 @@ Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · cr
 Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
 
 Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+### session-delivery — what a session moved toward the remote (deterministic)
+
+Records the commits, pushes, and pull request merges a session ran, each with its time and whether it succeeded, plus counts per kind. The shell command is read as a command, so a quoted `git commit` delivers nothing, and a dry run or `gh pr merge --auto` is not an event. When the host reports success, the result text is checked once more, because git can refuse with exit 0 and a pipe hides the exit status. A session with no event gets an empty list, so a monthly rate has a denominator. The node is a delivery record and does not label the session's outcome. A commit shows the session produced something, not that the work was right. The `pr-opened` analyzer records opened pull requests. The analyzer doesn't call a model and proposes nothing.
+
+Source: [`session-delivery/index.ts`](./src/analyze/analyzers/session-delivery/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/session-delivery/detect.ts) · failure markers in [`config.ts`](./src/analyze/analyzers/session-delivery/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 

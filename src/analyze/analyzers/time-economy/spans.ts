@@ -189,7 +189,7 @@ const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
  */
 const COMMAND_SEPARATOR = /\|\||&&|[;\n|]/;
 
-function commandSegments(command: string): string[] {
+export function commandSegments(command: string): string[] {
 	return command
 		.split(COMMAND_SEPARATOR)
 		.map((s) => s.trim())
