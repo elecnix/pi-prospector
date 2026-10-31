@@ -3,8 +3,8 @@ import { LIMIT_USER_ROLE, LIMIT_VERSIONS } from "../../metrics/limits.js";
 
 export const metrics: MetricDefinition[] = [
 	{
-		id: "turn-frustration.frustration-hit",
-		name: "Frustration hit",
+		id: "turn-frustration.frustration-signal",
+		name: "Frustration signal (hit)",
 		definition: "One turn and one signal: the user text of the turn matched a lexicon word or phrase, a dictionary entry, or a paralinguistic marker.",
 		measurement: "rule-based",
 		unit: "hits per 100 turns",
@@ -14,6 +14,7 @@ export const metrics: MetricDefinition[] = [
 			"A hit matches against lexicon verdicts that a model inferred, so the category of a hit is only as good as the verdict behind it.",
 			"A hit node stores its intrinsic weight, and a reader scales it by how specific the term is in the corpus, so one stored hit can count differently as the corpus grows. A muted term stops counting.",
 			"Hits drawn before version 1.10 have no origin label, so they may match pasted text.",
+			"The corpus fingerprint counts only occurrences in text the person typed (origin typed), so its figure is lower than the count of all hits and excludes hits with no origin label.",
 			LIMIT_USER_ROLE,
 			LIMIT_VERSIONS,
 		],

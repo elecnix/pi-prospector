@@ -10,6 +10,7 @@ export const metrics: MetricDefinition[] = [
 		unit: "minutes per session",
 		denominator: "none",
 		limitations: [
+			"The figure is the active_seconds field of the node. The corpus fingerprint reports it as a total in hours and as a per-session distribution, so a total adds up agent time (see the parallel-work limit).",
 			"A call without both timestamps is untimed, counted as such and never as zero seconds.",
 			"The analyzer may have read only part of a period, so a monthly figure describes the sessions it read.",
 			LIMIT_PARALLEL,

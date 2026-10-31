@@ -5,6 +5,26 @@ const REPAIR_FULL = "prospect analyze --analyzer turn-pair-llm --revise major,mi
 
 export const metrics: MetricDefinition[] = [
 	{
+		id: "turn-pair-llm.turns-classified",
+		name: "Turns classified",
+		definition: "The number of turns that turn-pair-llm judged: nodes of kind classification, not error nodes.",
+		measurement: "inferred",
+		unit: "turns",
+		denominator: "none",
+		limitations: [
+			"The turns are the ones the analyzer's version chose to escalate, so the count describes that selection and not all turns.",
+			"Failed calls leave error nodes, which this count excludes.",
+			LIMIT_VERSIONS,
+		],
+		seriesBreaks: [
+			{
+				version: "1.4",
+				effect: "A turn that matches a frustration signal is escalated even when its score is low, so the count rises with no change in behaviour.",
+				repair: "prospect analyze --backfill-missing fills the newly escalated turns",
+			},
+		],
+	},
+	{
 		id: "turn-pair-llm.friction-type",
 		name: "Friction type",
 		definition: "The kind of friction in one turn, judged from the user and assistant text, the tool calls and the error heads.",
