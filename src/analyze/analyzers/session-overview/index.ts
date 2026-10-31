@@ -144,7 +144,10 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// the other readers about which signals exist. The source set names the current
 	// generation of each upstream rather than every live one. Minor: the digest
 	// content narrows; the synthesis contract is otherwise unchanged.
-	minor: 12,
+	// 1.13: the frustration hits it reads count the person's own words only (`pricedHits`
+	// scales a hit by its typed share and drops one with none), and turn-pair-core no
+	// longer marks a correction in a message another agent or the harness wrote.
+	minor: 13,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };

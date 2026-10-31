@@ -106,7 +106,10 @@ export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	// the unit's identity no longer folds in conclusions the graph has superseded.
 	// The analyzer also declares that it consults term mutes, so muting a term
 	// re-identifies the units its boost shaped.
-	minor: 8,
+	// 1.9: the frustration hits it reads count the person's own words only (`pricedHits`
+	// scales a hit by its typed share and drops one with none), and turn-pair-core no
+	// longer marks a correction in a message another agent or the harness wrote.
+	minor: 9,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };
