@@ -6,6 +6,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { deliveryKindsOf, findDeliveryEvents } from "../../src/analyze/analyzers/session-delivery/detect.js";
+import { DEFAULT_SESSION_DELIVERY_CONFIG } from "../../src/analyze/analyzers/session-delivery/config.js";
 import type { MessageRow } from "../../src/analyze/types.js";
 import { makeMessageRow as row } from "./helpers.js";
 
@@ -55,6 +56,11 @@ describe("deliveryKindsOf", () => {
 		assert.deepEqual(deliveryKindsOf("timeout 60 git push origin x"), ["push"]);
 	});
 
+	it("reads a git command whose option value is quoted", () => {
+		assert.deepEqual(deliveryKindsOf(`git -C "my repo" commit -m x`), ["commit"]);
+		assert.deepEqual(deliveryKindsOf(`git -c 'user.name=a b' push`), ["push"]);
+	});
+
 	it("counts git commit -n, which is --no-verify", () => {
 		assert.deepEqual(deliveryKindsOf(`git commit -n -m x`), ["commit"]);
 	});
@@ -84,6 +90,13 @@ describe("findDeliveryEvents", () => {
 		const [event] = findDeliveryEvents([shell("a", "git commit -m x", "")[0]!]);
 		assert.equal(event?.succeeded, false);
 		assert.equal(event?.result_message_id, null);
+	});
+
+	it("names the pattern when a configured failure marker is not a valid regex", () => {
+		assert.throws(
+			() => findDeliveryEvents(shell("a", "git commit -m x", "ok"), { ...DEFAULT_SESSION_DELIVERY_CONFIG, commitFailureMarkers: ["("] }),
+			/session-delivery: invalid failure marker "\("/,
+		);
 	});
 
 	it("finds nothing in a session that ran no delivery command", () => {

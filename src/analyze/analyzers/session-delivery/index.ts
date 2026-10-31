@@ -90,7 +90,7 @@ function deliveryFingerprint(messages: readonly MessageRow[]): string {
 					m.timestamp ?? "",
 					m.tool_calls ? shortHash(m.tool_calls) : "",
 					m.tool_results ? shortHash(m.tool_results) : "",
-					m.tool_results && m.content_text ? shortHash(m.content_text) : "",
+					m.content_text ? shortHash(m.content_text) : "",
 				].join(":"),
 			)
 			.join("\n"),

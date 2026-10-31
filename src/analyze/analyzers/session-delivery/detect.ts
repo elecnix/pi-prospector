@@ -39,7 +39,7 @@ export interface DeliveryEvent {
 /** The delivery kinds a shell command runs, one entry per segment that delivers. */
 export function deliveryKindsOf(command: string): DeliveryKind[] {
 	const kinds: DeliveryKind[] = [];
-	for (const segment of commandSegments(stripCommandText(command))) {
+	for (const segment of commandSegments(stripCommandText(command, "_"))) {
 		// The program must sit at command position: `echo git commit` and
 		// `grep -l git push` mention a command without running it.
 		const program = commandFamily(segment, 1);
@@ -56,7 +56,13 @@ export function deliveryKindsOf(command: string): DeliveryKind[] {
 function markersFor(kind: DeliveryKind, config: SessionDeliveryConfig): RegExp[] {
 	const sources =
 		kind === "commit" ? config.commitFailureMarkers : kind === "push" ? config.pushFailureMarkers : config.mergeFailureMarkers;
-	return sources.map((s) => new RegExp(s, "im"));
+	return sources.map((s) => {
+		try {
+			return new RegExp(s, "im");
+		} catch (err) {
+			throw new Error(`session-delivery: invalid failure marker "${s}": ${err instanceof Error ? err.message : String(err)}`);
+		}
+	});
 }
 
 /** The delivery events of a session, in stream order. */

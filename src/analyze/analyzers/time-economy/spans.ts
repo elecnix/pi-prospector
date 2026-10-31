@@ -158,10 +158,12 @@ const QUOTED_STRING = /"[^"\n]*"|'[^'\n]*'/g;
  * A command with its heredoc bodies and quoted strings removed.
  *
  * What is left is the part the shell actually executes, so a pattern that
- * matches it matches a command rather than a mention of one.
+ * matches it matches a command rather than a mention of one. `quotedAs` is what
+ * a quoted string becomes: a space by default, or a placeholder word when the
+ * caller must keep an option's value in place.
  */
-export function stripCommandText(command: string): string {
-	return command.replace(HEREDOC_BODY, "<<HEREDOC").replace(QUOTED_STRING, " ");
+export function stripCommandText(command: string, quotedAs = " "): string {
+	return command.replace(HEREDOC_BODY, "<<HEREDOC").replace(QUOTED_STRING, quotedAs);
 }
 
 /**
