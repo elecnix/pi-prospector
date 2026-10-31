@@ -343,7 +343,7 @@ function pastedFinding(text: string, skillExpansion: boolean): PasteFinding {
 	// A quoted line is a way of replying, not material the person did not write.
 	if (share >= 0.5) return content - (copied - sentences) < PURE_PASTE_MAX_PROSE_CHARS ? "pasted-block" : "mixed";
 	if ((copied) / content >= 0.5 && sentences > 0) return "mixed";
-	// A Claude Code prompt echo (`❯ please fix the build`) is the person's sentence, not a shell prompt.
+	// A Claude Code prompt echo (`❯ please fix the failing build now`) is the person's sentence, not a shell prompt.
 	if (TERMINAL_RE.test(text.trimStart()) && text.split("\n").length >= 3 && !proseLike(text.trimStart().split("\n")[0]!.replace(/^❯\s*/u, ""))) return "terminal-output";
 	return null;
 }

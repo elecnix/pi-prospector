@@ -79,7 +79,7 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// most of it and the person's own words are few (under 40 characters). A paste
 	// with sentences beside it, and a long run of sentences that the span labeller
 	// took for a paste, go to the decision model as `paste-with-prose`. A Claude Code
-	// prompt echo (`❯ please fix the build`) is no shell capture, a bare link inside
+	// prompt echo (`❯ please fix the failing build now`) is no shell capture, a bare link inside
 	// a skill command is the person's, and a `Worktree: /path` line marks an
 	// agent's brief.
 	minor: 2,
