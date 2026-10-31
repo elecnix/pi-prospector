@@ -25,6 +25,7 @@
           "session-ending",
           "pr-opened",
           "skill-use",
+          "delegation-outcomes",
           "time-economy",
           "verification-commands",
           "stale-verification",
