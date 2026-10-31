@@ -23,6 +23,7 @@ import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { messageOriginAnalyzer } from "./analyzers/message-origin/index.js";
+import { promptFormAnalyzer } from "./analyzers/prompt-form/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
@@ -60,6 +61,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"frustration-lexicon",
 	"turn-frustration",
 	"message-origin",
+	"prompt-form",
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
@@ -114,6 +116,9 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	turnFrustrationAnalyzer,
 	// Who wrote each user-role message: rules first, a decision model for the undecided.
 	messageOriginAnalyzer,
+	// The shape of what a person typed: kind, length, and structure. Reads message-origin
+	// and turn-pair-core, so it sits after both.
+	promptFormAnalyzer,
 	turnPairLLMAnalyzer,
 	// The assistant's own cognitive state, per turn: confusion, indecision, and
 	// surprise read from the thinking trace and response text. Depends only on

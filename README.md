@@ -323,6 +323,11 @@ Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · cr
 Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
 
 Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+### prompt-form — the shape of what a person typed (deterministic)
+
+Measures the form of the prompts a person typed, one session-anchored node per session. The node counts questions, instructions and corrections, gives the length of the prompts (sum, median, 90th percentile, maximum, and buckets that add across sessions), and counts the prompts that held a list, a heading or a code block, so a monthly series is a sum of nodes. It reads `message-origin` and only messages settled as `typed`, and it measures the person's own words after pasted and quoted text is cut. A correction is a turn `turn-pair-core` marked one. A question is a prompt whose own words hold a question mark and that isn't a correction. The kinds don't depend on a language, so a question without a mark reads as an instruction. A message whose origin is undecided is counted apart and its form isn't read. A session with no typed message has every count at zero. No model is called and nothing is proposed.
+
+Source: [`prompt-form/index.ts`](./src/analyze/analyzers/prompt-form/index.ts) · the measures in [`detect.ts`](./src/analyze/analyzers/prompt-form/detect.ts) · length buckets in [`config.ts`](./src/analyze/analyzers/prompt-form/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 

@@ -894,6 +894,11 @@ contain the new word have anything to compute.
 
 - **Skill load** (a skill brought into the agent's context) is a call to the host's skill tool, or a read of the skill's `SKILL.md` on a host that has no such tool. One load is one call.
 - **Skill use** is the list of skills a session loaded, each with its name, how many times it was loaded, and how many of those calls failed. It records what the agent loaded, never what was available. The instruction corpus is read from disk as it is now, so the skills installed during a past session cannot be recovered. A session that loaded none gets an empty list and still has a record, so a rate over sessions keeps its denominator.
+### Prompt form (deterministic, session-level)
+
+- **Prompt** is a user-role message a person typed: its message origin is `typed` and settled. Pasted blocks, quotes and harness envelopes inside it are cut, and the rest is the person's own words.
+- **Prompt kind** is **correction** when `turn-pair-core` marked the turn one, **question** when the person's own words carry a question mark and the prompt isn't a correction, and **instruction** otherwise. The kinds don't depend on a language, so the question count is a floor: a question without a mark reads as an instruction.
+- **Prompt form** is a session's prompts folded into counts per kind, a length distribution, and the number of prompts that held a list, a heading, or a code block. Counts and buckets add across sessions. An undecided message is counted apart and its form isn't read, because its label is provisional.
 
 ### Language-model access
 
