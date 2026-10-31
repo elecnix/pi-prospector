@@ -47,6 +47,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"attention-gaps",
 	"git-commands",
 	"activity-windows",
+	"delegation-outcomes",
 	"time-economy",
 	"verification-commands",
 	"stale-verification",
