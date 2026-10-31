@@ -894,6 +894,10 @@ contain the new word have anything to compute.
 
 - **Skill load** (a skill brought into the agent's context) is a call to the host's skill tool, or a read of the skill's `SKILL.md` on a host that has no such tool. One load is one call.
 - **Skill use** is the list of skills a session loaded, each with its name, how many times it was loaded, and how many of those calls failed. It records what the agent loaded, never what was available. The instruction corpus is read from disk as it is now, so the skills installed during a past session cannot be recovered. A session that loaded none gets an empty list and still has a record, so a rate over sessions keeps its denominator.
+### Session delivery (deterministic, session-level)
+
+- **Delivery event** is a shell command that moved work toward the remote or the main line and succeeded: a commit or a push, or the merge of a pull request. It is read from the command with heredoc bodies and quoted strings removed, and the program must sit at command position, so `echo git commit` runs nothing. A dry run is not an event, and neither is `gh pr merge --auto`, which only arms a later merge, or `--disable-auto`, which cancels one. The host's success verdict is checked against the result text when the result row contains one result, because git exits 0 for some refusals and a pipe hides the exit status. Each event says whether its text was checked: a row with several results joins their texts, which cannot be attributed to one call, so the host's verdict stands alone there.
+- **Session delivery** is the list of a session's delivery events with per-kind counts. A session with no event gets an empty list and still has a record, so a rate over sessions keeps its denominator. It is a delivery record and not an outcome label: a commit shows the session produced something. It never shows the work was right, so the system still assigns no outcome to a session. Opening a pull request belongs to `pr-opened`.
 
 ### Language-model access
 
