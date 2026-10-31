@@ -866,6 +866,11 @@ reports how many terms it learned and the user asks for a full plain fill. The
 back-fill stays frugal: scanning is cheap, and only the turns that actually
 contain the new word have anything to compute.
 
+### Skill use (deterministic, session-level)
+
+- **Skill load** — the agent bringing a skill into its context: a call to the host's skill tool, or a read of the skill's `SKILL.md` on a host that has no such tool. One load is one call.
+- **Skill use** — the skills a session loaded, each with its name, how many times it was loaded, and how many of those calls failed. It records what the agent *loaded*, never what was *available*: the instruction corpus is read from disk as it is now, so the skills installed during a past session are not recoverable. A session that loaded none carries an empty list, not an absent record, so a rate over sessions keeps its denominator.
+
 ### Language-model access
 
 - **Model tier** — an abstract quality/cost band (**cheap**, **mid**,

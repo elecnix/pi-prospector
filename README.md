@@ -302,6 +302,12 @@ Records what a session produced, when what it produced was a pull request. A ses
 
 Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · creation detection in [`detect.ts`](./src/analyze/analyzers/pr-opened/detect.ts) · tool names and caps in [`config.ts`](./src/analyze/analyzers/pr-opened/config.ts).
 
+### skill-use — which skills a session loaded (deterministic)
+
+Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded no skill gets an empty list, so a monthly rate has a denominator. It records use, not availability: which skills were installed in a past session is not kept. It uses no model, and it proposes nothing.
+
+Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+
 ### routing-opportunity — model routing labels (deterministic)
 
 Labels each turn as downshiftable (a cheaper model could have handled it) or escalation-worthy (a better model was needed), based on existing friction, trajectory, and repetition-collapse signals. Attaches the serving model and billed cost so the corpus-level efficiency frontier can be computed honestly — a turn labeled "downshiftable" that cost $0.03 on an expensive model is a concrete saving opportunity. No LLM.

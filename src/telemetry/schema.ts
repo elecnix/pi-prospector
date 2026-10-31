@@ -41,6 +41,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"repetition-collapse",
 	"session-ending",
 	"pr-opened",
+	"skill-use",
 	"time-economy",
 	"verification-commands",
 	"stale-verification",
