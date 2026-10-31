@@ -159,7 +159,6 @@ export function buildToolStream(messages: MessageRow[]): ToolStream {
 		if (inv.callId && !byCallId.has(inv.callId)) byCallId.set(inv.callId, inv);
 	}
 	const idless = invocations.filter((inv) => !inv.callId);
-	let idlessCursor = 0;
 
 	for (const m of messages) {
 		if (m.role !== "toolResult" || !m.tool_results) continue;
@@ -167,7 +166,7 @@ export function buildToolStream(messages: MessageRow[]): ToolStream {
 		for (const r of results) {
 			const target = r.toolCallId
 				? (byCallId.get(r.toolCallId) ?? firstUnpairedIdless(idless, r.toolName))
-				: idless[idlessCursor++];
+				: firstUnpairedIdless(idless, "");
 			if (!target || target.outcome) continue;
 			target.outcome = {
 				messageId: m.id,

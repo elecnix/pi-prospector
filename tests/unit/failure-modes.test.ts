@@ -360,6 +360,23 @@ describe("buildToolStream", () => {
 		assert.deepEqual(stream.invocations.map((i) => i.outcome?.isError), [true, false]);
 	});
 
+	it("keeps an id-less result paired with its own call after an unknown-id result took an earlier one", () => {
+		const rows: MessageRow[] = [
+			msg({
+				id: "a1",
+				role: "assistant",
+				tool_calls: JSON.stringify([
+					{ name: "bash", arguments: { command: "one" } },
+					{ name: "bash", arguments: { command: "two" } },
+				]),
+			}),
+			msg({ id: "r1", role: "toolResult", tool_results: JSON.stringify([{ toolCallId: "p-1", toolName: "bash", isError: true, textLength: 1 }]) }),
+			msg({ id: "r2", role: "toolResult", tool_results: JSON.stringify([{ toolName: "bash", isError: false, textLength: 1 }]) }),
+		];
+		const stream = buildToolStream(rows);
+		assert.deepEqual(stream.invocations.map((i) => i.outcome?.isError), [true, false]);
+	});
+
 	it("leaves a result unpaired when every call carries an id and none matches", () => {
 		const rows = [
 			...callAndResult("c1", "bash", { command: "ls" }),

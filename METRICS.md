@@ -80,7 +80,7 @@ Timestamps are UTC, and a session belongs to the month of its first message.
 
 ## Failures
 
-The failure-modes analyzer (version 1.3) decides the next four entries after the raw rate. It reads the action stream described in DESIGN.md and matches errors against a hand-written catalogue.
+The failure-modes analyzer (version 1.3) decides the three entries after the raw rate. It reads the action stream described in DESIGN.md and matches errors against a hand-written catalogue.
 
 ### Raw tool error rate
 
@@ -94,7 +94,7 @@ The failure-modes analyzer (version 1.3) decides the next four entries after the
 - **Definition**: a well-formed tool call that the tool refused or errored on.
 - **Measured by**: rule-based. failure-modes pairs each call with its result by call id (and by tool name and order when the stored call has no id), then counts the paired results flagged as errors.
 - **Unit and denominator**: failures per session, and failures per tool call. The node stores the failure count and the tool call count.
-- **Limits**: a call with no result is unfinished and not failed. Before version 1.3, a session indexed before the call id was stored read as zero tool failures whatever its transcript recorded, because no call could pair with a result. Nodes of version 1.2 and earlier for such sessions understate failures until a revise run recomputes them.
+- **Limits**: a call with no result is unfinished and not failed. Before version 1.3, a session indexed before the call id was stored read as zero tool failures whatever its transcript recorded, because no call could pair with a result. Nodes of version 1.2 and earlier for such sessions understate failures. A revise run fills new nodes beside them and does not replace them (see "Re-running failure-modes adds a second node").
 
 ### Turn failure
 
@@ -287,7 +287,7 @@ A series break turns a trend across it into a comparison of two measurements. Th
 
 | Metric | Break | Effect | Repair |
 |---|---|---|---|
-| Tool failure, session ending, and any rate that reads tool outcomes | Sessions indexed before the call id was stored (before 2026-08-20) could not pair calls with results. Fixed in failure-modes 1.3 and session-ending 1.1 | Those sessions read as zero tool failures and cannot end `resolved` | `prospect analyze --analyzer failure-modes --revise minor` and `prospect analyze --analyzer session-ending --revise minor` |
+| Tool failure, session ending, and any rate that reads tool outcomes | Sessions indexed before the call id was stored (before 2026-08-20) could not pair calls with results. Fixed in failure-modes 1.3 and session-ending 1.1 | Those sessions read as zero tool failures and cannot end `resolved` | `prospect analyze --analyzer session-ending --revise minor`. For failure-modes, `prospect analyze --analyzer failure-modes --revise minor` adds new nodes and leaves the old ones current, so read one node per session or remove the old output first with `prospect gc --analyzer failure-modes` |
 | Trajectory signals, uncompleted leads, compression-checklist grades, navigation anti-patterns, revive chains | Same call-id break. Fixed in tool-trajectory 7.1, uncompleted-leads 1.1, compression-checklist 1.1, navigation-efficiency 1.1 and revive-chains 1.1 | Pre-flight gaps run 20 to 30 times lower per session on affected sessions, and stuck-loops are rarer too | `--revise minor` on each analyzer (a tool-trajectory re-run changes the identity of turn-pair-llm, friction-accumulation, routing-opportunity and session-overview units) |
 | Pull requests opened, passing-run staleness, active time | Same call-id break, but no node exists for the affected sessions, or none changes | Nothing to revise. A fill creates the missing nodes | `--backfill-missing` |
 | Turn failure | Sessions indexed before sync stored the stop reason | Unknown, shown as `absent` | Sync the session again, then revise failure-modes |
