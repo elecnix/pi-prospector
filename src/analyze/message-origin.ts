@@ -181,7 +181,7 @@ const COMPUTED_TASK_RE = /^\[Workflow harness — computed/;
  * a child session. The person typed those words in the parent session, where their
  * own node counts them. The copy is a notification so the words count once.
  */
-const RELAYED_REQUEST_RE = /^\[Workflow harness — user request/;
+const RELAYED_REQUEST_RE = /\[Workflow harness — user request/;
 
 /** The line the harness puts above a message another session sent. */
 const PEER_RELAY_RE = /^Another Claude session sent a message/;
