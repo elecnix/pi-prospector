@@ -6,11 +6,11 @@
  * and how much of the work moved to children at all. One session-anchored metric
  * node per session lists each delegation call with its outcome (read from the
  * host's records; see `detect.ts` for the order) and per-outcome counts, plus the
- * child sessions that name this one as their parent and the messages they hold.
+ * child sessions that name this one as their parent and the messages they contain.
  * A session that delegated nothing gets zero counts, so a rate keeps its
  * denominator. Deterministic, no LLM, and it proposes nothing.
  *
- * `completed` means the host reported no failure. It never says the child's work
+ * `completed` means the host did not report a failure. It never says the child's work
  * was right.
  */
 
@@ -75,7 +75,7 @@ export const DELEGATION_OUTCOMES_DEF: AnalyzerDef = {
 	id: "delegation-outcomes",
 	label: "Delegation Outcomes (deterministic)",
 	description:
-		"Records how a session's hand-offs to child agents ended: each delegation call with its outcome (completed, failed, killed, revived, unanswered), read from the host's background-task records, error flags, and orchestration classification, plus per-outcome counts, and the child sessions that name this session as their parent with the messages they hold. A session that delegated nothing gets zero counts. Completed means the host reported no failure, not that the work was right. Deterministic, no LLM; it proposes nothing.",
+		"Records how a session's hand-offs to child agents ended: each delegation call with its outcome (completed, failed, killed, revived, unanswered), read from the host's background-task records, error flags, and orchestration classification, plus per-outcome counts, and the child sessions that name this session as their parent with the messages they contain. A session that delegated nothing gets zero counts. Completed means the host reported no failure, not that the work was right. Deterministic, no LLM; it proposes nothing.",
 	anchorSpan: "full_session",
 	dependencies: [],
 	outputSchema: DELEGATION_OUTCOMES_PROPERTIES,
