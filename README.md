@@ -323,6 +323,11 @@ Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · cr
 Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
 
 Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+### attention-gaps — how long the agent waited for a person (deterministic)
+
+Measures the time from the agent's last activity to each message a person typed. The analyzer reads the `message-origin` nodes and counts only messages settled as `typed`, so a prompt another agent wrote or a harness notification isn't attention. A message whose origin is undecided keeps a provisional `typed` label, and its gap is counted apart and kept out of the statistics. The node, one per session, stores the typed message count, the count, median, 90th percentile and maximum of the gaps, buckets from seconds to hours, and the longest gaps with their messages. A first turn or a message without a timestamp has no gap and is counted, never measured as zero. A session with no typed message has every count at zero, so the share of sessions that wait on a person has a denominator. No model is called and nothing is proposed.
+
+Source: [`attention-gaps/index.ts`](./src/analyze/analyzers/attention-gaps/index.ts) · the scan in [`detect.ts`](./src/analyze/analyzers/attention-gaps/detect.ts) · bucket bounds in [`config.ts`](./src/analyze/analyzers/attention-gaps/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 

@@ -43,6 +43,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"session-ending",
 	"pr-opened",
 	"skill-use",
+	"attention-gaps",
 	"time-economy",
 	"verification-commands",
 	"stale-verification",

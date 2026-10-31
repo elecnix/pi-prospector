@@ -894,6 +894,12 @@ contain the new word have anything to compute.
 
 - **Skill load** (a skill brought into the agent's context) is a call to the host's skill tool, or a read of the skill's `SKILL.md` on a host that has no such tool. One load is one call.
 - **Skill use** is the list of skills a session loaded, each with its name, how many times it was loaded, and how many of those calls failed. It records what the agent loaded, never what was available. The instruction corpus is read from disk as it is now, so the skills installed during a past session cannot be recovered. A session that loaded none gets an empty list and still has a record, so a rate over sessions keeps its denominator.
+### Attention (deterministic, session-level)
+
+- **Attention gap** is the time from the agent's last activity (its latest assistant message or tool result) to a user-role message. A harness notification filed under the user role is not the agent finishing, so the agent counts as waiting since before it.
+- **Attended message** is a user-role message whose message origin a rule or the decision model settled as `typed`. Other origins say nothing about when a person looked at the screen. A message whose origin node is `decided: false` carries a provisional `typed` label that nothing settled. Its gap is counted apart, and the statistics ignore it.
+- **Unmeasured** describes a typed message with no gap: the first turn, or a missing timestamp. It is counted and never read as zero seconds.
+- **Agent wait** is the distribution of attention gaps in a session. A long wait means the agent sat idle for a person. It doesn't say the person was busy elsewhere.
 
 ### Language-model access
 
