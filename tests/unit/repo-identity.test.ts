@@ -33,7 +33,7 @@ describe("repoIdentityOf", () => {
 	});
 
 	it("reads a Windows path", () => {
-		assert.equal(repoIdentityOf("C:\\Users\\ana\\src\\widgets\\main").repo_key, "widgets");
+		assert.equal(repoIdentityOf("C:\\Users\\ana\\code\\widgets\\main").repo_key, "widgets");
 	});
 
 	it("gives a root directory itself no key", () => {
@@ -50,6 +50,11 @@ describe("repoIdentityOf", () => {
 
 	it("does not mistake a longer name for a temp prefix", () => {
 		assert.equal(repoIdentityOf("/tmpfiles/x").placement, "unplaced");
+	});
+
+	it("does not read a repository's own src directory as a root", () => {
+		assert.equal(repoIdentityOf("/opt/myapp/src/lib").repo_key, null);
+		assert.equal(repoIdentityOf("/home/ana/work/myapp/src/lib").repo_key, "myapp", "the leftmost root wins");
 	});
 
 	it("honours a configured root", () => {
