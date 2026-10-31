@@ -35,7 +35,8 @@ function scopeTerms(scope: FingerprintScope): { terms: string[]; params: string[
 	const terms = ["s.parent_session IS NULL", "(s.started_at IS NULL OR s.started_at <= ?)"];
 	const params = [scope.asOf];
 	if (scope.sources !== null) {
-		terms.push(`s.source IN (${scope.sources.map(() => "?").join(", ")})`);
+		// An empty selection matches no session; `IN ()` is a syntax error.
+		terms.push(scope.sources.length === 0 ? "0" : `s.source IN (${scope.sources.map(() => "?").join(", ")})`);
 		params.push(...scope.sources);
 	}
 	if (scope.from !== null) {

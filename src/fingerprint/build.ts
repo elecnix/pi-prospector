@@ -123,8 +123,17 @@ function applyMeasure(measure: MeasureSpec, rows: readonly FingerprintRow[], min
 			const ids = new Set(rows.filter((r) => (numberOf(r, measure.field) ?? 0) > 0).map((r) => String(r["session"])));
 			return ids.size > 0 && ids.size < min ? WITHHELD : ids.size;
 		}
-		case "distinct":
-			return new Set(rows.flatMap((r) => (typeof r[measure.field] === "string" ? [r[measure.field] as string] : []))).size;
+		case "distinct": {
+			const values = new Set<string>();
+			const contributing = new Set<string>();
+			for (const row of rows) {
+				const value = row[measure.field];
+				if (typeof value !== "string") continue;
+				values.add(value);
+				contributing.add(String(row["session"]));
+			}
+			return contributing.size > 0 && contributing.size < min ? WITHHELD : values.size;
+		}
 		case "groups": {
 			const names = Object.keys(measure.dimensions);
 			const groups = new Map<string, { count: number; ids: Set<string> }>();
