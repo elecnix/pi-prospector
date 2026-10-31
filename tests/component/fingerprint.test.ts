@@ -4,7 +4,10 @@ import { Check } from "typebox/value";
 import { tempDb, insertMessages, type TempDb } from "./helpers.js";
 import { createRun, insertNode } from "../../src/db/analysis-queries.js";
 import { buildFingerprint, parseFingerprintArgs } from "../../src/fingerprint/build.js";
-import { Fingerprint, MIN_GROUP_SIZE } from "../../src/fingerprint/schema.js";
+import { fingerprintSchema, MIN_GROUP_SIZE, type Fingerprint } from "../../src/fingerprint/schema.js";
+import { BUILTIN_ANALYZERS } from "../../src/analyze/defaults.js";
+import { collectContributors } from "../../src/fingerprint/registry.js";
+import type { FingerprintContributor } from "../../src/fingerprint/contributor.js";
 import type { AsyncDatabase } from "../../src/db/async-db.js";
 
 /**
@@ -18,6 +21,13 @@ const ASOF = "2026-06-30T12:00:00.000Z";
 
 let t: TempDb;
 let n = 0;
+const contributors = collectContributors(BUILTIN_ANALYZERS);
+const build = (db: AsyncDatabase, request: ReturnType<typeof parseFingerprintArgs>, extra: readonly FingerprintContributor[] = []) =>
+	buildFingerprint(db, request, [...contributors, ...extra]);
+
+type Section = Record<string, unknown> & { status: string };
+const objective = (fp: Fingerprint, id: string) => fp.objective[id] as Section;
+const inferred = (fp: Fingerprint, id: string) => fp.inferred[id] as Section;
 
 async function seedSession(db: AsyncDatabase, id: string, source: string, startedAt: string, opts: { parent?: string; prompts: number; toolCalls: number; minutes: number }): Promise<void> {
 	await db
@@ -102,119 +112,113 @@ describe("buildFingerprint", () => {
 	});
 	after(() => t.close());
 
-	it("matches its schema and carries no identifying string", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)));
-		assert.ok(Check(Fingerprint, fp), "fingerprint does not match the schema");
+	const at = (extra = "") => parseFingerprintArgs(`${extra} --as-of ${ASOF}`.trim(), new Date(ASOF));
+
+	it("matches the schema its contributors compose and carries no identifying string", async () => {
+		const fp = await build(t.db, at());
+		assert.ok(Check(fingerprintSchema(contributors), fp), "fingerprint does not match the schema");
 		const text = JSON.stringify(fp);
 		for (const sentinel of SENTINELS) assert.ok(!text.includes(sentinel), `output contains ${sentinel}`);
 		assert.ok(!text.includes("codex"), "a source under the minimum is named");
 	});
 
 	it("records the version, the as-of date, the filter and the session count", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)));
-		assert.equal(fp.schemaVersion, 1);
+		const fp = await build(t.db, at());
+		assert.equal(fp.schemaVersion, 2);
 		assert.equal(fp.asOf, "2026-06-30");
 		assert.deepEqual(fp.filter, { sources: null, from: null, to: null });
 		assert.equal(fp.minGroupSize, MIN_GROUP_SIZE);
 		assert.equal(fp.sessions.count, 16);
-		assert.deepEqual(fp.sessions.bySource, [
-			{ key: "pi", count: 8, sessions: 8 },
-			{ key: "claude", count: 6, sessions: 6 },
+		const sources = objective(fp, "sources");
+		assert.equal(sources["sessionsMeasured"], 16);
+		// Codex has 2 sessions, under the minimum, and `other` would be under it too.
+		assert.deepEqual(sources["bySource"], [
+			{ source: "pi", count: 8, sessions: 8 },
+			{ source: "claude", count: 6, sessions: 6 },
 		]);
 	});
 
-	it("folds a source under the minimum into nothing, because other is under it too", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)));
-		assert.ok(!fp.sessions.bySource.some((g) => g.key === "other"));
-	});
-
 	it("restricts to the chosen sources", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--source claude --as-of ${ASOF}`, new Date(ASOF)));
+		const fp = await build(t.db, at("--source claude"));
 		assert.deepEqual(fp.filter.sources, ["claude"]);
 		assert.equal(fp.sessions.count, 6);
 	});
 
 	it("restricts to a date range, inclusive of both days", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--from 2026-03-02 --to 2026-03-06 --as-of ${ASOF}`, new Date(ASOF)));
+		const fp = await build(t.db, at("--from 2026-03-02 --to 2026-03-06"));
 		assert.deepEqual([fp.filter.from, fp.filter.to], ["2026-03-02", "2026-03-06"]);
 		assert.equal(fp.sessions.count, 5);
 	});
 
-	it("withholds every figure when the corpus is under the minimum, and still reports the count", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--source codex --as-of ${ASOF}`, new Date(ASOF)));
+	it("withholds every section when the corpus is under the minimum, and still reports the count", async () => {
+		const fp = await build(t.db, at("--source codex"));
 		assert.equal(fp.sessions.count, 2);
-		assert.deepEqual(fp.sessions.bySource, []);
-		assert.equal(fp.objective.usage.duration.status, "withheld");
-		assert.equal(fp.objective.shape.promptsPerSession.status, "withheld");
-		assert.equal(fp.objective.failures.status, "withheld");
-		assert.equal(fp.inferred.frustration.status, "withheld");
+		for (const section of [...Object.values(fp.objective), ...Object.values(fp.inferred)]) {
+			assert.deepEqual(section, { status: "withheld", reason: "below-min-group-size" });
+		}
 	});
 
 	it("measures usage and shape from the transcript", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--source pi --as-of ${ASOF}`, new Date(ASOF)));
+		const fp = await build(t.db, at("--source pi"));
 		assert.equal(fp.sessions.count, 8);
-		const { duration, activeTime } = fp.objective.usage;
+		const usage = objective(fp, "usage");
+		assert.equal(usage["activeDays"], 8);
+		const duration = usage["duration"] as { status: string; sessions: number; buckets: Array<{ sessions: number }> };
 		assert.equal(duration.status, "ok");
-		if (duration.status === "ok") {
-			assert.equal(duration.sessions, 8);
-			for (const b of duration.buckets) assert.ok(b.sessions === 0 || b.sessions >= MIN_GROUP_SIZE);
-		}
-		assert.equal(activeTime.status, "ok");
-		if (activeTime.status === "ok") {
-			assert.equal(activeTime.sessionsMeasured, 8);
-			// 8 sessions at 600..1020 s, 60 s apart: 6480 s.
-			assert.equal(activeTime.totalHours, 1.8);
-		}
-		assert.equal(fp.objective.usage.activeDays, 8);
-		const prompts = fp.objective.shape.promptsPerSession;
-		assert.equal(prompts.status === "ok" && prompts.p50, 6.5);
-		const tools = fp.objective.shape.toolCallsPerSession;
-		assert.equal(tools.status === "ok" && tools.p50, 2);
+		assert.equal(duration.sessions, 8);
+		for (const b of duration.buckets) assert.ok(b.sessions === 0 || b.sessions >= MIN_GROUP_SIZE);
+		const shape = objective(fp, "shape");
+		assert.equal((shape["promptsPerSession"] as { p50: number }).p50, 6.5);
+		assert.equal((shape["toolCallsPerSession"] as { p50: number }).p50, 2);
 	});
 
-	it("counts sub-agent sessions apart from sessions", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--source pi --as-of ${ASOF}`, new Date(ASOF)));
-		// One session started a sub-agent: under the minimum, so it is withheld rather than published as 1.
-		assert.deepEqual(fp.objective.shape.subAgents, { status: "withheld", reason: "below-min-group-size" });
+	it("measures active time from the time-economy nodes", async () => {
+		const fp = await build(t.db, at("--source pi"));
+		const active = objective(fp, "activeTime");
+		assert.equal(active["sessionsMeasured"], 8);
+		// 8 sessions at 600..1020 s, 60 s apart: 6480 s.
+		assert.equal(active["totalHours"], 1.8);
+		assert.equal(objective(await build(t.db, at("--source claude")), "activeTime").status, "ok");
+	});
+
+	it("withholds the sub-agent count when 1 to 4 sessions started one", async () => {
+		const shape = objective(await build(t.db, at("--source pi")), "shape");
+		assert.deepEqual(shape["sessionsWithSubAgents"], { status: "withheld", reason: "below-min-group-size" });
+		assert.deepEqual(shape["subAgentSessions"], { status: "withheld", reason: "below-min-group-size" });
 	});
 
 	it("reads the current generation of the graph as of the date", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--source pi --as-of ${ASOF}`, new Date(ASOF)));
-		const f = fp.objective.failures;
+		const f = objective(await build(t.db, at("--source pi")), "failures");
 		assert.equal(f.status, "ok");
-		if (f.status !== "ok") return;
-		assert.equal(f.sessionsMeasured, 8);
-		assert.equal(f.turnFailures, 8);
-		assert.equal(f.toolFailures, 16);
-		assert.deepEqual(f.byClass, [
+		assert.equal(f["sessionsMeasured"], 8);
+		assert.equal(f["turnFailures"], 8);
+		assert.equal(f["toolFailures"], 16);
+		assert.deepEqual(f["byClass"], [
 			{ axis: "tool", classId: "path-not-found", count: 16, sessions: 8 },
 			{ axis: "turn", classId: "rate-limit", count: 8, sessions: 8 },
 		]);
 	});
 
-	it("counts only the frustration the person typed, and labels it inferred", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--source pi --as-of ${ASOF}`, new Date(ASOF)));
-		const f = fp.inferred.frustration;
-		assert.equal(f.status, "ok");
-		if (f.status !== "ok") return;
-		assert.equal(f.sessionsMeasured, 8);
-		assert.equal(f.signals, 16);
-		assert.deepEqual(f.byCategory, [{ key: "profanity", count: 16, sessions: 8 }]);
-		const c = fp.inferred.turnClassification;
-		assert.equal(c.status === "ok" && c.turnsClassified, 8);
+	it("counts only the frustration the person typed, and files it as inferred", async () => {
+		const fp = await build(t.db, at("--source pi"));
+		assert.ok(!("frustration" in fp.objective));
+		const f = inferred(fp, "frustration");
+		assert.equal(f["sessionsMeasured"], 8);
+		assert.equal(f["signals"], 16);
+		assert.deepEqual(f["byCategory"], [{ category: "profanity", count: 16, sessions: 8 }]);
+		assert.equal(inferred(fp, "turnClassification")["turnsClassified"], 8);
 	});
 
 	it("withholds a graph section whose analyzer ran on too few sessions", async () => {
-		const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--source claude --as-of ${ASOF}`, new Date(ASOF)));
-		assert.equal(fp.objective.failures.status, "withheld");
-		assert.equal(fp.inferred.frustration.status, "withheld");
-		assert.equal(fp.objective.usage.activeTime.status, "ok");
+		const fp = await build(t.db, at("--source claude"));
+		assert.equal(objective(fp, "failures").status, "withheld");
+		assert.equal(inferred(fp, "frustration").status, "withheld");
 	});
 
 	it("writes nothing", async () => {
 		const count = async () => ((await t.db.prepare("SELECT (SELECT COUNT(*) FROM analysis_nodes) + (SELECT COUNT(*) FROM analysis_runs) + (SELECT COUNT(*) FROM analysis_edges) + (SELECT COUNT(*) FROM sessions) + (SELECT COUNT(*) FROM messages) AS c").get()) as { c: number }).c;
 		const before = await count();
-		await buildFingerprint(t.db, parseFingerprintArgs("", new Date(ASOF)));
+		await build(t.db, parseFingerprintArgs("", new Date(ASOF)));
 		assert.equal(await count(), before);
 	});
 });
@@ -240,5 +244,84 @@ describe("parseFingerprintArgs", () => {
 
 	it("reads --out", () => {
 		assert.equal(parseFingerprintArgs("--out fp.json", now).out, "fp.json");
+	});
+});
+
+describe("registering a contributor", () => {
+	let t2: TempDb;
+	const SENTINEL_CLASS = "SECRET-CLASS-NAME";
+	const hits = (sessions: number) =>
+		Array.from({ length: sessions }, (_, i) => ({ id: `plug-${i}`, kind: i % 2 === 0 ? "alpha" : SENTINEL_CLASS }));
+
+	before(async () => {
+		t2 = await tempDb();
+		for (const [i, h] of hits(8).entries()) {
+			await seedSession(t2.db, h.id, "pi", `2026-03-0${i + 1}T10:00:00.000Z`, { prompts: 2, toolCalls: 1, minutes: 5 });
+			await seedNode(t2.db, h.id, "my-private-analyzer", { score: i, kind: h.kind, text: "hunter2" });
+		}
+	});
+	after(() => t2.close());
+
+	const extra: FingerprintContributor = {
+		def: {
+			id: "plugged",
+			label: "Plugged",
+			description: "A section a new analyzer adds without editing the builder.",
+			kind: "inferred",
+			measures: [
+				{ kind: "total", id: "scoreTotal", field: "score" },
+				{ kind: "distribution", id: "scores", field: "score", unit: "prompts", edges: [0, 4] },
+				{ kind: "groups", id: "byKind", dimensions: { kind: ["alpha", "beta"] } },
+			],
+		},
+		async read(ctx) {
+			const rows = await ctx.nodes("my-private-analyzer", { score: "$.score", kind: "$.kind", text: "$.text" });
+			return { measured: rows.map((r) => String(r["session"])), rows };
+		},
+	};
+
+	it("adds a section the builder never named, and applies the guard to it", async () => {
+		const fp = await build(t2.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), [extra]);
+		const section = inferred(fp, "plugged");
+		assert.equal(section.status, "ok");
+		assert.equal(section["sessionsMeasured"], 8);
+		assert.equal(section["scoreTotal"], 28);
+		// 4 sessions use alpha, which is under the minimum, and so does the sentinel kind: they fold into other, which reaches it.
+		assert.deepEqual(section["byKind"], [{ kind: "other", count: 8, sessions: 8 }]);
+		const text = JSON.stringify(fp);
+		for (const leaked of [SENTINEL_CLASS, "hunter2", "my-private-analyzer", "plug-1"]) assert.ok(!text.includes(leaked), `output contains ${leaked}`);
+	});
+
+	it("is checked against the schema the declarations compose", async () => {
+		const schema = fingerprintSchema([...contributors, extra]);
+		const fp = await build(t2.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), [extra]);
+		assert.ok(Check(schema, fp));
+		const tampered = structuredClone(fp) as unknown as { inferred: { plugged: { byKind: Array<Record<string, unknown>> } } };
+		tampered.inferred.plugged.byKind[0]!["kind"] = SENTINEL_CLASS;
+		assert.ok(!Check(schema, tampered), "a value outside the fixed list passed the schema");
+		const widened = structuredClone(fp) as unknown as { inferred: { plugged: Record<string, unknown> } };
+		widened.inferred.plugged["note"] = "free text";
+		assert.ok(!Check(schema, widened), "an undeclared field passed the schema");
+	});
+
+	it("does not touch the graph", async () => {
+		const rows = async () => ((await t2.db.prepare("SELECT (SELECT COUNT(*) FROM analysis_nodes) + (SELECT COUNT(*) FROM analysis_runs) + (SELECT COUNT(*) FROM analysis_edges) AS c").get()) as { c: number }).c;
+		const before = await rows();
+		await build(t2.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), [extra]);
+		assert.equal(await rows(), before);
+	});
+
+	it("rejects a duplicate section id and a malformed id at registration", () => {
+		assert.throws(() => collectContributors([], [extra, extra]), /registered twice/);
+		assert.throws(() => collectContributors([], [{ ...extra, def: { ...extra.def, id: "Bad-Id" } }]), /must match/);
+		assert.throws(
+			() => collectContributors([], [{ ...extra, def: { ...extra.def, measures: [extra.def.measures[0]!, extra.def.measures[0]!] } }]),
+			/declares measure 'scoreTotal' twice/,
+		);
+	});
+
+	it("takes contributors from an analyzer's fingerprint list", () => {
+		const analyzer = { ...BUILTIN_ANALYZERS[0]!, fingerprint: [extra] };
+		assert.ok(collectContributors([analyzer]).some((c) => c.def.id === "plugged"));
 	});
 });

@@ -1,4 +1,4 @@
-import type { Bucket, Distribution, Withheld } from "./schema.js";
+import type { Bucket, Distribution, DistributionUnit, Withheld } from "./schema.js";
 
 /**
  * The minimum-group guard. Every figure a fingerprint publishes rests on at
@@ -31,7 +31,7 @@ function round(n: number): number {
  * none is left. Merging joins neighbours, so the buckets stay contiguous and an
  * empty bucket stays empty: a zero says nothing about any one session.
  */
-export function distribution(values: readonly number[], edges: readonly number[], unit: "minutes" | "prompts" | "tool-calls", min: number): Distribution {
+export function distribution(values: readonly number[], edges: readonly number[], unit: DistributionUnit, min: number): Distribution {
 	if (values.length < min) return WITHHELD;
 	let buckets: Bucket[] = edges.map((from, i) => ({ from, to: edges[i + 1] ?? null, sessions: 0 }));
 	for (const value of values) {
@@ -76,19 +76,23 @@ export interface RawGroup<K extends string> {
  * `other`, which is published only when it too reaches `min`; a session in two
  * folded groups counts once.
  */
-export function guardGroups<K extends string>(groups: readonly RawGroup<K>[], min: number): Array<{ key: K | "other"; count: number; sessions: number }> {
+export function guardGroups<K extends string>(
+	groups: readonly RawGroup<K>[],
+	min: number,
+	otherKey: K | "other" = "other",
+): Array<{ key: K | "other"; count: number; sessions: number }> {
 	const kept: Array<{ key: K | "other"; count: number; sessions: number }> = [];
 	let otherCount = 0;
 	const otherSessions = new Set<string>();
 	const folded: RawGroup<K>[] = [];
 	for (const group of groups) {
-		if (group.sessionIds.size >= min && group.key !== "other") kept.push({ key: group.key, count: group.count, sessions: group.sessionIds.size });
+		if (group.sessionIds.size >= min && group.key !== otherKey) kept.push({ key: group.key, count: group.count, sessions: group.sessionIds.size });
 		else folded.push(group);
 	}
 	for (const group of folded) {
 		otherCount += group.count;
 		for (const id of group.sessionIds) otherSessions.add(id);
 	}
-	if (otherSessions.size >= min) kept.push({ key: "other", count: otherCount, sessions: otherSessions.size });
+	if (otherSessions.size >= min) kept.push({ key: otherKey, count: otherCount, sessions: otherSessions.size });
 	return kept;
 }
