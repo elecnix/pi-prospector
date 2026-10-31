@@ -8,6 +8,10 @@ import { NOT_MUTED_AS_OF, NOT_REVISED_AS_OF } from "./current-generation.js";
  * node beyond the few fixed fields named below: the fingerprint builder gets
  * numbers and short enum values, and groups them.
  *
+ * The node readers are generic: a contributor names JSON paths into a node's
+ * content and gets back rows of numbers and short strings. The paths are bound
+ * as parameters, never spliced into the SQL, and must look like `$.a.b`.
+ *
  * Every query reads the session index and the graph as of one instant:
  * sessions that had started by then, messages stamped by then, and the
  * current generation of nodes that existed (and were not retracted) by then.
@@ -107,85 +111,76 @@ export async function sessionsWithRun(db: AsyncDatabase, scope: FingerprintScope
 	return new Set(rows.map((r) => r.id));
 }
 
-/** The seconds of active time each session's time-economy node recorded. */
-export async function activeSeconds(db: AsyncDatabase, scope: FingerprintScope): Promise<Array<{ id: string; seconds: number }>> {
+/** A JSON path into node content: `$` followed by `.name` steps. */
+const JSON_PATH = /^\$(\.[A-Za-z_][A-Za-z0-9_]*)+$/;
+/** A path relative to an array item, which may be the item itself. */
+const ITEM_PATH = /^\$(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+
+function checkPaths(paths: readonly string[], pattern: RegExp): void {
+	for (const path of paths) if (!pattern.test(path)) throw new Error(`'${path}' is not a JSON path of the form $.a.b`);
+}
+
+/** A scalar read out of node content. */
+export type NodeScalar = string | number | null;
+
+/** One row per current node of the analyzer, with each named field read from its content. `session` is the node's session. */
+export async function currentNodeRows(
+	db: AsyncDatabase,
+	scope: FingerprintScope,
+	analyzerId: string,
+	fields: Readonly<Record<string, string>>,
+): Promise<Array<Record<string, NodeScalar>>> {
+	const names = Object.keys(fields);
+	const paths = names.map((name) => fields[name]!);
+	checkPaths(paths, JSON_PATH);
 	const { from, params } = currentNodes(scope);
-	return (await prep(db, `SELECT n.session_id AS id, json_extract(n.content_json, '$.active_seconds') AS seconds FROM ${from}`).all(
-		"time-economy",
+	const select = names.map((_, i) => `json_extract(n.content_json, ?) AS f${i}`);
+	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from}`).all(
+		...paths,
+		analyzerId,
 		...params,
-	)) as Array<{ id: string; seconds: number }>;
+	)) as Array<Record<string, NodeScalar>>;
+	return rows.map((row) => Object.fromEntries([["session", row["session"]!], ...names.map((name, i) => [name, scalar(row[`f${i}`])])]));
 }
 
-export interface FailureTotals {
-	id: string;
-	turnFailures: number;
-	toolFailures: number;
+/**
+ * One row per element of an array in each current node's content. `itemFields`
+ * are read from the element (`$.name`, or `$` for the element itself) and
+ * `nodeFields` from the node, so a row can carry both.
+ */
+export async function currentNodeItems(
+	db: AsyncDatabase,
+	scope: FingerprintScope,
+	analyzerId: string,
+	arrayPath: string,
+	itemFields: Readonly<Record<string, string>>,
+	nodeFields: Readonly<Record<string, string>> = {},
+): Promise<Array<Record<string, NodeScalar>>> {
+	const itemNames = Object.keys(itemFields);
+	const nodeNames = Object.keys(nodeFields);
+	const itemPaths = itemNames.map((name) => itemFields[name]!);
+	const nodePaths = nodeNames.map((name) => nodeFields[name]!);
+	checkPaths([arrayPath, ...nodePaths], JSON_PATH);
+	checkPaths(itemPaths, ITEM_PATH);
+	const { from, params } = currentNodes(scope, ", json_each(n.content_json, ?) g");
+	const select = [...itemNames.map((_, i) => `json_extract(g.value, ?) AS i${i}`), ...nodeNames.map((_, i) => `json_extract(n.content_json, ?) AS n${i}`)];
+	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from}`).all(
+		...itemPaths,
+		...nodePaths,
+		arrayPath,
+		analyzerId,
+		...params,
+	)) as Array<Record<string, NodeScalar>>;
+	return rows.map((row) =>
+		Object.fromEntries([
+			["session", row["session"]!],
+			...itemNames.map((name, i) => [name, scalar(row[`i${i}`])]),
+			...nodeNames.map((name, i) => [name, scalar(row[`n${i}`])]),
+		]),
+	);
 }
 
-/** The failure counts of each session's failure-modes node. */
-export async function failureTotals(db: AsyncDatabase, scope: FingerprintScope): Promise<FailureTotals[]> {
-	const { from, params } = currentNodes(scope);
-	return (await prep(
-		db,
-		`SELECT n.session_id AS id,
-		        COALESCE(json_extract(n.content_json, '$.turn_failure_count'), 0) AS turnFailures,
-		        COALESCE(json_extract(n.content_json, '$.tool_failure_count'), 0) AS toolFailures
-		   FROM ${from}`,
-	).all("failure-modes", ...params)) as FailureTotals[];
-}
-
-export interface FailureGroupRow {
-	id: string;
-	axis: string | null;
-	classId: string | null;
-	count: number;
-}
-
-/** One row per failure class of each session's failure-modes node. */
-export async function failureGroups(db: AsyncDatabase, scope: FingerprintScope): Promise<FailureGroupRow[]> {
-	const { from, params } = currentNodes(scope, ", json_each(n.content_json, '$.groups') g");
-	return (await prep(
-		db,
-		`SELECT n.session_id AS id, json_extract(g.value, '$.axis') AS axis,
-		        json_extract(g.value, '$.class_id') AS classId, COALESCE(json_extract(g.value, '$.count'), 0) AS count
-		   FROM ${from}`,
-	).all("failure-modes", ...params)) as FailureGroupRow[];
-}
-
-export interface FrustrationRow {
-	id: string;
-	signalSource: string | null;
-	polarity: string | null;
-	category: string | null;
-	/** Occurrences in text the person typed; null when the hit carries no origin label. */
-	typed: number | null;
-}
-
-/** One row per turn-frustration hit. */
-export async function frustrationHits(db: AsyncDatabase, scope: FingerprintScope): Promise<FrustrationRow[]> {
-	const { from, params } = currentNodes(scope);
-	return (await prep(
-		db,
-		`SELECT n.session_id AS id, json_extract(n.content_json, '$.signal_source') AS signalSource,
-		        json_extract(n.content_json, '$.polarity') AS polarity, json_extract(n.content_json, '$.category') AS category,
-		        json_extract(n.content_json, '$.origins.typed') AS typed
-		   FROM ${from}`,
-	).all("turn-frustration", ...params)) as FrustrationRow[];
-}
-
-export interface ClassificationRow {
-	id: string;
-	sentiment: string | null;
-	frictionType: string | null;
-}
-
-/** One row per turn the classifier judged. */
-export async function turnClassifications(db: AsyncDatabase, scope: FingerprintScope): Promise<ClassificationRow[]> {
-	const { from, params } = currentNodes(scope);
-	return (await prep(
-		db,
-		`SELECT n.session_id AS id, json_extract(n.content_json, '$.sentiment') AS sentiment,
-		        json_extract(n.content_json, '$.friction_type') AS frictionType
-		   FROM ${from}`,
-	).all("turn-pair-llm", ...params)) as ClassificationRow[];
+/** Numbers and strings pass; anything else (an object or array read as JSON text) is not a shareable scalar. */
+function scalar(value: unknown): NodeScalar {
+	return typeof value === "number" || typeof value === "string" ? value : null;
 }

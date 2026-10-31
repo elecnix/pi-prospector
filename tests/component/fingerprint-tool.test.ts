@@ -4,8 +4,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Check } from "typebox/value";
+import { collectContributors } from "../../src/fingerprint/registry.js";
+import { BUILTIN_ANALYZERS } from "../../src/analyze/defaults.js";
+import { fingerprintSchema, type Fingerprint } from "../../src/fingerprint/schema.js";
 import { executeProspectTool } from "../../src/commands/tool.js";
-import { Fingerprint } from "../../src/fingerprint/schema.js";
 import type { ExtensionCommandContext } from "../../src/pi-stubs.js";
 
 /** The `fingerprint` action of the `prospect` tool: the same fingerprint the command prints. */
@@ -28,7 +30,7 @@ const call = (params: Record<string, unknown>) => executeProspectTool("id", para
 describe("prospect tool: fingerprint action", () => {
 	it("returns a fingerprint that matches the schema, as text and as details", async () => {
 		const result = await call({ action: "fingerprint", as_of: "2030-01-01" });
-		assert.ok(Check(Fingerprint, result.details), "details do not match the schema");
+		assert.ok(Check(fingerprintSchema(collectContributors(BUILTIN_ANALYZERS)), result.details), "details do not match the schema");
 		assert.deepEqual(JSON.parse(result.content[0]!.text), result.details);
 		assert.equal((result.details as Fingerprint).asOf, "2030-01-01");
 	});
@@ -36,6 +38,13 @@ describe("prospect tool: fingerprint action", () => {
 	it("passes source, from and to into the filter", async () => {
 		const result = await call({ action: "fingerprint", source: "pi,claude", from: "2026-01-01", to: "2026-02-01" });
 		assert.deepEqual((result.details as Fingerprint).filter, { sources: ["pi", "claude"], from: "2026-01-01", to: "2026-02-01" });
+	});
+
+	it("renders another format when asked, and keeps the fingerprint in details", async () => {
+		const result = await call({ action: "fingerprint", format: "csv" });
+		assert.match(result.content[0]!.text, /^metric,value\nschemaVersion,2\n/);
+		assert.equal((result.details as Fingerprint).kind, "corpus-fingerprint");
+		assert.match((await call({ action: "fingerprint", format: "xml" })).content[0]!.text, /unknown format 'xml'/);
 	});
 
 	it("reports a bad argument as text instead of throwing", async () => {
