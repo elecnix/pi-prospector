@@ -166,7 +166,11 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// quoted, agent, notification, fork-copy) and its occurrences per origin. The
 	// count and the weight are unchanged, and so is the hit's identity, so a
 	// `--revise minor` run redraws each hit beside its predecessor with the label.
-	minor: 10,
+	// 1.11: a pasted block whose closing tag repeats its attributes
+	// (`</pasted_content id="4a2f">`, how Claude Code writes every paste) is now
+	// labelled `pasted`. Before, the labeller found no closing tag, so a hit inside
+	// a real paste kept the label `typed`. Only the origin fields can move.
+	minor: 11,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };

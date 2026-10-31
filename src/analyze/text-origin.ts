@@ -97,8 +97,12 @@ const NOTIFICATION_TAGS = new Set([
 const AGENT_TAGS = new Set(["teammate-message", "cross-session-message"]);
 const PASTE_TAGS = new Set(["pasted_content"]);
 
-/** A fenced block, or a balanced `<tag>…</tag>` pair. */
-const BLOCK_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~|<([a-z][a-z0-9_-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1\s*>/g;
+/**
+ * A fenced block, or a balanced `<tag>…</tag>` pair. Claude Code repeats the
+ * attributes on the closing tag of a paste (`</pasted_content id="4a2f">`), so a
+ * closing tag may carry them.
+ */
+const BLOCK_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~|<([a-z][a-z0-9_-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1(?:\s[^>]*)?>/g;
 
 const QUOTED_LINE_RE = /^[ \t]*>/;
 const PASTE_PLACEHOLDER_RE = /^[ \t]*\[Pasted text #\d+/;
