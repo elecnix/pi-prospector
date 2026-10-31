@@ -24,6 +24,8 @@ import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/inde
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
 import { messageOriginAnalyzer } from "./analyzers/message-origin/index.js";
 import { attentionGapsAnalyzer } from "./analyzers/attention-gaps/index.js";
+import { messageAnswersAnalyzer } from "./analyzers/message-answers/index.js";
+import { promptFormAnalyzer } from "./analyzers/prompt-form/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
@@ -62,6 +64,8 @@ export const DEFAULT_ANALYZER_IDS = [
 	"turn-frustration",
 	"message-origin",
 	"attention-gaps",
+	"message-answers",
+	"prompt-form",
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
@@ -118,6 +122,10 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	messageOriginAnalyzer,
 	// How long the agent waited for a person, from the typed messages message-origin settled.
 	attentionGapsAnalyzer,
+	// The classifier questions analyzers registered about a message, asked in one request each.
+	// Without a decisionModel it plans nothing. prompt-form reads its answers.
+	messageAnswersAnalyzer,
+	promptFormAnalyzer,
 	turnPairLLMAnalyzer,
 	// The assistant's own cognitive state, per turn: confusion, indecision, and
 	// surprise read from the thinking trace and response text. Depends only on
