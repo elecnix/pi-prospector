@@ -112,7 +112,13 @@ export const attentionGapsAnalyzer: Analyzer = {
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
 		const origins = readOrigins(ctx.dependencyNodes[MESSAGE_ORIGIN_DEF.id] ?? []);
-		if (origins.used.length === 0 || ctx.messages.length === 0) return [];
+		const originNodes = origins.used;
+		if (ctx.messages.length === 0) return [];
+		// A session with no user-role message has no origin node to wait for and still
+		// earns a zero-count node. A session with user-role messages but no origin node
+		// is missing its dependency, and a zero here would be false.
+		const hasUserMessage = ctx.messages.some((m) => m.role === "user");
+		if (originNodes.length === 0 && hasUserMessage) return [];
 		// The origin nodes carry only the message, so the timing the gaps read enters
 		// the source set separately: a backfilled timestamp re-identifies the unit.
 		const sources: SourceRef[] = [

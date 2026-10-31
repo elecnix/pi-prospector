@@ -33,6 +33,18 @@ describe("scanAttention", () => {
 		assert.deepEqual(scan.buckets.map((b) => b.count), [0, 1, 0, 0, 1, 0]);
 	});
 
+	it("sorts the configured bounds before bucketing", () => {
+		const messages = [row({ id: "a1", role: "assistant", timestamp: T("10:00:00") }), row({ id: "u1", role: "user", timestamp: T("11:23:20") })];
+		const scan = scanAttention(messages, new Map([["u1", typed]]), { bucketBoundsSeconds: [3600, 10], longestCap: 5 });
+		assert.deepEqual(scan.buckets, [{ le_seconds: 10, count: 0 }, { le_seconds: 3600, count: 0 }, { le_seconds: null, count: 1 }]);
+		const within = scanAttention(
+			[row({ id: "a1", role: "assistant", timestamp: T("10:00:00") }), row({ id: "u1", role: "user", timestamp: T("10:30:00") })],
+			new Map([["u1", typed]]),
+			{ bucketBoundsSeconds: [3600, 10], longestCap: 5 },
+		);
+		assert.equal(within.buckets.find((b) => b.le_seconds === 3600)?.count, 1);
+	});
+
 	it("ignores messages that are not typed and does not treat a notification as the agent finishing", () => {
 		const messages = [
 			row({ id: "a1", role: "assistant", timestamp: T("10:00:00") }),

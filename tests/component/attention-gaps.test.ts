@@ -80,6 +80,23 @@ describe("attention-gaps component test", () => {
 		}
 	});
 
+	it("gives a session with no user-role message a zero-count node", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await run(db, "ag-agent-only", [
+				{ role: "assistant", text: "Scheduled run started.", timestamp: T("10:00:00") },
+				{ role: "assistant", text: "Scheduled run finished.", timestamp: T("10:00:30") },
+			]);
+			const nodes = await readAnalyzerNodes(db, "attention-gaps");
+			assert.equal(nodes.length, 1);
+			const content = JSON.parse(nodes[0]!.content_json) as AttentionGapsProperties;
+			assert.equal(content.typed_message_count, 0);
+			assert.equal(content.median_seconds, null);
+		} finally {
+			await close();
+		}
+	});
+
 	it("plans nothing for an empty transcript", async () => {
 		const { db, close } = await tempDb();
 		try {
