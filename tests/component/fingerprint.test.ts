@@ -304,6 +304,25 @@ describe("registering a contributor", () => {
 		assert.ok(!Check(schema, widened), "an undeclared field passed the schema");
 	});
 
+	it("withholds a distinct count that rests on 1 to 4 sessions", async () => {
+		const distinct: FingerprintContributor = {
+			def: { id: "kinds", label: "Kinds", description: "Distinct kinds.", kind: "inferred", measures: [{ kind: "distinct", id: "kindCount", field: "day" }] },
+			async read(ctx) {
+				const rows = await ctx.nodes("my-private-analyzer", { score: "$.score" });
+				// Only one session has a day, though all eight are measured.
+				return { measured: rows.map((r) => String(r["session"])), rows: rows.map((r, i) => ({ session: r["session"]!, day: i === 0 ? "2026-03-01" : null })) };
+			},
+		};
+		const fp = await build(t2.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), [distinct]);
+		assert.deepEqual(inferred(fp, "kinds")["kindCount"], { status: "withheld", reason: "below-min-group-size" });
+		assert.ok(Check(fingerprintSchema([...contributors, distinct]), fp));
+	});
+
+	it("reads an empty source list as matching no session instead of failing", async () => {
+		const fp = await build(t2.db, { sources: [], from: null, to: null, asOf: ASOF });
+		assert.equal(fp.sessions.count, 0);
+	});
+
 	it("does not touch the graph", async () => {
 		const rows = async () => ((await t2.db.prepare("SELECT (SELECT COUNT(*) FROM analysis_nodes) + (SELECT COUNT(*) FROM analysis_runs) + (SELECT COUNT(*) FROM analysis_edges) AS c").get()) as { c: number }).c;
 		const before = await rows();

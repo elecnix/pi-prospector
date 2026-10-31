@@ -105,7 +105,7 @@ export function measureSchema(measure: MeasureSpec): TSchema {
 		case "sessions":
 			return Type.Union([Count, Withheld]);
 		case "distinct":
-			return Count;
+			return Type.Union([Count, Withheld]);
 		case "groups": {
 			const dimensions = Object.fromEntries(Object.entries(measure.dimensions).map(([name, values]) => [name, oneOf([...values, "other"])]));
 			return Type.Array(Type.Object({ ...dimensions, count: Count, sessions: Count }, { additionalProperties: false }));
