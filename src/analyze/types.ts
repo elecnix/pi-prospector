@@ -12,6 +12,7 @@ import type { AsyncDatabase } from "../db/async-db.js";
 import type { TurnPair } from "./analyzers/turn-pair-core/build.js";
 import type { CwdSmoothnessCache } from "./analyzers/session-overview/cross-session.js";
 import type { DecisionCaller } from "./decision-model.js";
+import type { FingerprintContributor } from "../fingerprint/contributor.js";
 
 // ─────────────────────────── enumerations ───────────────────────────
 
@@ -645,6 +646,19 @@ export interface Analyzer {
 	 * Optional: an analyzer with no outputs is unaffected.
 	 */
 	outputs?: readonly AnalyzerOutput[];
+	/**
+	 * Sections this analyzer adds to the corpus fingerprint (`prospect fingerprint`).
+	 *
+	 * Like an output, a contributor reads the finished graph and writes nothing.
+	 * It declares the section's measures and how to read their rows; the
+	 * fingerprint applies the minimum group size and builds the strict schema
+	 * from the declaration, so a contributor cannot publish a value outside a
+	 * number, a day, or a member of a list it fixed in advance. Export them
+	 * from `fingerprint.ts` beside `index.ts`.
+	 *
+	 * Optional: an analyzer with no contributors is unaffected.
+	 */
+	fingerprint?: readonly FingerprintContributor[];
 }
 
 // ─────────────────────────── outputs ───────────────────────────

@@ -638,6 +638,18 @@ With reports on, pi-prospector sends one report a day to a [usage-tracker](https
 
 The setting lives in `~/.pi/agent/prospector-telemetry.json`. [`telemetry/tracker.config.json`](telemetry/tracker.config.json) lists every value the tracker accepts from pi-prospector.
 
+### `/prospect-fingerprint [--source a,b] [--from DAY] [--to DAY] [--as-of DAY] [--format json|csv] [--out FILE]`
+
+Print a fingerprint of your sessions as JSON. It covers how long and how often you work, what a session looks like, and what the analysis graph found, and it leaves out the content. The design makes it safe to share. Every value is a number, a date, or a member of a fixed list, so it has no place for conversation text, paths, titles, project names, session ids, or custom analyzer ids.
+
+- `--source` takes one or more of `pi`, `claude`, `codex`, `opencode`, `cline` (comma-separated or repeated). `--from` and `--to` are session start days, both inclusive. Leave all three out to take every session.
+- `--as-of` reads the sessions and the analysis graph as they stood on that day (a date or an ISO timestamp or a duration such as `7d`). The default is now.
+- The output has a schema version, the as-of date, the filter, and the session count. Under `objective` are figures counted or timed from the transcript, or found by a deterministic analyzer: active time and session duration, prompts and tool calls per session, sub-agents, and failures by class. Under `inferred` are figures a language model judged: frustration signals the person typed, and the friction type and sentiment of the turns the classifier read. Read those as estimates.
+- No figure rests on fewer than 5 sessions. A histogram bucket under 5 merges into its smaller neighbour. A group under 5 folds into `other` (dropped if `other` is also under 5). When an analyzer ran on fewer than 5 sessions, its section reads `withheld`.
+- `--format` picks the renderer: `json` (the default) or `csv`, one `metric,value` row per figure.
+- It reads only. It never runs analysis, so run `/prospect-analyze` first to fill the sections that depend on the graph.
+- Each section comes from a contributor that an analyzer registers in `Analyzer.fingerprint`, so a new analyzer adds a section without a change to the builder. `DESIGN.md` defines the contributor and renderer extension points.
+
 ## Pi tool: `prospect`
 
 When installed, pi-prospector registers a `prospect` tool the Pi coding agent can call during a session:
@@ -650,6 +662,7 @@ When installed, pi-prospector registers a `prospect` tool the Pi coding agent ca
 | `accept` | Mark a proposal as applied; optional `rationale`, `disposition` (planned/done/done_differently), `actual_change` record a durable decision |
 | `reject` | Mark a proposal as rejected; optional `rationale` records a durable decision |
 | `remediate` | Accept many proposals (`proposal_ids`) at once under ONE shared remediation (`description`) instead of N duplicated rationales |
+| `fingerprint` | Return the shareable corpus fingerprint as JSON; optional `source` (comma-separated), `from`, `to`, `as_of`, and `format` (`json` or `csv`) |
 
 This lets you say things like "show me open proposals" or "sync my sessions and check stats" directly in a Pi conversation. (Analysis itself runs through `/prospect-analyze`, not the tool, because it can be long-running and cost money.)
 

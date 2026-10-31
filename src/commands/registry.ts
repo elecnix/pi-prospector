@@ -253,6 +253,13 @@ export const COMMANDS: ProspectCommand[] = [
 		handler: (module) => module.prospectTelemetry,
 	}),
 	spec({
+		name: "prospect-fingerprint",
+		description:
+			"Print a shareable fingerprint of your sessions as JSON: counts, durations, and distributions, with no session text, paths, titles, project names, or ids. Objective figures (counted or timed) are kept apart from inferred ones (judged by a model). Any figure that rests on fewer than 5 sessions is merged into a neighbour or withheld. Flags: --source pi|claude|codex|opencode|cline (comma-separated or repeated; default all), --from YYYY-MM-DD and --to YYYY-MM-DD (session start days, both inclusive; default all), --as-of YYYY-MM-DD|ISO|7d (read the sessions and the graph as of then; default now), --format json|csv (default json), --out FILE (default stdout). Reads only; never runs analysis.",
+		load: () => import("./fingerprint.js"),
+		handler: (module) => module.prospectFingerprint,
+	}),
+	spec({
 		name: "prospect-models",
 		description: "Show the per-model quality/cost efficiency frontier over the analyzed routing corpus",
 		load: () => import("./models.js"),

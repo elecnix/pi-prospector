@@ -11,7 +11,7 @@ export const PROSPECT_TOOL = {
 	name: "prospect",
 	label: "Prospect",
 	description:
-		"Index sessions, run analysis, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, analyze, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, nodes, node, session_summary, leaks, search, help. " +
+		"Index sessions, run analysis, check stats, list/accept/reject proposals, and mute/unmute lexicon terms. Actions: sync, analyze, stats, list_proposals, accept, reject, remediate, mute, unmute, mutes, nodes, node, session_summary, leaks, search, fingerprint, help. " +
 		"list_proposals accepts source (pi|claude|codex|opencode|cline) to filter by coding harness. " +
 		"When accepting/rejecting, pass the human's reasoning via rationale, and disposition to record whether the " +
 		"recommended action is planned, already done, or done_differently (the idea triggered a different action). " +
@@ -31,7 +31,9 @@ export const PROSPECT_TOOL = {
 		"Use action leaks to report which sessions contain detected secrets: findings from the credential-detector analyzers with severity, rule, " +
 		"redacted preview, fingerprint, and message anchor (params: severity floor, limit, source). " +
 		"Use action search with query for content and pattern search over proposals and the session corpus (FTS5): hits carry record kind, id, session, " +
-		"a highlighted snippet ranked by bm25, and links into show / node (params: query required; kind all|messages|proposals; limit; source).",
+		"a highlighted snippet ranked by bm25, and links into show / node (params: query required; kind all|messages|proposals; limit; source). " +
+		"Use action fingerprint for a shareable JSON fingerprint of the sessions: counts, durations and distributions with no session text, paths, titles, project names or ids, " +
+		"objective figures apart from model-inferred ones, and no figure resting on fewer than 5 sessions (params: source, comma-separated; from and to as YYYY-MM-DD; as_of as a day, an ISO timestamp or a duration like 7d; format json or csv, default json).",
 	parameters: Type.Object({
 		action: Type.Union([
 			Type.Literal("sync"),
@@ -49,6 +51,7 @@ export const PROSPECT_TOOL = {
 			Type.Literal("session_summary"),
 			Type.Literal("leaks"),
 			Type.Literal("search"),
+			Type.Literal("fingerprint"),
 			Type.Literal("help"),
 		]),
 		status: Type.Optional(
@@ -111,6 +114,10 @@ export const PROSPECT_TOOL = {
 				description: "search: restrict which record kinds are searched (default all).",
 			}),
 		),
+		from: Type.Optional(Type.String({ description: "fingerprint: first session start day to include, YYYY-MM-DD." })),
+		to: Type.Optional(Type.String({ description: "fingerprint: last session start day to include, YYYY-MM-DD." })),
+		as_of: Type.Optional(Type.String({ description: "fingerprint: read the sessions and the graph as of this day, ISO timestamp, or duration such as 7d (default now)." })),
+		format: Type.Optional(Type.String({ description: "fingerprint: output format, json (default) or csv." })),
 		// session_id is declared above (list_proposals filter); session_summary reuses it.
 	}),
 };

@@ -13,6 +13,7 @@ import { getLatestAnalyzeRuns } from "../db/analysis-queries.js";
 import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
 import { readSessionSummary } from "./show.js";
 import { readLeaks, type LeaksQuery } from "./leaks.js";
+import { renderFingerprint } from "./fingerprint.js";
 import { readSearch, searchSyntaxHelp, type SearchQuery } from "./search.js";
 import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
@@ -50,6 +51,16 @@ function decisionInputFrom(params: Record<string, unknown>): DecisionInput {
 		rationale: (params.rationale as string | undefined) ?? null,
 		actual_change: (params.actual_change as string | undefined) ?? null,
 	};
+}
+
+/** The flag string the fingerprint command parses, from the tool's params. */
+function fingerprintFlags(params: Record<string, unknown>): string {
+	const flags: string[] = [];
+	for (const [param, flag] of [["source", "--source"], ["from", "--from"], ["to", "--to"], ["as_of", "--as-of"], ["format", "--format"]] as const) {
+		const value = params[param];
+		if (typeof value === "string" && value !== "") flags.push(flag, value);
+	}
+	return flags.join(" ");
 }
 
 export async function executeProspectTool(
@@ -285,6 +296,14 @@ export async function executeProspectTool(
 			return text(`prospect search: ${err instanceof Error ? err.message : String(err)}`, {});
 		}
 	}
+	case "fingerprint": {
+		try {
+			const { text: body, fingerprint } = await renderFingerprint(db, fingerprintFlags(params));
+			return text(body, fingerprint);
+		} catch (err) {
+			return text(`prospect fingerprint: ${err instanceof Error ? err.message : String(err)}`, {});
+		}
+	}
 	case "session_summary": {
 		const sessionId = params.session_id as string | undefined;
 		if (!sessionId) return text("session_id required (use list_proposals or nodes to find one)", {});
@@ -315,6 +334,7 @@ Analysis-graph & point-in-time commands (slash commands):
   - /prospect-show <proposal-id> — a proposal + the verbatim turns it was synthesised from
   - /prospect-show --session <id> — the session summary + its evidence (consumed turns, produced proposals, contrast siblings)
   - prospect tool action leaks / /prospect-leaks [--severity <critical|high|medium>] [--limit n] [--source pi|claude|codex|opencode|cline] — which sessions contain detected secrets, per finding: rule, redacted preview, fingerprint, message anchor
+  - prospect tool action fingerprint / /prospect-fingerprint [--source a,b] [--from DAY] [--to DAY] [--as-of DAY] [--format json|csv] — a shareable JSON fingerprint of the sessions: objective and inferred figures apart, nothing resting on fewer than 5 sessions, no content or ids
   - prospect tool action search / /prospect-search <query> [--kind all|messages|proposals] [--limit n] [--source pi|claude|codex|opencode|cline] — FTS5 content search over proposals and the session corpus: record kind, id, session, highlighted snippet, bm25 ranking; query syntax: plain terms (implicit AND), "quoted phrases", prefix term*, OR / NOT / AND, NEAR(a b, n), column:term (messages: content_text, content_thinking; proposals: title, summary, detail, evidence)
   - /prospect-stats --as-of <ts|7d> | --as-of-run <id> — stats as of a past point
   - /prospect-proposals --as-of <ts> — proposals with status reconstructed from decisions

@@ -56,6 +56,7 @@ import {
 } from "./decision.js";
 import { decisionIdentity } from "../../decision-model.js";
 import { computeEnrichCap, DEFAULT_TURN_PAIR_LLM_CONFIG, type TurnPairLLMConfig } from "./config.js";
+import { turnPairLlmFingerprint } from "./fingerprint.js";
 
 export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 	id: "turn-pair-llm",
@@ -143,6 +144,7 @@ interface EnrichMeta {
 }
 
 export const turnPairLLMAnalyzer: Analyzer = {
+	fingerprint: [turnPairLlmFingerprint],
 	def: TURN_PAIR_LLM_DEF,
 	version: TURN_PAIR_LLM_VERSION,
 	prompts: PROMPTS,

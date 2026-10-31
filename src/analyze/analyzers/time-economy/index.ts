@@ -48,6 +48,7 @@ import { isPreparationCommand, isCommitCommand, commitSubjectOf, isFailedPrepara
 import type { AsyncDatabase } from "../../../db/async-db.js";
 import { getBackgroundTasksForSession } from "../../../db/queries.js";
 import type { BackgroundTaskRow } from "../../types.js";
+import { timeEconomyFingerprint } from "./fingerprint.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const TimeEconomyRawProposal = Type.Object({
@@ -320,6 +321,7 @@ export function buildProposals(
 }
 
 export const timeEconomyAnalyzer: Analyzer = {
+	fingerprint: [timeEconomyFingerprint],
 	def: TIME_ECONOMY_DEF,
 	version: TIME_ECONOMY_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
