@@ -894,6 +894,11 @@ contain the new word have anything to compute.
 
 - **Skill load** (a skill brought into the agent's context) is a call to the host's skill tool, or a read of the skill's `SKILL.md` on a host that has no such tool. One load is one call.
 - **Skill use** is the list of skills a session loaded, each with its name, how many times it was loaded, and how many of those calls failed. It records what the agent loaded, never what was available. The instruction corpus is read from disk as it is now, so the skills installed during a past session cannot be recovered. A session that loaded none gets an empty list and still has a record, so a rate over sessions keeps its denominator.
+### Repository identity (deterministic, session-level)
+
+- **Repository key** is the one name a session's repository goes by, whatever the worktree or the spelling. It is the directory right below a repository root in the session's working directory, lowercased, without a trailing `.git`. The bare-repository-plus-worktrees layout and a plain clone give the same key.
+- **Placement** says where a session ran relative to a repository root: in a **repo**, in a **temp** directory, **unplaced** (outside every root), or **unknown** (the host recorded no directory). Only a session in a repo has a key. The others carry null, because a guessed key would count the session under the wrong repository.
+- **Checkout** is the first directory below the repository: a worktree's name in the worktrees layout, otherwise a subdirectory.
 
 ### Language-model access
 

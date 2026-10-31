@@ -323,6 +323,11 @@ Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · cr
 Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
 
 Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+### repo-identity — the repository a session belongs to (deterministic)
+
+Gives each session one canonical repository key. A host records only the working directory, so one repository appears as one directory per worktree, and the host's own project field spells it several ways. The analyzer takes the directory right below a repository root (`Source`, `src`, `code` and similar, set in config), lowercases it, and drops a trailing `.git`. Worktrees of one repository then share a key. A session in a temporary directory, outside every root, or with no directory recorded gets no key and a placement that says which, because a guessed key would count sessions under the wrong repository. The node has the key, the first directory below the repository (a worktree name or a subdirectory), and the placement. The analyzer doesn't call a model and proposes nothing.
+
+Source: [`repo-identity/index.ts`](./src/analyze/analyzers/repo-identity/index.ts) · the rule in [`detect.ts`](./src/analyze/analyzers/repo-identity/detect.ts) · roots in [`config.ts`](./src/analyze/analyzers/repo-identity/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 
