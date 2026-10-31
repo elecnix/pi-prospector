@@ -10,7 +10,7 @@
  * Origin comes from `message-origin`, consumed through `consumes` edges. Only a
  * message a rule or the model settled as `typed` is attention. A node that is
  * `decided: false` keeps the provisional label `typed` and is counted apart, so a
- * message nobody could place never moves the statistics. A session with no typed
+ * message nobody could place never moves the statistics. A session with messages but no typed
  * message still gets a node with zero counts, because "no person was involved" is
  * a finding and a rate over sessions needs the denominator.
  *
