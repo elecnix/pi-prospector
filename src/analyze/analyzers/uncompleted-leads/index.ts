@@ -98,8 +98,11 @@ export const UNCOMPLETED_LEADS_VERSION: AnalyzerVersion = {
 	// commands) from single-result tool rows read through the shared action
 	// stream, literal completion matching within a tool-call window, per-class
 	// recurrence-gated proposals, and a capped per-session lead list.
+	// 1.1: the shared action stream now pairs a result that carries a call id with
+	// a stored call that has none (sessions indexed before 2026-08-20), so those
+	// sessions yield the leads their tool results held.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/uncompleted-leads/index.ts",
 };

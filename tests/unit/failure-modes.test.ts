@@ -320,6 +320,72 @@ describe("buildToolStream", () => {
 		assert.equal(stream.invocations[0]!.outcome!.isError, true);
 	});
 
+	it("pairs a result that carries an id with a stored call that carries none", () => {
+		// Rows indexed before sync kept the call id: the call has no id, the result
+		// does. Sessions from June to August look like this, and every error in them
+		// read as no error at all.
+		const rows: MessageRow[] = [
+			msg({
+				id: "a1",
+				role: "assistant",
+				tool_calls: JSON.stringify([
+					{ name: "read", arguments: { path: "/a" } },
+					{ name: "bash", arguments: { command: "ls" } },
+				]),
+			}),
+			msg({
+				id: "r1",
+				role: "toolResult",
+				tool_results: JSON.stringify([
+					{ toolCallId: "p-1", toolName: "bash", isError: true, textLength: 5 },
+					{ toolCallId: "p-2", toolName: "read", isError: false, textLength: 9 },
+				]),
+			}),
+		];
+		const stream = buildToolStream(rows);
+		assert.equal(stream.invocations[0]!.name, "read");
+		assert.equal(stream.invocations[0]!.outcome!.isError, false);
+		assert.equal(stream.invocations[1]!.name, "bash");
+		assert.equal(stream.invocations[1]!.outcome!.isError, true);
+	});
+
+	it("pairs same-named id-less calls with id-carrying results in order", () => {
+		const rows: MessageRow[] = [
+			msg({ id: "a1", role: "assistant", tool_calls: JSON.stringify([{ name: "bash", arguments: { command: "one" } }]) }),
+			msg({ id: "r1", role: "toolResult", tool_results: JSON.stringify([{ toolCallId: "p-1", toolName: "bash", isError: true, textLength: 1 }]) }),
+			msg({ id: "a2", role: "assistant", tool_calls: JSON.stringify([{ name: "bash", arguments: { command: "two" } }]) }),
+			msg({ id: "r2", role: "toolResult", tool_results: JSON.stringify([{ toolCallId: "p-2", toolName: "bash", isError: false, textLength: 1 }]) }),
+		];
+		const stream = buildToolStream(rows);
+		assert.deepEqual(stream.invocations.map((i) => i.outcome?.isError), [true, false]);
+	});
+
+	it("keeps an id-less result paired with its own call after an unknown-id result took an earlier one", () => {
+		const rows: MessageRow[] = [
+			msg({
+				id: "a1",
+				role: "assistant",
+				tool_calls: JSON.stringify([
+					{ name: "bash", arguments: { command: "one" } },
+					{ name: "bash", arguments: { command: "two" } },
+				]),
+			}),
+			msg({ id: "r1", role: "toolResult", tool_results: JSON.stringify([{ toolCallId: "p-1", toolName: "bash", isError: true, textLength: 1 }]) }),
+			msg({ id: "r2", role: "toolResult", tool_results: JSON.stringify([{ toolName: "bash", isError: false, textLength: 1 }]) }),
+		];
+		const stream = buildToolStream(rows);
+		assert.deepEqual(stream.invocations.map((i) => i.outcome?.isError), [true, false]);
+	});
+
+	it("leaves a result unpaired when every call carries an id and none matches", () => {
+		const rows = [
+			...callAndResult("c1", "bash", { command: "ls" }),
+			msg({ id: "r9", role: "toolResult", tool_results: JSON.stringify([{ toolCallId: "other", toolName: "bash", isError: true, textLength: 1 }]) }),
+		];
+		const stream = buildToolStream(rows);
+		assert.equal(stream.invocations[0]!.outcome, null);
+	});
+
 	it("treats a call that never got a result as unfinished, not as failed", () => {
 		const rows = callAndResult("c1", "bash", { command: "ls" });
 		const stream = buildToolStream(rows);
