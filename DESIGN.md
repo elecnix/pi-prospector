@@ -877,6 +877,15 @@ list — the system **learns the vocabulary from the corpus**.
   revised origin node reaches its hits when they are next recomputed, which a
   version bump forces, and a hit never becomes a second subject beside its
   predecessor.
+  `turn-pair-core` reads the node too: a
+  correction or a rebuttal candidate is something the person says to the agent,
+  so a message decided as `agent`, `notification` or `pasted` has no correction
+  and no rebuttal candidate, and the core node records the `origin` it read. The node is an input by a
+  `consumes` edge and stays out of the source set, so a turn keeps its identity
+  and `--revise minor` redraws it. Readers of frustration hits count the person's
+  own words: a hit's weight is scaled by its typed share (`typed_count` of
+  `count`), and a hit with no typed occurrence is dropped. A hit drawn before
+  the origin fields existed is read as it always was.
 - **Relayed request**: the copy of a person's request that a workflow script
   relays, word for word, into a child session under a banner that says so. The
   origin is `notification`, by the rule `relayed-request`. The person typed those
