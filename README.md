@@ -274,7 +274,7 @@ Source: [`verification-commands/index.ts`](./src/analyze/analyzers/verification-
 
 #### What leaves your machine
 
-`verification-commands` is the only analyzer in the project that sends anything from your sessions to a remote service. Here is the whole of it.
+`verification-commands` sends command lines and nothing else from your sessions. Here is the whole of it. `message-origin` and `message-answers` also send message text to a decision model when you set their `decisionModel`. `message-origin` sends the messages its rules could not place. `message-answers` sends the typed words of the messages that registered questions cover. Both stay off until you set a model, and neither redacts the text.
 
 **What is sent:** the distinct command lines a session ran, one per command, and nothing else. A command line is the text of a shell call, such as `tools/ci/verify-all` or `npm test -- --coverage`. The request carries that one line in a `command` field, together with the fixed question text the analyzer ships. No prompt, no reply, no file path, no timestamp, no tool result, and no message of any kind travels with it. A test in the suite asserts exactly that, and asserts it against a request that has been given extra session text to catch a regression.
 
@@ -760,7 +760,7 @@ Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one p
 
 The `jev` provider reads its key from `JEV_API_KEY` or `TYPESAFE_API_KEY`. `decisionProviders` adds other endpoints that serve the System One API, each with a `baseUrl`, the `apiKeyEnv` variables to read, and `inputUsdPerMtok` for the node's cost. The decision model and the question set are part of a node's identity, so switching marks earlier nodes stale for `config`. `assistant-cognition` still calls its `tier` model to copy the verbatim quote for a turn that shows surprise. The generative path stays the default.
 
-`verification-commands` has no generative path: it is a decision model or nothing. Set its `decisionModel` and it starts learning which commands verify your tree; leave it unset and it nominates nothing, so `stale-verification` falls back to its pattern list. It is the only analyzer that sends anything from your sessions to a remote service: the distinct command lines and nothing else. The section [What leaves your machine](#what-leaves-your-machine) says exactly what goes where, and how to keep it on your machine with `allowRemoteVerdicts: false`.
+`verification-commands` has no generative path: it is a decision model or nothing. Set its `decisionModel` and it starts learning which commands verify your tree; leave it unset and it nominates nothing, so `stale-verification` falls back to its pattern list. Its requests include the distinct command lines and nothing else. (`message-origin` and `message-answers` send message text if you give them a `decisionModel`. See [What leaves your machine](#what-leaves-your-machine).) The section [What leaves your machine](#what-leaves-your-machine) says exactly what goes where, and how to keep it on your machine with `allowRemoteVerdicts: false`.
 
 `scripts/measure-decision-model.ts` compares the two paths on up to 20 sessions already analysed, read-only, and prints agreement per field, time, and cost.
 
