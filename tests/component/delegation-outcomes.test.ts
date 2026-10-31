@@ -39,8 +39,11 @@ describe("delegation-outcomes component test", () => {
 			await db.prepare("UPDATE sessions SET message_count = 4 WHERE id = 'do-parent'").run();
 			for (const [child, count] of [["do-child-1", 10], ["do-child-2", 5]] as const) {
 				await insertSession(db, child);
-				await db.prepare("UPDATE sessions SET parent_session = 'do-parent', message_count = ? WHERE id = ?").run(count, child);
+				await db.prepare("UPDATE sessions SET parent_session = 'do-parent', message_count = ?, source = 'claude' WHERE id = ?").run(count, child);
 			}
+			// A Pi session naming the parent is a fork, which copies history, so it is not a child.
+			await insertSession(db, "do-fork");
+			await db.prepare("UPDATE sessions SET parent_session = 'do-parent', message_count = 100, source = 'pi' WHERE id = 'do-fork'").run();
 			const fw = mockFramework(db);
 			await fw.register(delegationOutcomesAnalyzer);
 			const summary = await fw.run("do-parent", {});

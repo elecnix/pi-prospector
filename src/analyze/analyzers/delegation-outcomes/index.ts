@@ -108,7 +108,7 @@ function delegationFingerprint(
 	const lines = messages.map((m) =>
 		[m.id, m.role, m.tool_calls ? shortHash(m.tool_calls) : "", m.tool_results ? shortHash(m.tool_results) : ""].join(":"),
 	);
-	const done = tasks.map((t) => `${t.tool_use_id}:${t.status ?? ""}`).sort();
+	const done = tasks.map((t) => `${t.tool_use_id}:${t.completed_at}:${t.status ?? ""}`).sort();
 	return shortHash([...lines, ...done, JSON.stringify(children)].join("\n"));
 }
 

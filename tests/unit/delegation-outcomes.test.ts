@@ -65,6 +65,12 @@ describe("scanDelegations", () => {
 		assert.ok(scan.events.every((e) => e.background));
 	});
 
+	it("ignores a completion record with no status", () => {
+		const scan = scanDelegations(delegate("a", "Task", { isError: true }), [{ ...task("a", ""), status: null }]);
+		assert.equal(scan.events[0]?.outcome, "failed");
+		assert.equal(scan.events[0]?.background, false);
+	});
+
 	it("records an unknown background status as other", () => {
 		assert.equal(scanDelegations(delegate("a", "Task"), [task("a", "weird")]).events[0]?.outcome, "other");
 	});
