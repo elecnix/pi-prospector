@@ -377,6 +377,23 @@ describe("buildToolStream", () => {
 		assert.deepEqual(stream.invocations.map((i) => i.outcome?.isError), [true, false]);
 	});
 
+	it("does not attach an id-less result to a call of another tool", () => {
+		const rows: MessageRow[] = [
+			msg({
+				id: "a1",
+				role: "assistant",
+				tool_calls: JSON.stringify([
+					{ name: "read", arguments: { path: "/a" } },
+					{ name: "bash", arguments: { command: "ls" } },
+				]),
+			}),
+			msg({ id: "r1", role: "toolResult", tool_results: JSON.stringify([{ toolName: "bash", isError: true, textLength: 1 }]) }),
+		];
+		const stream = buildToolStream(rows);
+		assert.equal(stream.invocations[0]!.outcome, null);
+		assert.equal(stream.invocations[1]!.outcome!.isError, true);
+	});
+
 	it("leaves a result unpaired when every call carries an id and none matches", () => {
 		const rows = [
 			...callAndResult("c1", "bash", { command: "ls" }),

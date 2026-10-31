@@ -166,7 +166,7 @@ export function buildToolStream(messages: MessageRow[]): ToolStream {
 		for (const r of results) {
 			const target = r.toolCallId
 				? (byCallId.get(r.toolCallId) ?? firstUnpairedIdless(idless, r.toolName))
-				: firstUnpairedIdless(idless, "");
+				: firstUnpairedIdless(idless, r.toolName);
 			if (!target || target.outcome) continue;
 			target.outcome = {
 				messageId: m.id,
