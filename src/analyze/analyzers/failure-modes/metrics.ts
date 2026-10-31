@@ -7,8 +7,8 @@ export const metrics: MetricDefinition[] = [
 		name: "Tool failure",
 		definition: "A well-formed tool call that the tool refused or errored on.",
 		measurement: "rule-based",
-		unit: "failures per session",
-		denominator: "tool calls (the node stores the failure count and the tool call count)",
+		unit: "failures per tool call (the node also stores the failure count per session)",
+		denominator: "tool calls",
 		limitations: [
 			"A call with no result is unfinished and not failed.",
 			"The failure is the result's error flag, which each harness sets by its own rules.",

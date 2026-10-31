@@ -104,6 +104,7 @@ describe("prospect CLI", () => {
 		assert.equal(gaps.code, 0);
 		assert.match(gaps.out, /navigation-efficiency/);
 		assert.equal((await capture(["metrics", "--analyzer", "nope"])).code, 1);
+		assert.equal((await capture(["metrics", "--analyzer"])).code, 1);
 	});
 
 	it("passes the remaining arguments to the command", async () => {

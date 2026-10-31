@@ -87,7 +87,7 @@ describe("metric definitions", () => {
 
 describe("the coverage gap", () => {
 	it("is exactly the list of pending analyzers", () => {
-		assert.deepEqual(analyzersWithoutMetrics(IDS), [...METRICS_PENDING].sort());
+		assert.deepEqual([...analyzersWithoutMetrics(IDS)].sort(), [...METRICS_PENDING].sort());
 	});
 
 	it("names only built-in analyzers", () => {

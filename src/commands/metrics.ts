@@ -35,7 +35,11 @@ export async function prospectMetrics(rawArgs: string, ctx: ExtensionCommandCont
 		return;
 	}
 
-	const owner = flags["analyzer"] || undefined;
+	if (flags["analyzer"] === "") {
+		output(ctx, "--analyzer needs an analyzer id. Use `sessions` for the figures counted from the index.", "error");
+		return;
+	}
+	const owner = flags["analyzer"];
 	const metrics = listMetrics(owner);
 	if (metrics.length === 0) {
 		const known = definedOwners().join(", ");
