@@ -124,6 +124,10 @@ describe("classifyMessageOrigin: agent", () => {
 		assert.equal(label("cc-swift-koala-42: you have been idle for ten minutes, report status."), "agent/relay-header");
 	});
 
+	it("labels a brief that gives the worker a worktree path", () => {
+		assert.equal(label("Fix the flaky retry test in acme/widgets. Read the issue first.\nWorktree: /work/widgets-retry (branch fix/retry)"), "agent/brief");
+	});
+
 	it("labels a long markdown brief that opens on a title", () => {
 		const brief = ["# Fix the flaky retry test", "", "## Context", "The retry test fails one run in ten.", "", "## Steps", ...Array.from({ length: 30 }, (_, i) => `${i + 1}. Do step number ${i} of the plan and record what happened.`), "", "## Report", "Say what you changed."].join("\n");
 		assert.equal(label(brief), "agent/brief");
@@ -162,8 +166,42 @@ describe("classifyMessageOrigin: pasted", () => {
 	});
 
 	it("sends a paste that reads like an agent's brief to the model instead of calling it a paste", () => {
-		const brief = Array.from({ length: 9 }, (_, i) => `Worktree: /work/repo-${i}\nBranch: fix/thing-${i}`).join("\n");
+		const brief = Array.from({ length: 9 }, (_, i) => `Ticket: PRI-${i}\nBranch: fix/thing-${i}`).join("\n");
 		assert.equal(classifyMessageOrigin(brief, USER).decided, false);
+	});
+
+	it("sends a paste with a person's own sentences beside it to the model, because the label depends on the sentences", () => {
+		const log = Array.from({ length: 12 }, (_, i) => `2026-01-01 10:00:${String(i).padStart(2, "0")} ERROR request failed`).join("\n");
+		const v = classifyMessageOrigin(`the retry never fires after the second failure, why is that?\n\n${log}`, USER);
+		assert.deepEqual([v.origin, v.rule, v.decided], ["typed", "undecided", false]);
+		assert.ok(v.suspicions.includes("paste-with-prose"));
+	});
+
+	it("still labels a paste with only a few words beside it pasted", () => {
+		const log = Array.from({ length: 12 }, (_, i) => `2026-01-01 10:00:${String(i).padStart(2, "0")} ERROR request failed`).join("\n");
+		assert.equal(label(`see this\n\n${log}`), "pasted/pasted-block");
+	});
+
+	it("does not call the person's own multi-line prompt a paste, however many short lines it has", () => {
+		const prompt = [
+			"I want to know the options for the retry policy:",
+			"- a fixed delay between every attempt",
+			"- an exponential delay that doubles each time",
+			"- a jitter added to either of the two above",
+			"- a cap on the number of attempts we make",
+			"- a separate cap on the total time we wait",
+			"- a way to turn it off for the tests we run",
+			"Tell me which one fits this service best.",
+			"Explain what the tradeoffs are for each choice.",
+		].join("\n");
+		const v = classifyMessageOrigin(prompt, USER);
+		assert.notEqual(v.origin + "/" + v.rule, "pasted/pasted-block");
+		assert.deepEqual([v.origin, v.decided], ["typed", false], "a long run of sentences may be the person's or an agent's, so the model decides");
+	});
+
+	it("does not call a Claude Code prompt echo a terminal capture", () => {
+		assert.equal(label("❯ restore the worktree and clean up the stranded ones, then record the incident\nit was removed by mistake\nplease check the others too"), "typed/no-marker");
+		assert.equal(label("❯ brew install iterm2\nWarning: the following taps are not trusted\nDone"), "pasted/terminal-output");
 	});
 
 	it("labels a message that is a fenced block", () => {
@@ -206,6 +244,10 @@ describe("classifyMessageOrigin: typed and undecided", () => {
 	it("labels a slash command with no arguments a notification, because a command carries no words", () => {
 		assert.equal(label("/compact"), "notification/slash-command");
 		assert.equal(label("<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>"), "notification/slash-command");
+	});
+
+	it("keeps a skill expansion typed when the person's instruction is only a link", () => {
+		assert.equal(label("<instructions>\nhttps://example.invalid/acme/widgets/issues/7\n</instructions>\n\n<guidelines>\n- Proceed test-first.\n</guidelines>"), "typed/no-marker");
 	});
 
 	it("keeps the arguments of a slash command typed", () => {
