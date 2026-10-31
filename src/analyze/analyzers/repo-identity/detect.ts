@@ -62,7 +62,8 @@ export function repoIdentityOf(
 
 	const lower = `/${segments.join("/")}`.toLowerCase();
 	const temp = config.tempPrefixes.some((p) => {
-		const prefix = p.toLowerCase().replace(/\/+$/, "");
+		// The same spelling as the path: forward slashes, one leading slash, lowercase.
+		const prefix = `/${p.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")}`.toLowerCase();
 		return lower === prefix || lower.startsWith(`${prefix}/`);
 	});
 	return { repo_key: null, placement: temp ? "temp" : "unplaced", checkout: null, root: null };

@@ -48,6 +48,12 @@ describe("repoIdentityOf", () => {
 		assert.equal(repoIdentityOf("").placement, "unknown");
 	});
 
+	it("recognises a temp directory configured and recorded with Windows separators", () => {
+		const config = { ...DEFAULT_REPO_IDENTITY_CONFIG, tempPrefixes: ["C:\\Users\\ana\\AppData\\Local\\Temp"] };
+		assert.equal(repoIdentityOf("C:\\Users\\ana\\AppData\\Local\\Temp\\x", config).placement, "temp");
+		assert.equal(repoIdentityOf("C:\\Users\\ana\\AppData\\Local\\Tempo", config).placement, "unplaced");
+	});
+
 	it("does not mistake a longer name for a temp prefix", () => {
 		assert.equal(repoIdentityOf("/tmpfiles/x").placement, "unplaced");
 	});
