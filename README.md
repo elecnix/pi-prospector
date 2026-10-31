@@ -150,6 +150,22 @@ The `rebuttal` type is the one the deterministic layer cannot settle on its own:
 
 Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.ts) · classifier prompt + evidence formatting in [`prompt.ts`](./src/analyze/analyzers/turn-pair-llm/prompt.ts) · tier + enrichment cap in [`config.ts`](./src/analyze/analyzers/turn-pair-llm/config.ts).
 
+### message-origin, the author of each user-role message
+
+Hosts file many things under the user role that the person never typed. `message-origin` writes one node per turn-starting message and labels it `typed`, `pasted`, `agent` or `notification` (definitions in [DESIGN.md](./DESIGN.md)). Named rules in [`message-origin.ts`](./src/analyze/message-origin.ts) decide nearly every message, and the node records the rule. To count only a person's words, filter on the label:
+
+```sh
+prospect nodes --analyzer message-origin --filter origin=typed
+```
+
+A message with only a weak sign of machine authorship is undecided. It keeps the provisional label `typed` and `decided: false`, and a run makes no model call. To settle those messages, set a decision model in `~/.pi/agent/prospector.json`:
+
+```json
+{ "analyzers": { "message-origin": { "decisionModel": "jev/jev-1.13.0" } } }
+```
+
+The model reads only the undecided messages, through two questions (`author` and `copied`), and the node keeps its probabilities. An answer below `minConfidence` (0.6 by default) leaves the message undecided.
+
 ### lexicon-candidates / frustration-lexicon / turn-frustration — the learned frustration lexicon
 
 The correction patterns in `turn-pair-core` are English regexes. Write `putain, c'est encore faux` or `не то` and they see nothing. Instead of shipping more languages — an unbounded list that is always partial — these three analyzers **learn the vocabulary from your own corpus**.
@@ -164,7 +180,7 @@ Each hit also records the **text origin** of the words it matched. A user messag
 prospect nodes --analyzer turn-frustration --filter origin=typed
 ```
 
-[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them.
+[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them. Hits drawn before 1.11 also label a Claude Code paste `typed`, because the paste's closing tag repeats its attributes and the earlier rule missed it. The same run redraws them.
 
 Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
 

@@ -22,6 +22,7 @@ import { routingOpportunityAnalyzer } from "./analyzers/routing-opportunity/inde
 import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.js";
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
+import { messageOriginAnalyzer } from "./analyzers/message-origin/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
@@ -57,6 +58,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"lexicon-candidates",
 	"frustration-lexicon",
 	"turn-frustration",
+	"message-origin",
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
@@ -108,6 +110,8 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	lexiconCandidatesAnalyzer,
 	frustrationLexiconAnalyzer,
 	turnFrustrationAnalyzer,
+	// Who wrote each user-role message: rules first, a decision model for the undecided.
+	messageOriginAnalyzer,
 	turnPairLLMAnalyzer,
 	// The assistant's own cognitive state, per turn: confusion, indecision, and
 	// surprise read from the thinking trace and response text. Depends only on

@@ -838,6 +838,30 @@ list — the system **learns the vocabulary from the corpus**.
   only. The label is a property of the hit, never part of its identity: adding
   it left each hit's source set unchanged, and the occurrences per origin add
   up to the hit's count. The rules are in `src/analyze/text-origin.ts`.
+- **Message origin**: the label on a whole user-role message that says who wrote
+  it. There are four, a closed list. `typed` means the person composed or
+  dictated the words. `pasted` means the person sent material they copied, such
+  as a log, a terminal capture or a bare link. `agent` means an agent or a script
+  wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
+  a message relayed from a peer session, a one-shot probe. `notification` means
+  the harness or an extension injected it: a monitor event, a task notification,
+  a slash command with no arguments, a tool result filed under the user role.
+  The `message-origin` analyzer writes one metric node per turn-starting message,
+  with the message as its anchor. Text origin labels the spans inside a message and
+  serves a frustration hit. Message origin labels the whole message and serves any
+  analyzer that must count only what a person wrote. Both read the harness
+  blocks that `text-origin.ts` knows, and a report joins a hit to its message's
+  node through the message anchor.
+- **Origin rule**: the test that decided a message's origin, such as
+  `child-session`, `signature`, `tool-result` or `pasted-block`. Every node
+  records its rule, so a reader can see why a message got its label. A strong
+  rule decides. A message that matches none but carries a **weak sign** of
+  machine authorship (an agent handle, the operator named in the third person,
+  worker vocabulary) is **undecided**: the node says `decided: false` and keeps
+  `typed` as a provisional label. When you configure the analyzer's `decisionModel`, a
+  decision model reads only the undecided messages and decides them, and the node
+  records its distribution. Rules run in a fixed order, and the first rule that
+  matches decides.
 - **Paralinguistic marker** — frustration carried by *form* rather than
   vocabulary: shouting, repeated punctuation, a held-down letter. These need
   neither a lexicon nor a language, and they exist so that a user whose words the
