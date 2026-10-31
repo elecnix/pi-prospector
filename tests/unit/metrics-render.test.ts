@@ -33,6 +33,13 @@ describe("renderMarkdown", () => {
 	});
 });
 
+describe("owner of an id", () => {
+	it("is the text before the first dot, and the whole id when it has no dot", () => {
+		const dotless: MetricDefinition = { ...METRIC, id: "sessions" };
+		assert.match(renderMarkdown([dotless], new Map()), /^## sessions$/m);
+	});
+});
+
 describe("renderJson", () => {
 	it("returns the definitions with their owner and facts", () => {
 		const parsed = JSON.parse(renderJson([METRIC], FACTS)) as Array<Record<string, unknown>>;

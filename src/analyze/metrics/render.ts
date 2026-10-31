@@ -18,7 +18,7 @@ export interface OwnerFacts {
 export type OwnerFactsById = ReadonlyMap<string, OwnerFacts>;
 
 function owner(metric: MetricDefinition): string {
-	return metric.id.slice(0, metric.id.indexOf("."));
+	return metric.id.split(".")[0] ?? metric.id;
 }
 
 function ownerLine(id: string, facts: OwnerFactsById): string {
