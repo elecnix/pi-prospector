@@ -182,7 +182,7 @@ The failure-modes analyzer (version 1.3) decides the three entries after the raw
 ### Trajectory signals
 
 - **Definition**: per session, the number of stuck-loops, polling-loops, oscillations, pre-flight gaps and no-effect edits. DESIGN.md defines each.
-- **Measured by**: rule-based. tool-trajectory (version 7.0) reads the ordered action stream. Its thresholds (`stuckLoopMin`, `pollingLoopMin`, `oscillationWindow`) are config.
+- **Measured by**: rule-based. tool-trajectory (version 7.1) reads the ordered action stream. Its thresholds (`stuckLoopMin`, `pollingLoopMin`, `oscillationWindow`) are config.
 - **Unit and denominator**: signals per session, or per 1000 tool calls when a report corrects for length.
 - **Limits**: a long session has more chances for each signal. A stuck-loop shows a pattern and does not prove the agent was wrong, because a legitimate retry loop looks the same. A signal that needs a result to decide, such as a pre-flight gap (a mutating command that failed), depends on pairing calls with results. Older tool-trajectory nodes for sessions indexed before call ids may undercount it.
 
