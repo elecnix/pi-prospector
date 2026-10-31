@@ -340,7 +340,7 @@ function pastedFinding(text: string, skillExpansion: boolean): PasteFinding {
 	// A link is what the person typed into a skill command, and a paste anywhere else.
 	if (LINK_ONLY_RE.test(text.trim())) return skillExpansion ? null : "link-only";
 	const content = nonSpace(text);
-	const spans = labelUserText(text, { role: "user", childAgent: false, forkCopy: false });
+	const spans = labelUserText(text, { forkCopy: false });
 	const copied = charsByOrigin(spans).get("pasted") ?? 0;
 	// A long paragraph that reads as sentences may be the person's own prompt or an agent's brief, so it is no paste.
 	const sentences = spans
@@ -384,11 +384,10 @@ export function classifyMessageOrigin(rawText: string, ctx: MessageOriginContext
 	if (NUMBERED_LISTING_RE.test(lead)) return verdict("notification", "tool-result");
 	if (SLASH_COMMAND_RE.test(lead) || EMPTY_COMMAND_RE.test(lead)) return verdict("notification", "slash-command");
 
-	// The span labeller also claims a signed message whole, so test the signature first.
 	if (SIGNATURE_RE.test(text.trimEnd())) return verdict("agent", "signature");
 
 	// Spans come from the span labeller with its whole-message rules switched off.
-	const spans = labelUserText(text, { role: "user", childAgent: false, forkCopy: false });
+	const spans = labelUserText(text, { forkCopy: false });
 	const chars = charsByOrigin(spans);
 	const notification = chars.get("notification") ?? 0;
 	const agentBlock = chars.get("agent") ?? 0;

@@ -17,7 +17,7 @@ import {
 	type TurnOriginContext,
 } from "../../src/analyze/text-origin.js";
 
-const USER: TurnOriginContext = { role: "user", childAgent: false, forkCopy: false };
+const USER: TurnOriginContext = { forkCopy: false };
 
 /** The spans as `origin: text` pairs, which reads better in a failure diff. */
 function shape(spans: TextSpan[]): string[] {
@@ -99,22 +99,9 @@ describe("labelUserText", () => {
 		});
 	}
 
-	it("labels a compaction continuation notification as a whole", () => {
-		const text = "This session is being continued from a previous conversation that ran out of context.\n> the user said it was wrong";
-		assert.deepEqual(labelUserText(text, USER).map((s) => s.origin), ["notification"]);
-	});
-
-	for (const role of ["custom_message", "branch_summary", "bashExecution"]) {
-		it(`labels a ${role} turn notification as a whole`, () => {
-			assert.deepEqual(labelUserText("awful output", { ...USER, role }).map((s) => s.origin), ["notification"]);
-		});
-	}
-
-	it("labels a message signed by an agent handle agent as a whole", () => {
-		for (const sig of ["— swift-koala-42", "— cc-eager-owl-07", "-- calm-river-3"]) {
-			const spans = labelUserText(`the build is useless\n\n${sig}`, USER);
-			assert.deepEqual(spans.map((s) => s.origin), ["agent"], sig);
-		}
+	it("leaves the whole-message labels to message-origin: a signed message and a compaction continuation are typed spans here", () => {
+		assert.deepEqual(labelUserText("the build is useless\n\n— swift-koala-42", USER).map((s) => s.origin), ["typed"]);
+		assert.deepEqual(labelUserText("This session is being continued from a previous conversation.", USER).map((s) => s.origin), ["typed"]);
 	});
 
 	it("does not take a dash in prose for a signature", () => {
@@ -126,12 +113,8 @@ describe("labelUserText", () => {
 		assert.deepEqual(labelUserText(text, USER).map((s) => s.origin), ["typed", "agent"]);
 	});
 
-	it("labels every turn of a child agent's session agent", () => {
-		assert.deepEqual(labelUserText("> quoted\ntyped", { ...USER, childAgent: true }).map((s) => s.origin), ["agent"]);
-	});
-
 	it("labels a fork's copy fork-copy, ahead of every other rule", () => {
-		const ctx = { ...USER, childAgent: true, forkCopy: true };
+		const ctx = { forkCopy: true };
 		assert.deepEqual(labelUserText("> quoted\n<system-reminder>x</system-reminder>", ctx).map((s) => s.origin), ["fork-copy"]);
 	});
 

@@ -18,6 +18,7 @@ import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
+import { messageOriginAnalyzer } from "../../src/analyze/analyzers/message-origin/index.js";
 import { lexiconCandidatesAnalyzer } from "../../src/analyze/analyzers/lexicon-candidates/index.js";
 import { frustrationLexiconAnalyzer } from "../../src/analyze/analyzers/frustration-lexicon/index.js";
 import {
@@ -42,6 +43,7 @@ async function analyzeFixtures(db: AsyncDatabase): Promise<void> {
 	assert.deepEqual(sync.errors, []);
 	const framework = new AnalyzerFramework({ db, llm: lexiconMock(FRUSTRATED).caller, modelTiers: DEFAULT_MODEL_TIERS });
 	await framework.register(turnPairCoreAnalyzer);
+	await framework.register(messageOriginAnalyzer);
 	await framework.register(lexiconCandidatesAnalyzer);
 	await framework.register(frustrationLexiconAnalyzer);
 	await framework.register(turnFrustrationAnalyzer);
