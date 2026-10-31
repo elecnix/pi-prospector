@@ -42,6 +42,8 @@ describe("deliveryKindsOf", () => {
 		assert.deepEqual(deliveryKindsOf("git log --grep commit"), []);
 		assert.deepEqual(deliveryKindsOf("git push --dry-run"), []);
 		assert.deepEqual(deliveryKindsOf("git push -n origin x"), []);
+		assert.deepEqual(deliveryKindsOf("git push -vn origin x"), []);
+		assert.deepEqual(deliveryKindsOf("git push -nv origin x"), []);
 		assert.deepEqual(deliveryKindsOf("gh pr merge 12 --auto --squash"), []);
 	});
 
@@ -79,7 +81,7 @@ describe("findDeliveryEvents", () => {
 	it("marks a host-reported success as succeeded, with its time", () => {
 		const events = findDeliveryEvents(shell("a", `git commit -m x`, "[main abc1234] x\n 1 file changed"));
 		assert.deepEqual(events, [
-			{ kind: "commit", succeeded: true, at: "2026-10-01T10:00:00.000Z", call_message_id: "call-a", result_message_id: "result-a" },
+			{ kind: "commit", succeeded: true, result_checked: true, at: "2026-10-01T10:00:00.000Z", call_message_id: "call-a", result_message_id: "result-a" },
 		]);
 	});
 
@@ -93,6 +95,23 @@ describe("findDeliveryEvents", () => {
 		assert.equal(commit?.succeeded, false);
 		const [push] = findDeliveryEvents(shell("b", "git push 2>&1 | tail", " ! [rejected]        main -> main (fetch first)"));
 		assert.equal(push?.succeeded, false);
+	});
+
+	it("says when the result text could not be checked", () => {
+		const call = row({ id: "call-m", role: "assistant", tool_calls: JSON.stringify([{ id: "m", name: "bash", arguments: { command: "git commit -m x" } }, { id: "n", name: "bash", arguments: { command: "ls" } }]) });
+		const both = row({
+			id: "result-mn",
+			role: "toolResult",
+			content_text: "nothing to commit\nfile",
+			tool_results: JSON.stringify([
+				{ toolCallId: "m", toolName: "bash", isError: false, textLength: 17 },
+				{ toolCallId: "n", toolName: "bash", isError: false, textLength: 4 },
+			]),
+		});
+		const [event] = findDeliveryEvents([call, both]);
+		assert.equal(event?.succeeded, true, "the host's verdict stands when the text cannot be attributed");
+		assert.equal(event?.result_checked, false);
+		assert.equal(findDeliveryEvents(shell("a", "git commit -m x", "[main abc1234] x"))[0]?.result_checked, true);
 	});
 
 	it("marks an unanswered call as not succeeded, with no result row", () => {

@@ -29,6 +29,12 @@ export interface DeliveryEvent {
 	kind: DeliveryKind;
 	/** Whether the call succeeded: the host said so and the result text did not say otherwise. */
 	succeeded: boolean;
+	/**
+	 * Whether the result text was read to confirm the host's verdict. False when the
+	 * call went unanswered, or when its result row held several results and the
+	 * joined text cannot be attributed to one; the host's verdict then stands alone.
+	 */
+	result_checked: boolean;
 	/** The call's timestamp, or null when the transcript recorded none. */
 	at: string | null;
 	call_message_id: string;
@@ -45,7 +51,7 @@ export function deliveryKindsOf(command: string): DeliveryKind[] {
 		const program = commandFamily(segment, 1);
 		const sub = program === "git" ? gitSubcommand(segment) : null;
 		// `-n` is a dry run for push but `--no-verify` for commit.
-		if (/\s--dry-run\b/.test(segment) || (sub === "push" && /\s-n\b/.test(segment))) continue;
+		if (/\s--dry-run\b/.test(segment) || (sub === "push" && /\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)/.test(segment))) continue;
 		if (sub === "commit") kinds.push("commit");
 		else if (sub === "push") kinds.push("push");
 		else if (commandFamily(segment, 3) === "gh pr merge" && !/\s--(auto|disable-auto|merge-queue)\b/.test(segment)) kinds.push("pr_merge");
@@ -80,15 +86,17 @@ export function findDeliveryEvents(
 		for (const kind of deliveryKindsOf(command)) {
 			const outcome = call.outcome;
 			let succeeded = outcome !== null && !outcome.isError;
+			let checked = false;
 			if (succeeded && outcome) {
 				const row = byId.get(outcome.messageId);
-				const single = row?.tool_results ? safeCount(row.tool_results) === 1 : false;
-				const text = single ? (row?.content_text ?? "").slice(0, config.maxResultChars) : "";
+				checked = row?.tool_results ? safeCount(row.tool_results) === 1 : false;
+				const text = checked ? (row?.content_text ?? "").slice(0, config.maxResultChars) : "";
 				if (markersFor(kind, config).some((re) => re.test(text))) succeeded = false;
 			}
 			events.push({
 				kind,
 				succeeded,
+				result_checked: checked,
 				at: byId.get(call.messageId)?.timestamp ?? null,
 				call_message_id: call.messageId,
 				result_message_id: outcome?.messageId ?? null,

@@ -37,6 +37,7 @@ const KIND = Type.Union([Type.Literal("commit"), Type.Literal("push"), Type.Lite
 export const DELIVERY_EVENT = Type.Object({
 	kind: KIND,
 	succeeded: Type.Boolean(),
+	result_checked: Type.Boolean(),
 	at: Type.Union([Type.String(), Type.Null()]),
 	call_message_id: Type.String(),
 	result_message_id: Type.Union([Type.String(), Type.Null()]),
