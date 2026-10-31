@@ -83,6 +83,8 @@ Every job carries a `timeout-minutes`, and pull requests run under a `concurrenc
 - `src/config.ts` — config loading with env overrides (`PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CONFIG`).
 - `src/types.ts` — shared TypeBox schemas.
 
+`METRICS.md` defines each metric (definition, measurement class, unit and denominator, limits, known series breaks). A change to what an analyzer measures, or a version bump that moves a series, updates its entry in the same pull request. `METRICS.md` holds no counts from a real corpus.
+
 See `DESIGN.md` for the concepts these modules implement and the ubiquitous language to use when naming them.
 
 ## Code style

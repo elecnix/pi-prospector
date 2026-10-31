@@ -880,7 +880,9 @@ Two conventions the reports state on their own face, rather than leaving a reade
 
 [`DESIGN.md`](./DESIGN.md) is the canonical description of the system: the ubiquitous language, the append-only graph, recipe-based identity and idempotency, versioned lineage, the reach of a run, and the deterministic-first layering. Read it before changing analysis behaviour.
 
-It closes with [Supporting literature](./DESIGN.md#7-supporting-literature) — the published work that corroborates the architectural bets, and, for each paper, where it says we are still short. The strongest of those results is that deterministic checks have three times been measured beating a model asked to judge, which is why the cheap layer here does the triage and the model is spent only on cases it escalates.
+[`METRICS.md`](./METRICS.md) defines every metric the system stores or a report prints: what it means, how it is measured, its unit and denominator, and the limits that stop two months or two harnesses from being compared. Read it before drawing a trend from the numbers.
+
+DESIGN.md closes with [Supporting literature](./DESIGN.md#7-supporting-literature) — the published work that corroborates the architectural bets, and, for each paper, where it says we are still short. The strongest of those results is that deterministic checks have three times been measured beating a model asked to judge, which is why the cheap layer here does the triage and the model is spent only on cases it escalates.
 
 ## License
 

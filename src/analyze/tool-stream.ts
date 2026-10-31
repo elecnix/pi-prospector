@@ -115,7 +115,9 @@ interface RawResult {
  * Calls are matched to results by tool-call id. Calls or results that carry no
  * id — older transcripts — fall back to first-in-first-out matching *among the
  * id-less ones only*, so the presence of one legacy row cannot dislodge the
- * exact pairings around it.
+ * exact pairings around it. A result whose id matches no call pairs with the
+ * earliest waiting id-less call of the same tool: sessions indexed before sync
+ * stored the call id hold exactly that shape.
  */
 export function buildToolStream(messages: MessageRow[]): ToolStream {
 	const invocations: ToolInvocation[] = [];
@@ -163,7 +165,9 @@ export function buildToolStream(messages: MessageRow[]): ToolStream {
 		if (m.role !== "toolResult" || !m.tool_results) continue;
 		const results = parseToolResults(m.tool_results);
 		for (const r of results) {
-			const target = r.toolCallId ? byCallId.get(r.toolCallId) : idless[idlessCursor++];
+			const target = r.toolCallId
+				? (byCallId.get(r.toolCallId) ?? firstUnpairedIdless(idless, r.toolName))
+				: idless[idlessCursor++];
 			if (!target || target.outcome) continue;
 			target.outcome = {
 				messageId: m.id,
@@ -181,6 +185,19 @@ export function buildToolStream(messages: MessageRow[]): ToolStream {
 		turnFailures,
 		coverage: { assistantTurnCount, toolCallCount: invocations.length, stopReasonRecorded },
 	};
+}
+
+/**
+ * The earliest id-less call still waiting for a result, among those that asked
+ * for the named tool.
+ *
+ * Rows indexed before sync kept the provider's call id hold calls with no id
+ * beside results that carry one, so the id on the result matches nothing. The
+ * tool name is the only thing the two sides still share. A result that names no
+ * tool matches the earliest waiting call of any name.
+ */
+function firstUnpairedIdless(idless: ToolInvocation[], toolName: string): ToolInvocation | undefined {
+	return idless.find((inv) => !inv.outcome && (toolName === "" || inv.name === toolName));
 }
 
 /**
