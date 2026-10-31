@@ -236,6 +236,11 @@ describe("parseFingerprintArgs", () => {
 		assert.deepEqual(parseFingerprintArgs("--source pi,claude --source codex", now).sources, ["pi", "claude", "codex"]);
 	});
 
+	it("rejects an as-of day that is not on the calendar", () => {
+		assert.throws(() => parseFingerprintArgs("--as-of 2025-13-01", now), /--as-of/);
+		assert.equal(parseFingerprintArgs("--as-of 2025-12-01", now).asOf, "2025-12-01T23:59:59.999Z");
+	});
+
 	it("rejects an unknown source, a bad date, and a reversed range", () => {
 		assert.throws(() => parseFingerprintArgs("--source vim", now), /unknown source/);
 		assert.throws(() => parseFingerprintArgs("--from yesterday", now), /--from/);
@@ -316,6 +321,17 @@ describe("registering a contributor", () => {
 		const fp = await build(t2.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), [distinct]);
 		assert.deepEqual(inferred(fp, "kinds")["kindCount"], { status: "withheld", reason: "below-min-group-size" });
 		assert.ok(Check(fingerprintSchema([...contributors, distinct]), fp));
+	});
+
+	it("refuses a distribution fed several rows per session, because it could rest on fewer sessions than it shows", async () => {
+		const several: FingerprintContributor = {
+			def: { id: "several", label: "Several", description: "Bad.", kind: "inferred", measures: [{ kind: "distribution", id: "d", field: "score", unit: "prompts", edges: [0] }] },
+			async read(ctx) {
+				const rows = await ctx.nodes("my-private-analyzer", { score: "$.score" });
+				return { measured: rows.map((r) => String(r["session"])), rows: [...rows, ...rows] };
+			},
+		};
+		await assert.rejects(build(t2.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), [several]), /more than one row per session/);
 	});
 
 	it("reads an empty source list as matching no session instead of failing", async () => {

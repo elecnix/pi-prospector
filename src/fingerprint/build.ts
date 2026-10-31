@@ -68,7 +68,7 @@ export function parseFingerprintArgs(raw: string, now: Date): FingerprintRequest
 	const to = parseDay("to", flags["to"]);
 	if (from !== null && to !== null && to < from) throw new Error(`--to ${to} is before --from ${from}`);
 	const asOfFlag = flags["as-of"];
-	const asOf = asOfFlag === undefined ? now.toISOString() : DAY.test(asOfFlag) ? `${asOfFlag}T23:59:59.999Z` : parseTimestamp(asOfFlag);
+	const asOf = asOfFlag === undefined ? now.toISOString() : DAY.test(asOfFlag) ? `${parseDay("as-of", asOfFlag)}T23:59:59.999Z` : parseTimestamp(asOfFlag);
 	return { sources: chosen.length > 0 ? [...new Set(chosen)] : null, from, to, asOf, out: flags["out"], format: flags["format"] };
 }
 
@@ -104,7 +104,18 @@ function byCountThenKey<T extends { key: string; count: number }>(groups: T[]): 
 function applyMeasure(measure: MeasureSpec, rows: readonly FingerprintRow[], min: number): unknown {
 	switch (measure.kind) {
 		case "distribution": {
-			const values = rows.flatMap((r) => numberOf(r, measure.field) ?? []);
+			// One value per session, so the guard counts sessions. A second row for a
+			// session would let a few sessions pass as many.
+			const seen = new Set<string>();
+			const values: number[] = [];
+			for (const row of rows) {
+				const value = numberOf(row, measure.field);
+				if (value === null) continue;
+				const session = String(row["session"]);
+				if (seen.has(session)) throw new Error(`measure '${measure.id}' got more than one row per session; a distribution takes one value per session`);
+				seen.add(session);
+				values.push(value);
+			}
 			return distribution(values, measure.edges, measure.unit, min);
 		}
 		case "total": {

@@ -14,7 +14,9 @@ export const timeEconomyFingerprint: FingerprintContributor = {
 	},
 	async read(ctx) {
 		const rows = await ctx.nodes("time-economy", { seconds: "$.active_seconds" });
-		const timed = rows.filter((r) => typeof r["seconds"] === "number");
+		// A distribution takes one value per session; keep the first node a session has.
+		const seen = new Set<string>();
+		const timed = rows.filter((r) => typeof r["seconds"] === "number" && !seen.has(String(r["session"])) && seen.add(String(r["session"])));
 		return {
 			measured: timed.map((r) => String(r["session"])),
 			rows: timed.map((r) => ({ session: r["session"]!, seconds: r["seconds"]!, minutes: Math.round((Number(r["seconds"]) / 60) * 100) / 100 })),
