@@ -25,6 +25,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"lexicon-candidates",
 	"frustration-lexicon",
 	"turn-frustration",
+	"message-origin",
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
