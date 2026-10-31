@@ -45,6 +45,7 @@ import { prOpenedAnalyzer } from "./analyzers/pr-opened/index.js";
 import { repoIdentityAnalyzer } from "./analyzers/repo-identity/index.js";
 import { skillUseAnalyzer } from "./analyzers/skill-use/index.js";
 import { gitCommandsAnalyzer } from "./analyzers/git-commands/index.js";
+import { activityWindowsAnalyzer } from "./analyzers/activity-windows/index.js";
 import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { staleVerificationAnalyzer } from "./analyzers/stale-verification/index.js";
 import { verificationCommandsAnalyzer } from "./analyzers/verification-commands/index.js";
@@ -86,6 +87,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"repo-identity",
 	"skill-use",
 	"git-commands",
+	"activity-windows",
 	"files-in-play",
 	"navigation-efficiency",
 	"similarity-cluster",
@@ -235,6 +237,9 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// The commits, pushes, and pull request merges each session ran. Deterministic,
 	// standalone, one metric node per session; it proposes nothing.
 	gitCommandsAnalyzer,
+	// When each session was running, as merged activity windows. The `concurrency`
+	// output folds them across sessions at read time. Deterministic, standalone.
+	activityWindowsAnalyzer,
 	// Where each session's wall-clock time went (#306): seconds per command
 	// family, active versus idle time, waits that block inside one tool call,
 	// and wait loops whose pgrep -f / ps | grep pattern matches the loop itself.
