@@ -307,7 +307,8 @@ export const sessionOverviewAnalyzer: Analyzer = {
 					system: ctx.prompts["map"] ?? MAP_PROMPT,
 					user: buildMapPrompt(seg.text),
 					temperature: config.temperature,
-					maxTokens: 800,
+					// A segment summary; 800 truncated occasionally (4 calls) — see #369.
+					maxTokens: 1500,
 					tool: MAP_TOOL,
 				});
 				costUsd += res.costUsd;
@@ -342,7 +343,9 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			system: ctx.prompts["reduce"] ?? REDUCE_PROMPT,
 			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals, contrastContext }),
 			temperature: config.temperature,
-			maxTokens: 2000,
+			// The session digest; 2,000 truncated ~0.3% of sessions on a model that
+			// reasons first, and each truncation costs the whole session's summary.
+			maxTokens: 4000,
 			tool: REDUCE_TOOL,
 		});
 		costUsd += reduceRes.costUsd;

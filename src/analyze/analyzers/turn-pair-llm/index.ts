@@ -360,7 +360,9 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
 			user: buildClassifyPrompt(input),
 			temperature: config.temperature,
-			maxTokens: 500,
+			// One verdict plus its rationale; 500 truncated ~3% of calls on a model that
+			// reasons first, and a truncated reply yields no node — see #369.
+			maxTokens: 1500,
 			tool: CLASSIFY_TOOL,
 		});
 

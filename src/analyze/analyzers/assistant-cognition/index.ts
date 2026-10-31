@@ -197,7 +197,12 @@ export const assistantCognitionAnalyzer: Analyzer = {
 				assistantText: meta.assistantText,
 			}),
 			temperature: config.temperature,
-			maxTokens: 700,
+			// Room for the full cognition record, not just the terse shape a small model
+			// returns: at 700 a model whose analysis runs longer lost ~14% of this
+			// analyzer's units to truncation, and a truncated reply yields no node — the
+			// unit is then retried against the same prompt forever. The budget only cuts
+			// answers short, so a reply that already fit is unchanged.
+			maxTokens: 2000,
 			tool: COGNITION_TOOL,
 		};
 
