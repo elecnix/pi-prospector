@@ -851,7 +851,15 @@ list — the system **learns the vocabulary from the corpus**.
   serves a frustration hit. Message origin labels the whole message and serves any
   analyzer that must count only what a person wrote. Both read the harness
   blocks that `text-origin.ts` knows, and a report joins a hit to its message's
-  node through the message anchor.
+  node through the message anchor. `turn-pair-core` reads the node too: a
+  correction or a rebuttal candidate is something the person says to the agent,
+  so a message decided as `agent`, `notification` or `pasted` has no correction
+  and no rebuttal candidate, and the core node records the `origin` it read. The node is an input by a
+  `consumes` edge and stays out of the source set, so a turn keeps its identity
+  and `--revise minor` redraws it. Readers of frustration hits count the person's
+  own words: a hit's weight is scaled by its typed share (`typed_count` of
+  `count`), and a hit with no typed occurrence is dropped. A hit drawn before
+  the origin fields existed is read as it always was.
 - **Origin rule**: the test that decided a message's origin, such as
   `child-session`, `signature`, `tool-result` or `pasted-block`. Every node
   records its rule, so a reader can see why a message got its label. A strong

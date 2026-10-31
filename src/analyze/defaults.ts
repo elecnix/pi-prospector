@@ -56,11 +56,11 @@ import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
 import { ruleRestatementAnalyzer } from "./analyzers/rule-restatement/index.js";
 
 export const DEFAULT_ANALYZER_IDS = [
+	"message-origin",
 	"turn-pair-core",
 	"lexicon-candidates",
 	"frustration-lexicon",
 	"turn-frustration",
-	"message-origin",
 	"attention-gaps",
 	"turn-pair-llm",
 	"assistant-cognition",
@@ -107,6 +107,9 @@ export const DEFAULT_ANALYZER_IDS = [
 
 /** The built-in analyzers registered by a plain analyze run, in dependency order. */
 export const BUILTIN_ANALYZERS: Analyzer[] = [
+	// Who wrote each user-role message: rules first, a decision model for the undecided.
+	// First, because turn-pair-core and turn-frustration read these nodes.
+	messageOriginAnalyzer,
 	turnPairCoreAnalyzer,
 	// The learned frustration lexicon: nominate vocabulary, judge each unseen word
 	// once for the whole corpus, then match turns against it. Ordered before
@@ -114,8 +117,6 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	lexiconCandidatesAnalyzer,
 	frustrationLexiconAnalyzer,
 	turnFrustrationAnalyzer,
-	// Who wrote each user-role message: rules first, a decision model for the undecided.
-	messageOriginAnalyzer,
 	// How long the agent waited for a person, from the typed messages message-origin settled.
 	attentionGapsAnalyzer,
 	turnPairLLMAnalyzer,

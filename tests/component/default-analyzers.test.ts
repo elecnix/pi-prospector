@@ -102,19 +102,19 @@ describe("default analyzer set (#291)", () => {
 		});
 		const out = await run(prospectAnalyze);
 		assert.match(out, /0 failed/);
-		assert.deepEqual(await ranAnalyzers(), ["files-in-play", "turn-pair-core"]);
+		assert.deepEqual(await ranAnalyzers(), ["files-in-play", "message-origin", "turn-pair-core"]);
 	});
 
 	it("--backfill-missing measures gaps against the default set only", async () => {
 		const out = await run(prospectAnalyze, "--backfill-missing");
 		assert.match(out, /No coverage gaps/);
-		assert.deepEqual(await ranAnalyzers(), ["files-in-play", "turn-pair-core"]);
+		assert.deepEqual(await ranAnalyzers(), ["files-in-play", "message-origin", "turn-pair-core"]);
 	});
 
 	it("--analyzer runs an analyzer outside the default set", async () => {
 		const out = await run(prospectAnalyze, "--analyzer session-ending --all");
 		assert.match(out, /0 failed/);
-		assert.deepEqual(await ranAnalyzers(), ["files-in-play", "session-ending", "turn-pair-core"]);
+		assert.deepEqual(await ranAnalyzers(), ["files-in-play", "message-origin", "session-ending", "turn-pair-core"]);
 	});
 
 	it("toggling the selection marks no node stale", async () => {
