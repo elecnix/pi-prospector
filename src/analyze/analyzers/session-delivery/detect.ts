@@ -8,7 +8,7 @@
  *
  * The command is read as a command, not as text: heredoc bodies and quoted
  * strings are removed first, so `echo "git commit"` delivers nothing. Dry runs
- * deliver nothing. `gh pr merge --auto` only arms a merge for later, so it is
+ * deliver nothing. `gh pr merge --auto` only arms a merge for later, and `--disable-auto` cancels one, so it is
  * not a merge.
  *
  * A success the host reported is checked once more against the result text when
@@ -48,7 +48,7 @@ export function deliveryKindsOf(command: string): DeliveryKind[] {
 		if (/\s--dry-run\b/.test(segment) || (sub === "push" && /\s-n\b/.test(segment))) continue;
 		if (sub === "commit") kinds.push("commit");
 		else if (sub === "push") kinds.push("push");
-		else if (commandFamily(segment, 3) === "gh pr merge" && !/\s--(auto|merge-queue)\b/.test(segment)) kinds.push("pr_merge");
+		else if (commandFamily(segment, 3) === "gh pr merge" && !/\s--(auto|disable-auto|merge-queue)\b/.test(segment)) kinds.push("pr_merge");
 	}
 	return kinds;
 }

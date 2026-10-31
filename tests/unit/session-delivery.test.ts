@@ -61,6 +61,15 @@ describe("deliveryKindsOf", () => {
 		assert.deepEqual(deliveryKindsOf(`git -c 'user.name=a b' push`), ["push"]);
 	});
 
+	it("reads each line of a multi-line command", () => {
+		assert.deepEqual(deliveryKindsOf("git add -A\ngit commit -m x\ngit push"), ["commit", "push"]);
+	});
+
+	it("ignores a merge that only arms or cancels auto-merge", () => {
+		assert.deepEqual(deliveryKindsOf("gh pr merge 12 --disable-auto"), []);
+		assert.deepEqual(deliveryKindsOf("gh pr merge --auto 12"), []);
+	});
+
 	it("counts git commit -n, which is --no-verify", () => {
 		assert.deepEqual(deliveryKindsOf(`git commit -n -m x`), ["commit"]);
 	});
