@@ -20,11 +20,19 @@ import { DISTRIBUTION_UNITS, ID_PATTERN, SECTION_KINDS, oneOf } from "./schema.j
 
 const Id = Type.String({ pattern: ID_PATTERN.source });
 const Field = Type.String({ pattern: "^[A-Za-z][A-Za-z0-9]*$" });
+/**
+ * Optional pointer to the figure's definition in the metric registry: `<analyzer-id>.<metric-name>`
+ * in kebab case, or `sessions.<name>` for a count from the session index. It is
+ * documentation only: nothing reads it at run time and it is never printed in a fingerprint.
+ */
+export const METRIC_ID_PATTERN = "^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*$";
+const MetricRef = Type.Optional(Type.String({ pattern: METRIC_ID_PATTERN }));
 
 /** The sessions' values of one field, spread over fixed buckets. One row per session. */
 export const DistributionMeasure = Type.Object({
 	kind: Type.Literal("distribution"),
 	id: Id,
+	metric: MetricRef,
 	/** A numeric field of the rows. */
 	field: Field,
 	unit: oneOf(DISTRIBUTION_UNITS),
@@ -36,16 +44,17 @@ export const DistributionMeasure = Type.Object({
 export const TotalMeasure = Type.Object({
 	kind: Type.Literal("total"),
 	id: Id,
+	metric: MetricRef,
 	field: Field,
 	divisor: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
 	decimals: Type.Optional(Type.Integer({ minimum: 0, maximum: 4 })),
 });
 
 /** How many sessions have a numeric field above zero. Withheld when that is 1 to 4. */
-export const SessionsMeasure = Type.Object({ kind: Type.Literal("sessions"), id: Id, field: Field });
+export const SessionsMeasure = Type.Object({ kind: Type.Literal("sessions"), id: Id, metric: MetricRef, field: Field });
 
 /** How many distinct values a string field takes (the days sessions started on, say). */
-export const DistinctMeasure = Type.Object({ kind: Type.Literal("distinct"), id: Id, field: Field });
+export const DistinctMeasure = Type.Object({ kind: Type.Literal("distinct"), id: Id, metric: MetricRef, field: Field });
 
 /**
  * Rows counted under dimensions. Each dimension is a field of the rows and a
@@ -55,6 +64,7 @@ export const DistinctMeasure = Type.Object({ kind: Type.Literal("distinct"), id:
 export const GroupsMeasure = Type.Object({
 	kind: Type.Literal("groups"),
 	id: Id,
+	metric: MetricRef,
 	dimensions: Type.Record(Field, Type.Array(Type.String({ pattern: "^[a-z0-9][a-z0-9_:.-]*$" }), { minItems: 1 }), { minProperties: 1 }),
 	countField: Type.Optional(Field),
 });

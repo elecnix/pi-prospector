@@ -12,13 +12,13 @@ export const turnPairLlmFingerprint: FingerprintContributor = {
 		description: "Friction type and sentiment of the turns the classifier judged.",
 		kind: "inferred",
 		measures: [
-			{ kind: "total", id: "turnsClassified", field: "turns" },
+			{ kind: "total", id: "turnsClassified", metric: "turn-pair-llm.turns-classified", field: "turns" },
 			{
 				kind: "groups",
-				id: "frictionType",
+				id: "frictionType", metric: "turn-pair-llm.friction-type",
 				dimensions: { frictionType: ["none", "wrong_approach", "missed_instruction", "tool_misuse", "repetition", "rebuttal"] },
 			},
-			{ kind: "groups", id: "sentiment", dimensions: { sentiment: ["positive", "neutral", "frustrated"] } },
+			{ kind: "groups", id: "sentiment", metric: "turn-pair-llm.sentiment", dimensions: { sentiment: ["positive", "neutral", "frustrated"] } },
 		],
 	},
 	async read(ctx) {

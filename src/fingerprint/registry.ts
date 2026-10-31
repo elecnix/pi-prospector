@@ -1,6 +1,7 @@
 import type { Analyzer } from "../analyze/types.js";
 import type { FingerprintContributor } from "./contributor.js";
 import { shapeContributor, sourcesContributor, usageContributor } from "./contributors/sessions.js";
+import { METRIC_ID_PATTERN } from "./contributor.js";
 import { ID_PATTERN } from "./schema.js";
 
 /**
@@ -33,6 +34,9 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 		for (const m of def.measures) {
 			if (measureIds.has(m.id)) throw new Error(`fingerprint contributor '${def.id}' declares measure '${m.id}' twice`);
 			measureIds.add(m.id);
+			if (m.metric !== undefined && !new RegExp(METRIC_ID_PATTERN).test(m.metric)) {
+				throw new Error(`fingerprint contributor '${def.id}' measure '${m.id}' has metric '${m.metric}', which is not <analyzer-id>.<metric-name>`);
+			}
 		}
 	}
 	return all;

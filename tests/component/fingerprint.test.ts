@@ -355,6 +355,17 @@ describe("registering a contributor", () => {
 		);
 	});
 
+	it("checks the metric id a measure points at", () => {
+		const withMetric = (metric: string) => ({ ...extra, def: { ...extra.def, measures: [{ ...extra.def.measures[0]!, metric }] } }) as FingerprintContributor;
+		assert.doesNotThrow(() => collectContributors([], [withMetric("failure-modes.tool-failure")]));
+		assert.throws(() => collectContributors([], [withMetric("Not A Metric")]), /not <analyzer-id>\.<metric-name>/);
+	});
+
+	it("points every built-in measure at its metric definition", () => {
+		const missing = contributors.flatMap((c) => c.def.measures.filter((m) => m.metric === undefined).map((m) => `${c.def.id}.${m.id}`));
+		assert.deepEqual(missing, []);
+	});
+
 	it("takes contributors from an analyzer's fingerprint list", () => {
 		const analyzer = { ...BUILTIN_ANALYZERS[0]!, fingerprint: [extra] };
 		assert.ok(collectContributors([analyzer]).some((c) => c.def.id === "plugged"));

@@ -27,7 +27,7 @@ export const sourcesContributor: FingerprintContributor = {
 		label: "Sources",
 		description: "How many sessions each coding harness produced.",
 		kind: "objective",
-		measures: [{ kind: "groups", id: "bySource", dimensions: { source: [...SOURCE_GROUPS] } }],
+		measures: [{ kind: "groups", id: "bySource", metric: "sessions.sessions-by-source", dimensions: { source: [...SOURCE_GROUPS] } }],
 	},
 	async read({ sessions }) {
 		return { measured: ids(sessions), rows: sessions.map((s) => ({ session: s.id, source: s.source })) };
@@ -42,8 +42,8 @@ export const usageContributor: FingerprintContributor = {
 		description: "Distinct days a session started on, and the distribution of session duration (first message to last).",
 		kind: "objective",
 		measures: [
-			{ kind: "distinct", id: "activeDays", field: "startDay" },
-			{ kind: "distribution", id: "duration", field: "durationMinutes", unit: "minutes", edges: DURATION_EDGES_MINUTES },
+			{ kind: "distinct", id: "activeDays", metric: "sessions.active-days", field: "startDay" },
+			{ kind: "distribution", id: "duration", metric: "sessions.duration", field: "durationMinutes", unit: "minutes", edges: DURATION_EDGES_MINUTES },
 		],
 	},
 	async read({ sessions }) {
@@ -66,10 +66,10 @@ export const shapeContributor: FingerprintContributor = {
 		description: "Prompts and tool calls per session, and the sub-agent sessions a session started.",
 		kind: "objective",
 		measures: [
-			{ kind: "distribution", id: "promptsPerSession", field: "prompts", unit: "prompts", edges: PROMPT_EDGES },
-			{ kind: "distribution", id: "toolCallsPerSession", field: "toolCalls", unit: "tool-calls", edges: TOOL_CALL_EDGES },
-			{ kind: "sessions", id: "sessionsWithSubAgents", field: "subAgentSessions" },
-			{ kind: "total", id: "subAgentSessions", field: "subAgentSessions" },
+			{ kind: "distribution", id: "promptsPerSession", metric: "sessions.prompts-per-session", field: "prompts", unit: "prompts", edges: PROMPT_EDGES },
+			{ kind: "distribution", id: "toolCallsPerSession", metric: "sessions.tool-calls-per-session", field: "toolCalls", unit: "tool-calls", edges: TOOL_CALL_EDGES },
+			{ kind: "sessions", id: "sessionsWithSubAgents", metric: "sessions.sessions-with-sub-agents", field: "subAgentSessions" },
+			{ kind: "total", id: "subAgentSessions", metric: "sessions.sub-agent-sessions", field: "subAgentSessions" },
 		],
 	},
 	async read({ sessions }) {

@@ -15,9 +15,9 @@ export const failureModesFingerprint: FingerprintContributor = {
 		description: "Failed generations and failed tool calls, by axis and by class from the failure catalogue.",
 		kind: "objective",
 		measures: [
-			{ kind: "total", id: "turnFailures", field: "turnFailures" },
-			{ kind: "total", id: "toolFailures", field: "toolFailures" },
-			{ kind: "groups", id: "byClass", dimensions: { axis: ["turn", "tool", "child"], classId: CLASS_IDS }, countField: "count" },
+			{ kind: "total", id: "turnFailures", metric: "failure-modes.turn-failure", field: "turnFailures" },
+			{ kind: "total", id: "toolFailures", metric: "failure-modes.tool-failure", field: "toolFailures" },
+			{ kind: "groups", id: "byClass", metric: "failure-modes.failure-class", dimensions: { axis: ["turn", "tool", "child"], classId: CLASS_IDS }, countField: "count" },
 		],
 	},
 	async read(ctx) {
