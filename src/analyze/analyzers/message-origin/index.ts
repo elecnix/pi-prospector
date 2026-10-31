@@ -79,6 +79,14 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// `relayed-request`. It was `notification/harness-line`, so only the rule name
 	// moves and no label changes.
 	minor: 1,
+	// 1.2: a better `pasted`. A message is a paste only when copied material is
+	// most of it and the person's own words are few (under 40 characters). A paste
+	// with sentences beside it, and a long run of sentences that the span labeller
+	// took for a paste, go to the decision model as `paste-with-prose`. A Claude Code
+	// prompt echo (`❯ please fix the build`) is no shell capture, a bare link inside
+	// a skill command is the person's, and a `Worktree: /path` line marks an
+	// agent's brief.
+	minor: 2,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/message-origin/index.ts",
 };
