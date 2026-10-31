@@ -35,9 +35,9 @@ import type {
 	PromptVersion,
 	SourceRef,
 } from "../../types.js";
-import { computeConfigHash, computeSourceSetHash } from "../../input-hash.js";
+import { canonicalJson, computeConfigHash, computeSourceSetHash, shortHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { DecisionAnswer, decisionIdentity, type DecisionQuestion } from "../../decision-model.js";
+import { DecisionAnswer, decisionIdentity } from "../../decision-model.js";
 import { MESSAGE_ORIGIN_DEF, type MessageOriginProperties } from "../message-origin/index.js";
 import { originDecisionState } from "../message-origin/decision.js";
 import { labelUserText } from "../../text-origin.js";
@@ -58,6 +58,12 @@ export const MessageAnswersProperties = Type.Object({
 	user_message_id: Type.String(),
 	/** The answer to each question, under its key (`id.v<version>`). */
 	answers: Type.Record(Type.String(), DecisionAnswer),
+	/**
+	 * A fingerprint of each question as it was asked. An answer is carried forward only
+	 * when the question's content still matches, so a question edited without a version
+	 * bump is asked again.
+	 */
+	asked: Type.Record(Type.String(), Type.String()),
 });
 export type MessageAnswersProperties = Static<typeof MessageAnswersProperties>;
 
@@ -86,10 +92,17 @@ const UnitMeta = Type.Object({
 	unanswered: Type.Array(Type.String()),
 	/** Answers carried forward from the message's previous node. */
 	carried: Type.Record(Type.String(), DecisionAnswer),
+	/** Fingerprints of the questions in `carried`. */
+	carriedAsked: Type.Record(Type.String(), Type.String()),
 	originOutputKey: Type.String(),
 	messageId: Type.String(),
 });
 type UnitMeta = Static<typeof UnitMeta>;
+
+/** A fingerprint of a question's content, so an edit without a version bump is noticed. */
+function questionFingerprint(q: MessageQuestion): string {
+	return shortHash(canonicalJson(q.question));
+}
 
 function ownWords(text: string): string {
 	return labelUserText(text, { role: "user", childAgent: false, forkCopy: false })
@@ -147,14 +160,17 @@ export const messageAnswersAnalyzer: Analyzer = {
 			const text = ownWords(message.content_text ?? "");
 			if (text === "") continue;
 
-			const before = previous.get(origin.user_message_id)?.answers ?? {};
+			const before = previous.get(origin.user_message_id);
 			const carried: Record<string, DecisionAnswer> = {};
+			const carriedAsked: Record<string, string> = {};
 			const unanswered: string[] = [];
 			for (const q of applicable) {
 				const key = questionKey(q);
-				const held = before[key];
-				if (held && held.type === q.question.type) carried[key] = held;
-				else unanswered.push(key);
+				const held = before?.answers[key];
+				if (held && held.type === q.question.type && before?.asked[key] === questionFingerprint(q)) {
+					carried[key] = held;
+					carriedAsked[key] = questionFingerprint(q);
+				} else unanswered.push(key);
 			}
 			const sources: SourceRef[] = [{ kind: "message", id: message.id }];
 			units.push({
@@ -162,7 +178,7 @@ export const messageAnswersAnalyzer: Analyzer = {
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "message",
 				anchorRef: message.id,
-				meta: { text, unanswered, carried, originOutputKey: node.output_key, messageId: message.id } satisfies UnitMeta as unknown as Record<string, unknown>,
+				meta: { text, unanswered, carried, carriedAsked, originOutputKey: node.output_key, messageId: message.id } satisfies UnitMeta as unknown as Record<string, unknown>,
 			});
 		}
 		return units;
@@ -172,6 +188,8 @@ export const messageAnswersAnalyzer: Analyzer = {
 		const config = (ctx.config.configJson as unknown as MessageAnswersConfig) ?? DEFAULT_MESSAGE_ANSWERS_CONFIG;
 		const meta = unit.meta as unknown as UnitMeta;
 		const answers: Record<string, DecisionAnswer> = { ...meta.carried };
+		const asked: Record<string, string> = { ...meta.carriedAsked };
+		const registered = new Map(registeredMessageQuestions().map((q) => [questionKey(q), q] as const));
 
 		let costUsd = 0;
 		let inputTokens = 0;
@@ -182,20 +200,18 @@ export const messageAnswersAnalyzer: Analyzer = {
 			if (!config.decisionModel || !ctx.decide) {
 				throw new Error(`message-answers is configured with decision model '${config.decisionModel}', but this run has no decision-model client.`);
 			}
-			const asked = new Map<string, DecisionQuestion>(
-				registeredMessageQuestions().map((q) => [questionKey(q), q.question] as const),
-			);
 			for (let i = 0; i < meta.unanswered.length; i += MAX_QUESTIONS_PER_REQUEST) {
 				const keys = meta.unanswered.slice(i, i + MAX_QUESTIONS_PER_REQUEST);
 				const response = await ctx.decide({
 					model: config.decisionModel,
 					state: originDecisionState(meta.text),
-					questions: Object.fromEntries(keys.map((key) => [key, asked.get(key)!])),
+					questions: Object.fromEntries(keys.map((key) => [key, registered.get(key)!.question])),
 				});
 				for (const key of keys) {
 					const answer = response.answers[key];
 					if (!answer) throw new Error(`Decision model returned no answer for '${key}'.`);
 					answers[key] = answer;
+					asked[key] = questionFingerprint(registered.get(key)!);
 				}
 				modelUsed = response.model;
 				costUsd += response.costUsd;
@@ -206,7 +222,8 @@ export const messageAnswersAnalyzer: Analyzer = {
 		}
 
 		const sorted = Object.fromEntries(Object.entries(answers).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-		const properties: MessageAnswersProperties = { user_message_id: meta.messageId, answers: sorted };
+		const sortedAsked = Object.fromEntries(Object.entries(asked).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+		const properties: MessageAnswersProperties = { user_message_id: meta.messageId, answers: sorted, asked: sortedAsked };
 		return {
 			nodeKind: "metric",
 			contentJson: properties as unknown as Record<string, unknown>,

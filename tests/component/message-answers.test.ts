@@ -203,6 +203,27 @@ describe("message-answers", () => {
 		}
 	});
 
+	it("asks a question again when its wording changed without a version bump, as when the code was edited between runs", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await insertSession(db, "s1");
+			await insertMessages(db, "s1", CONVERSATION);
+			const { model } = setup();
+			await (await frameworkFor(db, model)).run("s1");
+			const sent = model.calls.length;
+
+			resetMessageQuestions();
+			registerMessageQuestion({ ...GREETING, question: { type: "noul", instructions: "Is `message` a greeting or a thank-you?" } });
+			registerMessageQuestion(POLITE);
+			await (await frameworkFor(db, model)).run("s1", { revise: ["config"] });
+			const fresh = model.calls.slice(sent);
+			assert.equal(fresh.length, 2);
+			for (const call of fresh) assert.deepEqual(Object.keys(call.questions), ["is-greeting.v1"], "only the edited question is asked");
+		} finally {
+			await close();
+		}
+	});
+
 	it("asks nothing and writes nothing when no decision model is configured", async () => {
 		const { db, close } = await tempDb();
 		try {
