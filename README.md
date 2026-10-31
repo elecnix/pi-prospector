@@ -500,6 +500,10 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
 
 Proposals are never auto-applied. They sit in the database with status `open` until you accept or reject them.
 
+### `/prospect-metrics [--analyzer <id>] [--format md|json] [--gaps]`
+
+Print what each metric means. An entry gives the definition, how the value is decided (counted, rule-based or inferred), the unit and denominator, the limits, and the series breaks where an analyzer version changed the meaning, with the command that brings older nodes up to date. `--analyzer <id>` shows one analyzer (`sessions` shows the figures counted from the index), `--format json` prints the same as JSON, and `--gaps` lists the analyzers that have no definitions yet. Each analyzer declares its metrics in a `metrics.ts` beside its code. The command reads those definitions and never opens the database. Read the entry before drawing a trend from a number.
+
 ### `/prospect-output [list | <analyzer>[:<output>]] [--out DIR] [--as-of TS] [--key value]`
 
 Render an analyzer's [outputs](#outputs--turning-the-graph-into-files) to files. `output list` prints every output the registered analyzers declare, with its description and options.

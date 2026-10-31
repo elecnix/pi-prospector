@@ -117,6 +117,14 @@ export const COMMANDS: ProspectCommand[] = [
 		handler: (module) => module.prospectAnalyzers,
 	}),
 	spec({
+		name: "prospect-metrics",
+		flag: "metrics",
+		description:
+			"Print what each metric means: definition, how it is measured (counted, rule-based or inferred), unit and denominator, limits, and the series breaks where an analyzer version changed its meaning. Flags: --analyzer <id> (one analyzer; `sessions` for figures counted from the index), --format md|json, --gaps (list the analyzers that have no definitions yet). Reads the definitions that analyzers declare; touches no database and runs no analysis.",
+		load: () => import("./metrics.js"),
+		handler: (module) => module.prospectMetrics,
+	}),
+	spec({
 		name: "prospect-output",
 		flag: "output",
 		description:
