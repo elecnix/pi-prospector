@@ -4,7 +4,14 @@ import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { getDbPath } from "../config.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
+import type { AsyncDatabase } from "../db/async-db.js";
 import { buildFingerprint, parseFingerprintArgs } from "../fingerprint/build.js";
+import type { Fingerprint } from "../fingerprint/schema.js";
+
+/** Parse the flags and build the fingerprint on an open database; the tool action and the command share it. */
+export async function readFingerprint(db: AsyncDatabase, flags: string): Promise<Fingerprint> {
+	return buildFingerprint(db, parseFingerprintArgs(flags, new Date()));
+}
 
 /**
  * `/prospect-fingerprint [--source a,b] [--from DAY] [--to DAY] [--as-of DAY] [--out FILE]`:

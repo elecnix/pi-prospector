@@ -644,6 +644,7 @@ When installed, pi-prospector registers a `prospect` tool the Pi coding agent ca
 | `accept` | Mark a proposal as applied; optional `rationale`, `disposition` (planned/done/done_differently), `actual_change` record a durable decision |
 | `reject` | Mark a proposal as rejected; optional `rationale` records a durable decision |
 | `remediate` | Accept many proposals (`proposal_ids`) at once under ONE shared remediation (`description`) instead of N duplicated rationales |
+| `fingerprint` | Return the shareable corpus fingerprint as JSON; optional `source` (comma-separated), `from`, `to`, and `as_of` |
 
 This lets you say things like "show me open proposals" or "sync my sessions and check stats" directly in a Pi conversation. (Analysis itself runs through `/prospect-analyze`, not the tool, because it can be long-running and cost money.)
 

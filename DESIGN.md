@@ -875,6 +875,8 @@ A fingerprint describes a body of sessions to someone who must not see them.
 - **Objective and inferred figures**: an *objective* figure is counted or timed from the transcript, or found by a deterministic analyzer. An *inferred* figure rests on a language model's judgement. The fingerprint files it in its own section, so a reader treats it as an estimate. A frustration signal is inferred even though matching it is deterministic, because a model judged the word.
 - **Minimum group size**: the fewest sessions any published figure may rest on (5). A histogram bucket under it merges into its smaller neighbour. A breakdown group under it folds into `other`, which is published only when `other` reaches the minimum too. A section built on fewer sessions is withheld. Merging buckets, instead of hiding one, stops a reader from recovering a small count by subtracting from the total. The session count is the exception: the fingerprint states it whatever its size.
 
+A known leak is accepted. A source or a group under the minimum is dropped from its breakdown, so a reader who subtracts the listed groups from the session count learns how many sessions were dropped, though not what they were. Nicolas decided on 2026-10-31 to keep it. The count of dropped sessions says nothing about their content, and the alternatives (adding the remainder to the largest group, or withholding the whole breakdown) would distort the larger groups or hide figures that are safe to share.
+
 ### Language-model access
 
 - **Model tier** — an abstract quality/cost band (**cheap**, **mid**,
