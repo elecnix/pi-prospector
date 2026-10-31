@@ -180,7 +180,7 @@ Each hit also records the **text origin** of the words it matched. A user messag
 prospect nodes --analyzer turn-frustration --filter origin=typed
 ```
 
-[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them. Hits drawn before 1.11 also label a Claude Code paste `typed`, because the paste's closing tag repeats its attributes and the earlier rule missed it. The same run redraws them.
+[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them. Hits drawn before 1.11 also label a Claude Code paste `typed`, because the paste's closing tag repeats its attributes and the earlier rule missed it. The same run redraws them. From 1.12 a hit also reads the `message-origin` node of its turn: a message that node labels `agent`, `notification` or `pasted` gives every occurrence in it that label, so `origin=typed` leaves out orchestrator briefs and short terminal captures that no tag marks.
 
 Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
 

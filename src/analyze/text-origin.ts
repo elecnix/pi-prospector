@@ -10,20 +10,21 @@
  *     `<pasted_content>` block, a `[Pasted text #N ...]` placeholder line, or a
  *     paragraph (lines between blank lines) of `PASTE_MIN_LINES` lines or more.
  *   - `quoted`: a line that starts with `>`, after optional indentation.
- *   - `agent`: words another agent wrote. Every turn of a child agent's session
- *     (the parent agent wrote its prompts), a message whose last line is an agent
- *     signature (`— adjective-noun-12`, with an optional `cc-` prefix), and a
- *     `<teammate-message>` or `<cross-session-message>` block.
- *   - `notification`: text the harness injected. A turn that starts with a pi
- *     `custom_message`, `branch_summary` or `bashExecution` entry, a compaction
- *     continuation, and harness blocks such as `<task-notification>`,
- *     `<system-reminder>`, `<local-command-stdout>` or `<channel>`.
+ *   - `agent`: words another agent wrote, here a `<teammate-message>` or
+ *     `<cross-session-message>` block.
+ *   - `notification`: text the harness injected, here the harness blocks such as
+ *     `<task-notification>`, `<system-reminder>`, `<local-command-stdout>` or
+ *     `<channel>`.
  *   - `fork-copy`: a turn a fork copied from its parent session.
  *
- * Three labels apply to the whole message and are tested first, in this order:
- * `fork-copy`, then a `notification` turn, then an `agent` turn. Otherwise the
- * message is split into spans. Harness blocks and fenced blocks are cut out
- * first, and the text between them is labelled line by line.
+ * This module labels spans inside a message. The label of a whole message (a
+ * child agent's prompt, a signed message, a pi entry, a compaction continuation,
+ * a brief an orchestrator wrote) belongs to `message-origin.ts`, and
+ * turn-frustration reads that node first. Only `fork-copy` is tested here before
+ * the split, because it compares the turn with the parent session's turns, which
+ * a message's own text cannot show. Otherwise the message is split into spans.
+ * Harness blocks and fenced blocks are cut out first, and the text between them
+ * is labelled line by line.
  *
  * The spans concatenate back to the message exactly, so a caller can count a
  * word in each span and know the counts cover the whole message.
@@ -31,7 +32,7 @@
  * Two host flags never reach this module, and the reasons are recorded here.
  * Claude Code's `isMeta` lines are dropped by the parser, so they start no turn.
  * Claude Code's `isSidechain` lines appear only in child-agent transcripts,
- * which the `agent` rule covers through the session's parent link.
+ * which `message-origin.ts` labels `agent` through the session's parent link.
  *
  * Pure functions: no database, no state.
  */
@@ -60,10 +61,6 @@ export type TextSpan = Static<typeof TextSpan>;
 
 /** What the labeller needs to know about the turn beyond its text. */
 export const TurnOriginContext = Type.Object({
-	/** The turn-starting message's role. */
-	role: Type.String(),
-	/** The session is a child agent's: another agent wrote its prompts. */
-	childAgent: Type.Boolean(),
 	/** The message is a copy a fork took from its parent (see {@link isForkCopy}). */
 	forkCopy: Type.Boolean(),
 });
@@ -71,15 +68,6 @@ export type TurnOriginContext = Static<typeof TurnOriginContext>;
 
 /** A paragraph with this many lines or more is a paste. People rarely type eight lines without a blank one. */
 export const PASTE_MIN_LINES = 8;
-
-/** pi turn-start entries that the harness or an extension writes. */
-const NOTIFICATION_ROLES = new Set(["custom_message", "branch_summary", "bashExecution"]);
-
-/** The opening Claude Code writes on the summary that continues a compacted session. */
-const COMPACTION_RE = /^\s*This session is being continued from a previous conversation/;
-
-/** An agent handle on the message's last line: `— swift-koala-42`, `-- cc-eager-owl-07`. */
-const SIGNATURE_RE = /(?:^|\n)[ \t]*(?:—|–|--)[ \t]*(?:cc-)?[a-z]+-[a-z]+-\d{1,3}[ \t]*$/;
 
 const NOTIFICATION_TAGS = new Set([
 	"task-notification",
@@ -114,14 +102,6 @@ function blockOrigin(match: RegExpMatchArray): TextOrigin | null {
 	if (PASTE_TAGS.has(tag)) return "pasted";
 	if (AGENT_TAGS.has(tag)) return "agent";
 	if (NOTIFICATION_TAGS.has(tag)) return "notification";
-	return null;
-}
-
-/** The whole-message label, or null when the message must be split. */
-function wholeMessageOrigin(text: string, ctx: TurnOriginContext): TextOrigin | null {
-	if (ctx.forkCopy) return "fork-copy";
-	if (NOTIFICATION_ROLES.has(ctx.role) || COMPACTION_RE.test(text)) return "notification";
-	if (ctx.childAgent || SIGNATURE_RE.test(text.trimEnd())) return "agent";
 	return null;
 }
 
@@ -182,8 +162,7 @@ function merge(spans: TextSpan[]): TextSpan[] {
 /** Split a turn's user text into labelled spans. Returns no spans for blank text. */
 export function labelUserText(text: string, ctx: TurnOriginContext): TextSpan[] {
 	if (!text.trim()) return [];
-	const whole = wholeMessageOrigin(text, ctx);
-	if (whole) return [{ origin: whole, text }];
+	if (ctx.forkCopy) return [{ origin: "fork-copy", text }];
 
 	const spans: TextSpan[] = [];
 	let cursor = 0;
