@@ -75,7 +75,10 @@ export const MESSAGE_ORIGIN_DEF: AnalyzerDef = {
 export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	analyzerId: MESSAGE_ORIGIN_DEF.id,
 	major: 1,
-	minor: 0,
+	// 1.1: a workflow's relayed copy of a person's request gets its own rule,
+	// `relayed-request`. It was `notification/harness-line`, so only the rule name
+	// moves and no label changes.
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/message-origin/index.ts",
 };
