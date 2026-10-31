@@ -8,7 +8,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeToolCall, isNearIdentical, isExactlyIdentical, type NormalizedToolCall } from "../../src/analyze/analyzers/tool-trajectory/arg-parser.js";
 import { detectStuckLoops, detectPollingLoops, detectOscillation, detectPreFlightGaps, detectAllSignals, detectThoughtOscillation, SIGNAL_RISK_CLASSES, type ReasoningBlock, type ToolCallWithResult } from "../../src/analyze/analyzers/tool-trajectory/detectors.js";
-import { computeTrajectoryFriction } from "../../src/analyze/analyzers/tool-trajectory/index.js";
+import { computeTrajectoryFriction, extractToolCalls } from "../../src/analyze/analyzers/tool-trajectory/index.js";
+import { makeMessageRow } from "./helpers.js";
 import { DEFAULT_TOOL_TRAJECTORY_CONFIG, type ToolTrajectoryConfig } from "../../src/analyze/analyzers/tool-trajectory/config.js";
 
 // ──────────────────── helpers ────────────────────
@@ -764,5 +765,17 @@ describe("detectThoughtOscillation", () => {
 			makeBlock("m4", 3, BASE_THOUGHT),
 		];
 		assert.equal(detectThoughtOscillation(blocks, OSC_CONFIG).length, 0);
+	});
+});
+
+describe("extractToolCalls on stored calls without an id", () => {
+	it("reads the failure of an id-less call from the result that carries an id", () => {
+		const rows = [
+			makeMessageRow({ id: "a1", role: "assistant", tool_calls: JSON.stringify([{ name: "bash", arguments: { command: "mv file.txt /nonexistent/dest.txt" } }]) }),
+			makeMessageRow({ id: "r1", role: "toolResult", tool_results: JSON.stringify([{ toolCallId: "p-1", toolName: "bash", isError: true, textLength: 4 }]) }),
+		];
+		const calls = extractToolCalls(rows);
+		assert.equal(calls[0]!.isError, true);
+		assert.equal(detectPreFlightGaps(calls).length, 1);
 	});
 });

@@ -137,8 +137,11 @@ export const REVIVE_CHAINS_VERSION: AnalyzerVersion = {
 	analyzerId: REVIVE_CHAINS_DEF.id,
 	// 1.0: chain detection over the shared action stream, and the delegated
 	// usage rollup joined by the revive markers' run ids.
+	// 1.1: the shared action stream now pairs id-carrying results with id-less
+	// stored calls (sessions indexed before 2026-08-20), so a revived child's
+	// result and run id are found.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/revive-chains/index.ts",
 };

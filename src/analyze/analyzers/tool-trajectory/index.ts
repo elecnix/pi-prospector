@@ -137,8 +137,12 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
 	// no longer counts as the success that breaks a stuck-loop, so repeated no-op
 	// edits to one file now read as the retry loop they are. Major: signals
 	// appear on existing sessions.
+	// 7.1: the shared action stream now pairs id-carrying results with id-less
+	// stored calls (sessions indexed before 2026-08-20). Failures that were read
+	// as successes now count, so stuck-loops end correctly and pre-flight gaps
+	// appear on those sessions.
 	major: 7,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/tool-trajectory/index.ts",
 };
@@ -161,7 +165,7 @@ export const TOOL_TRAJECTORY_VERSION: AnalyzerVersion = {
  * simply ended before the answer arrived, and inventing a failure there would
  * manufacture stuck-loops out of clean tails.
  */
-function extractToolCalls(messages: MessageRow[]): ToolCallWithResult[] {
+export function extractToolCalls(messages: MessageRow[]): ToolCallWithResult[] {
 	return buildToolStream(messages).invocations.map((inv) => ({
 		call: normalizeToolCall({ name: inv.name, args: inv.args, messageId: inv.messageId }),
 		isError: inv.outcome?.isError ?? false,
