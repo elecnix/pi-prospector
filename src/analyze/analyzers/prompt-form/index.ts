@@ -147,7 +147,12 @@ export const promptFormAnalyzer: Analyzer = {
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
 		const originNodes = ctx.dependencyNodes[MESSAGE_ORIGIN_DEF.id] ?? [];
-		if (originNodes.length === 0 || ctx.messages.length === 0) return [];
+		if (ctx.messages.length === 0) return [];
+		// A session with no user-role message has no origin node to wait for and still
+		// earns a zero-count node. A session with user-role messages but no origin node
+		// is missing its dependency, and a zero here would be false.
+		const hasUserMessage = ctx.messages.some((m) => m.role === "user");
+		if (originNodes.length === 0 && hasUserMessage) return [];
 		const inputs = readInputs(ctx.messages, originNodes, ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? []);
 		const sources: SourceRef[] = [
 			{ kind: "session", id: `${ctx.sessionId}#text=${textFingerprint(ctx.messages, inputs.typedIds)}` },

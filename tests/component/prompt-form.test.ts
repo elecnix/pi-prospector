@@ -88,6 +88,21 @@ describe("prompt-form component test", () => {
 		}
 	});
 
+	it("gives a session with no user-role message a zero-count node", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await run(db, "pf-agent-only", [
+				{ role: "assistant", text: "Scheduled run started." },
+				{ role: "assistant", text: "Scheduled run finished." },
+			]);
+			const nodes = await readAnalyzerNodes(db, "prompt-form");
+			assert.equal(nodes.length, 1);
+			assert.equal((JSON.parse(nodes[0]!.content_json) as PromptFormProperties).typed_message_count, 0);
+		} finally {
+			await close();
+		}
+	});
+
 	it("plans nothing for an empty transcript", async () => {
 		const { db, close } = await tempDb();
 		try {

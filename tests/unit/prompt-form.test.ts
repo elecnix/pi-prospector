@@ -56,6 +56,11 @@ describe("scanPromptForm", () => {
 		assert.deepEqual(scan.length_buckets.map((b) => b.count), [3, 0, 0, 1, 0]);
 	});
 
+	it("sorts the configured bounds before bucketing", () => {
+		const scan = scanPromptForm([prompt("x".repeat(50))], 0, { lengthBoundsChars: [100, 10], listMinLines: 3 });
+		assert.deepEqual(scan.length_buckets, [{ le_chars: 10, count: 0 }, { le_chars: 100, count: 1 }, { le_chars: null, count: 0 }]);
+	});
+
 	it("returns zero counts and null statistics for no prompts", () => {
 		const scan = scanPromptForm([], 0);
 		assert.equal(scan.typed_message_count, 0);
