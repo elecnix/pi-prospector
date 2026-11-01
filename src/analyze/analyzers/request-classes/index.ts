@@ -243,7 +243,9 @@ export const requestClassesAnalyzer: Analyzer = {
 			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
 			user: buildUserPrompt(meta.lines),
 			temperature: cfg.temperature ?? 0,
-			maxTokens: 2000,
+			// The classification payload; 2,000 truncated occasionally on a model that
+			// reasons first, and a truncated reply yields no node — see #369.
+			maxTokens: 4000,
 			tool: CLASSIFY_TOOL,
 		});
 
