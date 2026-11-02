@@ -57,6 +57,7 @@ export const OriginRule = Type.Union([
 	Type.Literal("signature"),
 	Type.Literal("peer-message"),
 	Type.Literal("computed-task"),
+	Type.Literal("relayed-request"),
 	Type.Literal("spawn-pointer"),
 	Type.Literal("relay-header"),
 	Type.Literal("brief"),
@@ -137,7 +138,6 @@ const COMPACTION_RE = /^\s*This session is being continued from a previous conve
 const HARNESS_LINE_RE = new RegExp(
 	[
 		String.raw`\[Request interrupted by user`,
-		String.raw`\[Workflow harness — user request`,
 		String.raw`Base directory for this skill:`,
 		String.raw`\[minifleet\]`,
 		String.raw`\[workflows mode armed`,
@@ -175,6 +175,13 @@ const SIGNATURE_RE = /(?:^|\n)[ \t]*(?:—|–|--)[ \t]*(?:cc-)?[a-z]+-[a-z]+-\d
 
 /** The banner a workflow script puts on a task it computed at run time. */
 const COMPUTED_TASK_RE = /^\[Workflow harness — computed/;
+
+/**
+ * The banner a workflow puts on the copy of a person's request that it relays into
+ * a child session. The person typed those words in the parent session, where their
+ * own node counts them. The copy is a notification so the words count once.
+ */
+const RELAYED_REQUEST_RE = /\[Workflow harness — user request/;
 
 /** The line the harness puts above a message another session sent. */
 const PEER_RELAY_RE = /^Another Claude session sent a message/;
@@ -334,6 +341,7 @@ export function classifyMessageOrigin(rawText: string, ctx: MessageOriginContext
 
 	const lead = text.trimStart();
 	if (COMPUTED_TASK_RE.test(lead)) return verdict("agent", "computed-task");
+	if (RELAYED_REQUEST_RE.test(lead)) return verdict("notification", "relayed-request");
 	if (PEER_RELAY_RE.test(lead)) return verdict("agent", "teammate-block");
 	if (HARNESS_LINE_RE.test(lead)) return verdict("notification", "harness-line");
 	if (NUMBERED_LISTING_RE.test(lead)) return verdict("notification", "tool-result");

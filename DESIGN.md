@@ -852,6 +852,14 @@ list — the system **learns the vocabulary from the corpus**.
   analyzer that must count only what a person wrote. Both read the harness
   blocks that `text-origin.ts` knows, and a report joins a hit to its message's
   node through the message anchor.
+- **Relayed request**: the copy of a person's request that a workflow script
+  relays, word for word, into a child session under a banner that says so. The
+  origin is `notification`, by the rule `relayed-request`. The person typed those
+  words once, in the parent session, where the parent's own node counts them as
+  `typed`. A second `typed` label on the copy would count one request twice, and
+  would credit the person with a message that reached the child as a machine's
+  relay. The task text the same script computes at run time is `agent`, because
+  the script wrote it.
 - **Origin rule**: the test that decided a message's origin, such as
   `child-session`, `signature`, `tool-result` or `pasted-block`. Every node
   records its rule, so a reader can see why a message got its label. A strong

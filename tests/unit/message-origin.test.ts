@@ -67,8 +67,11 @@ describe("classifyMessageOrigin: notification", () => {
 		assert.equal(label("why is that call still running?", LATE), "typed/no-marker");
 	});
 
-	it("keeps a harness notification in a child session a notification, not an agent prompt", () => {
-		assert.equal(label("[Workflow harness — user request] The request below is relayed verbatim.", CHILD), "notification/harness-line");
+	it("labels the copy of a person's request that a workflow relays into a child session a notification, by its own rule", () => {
+		const relayed = "[Workflow harness — user request] The harness relays, verbatim, the request that started this run.\n    please check the build";
+		assert.equal(label(relayed, CHILD), "notification/relayed-request");
+		assert.equal(label(relayed), "notification/relayed-request", "the rule does not depend on the session being a child's");
+		assert.equal(label(`> forwarded\n${relayed}`), "notification/relayed-request", "the banner may follow a prefix line");
 	});
 
 	it("treats harness blocks as an envelope: a person's prompt with a reminder appended is typed", () => {
