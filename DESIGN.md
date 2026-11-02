@@ -592,6 +592,14 @@ that failed. One reconstruction serves every analyzer that needs it, so
 by *position* instead, as an earlier version did, mis-attributed every error in
 any session where one step issued several calls.
 
+A session indexed before sync stored the provider's call id holds calls without
+an id, next to results that have one. The pairing then falls back to the tool
+name and the order of the calls. A result pairs with the earliest waiting call
+of the same tool. Without the fallback every such call reads as unanswered, so
+the session looks free of tool failures and every outcome-based analyzer sees
+only silence. The coverage rule below exists to prevent that mistake, a silent
+zero from an unpaired stream.
+
 - **Failure class** — the curated category a failure falls into: rate limit,
   transport failure, provider server error, malformed tool call, context
   ceiling, authentication, quota, model unavailable, abort; and on the tool side

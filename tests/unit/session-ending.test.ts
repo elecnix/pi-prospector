@@ -95,6 +95,25 @@ describe("resolved endings", () => {
 		assert.equal(scan!.evidence.verification_ok, null);
 	});
 
+	it("reads the outcome of a stored call that has no id from a result that has one", () => {
+		// Sessions indexed before sync kept the call id: the call has none, its
+		// result does. Without a pairing, every one of them ended "no_recorded_results".
+		const messages = [
+			row({ role: "user", content_text: "Run the tests and tell me how it went." }),
+			row({
+				role: "assistant",
+				tool_calls: JSON.stringify([{ name: "bash", arguments: { command: "npm test" } }]),
+				stop_reason: "toolUse",
+			}),
+			row({ role: "toolResult", tool_results: JSON.stringify([{ toolCallId: "p-1", toolName: "bash", isError: false, textLength: 5 }]) }),
+			row({ role: "assistant", content_text: "All tests pass; nothing else needed changing in this repository." }),
+		];
+		const scan = classifyEnding(messages, CONFIG);
+		assert.equal(scan!.label, "resolved");
+		assert.equal(scan!.evidence.rule, "verification_passed");
+		assert.equal(scan!.unresolved_tool_call_count, 0);
+	});
+
 	it("recognises git commit/push and gh pr create as verification-class commands", () => {
 		for (const cmd of ["git commit -m 'fix'", "git push origin main", "gh pr create --title t"]) {
 			const messages = [
