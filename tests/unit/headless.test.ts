@@ -35,6 +35,7 @@ describe("PROSPECT_ACTIONS", () => {
 			"analyzers",
 			"diff",
 			"gc",
+			"metrics",
 			"mute",
 			"mutes",
 			"node",
