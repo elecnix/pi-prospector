@@ -35,7 +35,7 @@ export const metrics: MetricDefinition[] = [
 		],
 		limitations: [
 			"The basis ranks how direct the evidence is. A `command_url` key says where the session cloned from or pointed a remote, which is weaker evidence of where it worked than a remote git printed.",
-			"The share of sessions with `none` is the coverage of the key. Read every per-repository figure with that share beside it.",
+			"The share of sessions with `none` is the share left unplaced, and the coverage of the key is its complement. Read every per-repository figure with that share beside it.",
 		],
 	},
 ];

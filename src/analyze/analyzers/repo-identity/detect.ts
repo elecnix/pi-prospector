@@ -72,11 +72,13 @@ export function normaliseRepo(host: string, owner: string, name: string): string
 }
 
 const FORGE_PATH = /https?:\/\/(?:[^/\s@]+@)?([^/\s]+)\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?=[/\s)#?]|$)/g;
-const SSH_ADDRESS = /(?:ssh:\/\/)?git@([^:/\s]+)[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?(?=[\s)]|$)/g;
+const SSH_ADDRESS = /git@([^:/\s]+)[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?(?=[\s)]|$)/g;
+/** `ssh://[user@]host[:port]/owner/name`. */
+const SSH_URL = /ssh:\/\/(?:[^@\s/]+@)?([^:/\s]+)(?::\d+)?\/([^/\s]+)\/([^/\s]+?)(?:\.git)?(?=[\s)]|$)/g;
 /** `host:owner/name` as git prints it for an address written without a user. */
 const SCP_ADDRESS = /(?:^|\s)(?:[\w.-]+@)?([\w-]+(?:\.[\w-]+)+):([\w.-]+)\/([^/\s]+?)(?:\.git)?(?=\s|$)/g;
 const PR_URL = /https?:\/\/(?:[^/\s@]+@)?([^/\s]+)\/([^/\s]+)\/([^/\s]+?)\/(?:pull|pulls|issues)\/\d+/g;
-const ADDRESS_PATTERNS = [FORGE_PATH, SSH_ADDRESS, SCP_ADDRESS];
+const ADDRESS_PATTERNS = [FORGE_PATH, SSH_URL, SSH_ADDRESS, SCP_ADDRESS];
 const NOT_A_REPO_OWNER = new Set(["orgs", "settings", "login", "apps"]);
 
 function addresses(text: string, patterns: readonly RegExp[]): string[] {
@@ -103,7 +105,7 @@ function ghRepoFlag(segment: string): string | null {
 
 /** The directory a command ran in, when it said: a leading `cd`, or git's `-C`. Null means the working directory. */
 function commandDirectory(segment: string, whole: string): string | null {
-	const git = /\bgit\s+(?:-[a-zA-Z]\s+\S+\s+)*-C\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(segment);
+	const git = /\bgit\s+(?:(?:-[a-zA-Z]\s+\S+|--[\w-]+(?:=\S+)?)\s+)*-C\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(segment);
 	if (git) return git[1] ?? git[2] ?? git[3] ?? null;
 	const cd = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))\s*(?:&&|;)/.exec(whole);
 	return cd ? (cd[1] ?? cd[2] ?? cd[3] ?? null) : null;

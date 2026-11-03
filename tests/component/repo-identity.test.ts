@@ -43,7 +43,8 @@ describe("repo-identity component test", () => {
 			assert.deepEqual(contents.map((c) => c.repo_key), ["github.com/acme/widgets", "github.com/acme/widgets"]);
 			assert.deepEqual(contents.map((c) => c.basis), ["remote_output", "remote_output"]);
 			assert.deepEqual(contents.map((c) => c.directory).sort(), ["feat-x", "main"]);
-			const edges = (await nodeEdges(db, nodes[0]!.id)).filter((e) => e["edge_kind"] === "anchors");
+			const first = nodes.find((n) => (JSON.parse(n.content_json) as RepoIdentityProperties).session_id === "ri-a")!;
+			const edges = (await nodeEdges(db, first.id)).filter((e) => e["edge_kind"] === "anchors");
 			assert.equal(edges.filter((e) => e["to_ref_kind"] === "session").length, 1);
 			assert.ok(edges.find((e) => e["to_ref_id"] === ids[2]), "the result that carried the hint");
 		} finally {

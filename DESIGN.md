@@ -926,7 +926,7 @@ contain the new word have anything to compute.
 - **Repository key** is the one name a session's repository goes by: the forge address `host/owner/name`, lowercase, without credentials or a trailing `.git`. It comes from the session's own git commands and never from a folder name.
 - **Repository hint** is a forge address a session's git commands touched: **remote_output** (printed by `git remote`, `git push`, `git fetch` or `git pull`), **pr_url** (printed by a `gh pr` command), **gh_repo_flag** (the `--repo` value of a `gh` command), or **command_url** (written in `git clone` or `git remote add`). They are listed from strongest to weakest, and the most-supported address among the strongest basis present decides.
 - **Working-directory scope** limits the hints to commands that ran in the session's working directory or below it. A command with a directory outside it, or one held in a variable, is left out.
-- A session with no hint has a null key and the basis **none**. The share of such sessions is the coverage of the key, so a concentration figure is read beside it.
+- A session with no hint has a null key and the basis **none**. The share of such sessions is the share left unplaced, and the coverage is its complement. A concentration figure is read beside that share.
 
 ### Language-model access
 

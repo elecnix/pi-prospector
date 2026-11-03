@@ -36,6 +36,8 @@ describe("findRepoHints", () => {
 	it("reads the remote git printed, https or ssh, first remote only", () => {
 		const https = step("a", "git remote -v", "origin\thttps://github.com/Acme/Widgets.git (fetch)\norigin\thttps://github.com/Acme/Widgets.git (push)\nfork\thttps://github.com/ana/widgets.git (fetch)");
 		assert.deepEqual(repos(https), ["remote_output:github.com/acme/widgets"]);
+		const port = step("p", "git remote get-url origin", "ssh://git@github.com:22/acme/widgets.git");
+		assert.deepEqual(repos(port), ["remote_output:github.com/acme/widgets"]);
 		const ssh = step("b", "git remote get-url origin", "git@github.com:acme/widgets.git");
 		assert.deepEqual(repos(ssh), ["remote_output:github.com/acme/widgets"]);
 	});
@@ -64,6 +66,8 @@ describe("findRepoHints", () => {
 		assert.deepEqual(repos(step("a", "cd /somewhere/else && git push", other)), []);
 		assert.deepEqual(repos(step("b", "git -C /somewhere/else push", other)), []);
 		assert.deepEqual(repos(step("c", "git -C ~/x push", other)), []);
+		assert.deepEqual(repos(step("j", "git --no-pager -C /somewhere/else remote -v", other)), []);
+		assert.deepEqual(repos(step("k", "git -c core.pager=cat --no-pager -C /somewhere/else push", other)), []);
 		assert.deepEqual(repos(step("d", `git -C ${CWD} push`, other)), ["remote_output:github.com/other/repo"]);
 		assert.deepEqual(repos(step("e", `cd ${CWD}/sub && git push`, other)), ["remote_output:github.com/other/repo"]);
 		assert.deepEqual(repos(step("f", "cd sub && git push", other)), ["remote_output:github.com/other/repo"]);
