@@ -103,7 +103,9 @@ describe("prospect CLI", () => {
 		assert.match(one.out, /version \d+\.\d+, deterministic/);
 		const gaps = await capture(["metrics", "--gaps"]);
 		assert.equal(gaps.code, 0);
-		assert.ok(gaps.out.includes(METRICS_PENDING[0]!), "the gap list names a pending analyzer");
+		const first = METRICS_PENDING[0];
+		if (first === undefined) assert.match(gaps.out, /Every analyzer has metric definitions/);
+		else assert.ok(gaps.out.includes(first), "the gap list names a pending analyzer");
 		assert.equal((await capture(["metrics", "--analyzer", "nope"])).code, 1);
 		assert.equal((await capture(["metrics", "--analyzer"])).code, 1);
 	});
