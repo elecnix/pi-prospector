@@ -150,6 +150,22 @@ The `rebuttal` type is the one the deterministic layer cannot settle on its own:
 
 Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.ts) · classifier prompt + evidence formatting in [`prompt.ts`](./src/analyze/analyzers/turn-pair-llm/prompt.ts) · tier + enrichment cap in [`config.ts`](./src/analyze/analyzers/turn-pair-llm/config.ts).
 
+### message-origin, the author of each user-role message
+
+Hosts file many things under the user role that the person never typed. `message-origin` writes one node per turn-starting message and labels it `typed`, `pasted`, `agent` or `notification` (definitions in [DESIGN.md](./DESIGN.md)). Named rules in [`message-origin.ts`](./src/analyze/message-origin.ts) decide nearly every message, and the node records the rule. To count only a person's words, filter on the label:
+
+```sh
+prospect nodes --analyzer message-origin --filter origin=typed
+```
+
+A message with only a weak sign of machine authorship is undecided. It keeps the provisional label `typed` and `decided: false`, and a run makes no model call. To settle those messages, set a decision model in `~/.pi/agent/prospector.json`:
+
+```json
+{ "analyzers": { "message-origin": { "decisionModel": "jev/jev-1.13.0" } } }
+```
+
+The model reads only the undecided messages, through two questions (`author` and `copied`), and the node keeps its probabilities. An answer below `minConfidence` (0.6 by default) leaves the message undecided.
+
 ### lexicon-candidates / frustration-lexicon / turn-frustration — the learned frustration lexicon
 
 The correction patterns in `turn-pair-core` are English regexes. Write `putain, c'est encore faux` or `не то` and they see nothing. Instead of shipping more languages — an unbounded list that is always partial — these three analyzers **learn the vocabulary from your own corpus**.
@@ -164,7 +180,7 @@ Each hit also records the **text origin** of the words it matched. A user messag
 prospect nodes --analyzer turn-frustration --filter origin=typed
 ```
 
-[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them.
+[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them. Hits drawn before 1.11 also label a Claude Code paste `typed`, because the paste's closing tag repeats its attributes and the earlier rule missed it. The same run redraws them.
 
 Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
 
@@ -301,6 +317,17 @@ Source: [`stale-verification/index.ts`](./src/analyze/analyzers/stale-verificati
 Records what a session produced, when what it produced was a pull request. A session opened one when it ran the creation call **and** the forge answered with the pull request's URL. The call states the title (`gh pr create --title`, or a hosted-forge tool's own arguments), and the result states the URL. Both halves must hold, and the second one is what separates opening a pull request from reading or monitoring one. `gh pr create` prints the URL alone on a line, so a URL sharing its line with other text came from a grep hit or a document the session read. A stacked-PR tool reports differently: `gh stack link --open` prints `✓ Created PR #2351 (url) for feat/x (base: feat/y)`, and the analyzer takes the URL from that `Created PR` line, because the same verb prints only `Added 1 PR to stack` when it linked a pull request that already existed. The analyzer stores one session-anchored metric node per pull request, with the URL, repository, number, and title, and edges to the call and the result behind it. It proposes nothing, and it never calls a model.
 
 Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · creation detection in [`detect.ts`](./src/analyze/analyzers/pr-opened/detect.ts) · tool names and caps in [`config.ts`](./src/analyze/analyzers/pr-opened/config.ts).
+
+### skill-use — which skills a session loaded (deterministic)
+
+Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
+
+Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+### attention-gaps — how long the agent waited for a person (deterministic)
+
+Measures the time from the agent's last activity to each message a person typed. The analyzer reads the `message-origin` nodes and counts only messages settled as `typed`, so a prompt another agent wrote or a harness notification isn't attention. A message whose origin is undecided keeps a provisional `typed` label, and its gap is counted apart and kept out of the statistics. The node, one per session, stores the typed message count, the count, median, 90th percentile and maximum of the gaps, buckets from seconds to hours, and the longest gaps with their messages. A first turn or a message without a timestamp has no gap and is counted, never measured as zero. A session with no typed message has every count at zero, so the share of sessions that wait on a person has a denominator. No model is called and nothing is proposed.
+
+Source: [`attention-gaps/index.ts`](./src/analyze/analyzers/attention-gaps/index.ts) · the scan in [`detect.ts`](./src/analyze/analyzers/attention-gaps/detect.ts) · bucket bounds in [`config.ts`](./src/analyze/analyzers/attention-gaps/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 
@@ -477,6 +504,10 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
 - `--model provider/model` — pin **every** model tier to one concrete model for this run. Because the resolved model is part of a node's identity, a pinned run produces its own nodes; switching back to the normal mapping marks them stale (reason `config`).
 
 Proposals are never auto-applied. They sit in the database with status `open` until you accept or reject them.
+
+### `/prospect-metrics [--analyzer <id>] [--format md|json] [--gaps]`
+
+Print what each metric means. An entry gives the definition, how the value is decided (counted, rule-based or inferred), the unit and denominator, the limits, and the series breaks where an analyzer version changed the meaning, with the command that brings older nodes up to date. `--analyzer <id>` shows one analyzer (`sessions` shows the figures counted from the index), `--format json` prints the same as JSON, and `--gaps` lists the analyzers that have no definitions yet. Each analyzer declares its metrics in a `metrics.ts` beside its code. The command reads those definitions and never opens the database. Read the entry before drawing a trend from a number.
 
 ### `/prospect-output [list | <analyzer>[:<output>]] [--out DIR] [--as-of TS] [--key value]`
 

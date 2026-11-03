@@ -22,6 +22,8 @@ import { routingOpportunityAnalyzer } from "./analyzers/routing-opportunity/inde
 import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.js";
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
+import { messageOriginAnalyzer } from "./analyzers/message-origin/index.js";
+import { attentionGapsAnalyzer } from "./analyzers/attention-gaps/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
@@ -40,6 +42,7 @@ import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js
 import { decodeCollapseAnalyzer } from "./analyzers/decode-collapse/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { prOpenedAnalyzer } from "./analyzers/pr-opened/index.js";
+import { skillUseAnalyzer } from "./analyzers/skill-use/index.js";
 import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { staleVerificationAnalyzer } from "./analyzers/stale-verification/index.js";
 import { verificationCommandsAnalyzer } from "./analyzers/verification-commands/index.js";
@@ -57,6 +60,8 @@ export const DEFAULT_ANALYZER_IDS = [
 	"lexicon-candidates",
 	"frustration-lexicon",
 	"turn-frustration",
+	"message-origin",
+	"attention-gaps",
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
@@ -76,6 +81,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"verification-commands",
 	"stale-verification",
 	"pr-opened",
+	"skill-use",
 	"files-in-play",
 	"navigation-efficiency",
 	"similarity-cluster",
@@ -108,6 +114,10 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	lexiconCandidatesAnalyzer,
 	frustrationLexiconAnalyzer,
 	turnFrustrationAnalyzer,
+	// Who wrote each user-role message: rules first, a decision model for the undecided.
+	messageOriginAnalyzer,
+	// How long the agent waited for a person, from the typed messages message-origin settled.
+	attentionGapsAnalyzer,
 	turnPairLLMAnalyzer,
 	// The assistant's own cognitive state, per turn: confusion, indecision, and
 	// surprise read from the thinking trace and response text. Depends only on
@@ -212,6 +222,9 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// deterministic graders, before the synthesizer, so a future consumer can
 	// declare it as a dependency without reordering.
 	prOpenedAnalyzer,
+	// Which skills each session loaded and how often, by name. Deterministic,
+	// standalone, one metric node per session; it proposes nothing.
+	skillUseAnalyzer,
 	// Where each session's wall-clock time went (#306): seconds per command
 	// family, active versus idle time, waits that block inside one tool call,
 	// and wait loops whose pgrep -f / ps | grep pattern matches the loop itself.

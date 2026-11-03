@@ -62,6 +62,11 @@ describe("labelUserText", () => {
 		]);
 	});
 
+	it("labels a pasted-content block pasted when its closing tag repeats the attributes", () => {
+		const text = 'look <pasted_content id="p1">garbage everywhere</pasted_content id="p1"> fix it';
+		assert.deepEqual(labelUserText(text, USER).map((s) => s.origin), ["typed", "pasted", "typed"]);
+	});
+
 	it("labels a pasted-text placeholder line pasted", () => {
 		assert.deepEqual(shape(labelUserText("[Pasted text #1 +40 lines]\nthis is wrong", USER)), [
 			"pasted: [Pasted text #1 +40 lines]",
