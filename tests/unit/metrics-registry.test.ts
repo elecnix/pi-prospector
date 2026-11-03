@@ -47,7 +47,9 @@ function values(id: string): string[] {
 
 /** The literal members of a TypeBox union of literals. */
 function literals(schema: { anyOf?: Array<{ const?: unknown }> }): string[] {
-	return (schema.anyOf ?? []).map((m) => String(m.const));
+	const members = (schema.anyOf ?? []).map((m) => String(m.const));
+	assert.ok(members.length > 0, "the schema is not a union of literals, so a comparison against it proves nothing");
+	return members;
 }
 
 describe("metric definitions", () => {
