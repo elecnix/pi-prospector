@@ -205,6 +205,28 @@ export async function getSubagentRunsForSession(db: AsyncDatabase, sessionId: st
 	).all(sessionId)) as SubagentRunRow[];
 }
 
+/** How much work the child agents of one parent session carry out. */
+export interface ChildSessionStats {
+	child_session_count: number;
+	child_message_count: number;
+}
+
+/**
+ * The child agents spawned by a session, and how many messages they contain.
+ * `parent_session` also links a Pi fork to the session it forked from, and a
+ * fork copies the parent's history, so a Pi session is a fork and not a child.
+ * Only other harnesses' sessions count, the rule `turn-frustration` uses for a
+ * child agent. A parent's own `message_count` is read from its row, so a caller
+ * can state the share of the work that went to children.
+ */
+export async function getChildSessionStats(db: AsyncDatabase, sessionId: string): Promise<ChildSessionStats & { own_message_count: number }> {
+	const children = (await prep(db,
+		"SELECT COUNT(*) AS child_session_count, COALESCE(SUM(message_count), 0) AS child_message_count FROM sessions WHERE parent_session = ? AND source <> 'pi'",
+	).get(sessionId)) as ChildSessionStats;
+	const own = (await prep(db, "SELECT message_count FROM sessions WHERE id = ?").get(sessionId)) as { message_count?: number } | undefined;
+	return { ...children, own_message_count: own?.message_count ?? 0 };
+}
+
 // ── Background tasks ──
 
 export interface BackgroundTaskInsert {

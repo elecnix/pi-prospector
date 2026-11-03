@@ -932,6 +932,11 @@ contain the new word have anything to compute.
 - **Activity window** is a stretch of wall-clock time in which a session was running. Each gap between two messages counts up to the idle cap, and each timed tool call counts for its whole span. Overlapping stretches merge, so a session's windows never overlap. A message without a timestamp doesn't add to a window, and the node counts it.
 - **Concurrency** is how many sessions were active at the same moment. It belongs to the corpus, so no node stores it: a session's node would change whenever another session was added. It is a read-time fold of the sessions' activity windows (the `concurrency` output), which keeps rendering a pure read and the graph append-only.
 - **Agent time** is the sum of sessions' active time. With concurrent agents it exceeds the operator's own time, so a total of it is never read as hours the operator worked.
+### Delegation (deterministic, session-level)
+
+- **Delegation** is a call that hands work to a child agent. The child's own transcript is a separate session that records the parent.
+- **Delegation outcome** is how the host recorded the end of a delegation: **completed** (the host didn't report a failure), **failed**, **killed** (stopped before it finished), **revived** (the call resumed an earlier run), **unanswered** (no result ever arrived), or **other** (a background status the analyzer doesn't know). A background-task completion decides first, because the call itself only acknowledged the start. **Completed** never says the child's work was right.
+- **Work moved to children** is the child agents' sessions that name a session as their parent, with the messages they contain, beside the parent's own message count. It is a measure of volume, not of value. A Pi session's parent link marks a fork, which copies the parent's history, so a Pi session is never counted as a child. Pi's own subagent runs record no link to a parent session (the host joins them by project only), so a Pi parent reports zero child sessions while its delegation calls and their outcomes still count.
 
 ### Language-model access
 

@@ -46,6 +46,7 @@ import { repoIdentityAnalyzer } from "./analyzers/repo-identity/index.js";
 import { skillUseAnalyzer } from "./analyzers/skill-use/index.js";
 import { gitCommandsAnalyzer } from "./analyzers/git-commands/index.js";
 import { activityWindowsAnalyzer } from "./analyzers/activity-windows/index.js";
+import { delegationOutcomesAnalyzer } from "./analyzers/delegation-outcomes/index.js";
 import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { staleVerificationAnalyzer } from "./analyzers/stale-verification/index.js";
 import { verificationCommandsAnalyzer } from "./analyzers/verification-commands/index.js";
@@ -88,6 +89,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"skill-use",
 	"git-commands",
 	"activity-windows",
+	"delegation-outcomes",
 	"files-in-play",
 	"navigation-efficiency",
 	"similarity-cluster",
@@ -240,6 +242,9 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// When each session was running, as merged activity windows. The `concurrency`
 	// output folds them across sessions at read time. Deterministic, standalone.
 	activityWindowsAnalyzer,
+	// How each hand-off to a child agent ended, and how much work moved to child
+	// sessions. Deterministic, standalone, one metric node per session.
+	delegationOutcomesAnalyzer,
 	// Where each session's wall-clock time went (#306): seconds per command
 	// family, active versus idle time, waits that block inside one tool call,
 	// and wait loops whose pgrep -f / ps | grep pattern matches the loop itself.
