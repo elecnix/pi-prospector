@@ -21,7 +21,7 @@ export const metrics: MetricDefinition[] = [
 			"Completed is the absence of a reported failure, so a child that returned wrong work reads as completed.",
 			"A background completion with no status does not decide, and the call falls to the result's own flags.",
 			"A retry is seen only where Pi classifies it as a revival. A Claude Code call repeated with a new prompt after a failure reads as two calls.",
-			"The listed events are capped by config (200 by default). The counts always cover every call.",
+			"The listed events are capped by config (200 by default). The counts and the edges to the calls always cover every call.",
 			LIMIT_CALL_ID,
 			LIMIT_HARNESS,
 			LIMIT_VERSIONS,
