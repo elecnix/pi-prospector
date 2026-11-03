@@ -927,7 +927,6 @@ contain the new word have anything to compute.
 - **Repository hint** is a forge address a session's git commands touched: **remote_output** (printed by `git remote`, `git push`, `git fetch` or `git pull`), **pr_url** (printed by a `gh pr` command), **gh_repo_flag** (the `--repo` value of a `gh` command), or **command_url** (written in `git clone` or `git remote add`). They are listed from strongest to weakest, and the most-supported address among the strongest basis present decides.
 - **Working-directory scope** limits the hints to commands that ran in the session's working directory or below it. A command with a directory outside it, or one held in a variable, is left out.
 - A session with no hint has a null key and the basis **none**. The share of such sessions is the share left unplaced, and the coverage is its complement. A concentration figure is read beside that share.
-- A session with no hint has a null key and the basis **none**. The share of such sessions is the coverage of the key, so a concentration figure is read beside it.
 ### Activity and concurrency (deterministic)
 
 - **Activity window** is a stretch of wall-clock time in which a session was running. Each gap between two messages counts up to the idle cap, and each timed tool call counts for its whole span. Overlapping stretches merge, so a session's windows never overlap. A message without a timestamp doesn't add to a window, and the node counts it.
