@@ -44,6 +44,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"pr-opened",
 	"skill-use",
 	"attention-gaps",
+	"git-commands",
 	"time-economy",
 	"verification-commands",
 	"stale-verification",

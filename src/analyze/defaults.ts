@@ -43,6 +43,7 @@ import { decodeCollapseAnalyzer } from "./analyzers/decode-collapse/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { prOpenedAnalyzer } from "./analyzers/pr-opened/index.js";
 import { skillUseAnalyzer } from "./analyzers/skill-use/index.js";
+import { gitCommandsAnalyzer } from "./analyzers/git-commands/index.js";
 import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { staleVerificationAnalyzer } from "./analyzers/stale-verification/index.js";
 import { verificationCommandsAnalyzer } from "./analyzers/verification-commands/index.js";
@@ -82,6 +83,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"stale-verification",
 	"pr-opened",
 	"skill-use",
+	"git-commands",
 	"files-in-play",
 	"navigation-efficiency",
 	"similarity-cluster",
@@ -225,6 +227,9 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// Which skills each session loaded and how often, by name. Deterministic,
 	// standalone, one metric node per session; it proposes nothing.
 	skillUseAnalyzer,
+	// The commits, pushes, and pull request merges each session ran. Deterministic,
+	// standalone, one metric node per session; it proposes nothing.
+	gitCommandsAnalyzer,
 	// Where each session's wall-clock time went (#306): seconds per command
 	// family, active versus idle time, waits that block inside one tool call,
 	// and wait loops whose pgrep -f / ps | grep pattern matches the loop itself.
