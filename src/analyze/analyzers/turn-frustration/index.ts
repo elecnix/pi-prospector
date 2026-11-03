@@ -582,9 +582,12 @@ async function originContext(ctx: AnalyzerPlanContext): Promise<OriginLabeller> 
 					.filter((m) => TURN_START_ROLES.has(m.role) && m.content_text)
 					.map((m) => ({ text: m.content_text ?? "", timestamp: m.timestamp }));
 	const startedAt = lineage?.started_at || null;
+	// A session with a parent link is a child agent's unless it is a pi fork, where the link records a fork.
+	const childAgent = parent !== null && lineage?.source !== "pi";
 
 	// The message-origin node of each turn, newest per message. A message with no
-	// node (the analyzer did not run on it) keeps the span labels.
+	// node (the analyzer did not run on it, or it failed) keeps the span labels, except
+	// that every turn of a child agent's session is still an agent's.
 	const nodes = new Map<string, { origin: MessageOriginProperties["origin"]; decided: boolean; outputKey: string }>();
 	for (const node of currentHits(ctx.dependencyNodes[MESSAGE_ORIGIN_DEF.id] ?? [])) {
 		try {
@@ -602,6 +605,7 @@ async function originContext(ctx: AnalyzerPlanContext): Promise<OriginLabeller> 
 			// `typed` and an undecided message keep the finer span labels.
 			const node = nodes.get(messageId);
 			if (node?.decided && node.origin !== "typed" && text.trim()) return [{ origin: node.origin, text }];
+			if (!node && childAgent && text.trim()) return [{ origin: "agent", text }];
 			return labelUserText(text, { forkCopy: false });
 		},
 	};
