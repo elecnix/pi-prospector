@@ -350,6 +350,8 @@ Source: [`activity-windows/index.ts`](./src/analyze/analyzers/activity-windows/i
 
 Records how each call that hands work to a child agent ended: `completed`, `failed`, `killed`, `revived`, `unanswered`, or `other`. The outcome comes from the host's records. A missing result means `unanswered`. Otherwise a background-task completion decides, then the error flag on the result, then Pi's orchestration classification. `completed` means the host didn't report a failure. It doesn't say the child's work was right. The node also stores the per-outcome counts, the child agents' sessions that name this session as their parent, and the messages they contain, so a reader can state what share of the work moved to children. A Pi session's parent link marks a fork, so Pi sessions don't count as children, and Pi's own subagent runs have no parent link, so a Pi parent reports zero child sessions. A session that delegated nothing has every count at zero and keeps its place in a rate's denominator. No model is called and nothing is proposed.
 
+The definitions print with `prospect metrics --analyzer delegation-outcomes`.
+
 Source: [`delegation-outcomes/index.ts`](./src/analyze/analyzers/delegation-outcomes/index.ts) · the outcome order in [`detect.ts`](./src/analyze/analyzers/delegation-outcomes/detect.ts) · tool names and statuses in [`config.ts`](./src/analyze/analyzers/delegation-outcomes/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
