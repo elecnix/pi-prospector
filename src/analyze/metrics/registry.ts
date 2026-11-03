@@ -47,6 +47,7 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
  */
 export const METRICS_PENDING: readonly string[] = [
 	"assistant-cognition",
+	"attention-gaps",
 	"cache-economy",
 	"compression-checklist",
 	"context-economy",
