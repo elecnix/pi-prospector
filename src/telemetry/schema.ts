@@ -42,6 +42,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"repetition-collapse",
 	"session-ending",
 	"pr-opened",
+	"repo-identity",
 	"skill-use",
 	"attention-gaps",
 	"git-commands",

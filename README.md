@@ -334,6 +334,12 @@ Records the git commands that publish work: commits, pushes, and pull request me
 
 Source: [`git-commands/index.ts`](./src/analyze/analyzers/git-commands/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/git-commands/detect.ts) · failure markers in [`config.ts`](./src/analyze/analyzers/git-commands/config.ts).
 
+### repo-identity: the repository a session worked in (deterministic)
+
+Gives each session one repository key, `host/owner/name` in lowercase. The host records only the working directory, and a directory name says little: a worktree is named for a branch and a folder layout is one person's habit. The analyzer reads the forge address the session's own git commands touched. In order of strength, these are the remote that `git remote`, `git push`, `git fetch` or `git pull` printed, a pull request URL that a `gh pr` command printed, the `--repo` flag of a `gh` command, and an address written in `git clone` or `git remote add`. The working directory scopes the hints: a command that ran elsewhere (`cd /elsewhere && git push`, `git -C /elsewhere`) says nothing about this session. Credentials in an address are dropped. A session with no hint has a null key and the basis `none`, because a key guessed from a folder name would count the session under the wrong repository. The node also stores the name of the working directory, the number of hints behind the key, and an edge to the message that contains the first one. No model is called and nothing is proposed. The definitions print with `prospect metrics --analyzer repo-identity`.
+
+Source: [`repo-identity/index.ts`](./src/analyze/analyzers/repo-identity/index.ts) · the hints in [`detect.ts`](./src/analyze/analyzers/repo-identity/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/repo-identity/config.ts).
+
 ### routing-opportunity — model routing labels (deterministic)
 
 Labels each turn as downshiftable (a cheaper model could have handled it) or escalation-worthy (a better model was needed), based on existing friction, trajectory, and repetition-collapse signals. Attaches the serving model and billed cost so the corpus-level efficiency frontier can be computed honestly — a turn labeled "downshiftable" that cost $0.03 on an expensive model is a concrete saving opportunity. No LLM.

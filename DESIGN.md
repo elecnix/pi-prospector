@@ -921,6 +921,13 @@ contain the new word have anything to compute.
 - **Git command event** is a shell command that commits, pushes, or merges a pull request, with the host's verdict on whether it worked. It is read from the command with heredoc bodies and quoted strings removed, and the program must be the first word of its command, so `echo git commit` runs nothing. A dry run and a help request are not events, and neither is `gh pr merge --auto`, which only arms a later merge, or `--disable-auto`, which cancels one. The host's success verdict is checked against the result text when the result row contains one result, because git exits 0 for some refusals and a pipe hides the exit status. A call that chained several commands (`&&`, `;`, a pipe, or lines) and failed has one verdict for all of them, so each of its events is marked **shared**: the failure is not pinned on one command. Each event says whether its text was checked: a row with several results joins their texts, which cannot be attributed to one call, so only the host's verdict decides there.
 - **Git commands record** is the list of a session's git command events with a count per kind. A session that ran none gets an empty list and still has a record, so a rate over sessions keeps its denominator. A commit shows the session ran `git commit` and it worked. It never shows the work was right, so the system still assigns no outcome to a session. Opening a pull request belongs to `pr-opened`.
 
+### Repository identity (deterministic, session-level)
+
+- **Repository key** is the one name a session's repository goes by: the forge address `host/owner/name`, lowercase, without credentials or a trailing `.git`. It comes from the session's own git commands and never from a folder name.
+- **Repository hint** is a forge address a session's git commands touched: **remote_output** (printed by `git remote`, `git push`, `git fetch` or `git pull`), **pr_url** (printed by a `gh pr` command), **gh_repo_flag** (the `--repo` value of a `gh` command), or **command_url** (written in `git clone` or `git remote add`). They are listed from strongest to weakest, and the most-supported address among the strongest basis present decides.
+- **Working-directory scope** limits the hints to commands that ran in the session's working directory or below it. A command with a directory outside it, or one held in a variable, is left out.
+- A session with no hint has a null key and the basis **none**. The share of such sessions is the coverage of the key, so a concentration figure is read beside it.
+
 ### Language-model access
 
 - **Model tier** — an abstract quality/cost band (**cheap**, **mid**,
