@@ -65,7 +65,7 @@ export const PROMPT_FORM_DEF: AnalyzerDef = {
 	id: "prompt-form",
 	label: "Prompt Form (deterministic)",
 	description:
-		"Measures the shape of what a person typed in a session: question, instruction, correction and other counts (a classifier's answer, or unknown), length (sum, median, 90th percentile, maximum, buckets), and how many prompts held a list, a heading, or a code block. Reads message-origin nodes and only messages settled as typed, in the person's own words after pasted and quoted text is cut; messages with an undecided origin are counted apart and not read. Each prompt's kind is a classifier answer from message-answers, or unknown. A session with no typed message gets zero counts. Deterministic, no LLM; it proposes nothing.",
+		"Measures the shape of what a person typed in a session: question, instruction, correction and other counts (a classifier's answer, or unknown), length (sum, median, 90th percentile, maximum, buckets), and how many prompts held a list, a heading, or a code block (a code block counts wherever it sits in the message, because it is a fact about the form of the message). Reads message-origin nodes and only messages settled as typed, in the person's own words after pasted and quoted text is cut; messages with an undecided origin are counted apart and not read. Each prompt's kind is a classifier answer from message-answers, or unknown. A session with no typed message gets zero counts. Deterministic, no LLM; it proposes nothing.",
 	anchorSpan: "full_session",
 	dependencies: [MESSAGE_ORIGIN_DEF.id, MESSAGE_ANSWERS_DEF.id],
 	outputSchema: PROMPT_FORM_PROPERTIES,
