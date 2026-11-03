@@ -5,6 +5,7 @@ import { tempDb, insertMessages, type TempDb } from "./helpers.js";
 import { createRun, insertNode } from "../../src/db/analysis-queries.js";
 import { buildFingerprint, parseFingerprintArgs } from "../../src/fingerprint/build.js";
 import { fingerprintSchema, MIN_GROUP_SIZE, type Fingerprint } from "../../src/fingerprint/schema.js";
+import { hasMetric } from "../../src/analyze/metrics/registry.js";
 import { BUILTIN_ANALYZERS } from "../../src/analyze/defaults.js";
 import { collectContributors } from "../../src/fingerprint/registry.js";
 import type { FingerprintContributor } from "../../src/fingerprint/contributor.js";
@@ -359,6 +360,11 @@ describe("registering a contributor", () => {
 		const withMetric = (metric: string) => ({ ...extra, def: { ...extra.def, measures: [{ ...extra.def.measures[0]!, metric }] } }) as FingerprintContributor;
 		assert.doesNotThrow(() => collectContributors([], [withMetric("failure-modes.tool-failure")]));
 		assert.throws(() => collectContributors([], [withMetric("Not A Metric")]), /not <analyzer-id>\.<metric-name>/);
+	});
+
+	it("points every built-in measure at a metric the registry defines", () => {
+		const unknown = contributors.flatMap((c) => c.def.measures.filter((m) => m.metric !== undefined && !hasMetric(m.metric)).map((m) => `${c.def.id}.${m.id}: ${m.metric}`));
+		assert.deepEqual(unknown, []);
 	});
 
 	it("points every built-in measure at its metric definition", () => {
