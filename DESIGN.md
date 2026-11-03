@@ -874,8 +874,9 @@ list — the system **learns the vocabulary from the corpus**.
   node through the message anchor, and turn-frustration records the node as an
   input by a `consumes` edge. The edge is a record and the hit's identity does not
   include the node, the way the lexicon verdict a hit copies is not part of it: a
-  new origin node makes a hit stale for the next `--revise minor`, and the hit
-  never becomes a second subject beside its predecessor.
+  revised origin node reaches its hits when they are next recomputed, which a
+  version bump forces, and a hit never becomes a second subject beside its
+  predecessor.
   `turn-pair-core` reads the node too: a
   correction or a rebuttal candidate is something the person says to the agent,
   so a message decided as `agent`, `notification` or `pasted` has no correction
