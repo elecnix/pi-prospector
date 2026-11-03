@@ -27,7 +27,7 @@ export const metrics: MetricDefinition[] = [
 	{
 		id: "git-commands.push",
 		name: "Pushes",
-		definition: "Shell commands that ran `git push` and worked, with dry runs (`--dry-run`, `-n`, and a bundle such as `-vn`) left out.",
+		definition: "Shell commands that ran `git push` and worked, with dry runs (`--dry-run`, `-n`, and a bundle such as `-vn`) and help requests left out.",
 		measurement: "rule-based",
 		unit: "pushes per session",
 		denominator: "none",

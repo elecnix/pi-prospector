@@ -72,6 +72,13 @@ describe("gitCommandKindsOf", () => {
 		assert.deepEqual(gitCommandKindsOf("gh pr merge --auto 12"), []);
 	});
 
+	it("ignores a help invocation", () => {
+		assert.deepEqual(gitCommandKindsOf("git push -h"), []);
+		assert.deepEqual(gitCommandKindsOf("git commit --help"), []);
+		assert.deepEqual(gitCommandKindsOf("gh pr merge --help"), []);
+		assert.deepEqual(gitCommandKindsOf("gh pr merge -h"), []);
+	});
+
 	it("counts git commit -n, which is --no-verify", () => {
 		assert.deepEqual(gitCommandKindsOf(`git commit -n -m x`), ["commit"]);
 	});

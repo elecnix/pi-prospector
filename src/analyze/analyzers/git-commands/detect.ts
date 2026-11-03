@@ -51,6 +51,8 @@ export function gitCommandKindsOf(command: string): GitCommandKind[] {
 		const program = commandFamily(segment, 1);
 		const sub = program === "git" ? gitSubcommand(segment) : null;
 		// `-n` is a dry run for push but `--no-verify` for commit.
+		// Help prints usage and exits 0, so it must not read as a command that worked.
+		if (/\s(?:--help|-h)(?:\s|$)/.test(segment)) continue;
 		if (/\s--dry-run\b/.test(segment) || (sub === "push" && /\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)/.test(segment))) continue;
 		if (sub === "commit") kinds.push("commit");
 		else if (sub === "push") kinds.push("push");
