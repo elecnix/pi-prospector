@@ -59,9 +59,41 @@ export function sourceDiscoveryPaths(config: ProspectorConfig = loadConfig()): s
  * whether they are fatal (the sync command surfaces them in its output).
  */
 export async function buildCustomAdapters(config: ProspectorConfig = loadConfig()): Promise<{ adapters: SessionSourceAdapter[]; errors: string[] }> {
-	const names = (config.sources ?? []).filter((s) => !isBuiltinSourceName(s));
+	const { names: selected, error } = sourceNames(config);
+	if (error) return { adapters: [], errors: [error] };
+	const names = selected.filter((s) => !isBuiltinSourceName(s));
 	const { loaded, errors } = await loadCustomSources({ names, paths: sourceDiscoveryPaths(config), builtinIds: BUILTIN_SOURCE_TAGS });
 	return { adapters: loaded, errors: errors.map((e) => (e.file ? `${e.name} (${e.file}): ${e.message}` : e.message)) };
+}
+
+/**
+ * The source names `config.sources` selects, or the reason it names none.
+ *
+ * `loadConfig` casts parsed JSON without checking it, so a hand edit can leave
+ * `sources` as a string. Calling `.filter` on that value threw a TypeError out
+ * of the sync command, so the field is checked here, once, and the caller
+ * reports the message like any other load failure.
+ */
+function sourceNames(config: ProspectorConfig): { names: string[]; error?: string } {
+	const raw: unknown = config.sources;
+	if (raw === undefined) return { names: [] };
+	if (!Array.isArray(raw) || raw.some((s) => typeof s !== "string")) {
+		return { names: [], error: "config 'sources' must be an array of source names" };
+	}
+	return { names: raw as string[] };
+}
+
+/**
+ * The adapters one sync runs, built-ins first.
+ *
+ * `runSync` claims each file once and the first adapter wins. The pi-subagent
+ * adapter must claim the nested run directories before the plain pi adapter,
+ * because it also recovers the parent session id. A custom source that
+ * rediscovers the same run files would take them from the subagent adapter if
+ * it came first, so custom adapters follow every built-in.
+ */
+export function composeAdapters(builtin: SessionSourceAdapter[], custom: SessionSourceAdapter[]): SessionSourceAdapter[] {
+	return [...builtin, ...custom];
 }
 
 /** Tags the built-in adapters claim, which a custom source must not take. */
@@ -80,7 +112,7 @@ export function buildAdapters(): SessionSourceAdapter[] {
 		new ClineFileSource(getClineSessionsDir()),
 	];
 
-	const sources = loadConfig().sources ?? [];
+	const sources = sourceNames(loadConfig()).names;
 
 	if (sources.includes("pi-subagent")) {
 		adapters.push(new PiSubagentSource(getSessionsDir()));
@@ -99,7 +131,7 @@ export async function runProspectSync(db: AsyncDatabase, opts?: { project?: stri
 	for (const a of adapters) {
 		if ("db" in a) (a as { db: unknown }).db = db;
 	}
-	const result = await runSync(db, [...adapters, ...buildAdapters()], opts);
+	const result = await runSync(db, composeAdapters(buildAdapters(), adapters), opts);
 	// A custom source that failed to load is a sync error like any other, but
 	// it produces no session rows, so surface it even when every adapter ran.
 	result.errors.push(...errors);

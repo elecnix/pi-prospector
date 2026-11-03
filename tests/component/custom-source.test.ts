@@ -4,9 +4,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { loadCustomSources, resolveSourcePaths } from "../../src/sync/source-loader.js";
-import { buildCustomAdapters } from "../../src/commands/sync.js";
+import { buildCustomAdapters, composeAdapters, runProspectSync } from "../../src/commands/sync.js";
+import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
+import { PiFileSource } from "../../src/sync/sources/pi-file.js";
+import type { SessionSourceAdapter } from "../../src/sync/adapter.js";
+import type { ProspectorConfig } from "../../src/types.js";
 import { runSync } from "../../src/sync/index.js";
-import { makeTempRoot, tempDb } from "./helpers.js";
+import { makeTempRoot, messageLine, piSessionFileName, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
 
 /**
  * The custom-source loader, end to end: discovery, validation, config wiring,
@@ -206,5 +210,102 @@ describe("buildCustomAdapters", () => {
 		assert.deepEqual(errors, []);
 		assert.equal(adapters.length, 1);
 		assert.equal(adapters[0]!.source, "echo");
+	});
+});
+
+/** A custom source that rediscovers every child-run file the subagent adapter also owns. */
+function overlappingSource(root: string): SessionSourceAdapter {
+	const runFiles = (): string[] => {
+		const out: string[] = [];
+		const walk = (dir: string): void => {
+			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+				const full = path.join(dir, entry.name);
+				if (entry.isDirectory()) walk(full);
+				else if (entry.name === "session.jsonl") out.push(full);
+			}
+		};
+		walk(root);
+		return out;
+	};
+	return {
+		source: "overlap",
+		async discover() {
+			return runFiles().map((filePath) => ({ filePath, project: "overlap", mtime: 1000, size: 0, source: "overlap" }));
+		},
+		async read(disc, resumeLine) {
+			const header = JSON.parse(fs.readFileSync(disc.filePath, "utf8").split("\n")[0]!) as { id: string; timestamp: string; cwd?: string };
+			return {
+				session: {
+					id: header.id, file_path: disc.filePath, project: disc.project, source: "overlap",
+					cwd: header.cwd ?? null, parent_session: null,
+					started_at: header.timestamp, last_line: resumeLine,
+					last_modified: disc.mtime, analyzed_at: null, message_count: 0,
+					branch_count: 0, name: null, tool_inventory: null,
+				},
+				messages: [],
+				processedCount: 1, processedTimestamp: disc.mtime, forksResolved: 0,
+			};
+		},
+	};
+}
+
+describe("adapter order", () => {
+	it("keeps the built-in adapters ahead of custom ones, so pi-subagent keeps the child runs", async () => {
+		const parentId = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+		const projectDir = path.join(root, "--Users-test--proj");
+		writeJsonl(projectDir, piSessionFileName(parentId, "2026-08-19T01-00-00"), [
+			sessionHeaderLine(parentId),
+			messageLine(parentId, 1, "user", "hello from the parent", "2026-08-19T01:02:20Z"),
+		]);
+		// The tree pi writes for a child run, which both the subagent adapter and the overlap source discover.
+		writeJsonl(path.join(projectDir, `2026-08-19T01-00-00Z_${parentId}`, "2b83bd26", "run-0"), "session.jsonl", [
+			sessionHeaderLine("child-0"),
+			messageLine("child-0", 1, "user", "hello from the child", "2026-08-19T01:02:20Z"),
+		]);
+
+		const composed = composeAdapters([new PiSubagentSource(root), new PiFileSource(root)], [overlappingSource(root)]);
+		assert.deepEqual(composed.map((a) => a.source), ["pi-subagent", "pi", "overlap"]);
+
+		const t = await tempDb();
+		try {
+			const result = await runSync(t.db, composed);
+			assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+			const rows = (await t.db.prepare("SELECT id, source, parent_session FROM sessions ORDER BY id").all()) as Array<{
+				id: string;
+				source: string;
+				parent_session: string | null;
+			}>;
+			assert.deepEqual(rows, [
+				{ id: parentId, source: "pi", parent_session: null },
+				{ id: "child-0", source: "pi-subagent", parent_session: parentId },
+			]);
+		} finally {
+			await t.close();
+		}
+	});
+});
+
+describe("a config sources value that is not an array", () => {
+	it("reports it from buildCustomAdapters instead of throwing", async () => {
+		const { adapters, errors } = await buildCustomAdapters({ sources: "echo" } as unknown as ProspectorConfig);
+		assert.equal(adapters.length, 0);
+		assert.equal(errors.length, 1);
+		assert.match(errors[0]!, /'sources' must be an array/);
+	});
+
+	it("reports it in the sync result from runProspectSync instead of throwing", async () => {
+		const file = path.join(root, "prospector.json");
+		fs.writeFileSync(file, JSON.stringify({ sources: "echo" }));
+		const previous = process.env["PROSPECTOR_CONFIG"];
+		process.env["PROSPECTOR_CONFIG"] = file;
+		const t = await tempDb();
+		try {
+			const result = await runProspectSync(t.db);
+			assert.ok(result.errors.some((e) => /'sources' must be an array/.test(e)), JSON.stringify(result.errors));
+		} finally {
+			await t.close();
+			if (previous === undefined) delete process.env["PROSPECTOR_CONFIG"];
+			else process.env["PROSPECTOR_CONFIG"] = previous;
+		}
 	});
 });
