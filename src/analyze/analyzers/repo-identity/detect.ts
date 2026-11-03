@@ -103,24 +103,37 @@ function ghRepoFlag(segment: string): string | null {
 	return null;
 }
 
-/** The directory a command ran in, when it said: a leading `cd`, or git's `-C`. Null means the working directory. */
-function commandDirectory(segment: string, whole: string): string | null {
-	const git = /\bgit\s+(?:(?:-[a-zA-Z]\s+\S+|--[\w-]+(?:=\S+)?)\s+)*-C\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(segment);
-	if (git) return git[1] ?? git[2] ?? git[3] ?? null;
-	const cd = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))\s*(?:&&|;)/.exec(whole);
-	return cd ? (cd[1] ?? cd[2] ?? cd[3] ?? null) : null;
+/** A path with forward slashes, no trailing slash, and the case folded when it is a Windows drive path. */
+function pathKey(path: string): string {
+	const p = path.replace(/\\/g, "/").replace(/\/+$/, "");
+	return /^[a-zA-Z]:/.test(p) ? p.toLowerCase() : p;
 }
 
-/** Whether a command's directory is the working directory or below it. Unknown directories (a variable, `~`) are outside. */
-function withinWorkingDirectory(directory: string | null, cwd: string): boolean {
-	if (directory === null || cwd === "") return true;
-	// A quoted path read from blanked text is unknown.
+/**
+ * Whether a directory is the working directory or below it. A relative path is
+ * inside unless it climbs out, and a path held in a variable or under `~` is
+ * outside, since its value is not in the transcript.
+ */
+function isWithin(directory: string, cwd: string): boolean {
 	if (directory === "_") return false;
-	const target = directory.replace(/\\/g, "/").replace(/\/+$/, "");
-	const base = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+	const target = pathKey(directory);
 	if (target.startsWith("~") || target.includes("$")) return false;
 	if (!/^(?:\/|[a-zA-Z]:)/.test(target)) return !target.startsWith("..");
+	const base = pathKey(cwd);
 	return target === base || target.startsWith(`${base}/`);
+}
+
+/** The directory a `cd` segment moves to, or null when the segment is not a `cd`. */
+function cdTarget(segment: string): string | null {
+	const m = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))\s*$/.exec(segment);
+	if (m) return m[1] ?? m[2] ?? m[3] ?? "";
+	return /^\s*cd\s*$/.test(segment) ? "" : null;
+}
+
+/** The `-C` directory of a git segment, or null. */
+function gitDirectory(segment: string): string | null {
+	const git = /\bgit\s+(?:(?:-[a-zA-Z]\s+\S+|--[\w-]+(?:=\S+)?)\s+)*-C\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(segment);
+	return git ? (git[1] ?? git[2] ?? git[3] ?? null) : null;
 }
 
 /** Every hint in a session, in stream order. */
@@ -148,10 +161,19 @@ export function findRepoHints(
 		const stripped = commandSegments(blanked);
 		const raw = commandSegments(command);
 		const aligned = raw.length === stripped.length;
+		// Where the shell is as the segments run in order: a `cd` moves it for the rest of the call.
+		let inside = true;
 		for (const [i, segment] of stripped.entries()) {
-			const text = aligned ? raw[i]! : segment;
 			// The directory is read from the raw text, so a quoted path is a path and not a blank.
-			if (!withinWorkingDirectory(commandDirectory(text, aligned ? command : blanked), cwd)) continue;
+			const text = aligned ? raw[i]! : segment;
+			const moved = cdTarget(text);
+			if (moved !== null) {
+				inside = moved === "" ? false : /^(?:\/|[a-zA-Z]:|~|\$|_)/.test(moved) ? isWithin(moved, cwd) : inside && isWithin(moved, cwd);
+				continue;
+			}
+			const dir = gitDirectory(text);
+			const here = dir === null ? inside : /^(?:\/|[a-zA-Z]:|~|\$|_)/.test(dir) ? isWithin(dir, cwd) : inside && isWithin(dir, cwd);
+			if (cwd !== "" && !here) continue;
 			const program = segment
 				.trim()
 				.split(/\s+/)

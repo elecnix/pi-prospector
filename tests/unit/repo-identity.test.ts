@@ -76,6 +76,21 @@ describe("findRepoHints", () => {
 		assert.deepEqual(repos(step("i", `cd "${CWD}/sub" && git push`, other)), ["remote_output:github.com/other/repo"]);
 	});
 
+	it("follows a cd in the middle of a chain", () => {
+		const other = "To github.com:other/repo.git\n";
+		assert.deepEqual(repos(step("a", "git status && cd /somewhere/else && git push", other)), []);
+		assert.deepEqual(repos(step("b", `cd /somewhere/else && cd ${CWD} && git push`, other)), ["remote_output:github.com/other/repo"]);
+		assert.deepEqual(repos(step("c", "cd .. && git push", other)), []);
+		assert.deepEqual(repos(step("d", "cd $OTHER; git push", other)), []);
+	});
+
+	it("compares Windows paths without regard to case", () => {
+		const win = "C:\\Users\\Ana\\app";
+		const out = step("a", "git -C C:\\Users\\ana\\App push", "To github.com:acme/app.git\n");
+		assert.deepEqual(findRepoHints(out, win).map((h) => h.repo), ["github.com/acme/app"]);
+		assert.deepEqual(findRepoHints(step("b", "git -C D:\\other push", "To github.com:acme/app.git\n"), win), []);
+	});
+
 	it("ignores a failed command, a mention in a quoted string, and other programs", () => {
 		assert.deepEqual(repos(step("a", "git push", "To github.com:acme/widgets.git", true)), []);
 		assert.deepEqual(repos(step("b", `echo "git push"`, "To github.com:acme/widgets.git")), []);
