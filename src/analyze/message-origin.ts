@@ -193,11 +193,11 @@ const PEER_RELAY_RE = /^Another Claude session sent a message/;
 
 /** A pointer to a file that holds the real prompt: how an orchestrator starts a worker. */
 const SPAWN_POINTER_RE =
-	/^(?:Your task is in\s+\S+|Read\b[^\n]{0,200}\b(?:carry out the task (?:it|that) describes|do what it says|and follow it|and carry out)\b)/i;
+	/^(?:Your task is in\s+\S+|Task is in (?:the )?file\s+\S+|Do what @?\S+ says\b|Read\s+\S+(?:,\s*then\s+\S+)+,?\s+and do (?:that|the) work\b|Read\b[^\n]{0,200}\b(?:carry out the task (?:it|that) describes|do what it says|and follow it|and carry out)\b)/i;
 
 /** A header an agent puts on a message it relays or sends to another session. */
 const RELAY_HEADER_RE =
-	/^(?:Orchestrator\b[:,]|Standing rules from the orchestrator|From an unsigned sender|News from [a-z][a-z-]*,|Mid-run steering from|Operator (?:answer|grant|decision|instruction)\b|(?:cc|pi|codex)-[a-z]+-[a-z]+-\d{1,3}[:,])/i;
+	/^(?:Orchestrator\b[:,]|Standing rules from the orchestrator|From an unsigned sender|News from [a-z][a-z-]*,|Mid-run steering from|Operator (?:answer|grant|decision|instruction)\b|(?:cc|pi|codex)-[a-z]+-[a-z]+-\d{1,3}[:,]|[a-z][a-z0-9]*(?:-[a-z0-9]+)+ (?:relaying|relays) [a-z][a-z0-9]*(?:-[a-z0-9]+)+|[a-z][a-z0-9]*(?:-[a-z0-9]+)+ \(per [a-z][a-z0-9]*(?:-[a-z0-9]+)+)/i;
 
 /** `You are a …`, `Your job is …`, `Task: …`: how a prompt addresses a worker. */
 const ROLE_PREAMBLE_RE =
@@ -213,7 +213,7 @@ const FIELD_LINE_RE = /^(?:Ticket|Worktree|Branch|PR|Repo|Report file|Task|Issue
 const AGENT_HANDLE_RE = /\b(?:cc|cx|pi|oc|codex)-[a-z]+-[a-z]+-\d{1,3}\b/;
 const OPERATOR_RE = /\b(?:the operator|operator(?:'|’)s|relayed from|his words|their words)\b/i;
 const WORKER_VOCAB_RE = /\b(?:your (?:worktree|lane|orchestrator|shelf|PR|pull request|branch|work)\b|Worktree for your|orchestrator|shelf item|post-merge lane|fan-?out lane)\b/i;
-const PROBE_RE = /^(?:Reply|Respond|Say|Answer|Print|Output)\b[^\n]{0,60}\b(?:exactly|only|nothing else|single word|the word|with ok)\b|^Reply (?:OK\b|with(?: the\b|:))|^Read \S+ in this directory\b/i;
+const PROBE_RE = /^(?:Reply|Respond|Say|Answer|Print|Output)\b[^\n]{0,60}\b(?:exactly|only|nothing else|single word|the word|with ok)\b|^Reply (?:OK\b|with(?: the\b|:))|^Read \S+ in this directory\b|^(?:Now |Next: )?(?:call|invoke) the (?:\S+ ){0,3}tool\b(?=[^\n]*\b(?:once|with name)\b)|^Run this exact (?:shell |bash )?command\b|^List the exact names of every tool\b|^Run ListAgents\b|^(?:[^\n]{0,80}\?\s+)?Answer with (?:the word|one word|the number) only\.?$/i;
 const SHA_RE = /\b[0-9a-f]{7,40}\b/;
 const ABS_PATH_RE = /(?:^|[\s`'"(])\/(?:Users|private|tmp|home|var)\/[^\s`'")]+/g;
 

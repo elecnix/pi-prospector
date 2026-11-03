@@ -120,6 +120,34 @@ describe("classifyMessageOrigin: agent", () => {
 		assert.equal(label("The operator is away."), "typed/undecided");
 	});
 
+	it("labels the other ways an orchestrator points a worker at a prompt file", () => {
+		assert.equal(label("Do what @/tmp/prompts/job-7.md says."), "agent/spawn-pointer");
+		assert.equal(label("Task is in file /tmp/prompts/job-7.md"), "agent/spawn-pointer");
+		assert.equal(label("Read /tmp/common.md, then /tmp/brief-a.md, and do that work. Your card tools come from the card server."), "agent/spawn-pointer");
+	});
+
+	it("labels a message one session relays for another by the handles in its opening", () => {
+		assert.equal(label("lane-b9 relaying lane-2e: verify the two open points and report both with evidence."), "agent/relay-header");
+		assert.equal(label("lane-b9 (per lane-2e, conflict listener): three pull requests edit the same files, merge in order."), "agent/relay-header");
+		assert.equal(label("the retry relaying code is wrong, please look"), "typed/no-marker");
+	});
+
+	it("labels a one-shot prompt that tells the agent exactly which tool to call", () => {
+		assert.equal(label("Call the probe server tool slow_job once, wait for it to finish, then say what it returned in one line."), "agent/probe");
+		assert.equal(label("Now call the probe server tool ask_user once and tell me what happened in one line."), "agent/probe");
+		assert.equal(label("Call the Agent tool with name t1 and prompt 'Reply with IDLE and stop.' Quote the exact Agent result and stop."), "agent/probe");
+		assert.equal(label("Run this exact shell command with the Bash tool and report its output: echo hello-probe"), "agent/probe");
+		assert.equal(label("List the exact names of every tool available to you, one per line, nothing else."), "agent/probe");
+		assert.equal(label("Run ListAgents and report its exact output in full."), "agent/probe");
+		assert.equal(label("What is the code word in the document? Answer with the word only."), "agent/probe");
+	});
+
+	it("keeps a person's own request about a tool typed", () => {
+		assert.equal(label("can you call the build tool again after you fix the import, and tell me if it passes?"), "typed/no-marker");
+		assert.equal(label("Call the fleet tool and retire the finished agents now."), "typed/no-marker");
+		assert.equal(label("which tool lists the agents that are running right now"), "typed/no-marker");
+	});
+
 	it("labels a header an agent puts on a relayed message", () => {
 		assert.equal(label("Orchestrator: rebase onto main and resolve the conflict."), "agent/relay-header");
 		assert.equal(label("From an unsigned sender: the answer to your question is yes."), "agent/relay-header");
