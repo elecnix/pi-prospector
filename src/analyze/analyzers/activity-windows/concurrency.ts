@@ -33,6 +33,8 @@ export function foldConcurrency(
 	const buckets = new Map<number, Array<{ sessionId: string; start: number; end: number }>>();
 	for (const { sessionId, windows } of sessions) {
 		for (const [start, end] of windows) {
+			// A window with no length holds no moment of activity. Scanning it would dip the open count below zero.
+			if (end <= start) continue;
 			for (let b = Math.floor(start / size) * size; b < end; b += size) {
 				const list = buckets.get(b) ?? [];
 				list.push({ sessionId, start: Math.max(start, b), end: Math.min(end, b + size) });

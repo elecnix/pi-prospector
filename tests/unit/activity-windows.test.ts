@@ -74,6 +74,14 @@ describe("foldConcurrency", () => {
 		assert.equal(row0?.peak_concurrent, 1);
 	});
 
+	it("skips a window with no length instead of dipping the count", () => {
+		const rows = foldConcurrency([
+			{ sessionId: "a", windows: [[ms("10:00:00"), ms("10:00:00")]] },
+			{ sessionId: "b", windows: [[ms("10:10:00"), ms("10:20:00")]] },
+		]);
+		assert.deepEqual(rows, [{ bucket_start: T("10:00:00"), sessions: 1, peak_concurrent: 1, active_minutes: 10 }]);
+	});
+
 	it("folds by day and returns nothing for no sessions", () => {
 		const rows = foldConcurrency([{ sessionId: "a", windows: [[ms("01:00:00"), ms("23:00:00")]] }], "day");
 		assert.equal(rows.length, 1);
