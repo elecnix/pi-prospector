@@ -21,12 +21,19 @@ import { metrics as delegationOutcomes } from "../analyzers/delegation-outcomes/
 import { metrics as cacheEconomy } from "../analyzers/cache-economy/metrics.js";
 import { metrics as contextEconomy } from "../analyzers/context-economy/metrics.js";
 import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
+import { metrics as frictionAccumulation } from "../analyzers/friction-accumulation/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
 import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
+import { metrics as groundedClaims } from "../analyzers/grounded-claims/metrics.js";
 import { metrics as messageOrigin } from "../analyzers/message-origin/metrics.js";
 import { metrics as repoIdentity } from "../analyzers/repo-identity/metrics.js";
 import { metrics as routingOpportunity } from "../analyzers/routing-opportunity/metrics.js";
+import { metrics as phaseTrajectory } from "../analyzers/phase-trajectory/metrics.js";
+import { metrics as planCompliance } from "../analyzers/plan-compliance/metrics.js";
+import { metrics as prOpened } from "../analyzers/pr-opened/metrics.js";
 import { metrics as sessionEnding } from "../analyzers/session-ending/metrics.js";
+import { metrics as similarityCluster } from "../analyzers/similarity-cluster/metrics.js";
+import { metrics as skillUse } from "../analyzers/skill-use/metrics.js";
 import { metrics as timeEconomy } from "../analyzers/time-economy/metrics.js";
 import { metrics as tokenUnits } from "../analyzers/token-units/metrics.js";
 import { metrics as toolInventoryTax } from "../analyzers/tool-inventory-tax/metrics.js";
@@ -44,12 +51,19 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "cache-economy", metrics: cacheEconomy },
 	{ owner: "context-economy", metrics: contextEconomy },
 	{ owner: "failure-modes", metrics: failureModes },
+	{ owner: "friction-accumulation", metrics: frictionAccumulation },
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
 	{ owner: "git-commands", metrics: gitCommands },
+	{ owner: "grounded-claims", metrics: groundedClaims },
 	{ owner: "message-origin", metrics: messageOrigin },
 	{ owner: "repo-identity", metrics: repoIdentity },
 	{ owner: "routing-opportunity", metrics: routingOpportunity },
+	{ owner: "phase-trajectory", metrics: phaseTrajectory },
+	{ owner: "plan-compliance", metrics: planCompliance },
+	{ owner: "pr-opened", metrics: prOpened },
 	{ owner: "session-ending", metrics: sessionEnding },
+	{ owner: "similarity-cluster", metrics: similarityCluster },
+	{ owner: "skill-use", metrics: skillUse },
 	{ owner: "time-economy", metrics: timeEconomy },
 	{ owner: "token-units", metrics: tokenUnits },
 	{ owner: "tool-inventory-tax", metrics: toolInventoryTax },
@@ -72,18 +86,13 @@ export const METRICS_PENDING: readonly string[] = [
 	"decode-collapse",
 	"detect-secrets",
 	"files-in-play",
-	"friction-accumulation",
 	"gitleaks",
-	"grounded-claims",
 	"language-mismatch",
 	"lexicon-candidates",
 	"message-answers",
 	"navigation-efficiency",
 	"nosey-parker",
-	"phase-trajectory",
 	"piicatcher",
-	"plan-compliance",
-	"pr-opened",
 	"presidio",
 	"prompt-form",
 	"repetition-collapse",
@@ -93,8 +102,6 @@ export const METRICS_PENDING: readonly string[] = [
 	"secret-leak",
 	"secret-scanner",
 	"session-overview",
-	"similarity-cluster",
-	"skill-use",
 	"stale-verification",
 	"task-tool-mismatch",
 	"trufflehog",
