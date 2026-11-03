@@ -32,6 +32,11 @@ import { PULL_REQUEST_PROPERTIES } from "../../src/analyze/analyzers/pr-opened/i
 import { SKILL_USE_ENTRY } from "../../src/analyze/analyzers/skill-use/index.js";
 import { ClusterFindingSchema } from "../../src/analyze/analyzers/similarity-cluster/index.js";
 import { EndingLabelSchema } from "../../src/analyze/analyzers/session-ending/detect.js";
+import { NavPattern } from "../../src/analyze/analyzers/navigation-efficiency/detect.js";
+import { TargetResolutionKind } from "../../src/analyze/analyzers/task-tool-mismatch/detect.js";
+import { LeadTypeSchema } from "../../src/analyze/analyzers/uncompleted-leads/config.js";
+import { StaleRunSchema } from "../../src/analyze/analyzers/stale-verification/detect.js";
+import { VERIFICATION_VERDICTS } from "../../src/analyze/analyzers/verification-commands/decision.js";
 
 const SRC = path.resolve(import.meta.dirname, "..", "..", "src");
 const IDS = BUILTIN_ANALYZERS.map((a) => a.def.id);
@@ -104,6 +109,15 @@ describe("metric definitions", () => {
 		assert.deepEqual(values("pr-opened.pull-request-opened").sort(), literals(PULL_REQUEST_PROPERTIES.properties.via).sort());
 		assert.deepEqual(values("skill-use.skill-calls").sort(), literals(SKILL_USE_ENTRY.properties.via).sort());
 		assert.deepEqual(values("similarity-cluster.cluster").sort(), literals(ClusterFindingSchema.properties.detector).sort());
+	});
+
+	it("list the same values as the code of the tool-use analyzers", () => {
+		assert.deepEqual(values("navigation-efficiency.navigation-pattern").sort(), literals(NavPattern).sort());
+		assert.deepEqual(values("task-tool-mismatch.target-resolution").sort(), literals(TargetResolutionKind).sort());
+		assert.deepEqual(values("uncompleted-leads.lead").sort(), literals(LeadTypeSchema).sort());
+		assert.deepEqual(values("stale-verification.stale-cause").sort(), literals(StaleRunSchema.properties.cause).sort());
+		assert.deepEqual(values("stale-verification.stale-outcome").sort(), literals(StaleRunSchema.properties.outcome).sort());
+		assert.deepEqual(values("verification-commands.verdict").sort(), [...VERIFICATION_VERDICTS].sort());
 	});
 
 	it("list every rule code that session-ending can emit", () => {

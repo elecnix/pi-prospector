@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { FIXTURES } from "./helpers.js";
 import { main } from "../../src/cli.js";
+import { METRICS_PENDING } from "../../src/analyze/metrics/registry.js";
 import type { ModelRegistry } from "../../src/pi-stubs.js";
 
 /**
@@ -102,7 +103,7 @@ describe("prospect CLI", () => {
 		assert.match(one.out, /version \d+\.\d+, deterministic/);
 		const gaps = await capture(["metrics", "--gaps"]);
 		assert.equal(gaps.code, 0);
-		assert.match(gaps.out, /navigation-efficiency/);
+		assert.ok(gaps.out.includes(METRICS_PENDING[0]!), "the gap list names a pending analyzer");
 		assert.equal((await capture(["metrics", "--analyzer", "nope"])).code, 1);
 		assert.equal((await capture(["metrics", "--analyzer"])).code, 1);
 	});
