@@ -88,7 +88,7 @@ describe("findGitCommandEvents", () => {
 	it("marks a host-reported success as succeeded, with its time", () => {
 		const events = findGitCommandEvents(shell("a", `git commit -m x`, "[main abc1234] x\n 1 file changed"));
 		assert.deepEqual(events, [
-			{ kind: "commit", succeeded: true, result_checked: true, at: "2026-10-01T10:00:00.000Z", call_message_id: "call-a", result_message_id: "result-a" },
+			{ kind: "commit", succeeded: true, verdict_shared: false, result_checked: true, at: "2026-10-01T10:00:00.000Z", call_message_id: "call-a", result_message_id: "result-a" },
 		]);
 	});
 
@@ -102,6 +102,16 @@ describe("findGitCommandEvents", () => {
 		assert.equal(commit?.succeeded, false);
 		const [push] = findGitCommandEvents(shell("b", "git push 2>&1 | tail", " ! [rejected]        main -> main (fetch first)"));
 		assert.equal(push?.succeeded, false);
+	});
+
+	it("says when a failed call chained several commands, so the failure is not pinned on one", () => {
+		const [commit, push] = findGitCommandEvents(shell("a", "git commit -m x && git push", "error: pathspec", true));
+		assert.deepEqual([commit?.succeeded, commit?.verdict_shared, push?.succeeded, push?.verdict_shared], [false, true, false, true]);
+		const [alone] = findGitCommandEvents(shell("b", "git push", "rejected", true));
+		assert.equal(alone?.verdict_shared, false, "a call with one command owns its verdict");
+		const [piped] = findGitCommandEvents(shell("c", "git commit -m x | tail -3", "nothing to commit, working tree clean"));
+		assert.equal(piped?.succeeded, false);
+		assert.equal(piped?.verdict_shared, false, "a refusal read from the text belongs to its command");
 	});
 
 	it("says when the result text could not be checked", () => {

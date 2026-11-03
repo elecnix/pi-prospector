@@ -35,6 +35,7 @@ const KIND = Type.Union([Type.Literal("commit"), Type.Literal("push"), Type.Lite
 export const GIT_COMMAND_EVENT = Type.Object({
 	kind: KIND,
 	succeeded: Type.Boolean(),
+	verdict_shared: Type.Boolean(),
 	result_checked: Type.Boolean(),
 	at: Type.Union([Type.String(), Type.Null()]),
 	call_message_id: Type.String(),

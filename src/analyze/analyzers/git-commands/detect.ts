@@ -27,6 +27,13 @@ export type GitCommandKind = "commit" | "push" | "pr_merge";
 
 export interface GitCommandEvent {
 	kind: GitCommandKind;
+	/**
+	 * True when the host reported the call failed and the call chained several
+	 * commands (`&&`, `;`, or lines). The host's verdict covers the whole call and
+	 * cannot say which command failed, or whether the later ones ever ran, so
+	 * this event's failure is not attributed to it.
+	 */
+	verdict_shared: boolean;
 	/** Whether the call succeeded: the host said so and the result text did not say otherwise. */
 	succeeded: boolean;
 	/**
@@ -95,8 +102,10 @@ export function findGitCommandEvents(
 				const text = checked ? (row?.content_text ?? "").slice(0, config.maxResultChars) : "";
 				if (markersFor(kind, config).some((re) => re.test(text))) succeeded = false;
 			}
+			const hostFailed = outcome !== null && outcome.isError;
 			events.push({
 				kind,
+				verdict_shared: hostFailed && /&&|;|\n/.test(stripCommandText(command.trim(), "_")),
 				succeeded,
 				result_checked: checked,
 				at: byId.get(call.messageId)?.timestamp ?? null,
