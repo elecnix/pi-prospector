@@ -343,6 +343,8 @@ Source: [`repo-identity/index.ts`](./src/analyze/analyzers/repo-identity/index.t
 
 Records the stretches a session was active, from the host's own timestamps. Each gap between two messages counts up to an idle cap (300 seconds by default, the same cap as `time-economy`), and each timed tool call counts for its whole span, because a ten-minute test run was running even though nobody wrote anything. The stretches are merged into non-overlapping windows on one session-anchored metric node, with the total and a count of messages that had no timestamp. How many sessions ran at once is a corpus question, so no node stores it. The `concurrency` output folds every session's windows at read time into one row per hour or day with the distinct sessions, the peak number active at the same moment, and the summed active minutes. Those minutes are agent time, not the operator's. Render it with `prospect output activity-windows:concurrency`, which takes `--bucket hour|day` and `--day YYYY-MM-DD`. The analyzer doesn't call a model and proposes nothing.
 
+The definitions print with `prospect metrics --analyzer activity-windows`.
+
 Source: [`activity-windows/index.ts`](./src/analyze/analyzers/activity-windows/index.ts) · windows in [`detect.ts`](./src/analyze/analyzers/activity-windows/detect.ts) · the fold in [`concurrency.ts`](./src/analyze/analyzers/activity-windows/concurrency.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
