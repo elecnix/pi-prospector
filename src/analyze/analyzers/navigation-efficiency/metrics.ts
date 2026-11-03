@@ -36,8 +36,8 @@ export const metrics: MetricDefinition[] = [
 		name: "Structural-edge count (SEC)",
 		definition: "The number of viewed regions whose nearest viewed ancestor was also viewed: how much of the navigation was descent along the tree and not jumps across it.",
 		measurement: "rule-based",
-		unit: "regions per session",
-		denominator: "none",
+		unit: "regions in one session",
+		denominator: "none: the node stores one raw count per session, not a rate",
 		limitations: [
 			"It grows with the number of regions viewed, so compare it with the regions-viewed count the node stores.",
 			"A region is a directory, a file or a bounded slice of a file.",
@@ -49,8 +49,8 @@ export const metrics: MetricDefinition[] = [
 		name: "Structural breadth (SB)",
 		definition: "The most viewed regions hanging directly under one viewed region. A value above 1 means the agent explored more than one sibling before converging.",
 		measurement: "rule-based",
-		unit: "regions per session",
-		denominator: "none",
+		unit: "regions in one session",
+		denominator: "none: the node stores one raw count per session, not a rate",
 		limitations: [
 			"A long session has more chances to widen it.",
 			"It shows breadth of exploration and does not show whether the exploration was needed.",
