@@ -99,6 +99,7 @@ describe("scanDelegations", () => {
 		assert.equal(scan.call_count, 2);
 		assert.equal(scan.events.length, 1);
 		assert.equal(scan.tool_call_count, 3);
+		assert.deepEqual(scan.call_message_ids, ["call-a", "call-b"], "every call is evidence, past the event cap");
 	});
 
 	it("returns zero counts for a session that delegated nothing", () => {

@@ -156,7 +156,7 @@ export const delegationOutcomesAnalyzer: Analyzer = {
 
 		const edges: AnalysisResult["edges"] = [
 			{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
-			...[...new Set(scan.events.map((e) => e.call_message_id))].map((id, i) => ({
+			...scan.call_message_ids.map((id, i) => ({
 				toRefKind: REF_KINDS.MESSAGE,
 				toRefId: id,
 				edgeKind: EDGE_KINDS.ANCHORS,

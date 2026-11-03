@@ -39,6 +39,8 @@ export interface DelegationScan {
 	/** Every delegation call, including those past the event cap. */
 	call_count: number;
 	counts: Record<DelegationOutcome, number>;
+	/** The assistant message of every delegation call, including those past the event cap. */
+	call_message_ids: string[];
 	/** Every tool call in the session: the denominator for a delegation share. */
 	tool_call_count: number;
 }
@@ -69,9 +71,11 @@ export function scanDelegations(
 	const events: DelegationEvent[] = [];
 	const counts = Object.fromEntries(OUTCOMES.map((o) => [o, 0])) as Record<DelegationOutcome, number>;
 	let callCount = 0;
+	const callMessageIds = new Set<string>();
 	for (const call of invocations) {
 		if (!tools.has(call.name.toLowerCase())) continue;
 		callCount++;
+		callMessageIds.add(call.messageId);
 
 		const done = background.get(call.callId);
 		let outcome: DelegationOutcome;
@@ -93,5 +97,5 @@ export function scanDelegations(
 			});
 		}
 	}
-	return { events, call_count: callCount, counts, tool_call_count: invocations.length };
+	return { events, call_count: callCount, call_message_ids: [...callMessageIds], counts, tool_call_count: invocations.length };
 }
