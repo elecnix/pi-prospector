@@ -76,6 +76,17 @@ describe("findRepoHints", () => {
 		assert.deepEqual(repos(step("i", `cd "${CWD}/sub" && git push`, other)), ["remote_output:github.com/other/repo"]);
 	});
 
+	it("takes the first address written in git remote -v whatever its shape", () => {
+		const text = "origin\tgit@github.com:acme/widgets.git (fetch)\nupstream\thttps://github.com/other/widgets.git (fetch)";
+		assert.deepEqual(repos(step("a", "git remote -v", text)), ["remote_output:github.com/acme/widgets"]);
+	});
+
+	it("does not read the output of a call that also ran a command elsewhere", () => {
+		const out = "To github.com:other/thing.git\n";
+		assert.deepEqual(repos(step("a", "git fetch origin; git -C /somewhere/else push", out)), []);
+		assert.deepEqual(repos(step("b", "git fetch origin; git push", out)), ["remote_output:github.com/other/thing"]);
+	});
+
 	it("follows a cd in the middle of a chain", () => {
 		const other = "To github.com:other/repo.git\n";
 		assert.deepEqual(repos(step("a", "git status && cd /somewhere/else && git push", other)), []);

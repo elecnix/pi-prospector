@@ -82,15 +82,16 @@ const ADDRESS_PATTERNS = [FORGE_PATH, SSH_URL, SSH_ADDRESS, SCP_ADDRESS];
 const NOT_A_REPO_OWNER = new Set(["orgs", "settings", "login", "apps"]);
 
 function addresses(text: string, patterns: readonly RegExp[]): string[] {
-	const found: string[] = [];
+	const found: Array<{ at: number; repo: string }> = [];
 	for (const re of patterns) {
 		for (const m of text.matchAll(new RegExp(re.source, "g"))) {
 			const repo = normaliseRepo(m[1] ?? "", m[2] ?? "", m[3] ?? "");
-			if (repo && !NOT_A_REPO_OWNER.has(m[2]!.toLowerCase())) found.push(repo);
+			if (repo && !NOT_A_REPO_OWNER.has(m[2]!.toLowerCase())) found.push({ at: m.index ?? 0, repo });
 		}
 	}
+	// In the order written, so the first address is the first one in the text whatever its shape.
 	// One address written once is one hint, however many patterns read it.
-	return [...new Set(found)];
+	return [...new Set(found.sort((a, b) => a.at - b.at).map((f) => f.repo))];
 }
 
 /** The `-R` / `--repo` value of a `gh` command, as `host/owner/name`. */
@@ -163,6 +164,7 @@ export function findRepoHints(
 		const aligned = raw.length === stripped.length;
 		// Where the shell is as the segments run in order: a `cd` moves it for the rest of the call.
 		let inside = true;
+		const scoped: Array<{ segment: string; text: string; here: boolean }> = [];
 		for (const [i, segment] of stripped.entries()) {
 			// The directory is read from the raw text, so a quoted path is a path and not a blank.
 			const text = aligned ? raw[i]! : segment;
@@ -173,7 +175,13 @@ export function findRepoHints(
 			}
 			const dir = gitDirectory(text);
 			const here = dir === null ? inside : /^(?:\/|[a-zA-Z]:|~|\$|_)/.test(dir) ? isWithin(dir, cwd) : inside && isWithin(dir, cwd);
-			if (cwd !== "" && !here) continue;
+			scoped.push({ segment, text, here: cwd === "" || here });
+		}
+		// The result is one text for the whole call. When any command in it ran elsewhere, its
+		// lines cannot be told from the others', so the output is not read at all.
+		const readOutput = scoped.every((s) => s.here);
+		for (const { segment, text, here } of scoped) {
+			if (!here) continue;
 			const program = segment
 				.trim()
 				.split(/\s+/)
@@ -181,7 +189,7 @@ export function findRepoHints(
 			if (program === "gh") {
 				const flag = ghRepoFlag(text);
 				if (flag) hints.push({ repo: flag, basis: "gh_repo_flag", message_id: call.messageId });
-				if (/\bgh\s+pr\b/.test(segment) && output) {
+				if (/\bgh\s+pr\b/.test(segment) && output && readOutput) {
 					for (const repo of addresses(output, [PR_URL])) hints.push({ repo, basis: "pr_url", message_id: row!.id });
 				}
 			} else if (program === "git") {
@@ -189,13 +197,18 @@ export function findRepoHints(
 				if (/\s(?:clone|add|set-url)\s/.test(segment) && (sub === "clone" || sub === "remote")) {
 					for (const repo of addresses(text, ADDRESS_PATTERNS)) hints.push({ repo, basis: "command_url", message_id: call.messageId });
 				}
-				if (output && sub !== null && ["remote", "push", "fetch", "pull", "ls-remote"].includes(sub)) {
+				if (output && readOutput && sub !== null && ["remote", "push", "fetch", "pull", "ls-remote"].includes(sub)) {
 					for (const repo of remoteOutputAddresses(output, sub)) hints.push({ repo, basis: "remote_output", message_id: row!.id });
 				}
 			}
 		}
 	}
-	return hints;
+	// One text read by two segments of a call is one hint.
+	const seen = new Set<string>();
+	return hints.filter((h) => {
+		const key = `${h.basis}|${h.repo}|${h.message_id}`;
+		return seen.has(key) ? false : (seen.add(key), true);
+	});
 }
 
 /**
