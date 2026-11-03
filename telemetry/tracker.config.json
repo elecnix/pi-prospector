@@ -24,8 +24,12 @@
           "repetition-collapse",
           "session-ending",
           "pr-opened",
+          "repo-identity",
           "skill-use",
           "attention-gaps",
+          "git-commands",
+          "activity-windows",
+          "delegation-outcomes",
           "time-economy",
           "verification-commands",
           "stale-verification",
@@ -75,7 +79,7 @@
         "rejected",
         "acceptedModified"
       ],
-      "maxRows": 150,
+      "maxRows": 240,
       "maxCount": 10000000
     }
   },
