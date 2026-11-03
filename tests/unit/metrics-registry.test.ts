@@ -98,10 +98,9 @@ describe("metric definitions", () => {
 		assert.deepEqual(values("phase-trajectory.turn-phase").sort(), literals(PhaseName).sort());
 		assert.deepEqual(values("phase-trajectory.phase-signal").sort(), literals(PhaseSignalKind).sort());
 		const claims = GROUNDED_CLAIMS_PROPERTIES.properties;
-		assert.deepEqual(
-			[...values("grounded-claims.ungrounded-claim"), ...values("grounded-claims.unacted-request")].sort(),
-			literals(claims.claim_kind).sort(),
-		);
+		const kinds = literals(claims.claim_kind);
+		assert.deepEqual(values("grounded-claims.ungrounded-claim").sort(), kinds.filter((k) => k !== "request").sort());
+		assert.deepEqual(values("grounded-claims.unacted-request"), kinds.filter((k) => k === "request"));
 		assert.deepEqual(values("pr-opened.pull-request-opened").sort(), literals(PULL_REQUEST_PROPERTIES.properties.via).sort());
 		assert.deepEqual(values("skill-use.skill-calls").sort(), literals(SKILL_USE_ENTRY.properties.via).sort());
 		assert.deepEqual(values("similarity-cluster.cluster").sort(), literals(ClusterFindingSchema.properties.detector).sort());
