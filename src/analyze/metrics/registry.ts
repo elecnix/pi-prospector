@@ -15,6 +15,7 @@
 import { Check } from "typebox/value";
 import { CORE_METRICS } from "./core.js";
 import { CORE_OWNER, MetricDefinition } from "./types.js";
+import { metrics as activityWindows } from "../analyzers/activity-windows/metrics.js";
 import { metrics as attentionGaps } from "../analyzers/attention-gaps/metrics.js";
 import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
@@ -31,6 +32,7 @@ import { metrics as turnPairLlm } from "../analyzers/turn-pair-llm/metrics.js";
 /** Every owner's definitions: an analyzer id, or `sessions`. */
 const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: CORE_OWNER, metrics: CORE_METRICS },
+	{ owner: "activity-windows", metrics: activityWindows },
 	{ owner: "attention-gaps", metrics: attentionGaps },
 	{ owner: "failure-modes", metrics: failureModes },
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
