@@ -108,8 +108,11 @@ export const NAVIGATION_EFFICIENCY_VERSION: AnalyzerVersion = {
 	// 1.0 (issue #254): path-depth model over read/ls/find/glob/grep and bash
 	// navigation, the four structural anti-pattern detectors, SEC/SB metrics,
 	// and a per-pattern recurrence-gated proposal.
+	// 1.1: the shared action stream now pairs id-carrying results with id-less
+	// stored calls (sessions indexed before 2026-08-20), so a failed edit is seen
+	// and a re-read after it counts as a repeated view.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/navigation-efficiency/index.ts",
 };

@@ -180,7 +180,7 @@ Each hit also records the **text origin** of the words it matched. A user messag
 prospect nodes --analyzer turn-frustration --filter origin=typed
 ```
 
-[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them. Hits drawn before 1.11 also label a Claude Code paste `typed`, because the paste's closing tag repeats its attributes and the earlier rule missed it. The same run redraws them.
+[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them. Hits drawn before 1.11 also label a Claude Code paste `typed`, because the paste's closing tag repeats its attributes and the earlier rule missed it. The same run redraws them. From 1.12 a hit also reads the `message-origin` node of its turn: a message that node labels `agent`, `notification` or `pasted` gives every occurrence in it that label, so `origin=typed` leaves out orchestrator briefs and short terminal captures that no tag marks.
 
 Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
 
@@ -524,6 +524,10 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
 - `--model provider/model` — pin **every** model tier to one concrete model for this run. Because the resolved model is part of a node's identity, a pinned run produces its own nodes; switching back to the normal mapping marks them stale (reason `config`).
 
 Proposals are never auto-applied. They sit in the database with status `open` until you accept or reject them.
+
+### `/prospect-metrics [--analyzer <id>] [--format md|json] [--gaps]`
+
+Print what each metric means. An entry gives the definition, how the value is decided (counted, rule-based or inferred), the unit and denominator, the limits, and the series breaks where an analyzer version changed the meaning, with the command that brings older nodes up to date. `--analyzer <id>` shows one analyzer (`sessions` shows the figures counted from the index), `--format json` prints the same as JSON, and `--gaps` lists the analyzers that have no definitions yet. Each analyzer declares its metrics in a `metrics.ts` beside its code. The command reads those definitions and never opens the database. Read the entry before drawing a trend from a number.
 
 ### `/prospect-output [list | <analyzer>[:<output>]] [--out DIR] [--as-of TS] [--key value]`
 

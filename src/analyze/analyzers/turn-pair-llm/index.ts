@@ -106,7 +106,10 @@ export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	// the unit's identity no longer folds in conclusions the graph has superseded.
 	// The analyzer also declares that it consults term mutes, so muting a term
 	// re-identifies the units its boost shaped.
-	minor: 8,
+	// 1.9: the frustration hits it reads count the person's own words only (`pricedHits`
+	// scales a hit by its typed share and drops one with none), and turn-pair-core no
+	// longer marks a correction in a message another agent or the harness wrote.
+	minor: 9,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };
@@ -360,7 +363,9 @@ export const turnPairLLMAnalyzer: Analyzer = {
 			system: ctx.prompts["classify"] ?? CLASSIFY_PROMPT,
 			user: buildClassifyPrompt(input),
 			temperature: config.temperature,
-			maxTokens: 500,
+			// One verdict plus its rationale; 500 truncated ~3% of calls on a model that
+			// reasons first, and a truncated reply yields no node — see #369.
+			maxTokens: 1500,
 			tool: CLASSIFY_TOOL,
 		});
 

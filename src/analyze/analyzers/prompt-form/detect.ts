@@ -51,7 +51,7 @@ const HEADING_LINE = /^\s{0,3}#{1,6}\s+\S/;
 
 /** The shape of one typed prompt, or null when none of its words were the person's own. */
 export function shapeOf(prompt: TypedPrompt, config: PromptFormConfig = DEFAULT_PROMPT_FORM_CONFIG): PromptShape | null {
-	const own = labelUserText(prompt.text, { role: "user", childAgent: false, forkCopy: false })
+	const own = labelUserText(prompt.text, { forkCopy: false })
 		.filter((span) => span.origin === "typed")
 		.map((span) => span.text)
 		.join("\n")

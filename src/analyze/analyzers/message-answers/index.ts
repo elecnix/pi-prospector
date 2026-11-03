@@ -105,7 +105,7 @@ function questionFingerprint(q: MessageQuestion): string {
 }
 
 function ownWords(text: string): string {
-	return labelUserText(text, { role: "user", childAgent: false, forkCopy: false })
+	return labelUserText(text, { forkCopy: false })
 		.filter((span) => span.origin === "typed")
 		.map((span) => span.text)
 		.join("\n")

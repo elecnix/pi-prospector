@@ -592,6 +592,14 @@ that failed. One reconstruction serves every analyzer that needs it, so
 by *position* instead, as an earlier version did, mis-attributed every error in
 any session where one step issued several calls.
 
+A session indexed before sync stored the provider's call id holds calls without
+an id, next to results that have one. The pairing then falls back to the tool
+name and the order of the calls. A result pairs with the earliest waiting call
+of the same tool. Without the fallback every such call reads as unanswered, so
+the session looks free of tool failures and every outcome-based analyzer sees
+only silence. The coverage rule below exists to prevent that mistake, a silent
+zero from an unpaired stream.
+
 - **Failure class** — the curated category a failure falls into: rate limit,
   transport failure, provider server error, malformed tool call, context
   ceiling, authentication, quota, model unavailable, abort; and on the tool side
@@ -837,12 +845,24 @@ list — the system **learns the vocabulary from the corpus**.
   it matched and its occurrences per origin, so a report can count typed text
   only. The label is a property of the hit, never part of its identity: adding
   it left each hit's source set unchanged, and the occurrences per origin add
-  up to the hit's count. The rules are in `src/analyze/text-origin.ts`.
+  up to the hit's count. The rules are in `src/analyze/text-origin.ts`. Text
+  origin labels the spans inside a message. A turn-frustration hit also reads the
+  **message origin** (below) of its turn: when that node is decided and is not
+  `typed`, every occurrence in the message takes its label, so a brief an
+  orchestrator wrote or a short terminal capture is not the person's words. A
+  `typed` or undecided message keeps the span labels, because a typed message can
+  hold a pasted block or a quoted line. The message-level rules (child agent,
+  signature, pi entry, compaction) live only in `message-origin.ts`. The span
+  labeller keeps `fork-copy`, which compares a turn with the parent session's turns.
 - **Message origin**: the label on a whole user-role message that says who wrote
   it. There are four, a closed list. `typed` means the person composed or
   dictated the words. `pasted` means the person sent material they copied, such
-  as a log, a terminal capture or a bare link. `agent` means an agent or a script
-  wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
+  as a log, a terminal capture or a bare link, with few words of their own
+  beside it. A paste with sentences beside it is not decided by its layout. Neither
+  is a long run of short lines that reads as sentences, because a person who
+  presses return often writes eight lines, and an agent's brief looks the same.
+  Those messages are undecided and go to the decision model. `agent` means
+  an agent or a script wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
   a message relayed from a peer session, a one-shot probe. `notification` means
   the harness or an extension injected it: a monitor event, a task notification,
   a slash command with no arguments, a tool result filed under the user role.
@@ -851,7 +871,31 @@ list — the system **learns the vocabulary from the corpus**.
   serves a frustration hit. Message origin labels the whole message and serves any
   analyzer that must count only what a person wrote. Both read the harness
   blocks that `text-origin.ts` knows, and a report joins a hit to its message's
-  node through the message anchor.
+  node through the message anchor, and turn-frustration records the node as an
+  input by a `consumes` edge. The edge is a record and the hit's identity does not
+  include the node, the way the lexicon verdict a hit copies is not part of it: a
+  new origin node makes a hit stale for the next `--revise minor`, and the hit
+  never becomes a second subject beside its predecessor.
+  `turn-pair-core` reads the node too: a
+  correction or a rebuttal candidate is something the person says to the agent,
+  so a message decided as `agent`, `notification` or `pasted` has no correction
+  and no rebuttal candidate, and the core node records the `origin` it read. The node is an input by a
+  `consumes` edge and stays out of the source set, so a turn keeps its identity
+  and `--revise minor` redraws it. Readers of frustration hits count the person's
+  own words: a hit's weight is scaled by its typed share (`typed_count` of
+  `count`), and a hit with no typed occurrence is dropped. A hit drawn before
+  the origin fields existed is read as it always was.
+  A revised origin node reaches its consumers when the consumer is next recomputed, which a
+  version bump forces, and not before. Run the model pass over `message-origin` first and
+  revise its consumers after it, so they read the final labels.
+- **Relayed request**: the copy of a person's request that a workflow script
+  relays, word for word, into a child session under a banner that says so. The
+  origin is `notification`, by the rule `relayed-request`. The person typed those
+  words once, in the parent session, where the parent's own node counts them as
+  `typed`. A second `typed` label on the copy would count one request twice, and
+  would credit the person with a message that reached the child as a machine's
+  relay. The task text the same script computes at run time is `agent`, because
+  the script wrote it.
 - **Origin rule**: the test that decided a message's origin, such as
   `child-session`, `signature`, `tool-result` or `pasted-block`. Every node
   records its rule, so a reader can see why a message got its label. A strong
@@ -935,6 +979,56 @@ contain the new word have anything to compute.
   model provider system, so credentials and model availability are managed in one
   place and never reimplemented here. In tests it is replaced by a deterministic
   stand-in so the suite needs no network and no API key.
+
+### Measurement and comparability
+
+Every number a report prints comes from a node or from the messages. A reader
+can check it only if the number has a stated meaning, a stated method, and
+stated limits. Each analyzer declares those for its metrics next to its code,
+and `prospect metrics` prints them. These terms are the vocabulary of those
+definitions.
+
+- **Metric**: a number derived from the index: stored in a node, or computed by
+  a read over nodes and messages. A metric has a name, a one-sentence
+  definition, a measurement class, a unit, a denominator, and known limits.
+- **Measurement class**: how a value was decided. A **counted** value is counted
+  or timed from the transcript with no judgement. A **rule-based** value comes
+  from a deterministic analyzer applying a hand-written rule or catalogue: the
+  same input always gives the same output, but the rule can be wrong. An
+  **inferred** value was judged by a language model or a decision model and is an
+  estimate. A report keeps the three apart.
+- **Denominator**: the population a rate is a share of. Every rate states it,
+  because the population moves. The turns a classifier judged are the turns its
+  version chose to escalate, not all turns, so a share of classified turns
+  describes that selection.
+- **Coverage**: the share of a denominator that an analyzer actually read. A
+  figure with low coverage describes the sessions it read, and a month with
+  different coverage describes different sessions.
+- **Capture era**: the span of sessions indexed while the sync layer stored a
+  named field. A field added later is unknown in earlier sessions until they are
+  synced again, and unknown never reads as zero. The call id, the stop reason,
+  the billed cost, the recorded model, and the tool inventory each started a
+  capture era.
+- **Series break**: a point where a metric changes meaning or population: a new
+  analyzer version, a new resolved model, a new capture era, or a change of
+  harness. A comparison across a series break compares two measurements, not one
+  trend. The repair is to recompute the whole window to the current recipe with a
+  revise run (graded by the analyzer's version move). Until then, compare only
+  inside an unbroken stretch.
+- **Session ending**: how a session stopped, read from the last events of its
+  transcript. The session-ending analyzer decides it with rules and no model.
+- **Ending label**: the session ending reduced to one of five values, listed in
+  the order the rules are tried. **errored**: the last recorded events are
+  failures. **abandoned**: the transcript stops with work unfinished (the operator
+  aborted the last generation, a tool result nobody answered, a user message the
+  agent never replied to, or an assistant step still issuing tool calls).
+  **handed-off**: the last message is a short closure from the user, such as
+  "thanks". **resolved**: the agent wrote a substantive final summary and the most
+  recent verification-class command succeeded (or, with no such command, the last
+  tool result succeeded). **unclear**: everything else. The label is a coarse
+  ranking input and never gates detection. It reads outcomes from the action
+  stream, so a session whose calls and results could not be paired cannot be
+  labelled **resolved**.
 
 ### Proposals (the product)
 
@@ -1043,9 +1137,10 @@ contain the new word have anything to compute.
   baseline, and SWE-Replay (2026) *discards* trajectories whose outcome was bad
   before mining them, on the grounds that their intermediate steps mislead —
   worth about four points in their ablation. The second of those marks a gap we
-  still carry: a session's **outcome** is not something this system labels, so
-  friction from a session that succeeded anyway is mined identically to friction
-  from one that was abandoned. In pi-prospector the contrast works
+  still carry: a session's **ending label** is coarse and no proposal is weighted
+  by it yet, so friction from a session that succeeded anyway is mined
+  identically to friction from one that was abandoned. In pi-prospector the
+  contrast works
   at two scopes: **within-session** (a clean pair versus a friction pair in the
   same session) and **cross-session** (a session is handed a compact digest of up
   to N *smooth* sibling sessions in the same repo/`cwd` as negative examples —
@@ -1622,8 +1717,8 @@ only our own reasoning, and where the literature says we are still short.
   outcome before mining them; a cheap deterministic selector beat an
   LLM-as-a-judge at lower cost. → *Deterministic first*; success/failure
   contrast.
-  **Where it says we are short:** we assign no outcome label to a session, so
-  we cannot filter or weight by it.
+  **Where it says we are short:** a session's ending label is coarse and
+  rule-based, and nothing filters or weights proposals by it yet.
 
 - **Chen et al. (2026), Process-Centric Analysis of Agentic Software Systems
   (Graphectory)**, OOPSLA

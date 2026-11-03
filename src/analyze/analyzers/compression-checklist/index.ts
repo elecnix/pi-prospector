@@ -98,8 +98,11 @@ export const COMPRESSION_CHECKLIST_VERSION: AnalyzerVersion = {
 	// verbatim source-reference retention, unresolved-item cues, abandoned-
 	// direction cues) plus ground-truth lead-loss detection over each compaction
 	// cycle, with a recurrence-gated proposal.
+	// 1.1: the shared action stream now pairs id-carrying results with id-less
+	// stored calls (sessions indexed before 2026-08-20), so lead loss is graded
+	// against the results those calls received.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/compression-checklist/index.ts",
 };
