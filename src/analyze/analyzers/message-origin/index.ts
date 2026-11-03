@@ -78,7 +78,6 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// 1.1: a workflow's relayed copy of a person's request gets its own rule,
 	// `relayed-request`. It was `notification/harness-line`, so only the rule name
 	// moves and no label changes.
-	minor: 1,
 	// 1.2: a better `pasted`. A message is a paste only when copied material is
 	// most of it and the person's own words are few (under 40 characters). A paste
 	// with sentences beside it, and a long run of sentences that the span labeller
