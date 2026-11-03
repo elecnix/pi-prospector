@@ -885,6 +885,9 @@ list — the system **learns the vocabulary from the corpus**.
   own words: a hit's weight is scaled by its typed share (`typed_count` of
   `count`), and a hit with no typed occurrence is dropped. A hit drawn before
   the origin fields existed is read as it always was.
+  A revised origin node reaches its consumers when the consumer is next recomputed, which a
+  version bump forces, and not before. Run the model pass over `message-origin` first and
+  revise its consumers after it, so they read the final labels.
 - **Relayed request**: the copy of a person's request that a workflow script
   relays, word for word, into a child session under a banner that says so. The
   origin is `notification`, by the rule `relayed-request`. The person typed those
