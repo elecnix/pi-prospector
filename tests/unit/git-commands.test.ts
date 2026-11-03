@@ -146,6 +146,12 @@ describe("findGitCommandEvents", () => {
 		);
 	});
 
+	it("reads the tail of a long result, where a refusal prints", () => {
+		const long = `${"hook output\n".repeat(5000)}nothing to commit, working tree clean`;
+		const [event] = findGitCommandEvents(shell("a", "git commit -m x 2>&1 | tee log", long));
+		assert.equal(event?.succeeded, false);
+	});
+
 	it("finds nothing in a session that ran no git command", () => {
 		assert.deepEqual(findGitCommandEvents(shell("a", "ls", "a b")), []);
 	});

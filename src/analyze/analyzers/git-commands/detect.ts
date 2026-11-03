@@ -99,7 +99,7 @@ export function findGitCommandEvents(
 			if (succeeded && outcome) {
 				const row = byId.get(outcome.messageId);
 				checked = row?.tool_results ? safeCount(row.tool_results) === 1 : false;
-				const text = checked ? (row?.content_text ?? "").slice(0, config.maxResultChars) : "";
+				const text = checked ? headAndTail(row?.content_text ?? "", config.maxResultChars) : "";
 				if (markersFor(kind, config).some((re) => re.test(text))) succeeded = false;
 			}
 			const hostFailed = outcome !== null && outcome.isError;
@@ -115,6 +115,13 @@ export function findGitCommandEvents(
 		}
 	}
 	return events;
+}
+
+/** The text, or its head and tail when it is longer than the cap: a refusal prints last. */
+function headAndTail(text: string, cap: number): string {
+	if (text.length <= cap) return text;
+	const half = Math.floor(cap / 2);
+	return `${text.slice(0, half)}\n${text.slice(text.length - half)}`;
 }
 
 function safeCount(toolResults: string): number {

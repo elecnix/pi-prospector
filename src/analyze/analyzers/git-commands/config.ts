@@ -21,7 +21,7 @@ export const GitCommandsConfig = Type.Object({
 	commitFailureMarkers: Type.Array(Type.String()),
 	pushFailureMarkers: Type.Array(Type.String()),
 	mergeFailureMarkers: Type.Array(Type.String()),
-	/** Character cap on the result text read per call. */
+	/** Character cap on the result text read per call. A longer text is read at its head and its tail. */
 	maxResultChars: Type.Integer({ minimum: 1 }),
 });
 export type GitCommandsConfig = Static<typeof GitCommandsConfig>;
