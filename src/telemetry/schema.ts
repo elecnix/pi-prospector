@@ -48,6 +48,8 @@ export const KNOWN_ANALYZER_IDS = [
 	"git-commands",
 	"activity-windows",
 	"delegation-outcomes",
+	"message-answers",
+	"prompt-form",
 	"time-economy",
 	"verification-commands",
 	"stale-verification",
