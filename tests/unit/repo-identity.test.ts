@@ -67,6 +67,9 @@ describe("findRepoHints", () => {
 		assert.deepEqual(repos(step("d", `git -C ${CWD} push`, other)), ["remote_output:github.com/other/repo"]);
 		assert.deepEqual(repos(step("e", `cd ${CWD}/sub && git push`, other)), ["remote_output:github.com/other/repo"]);
 		assert.deepEqual(repos(step("f", "cd sub && git push", other)), ["remote_output:github.com/other/repo"]);
+		assert.deepEqual(repos(step("g", `cd "/somewhere/else" && git push`, other)), []);
+		assert.deepEqual(repos(step("h", `git -C "/somewhere/else" push`, other)), []);
+		assert.deepEqual(repos(step("i", `cd "${CWD}/sub" && git push`, other)), ["remote_output:github.com/other/repo"]);
 	});
 
 	it("ignores a failed command, a mention in a quoted string, and other programs", () => {

@@ -112,6 +112,8 @@ function commandDirectory(segment: string, whole: string): string | null {
 /** Whether a command's directory is the working directory or below it. Unknown directories (a variable, `~`) are outside. */
 function withinWorkingDirectory(directory: string | null, cwd: string): boolean {
 	if (directory === null || cwd === "") return true;
+	// A quoted path read from blanked text is unknown.
+	if (directory === "_") return false;
 	const target = directory.replace(/\\/g, "/").replace(/\/+$/, "");
 	const base = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
 	if (target.startsWith("~") || target.includes("$")) return false;
@@ -146,7 +148,8 @@ export function findRepoHints(
 		const aligned = raw.length === stripped.length;
 		for (const [i, segment] of stripped.entries()) {
 			const text = aligned ? raw[i]! : segment;
-			if (!withinWorkingDirectory(commandDirectory(segment, blanked), cwd)) continue;
+			// The directory is read from the raw text, so a quoted path is a path and not a blank.
+			if (!withinWorkingDirectory(commandDirectory(text, aligned ? command : blanked), cwd)) continue;
 			const program = segment
 				.trim()
 				.split(/\s+/)
