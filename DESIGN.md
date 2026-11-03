@@ -855,7 +855,7 @@ list — the system **learns the vocabulary from the corpus**.
   presses return often writes eight lines, and an agent's brief looks the same.
   Those messages are undecided and go to the decision model. `agent` means
   an agent or a script wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
-  a message relayed from a peer session, a one-shot probe. `notification` means
+  a message relayed from a peer session, a one-shot probe (a prompt that tells the agent which tool to call or which exact command to run, and what to report). `notification` means
   the harness or an extension injected it: a monitor event, a task notification,
   a slash command with no arguments, a tool result filed under the user role.
   The `message-origin` analyzer writes one metric node per turn-starting message,
