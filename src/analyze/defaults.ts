@@ -42,6 +42,7 @@ import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js
 import { decodeCollapseAnalyzer } from "./analyzers/decode-collapse/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { prOpenedAnalyzer } from "./analyzers/pr-opened/index.js";
+import { repoIdentityAnalyzer } from "./analyzers/repo-identity/index.js";
 import { skillUseAnalyzer } from "./analyzers/skill-use/index.js";
 import { gitCommandsAnalyzer } from "./analyzers/git-commands/index.js";
 import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
@@ -82,6 +83,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"verification-commands",
 	"stale-verification",
 	"pr-opened",
+	"repo-identity",
 	"skill-use",
 	"git-commands",
 	"files-in-play",
@@ -224,6 +226,9 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// deterministic graders, before the synthesizer, so a future consumer can
 	// declare it as a dependency without reordering.
 	prOpenedAnalyzer,
+	// The repository each session worked in, as one key read from the forge address its own
+	// git commands touched. Deterministic, standalone, one metric node per session.
+	repoIdentityAnalyzer,
 	// Which skills each session loaded and how often, by name. Deterministic,
 	// standalone, one metric node per session; it proposes nothing.
 	skillUseAnalyzer,

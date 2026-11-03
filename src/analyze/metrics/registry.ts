@@ -20,6 +20,7 @@ import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
 import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
 import { metrics as messageOrigin } from "../analyzers/message-origin/metrics.js";
+import { metrics as repoIdentity } from "../analyzers/repo-identity/metrics.js";
 import { metrics as sessionEnding } from "../analyzers/session-ending/metrics.js";
 import { metrics as timeEconomy } from "../analyzers/time-economy/metrics.js";
 import { metrics as toolTrajectory } from "../analyzers/tool-trajectory/metrics.js";
@@ -35,6 +36,7 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
 	{ owner: "git-commands", metrics: gitCommands },
 	{ owner: "message-origin", metrics: messageOrigin },
+	{ owner: "repo-identity", metrics: repoIdentity },
 	{ owner: "session-ending", metrics: sessionEnding },
 	{ owner: "time-economy", metrics: timeEconomy },
 	{ owner: "tool-trajectory", metrics: toolTrajectory },
