@@ -38,12 +38,12 @@ const CLAUDE_CHILD = "agent-a0001";
 const FRUSTRATED = new Set(["wrong", "broken", "garbage", "useless", "awful", "terrible", "stupid"]);
 
 /** Sync both fixture trees and run the lexicon pipeline over every session. */
-async function analyzeFixtures(db: AsyncDatabase): Promise<void> {
+async function analyzeFixtures(db: AsyncDatabase, withOrigin = true): Promise<void> {
 	const sync = await runSync(db, [new PiFileSource(path.join(ROOT, "pi")), new ClaudeFileSource(path.join(ROOT, "claude"))]);
 	assert.deepEqual(sync.errors, []);
 	const framework = new AnalyzerFramework({ db, llm: lexiconMock(FRUSTRATED).caller, modelTiers: DEFAULT_MODEL_TIERS });
 	await framework.register(turnPairCoreAnalyzer);
-	await framework.register(messageOriginAnalyzer);
+	if (withOrigin) await framework.register(messageOriginAnalyzer);
 	await framework.register(lexiconCandidatesAnalyzer);
 	await framework.register(frustrationLexiconAnalyzer);
 	await framework.register(turnFrustrationAnalyzer);
@@ -51,10 +51,10 @@ async function analyzeFixtures(db: AsyncDatabase): Promise<void> {
 }
 
 /** Run `check` against a fresh database holding the analysed fixtures. */
-async function withFixtures(check: (db: AsyncDatabase) => Promise<void>): Promise<void> {
+async function withFixtures(check: (db: AsyncDatabase) => Promise<void>, withOrigin = true): Promise<void> {
 	const { db, close } = await tempDb();
 	try {
-		await analyzeFixtures(db);
+		await analyzeFixtures(db, withOrigin);
 		await check(db);
 	} finally {
 		await close();
@@ -126,6 +126,11 @@ describe("turn-frustration text origin", () => {
 		withFixtures(async (db) => {
 			assert.equal(hitOn(await hits(db, CLAUDE_CHILD), "a01", "stupid").origin, "agent");
 		}));
+
+	it("still labels a child agent's turns agent when the message-origin analyzer did not run", () =>
+		withFixtures(async (db) => {
+			assert.equal(hitOn(await hits(db, CLAUDE_CHILD), "a01", "stupid").origin, "agent");
+		}, false));
 
 	it("keeps every hit and its count: labelling adds a field, it removes nothing", () =>
 		withFixtures(async (db) => {
