@@ -874,8 +874,9 @@ list — the system **learns the vocabulary from the corpus**.
   node through the message anchor, and turn-frustration records the node as an
   input by a `consumes` edge. The edge is a record and the hit's identity does not
   include the node, the way the lexicon verdict a hit copies is not part of it: a
-  new origin node makes a hit stale for the next `--revise minor`, and the hit
-  never becomes a second subject beside its predecessor.
+  revised origin node reaches its hits when they are next recomputed, which a
+  version bump forces, and a hit never becomes a second subject beside its
+  predecessor.
 - **Relayed request**: the copy of a person's request that a workflow script
   relays, word for word, into a child session under a banner that says so. The
   origin is `notification`, by the rule `relayed-request`. The person typed those
