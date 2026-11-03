@@ -23,6 +23,7 @@ import {
 	getClineSessionsDir,
 } from "../config.js";
 import type { HarnessSource } from "../harness.js";
+import type { ProspectorConfig } from "../types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -43,8 +44,12 @@ const PROJECT_SOURCES_DIR = path.join(".prospector", "sources");
  * parses strictly more than the plain one (it additionally recovers the parent
  * session id from the enclosing UUID directory), so it must claim them first.
  */
-export function sourceDiscoveryPaths(): string[] {
-	return resolveSourcePaths({ userDir: PI_AGENT_SOURCES_DIR, projectDir: path.resolve(process.cwd(), PROJECT_SOURCES_DIR) });
+export function sourceDiscoveryPaths(config: ProspectorConfig = loadConfig()): string[] {
+	return resolveSourcePaths({
+		config,
+		userDir: PI_AGENT_SOURCES_DIR,
+		projectDir: path.resolve(process.cwd(), PROJECT_SOURCES_DIR),
+	});
 }
 
 /**
@@ -53,9 +58,9 @@ export function sourceDiscoveryPaths(): string[] {
  * import, and a tag collision are all returned as errors — the caller decides
  * whether they are fatal (the sync command surfaces them in its output).
  */
-export async function buildCustomAdapters(config = loadConfig()): Promise<{ adapters: SessionSourceAdapter[]; errors: string[] }> {
+export async function buildCustomAdapters(config: ProspectorConfig = loadConfig()): Promise<{ adapters: SessionSourceAdapter[]; errors: string[] }> {
 	const names = (config.sources ?? []).filter((s) => !isBuiltinSourceName(s));
-	const { loaded, errors } = await loadCustomSources({ names, paths: sourceDiscoveryPaths(), builtinIds: BUILTIN_SOURCE_TAGS });
+	const { loaded, errors } = await loadCustomSources({ names, paths: sourceDiscoveryPaths(config), builtinIds: BUILTIN_SOURCE_TAGS });
 	return { adapters: loaded, errors: errors.map((e) => (e.file ? `${e.name} (${e.file}): ${e.message}` : e.message)) };
 }
 

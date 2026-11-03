@@ -87,6 +87,11 @@ export async function loadCustomSources(opts: SourceLoadOptions): Promise<Source
 	const claimedTags = new Map<string, string>(); // tag → name that first claimed it
 
 	for (const name of opts.names) {
+		const bad = invalidSourceName(name);
+		if (bad) {
+			errors.push({ name, message: bad });
+			continue;
+		}
 		const file = findSourceFile(opts.paths, name);
 		if (!file) {
 			errors.push({ name, message: `no source named '${name}' under ${opts.paths.join(", ")}` });
@@ -121,6 +126,22 @@ export async function loadCustomSources(opts: SourceLoadOptions): Promise<Source
 	}
 
 	return { loaded, errors };
+}
+
+/**
+ * Why a config `sources` entry is not a directory name, or null when it is one.
+ *
+ * A name is one path segment. `path.join` would otherwise resolve `../x` or an
+ * absolute path outside every discovery directory, and a config entry would
+ * choose which module the loader imports. A source directory is found only
+ * below a discovery path.
+ */
+function invalidSourceName(name: string): string | null {
+	if (name.length === 0) return "source name is empty";
+	if (name === "." || name === ".." || name.includes("/") || name.includes("\\") || path.isAbsolute(name)) {
+		return `source name '${name}' must be a single directory name, not a path`;
+	}
+	return null;
 }
 
 /** The first `<paths[i]>/<name>/index.{ts,js,mjs}` that exists, or undefined. */

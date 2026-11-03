@@ -93,6 +93,13 @@ export interface ProspectorConfig {
 	 * or ./.prospector/sources/<name>/ are also resolved from this list.
 	 */
 	sources?: string[];
+	/**
+	 * Extra directories to find a custom source in, ahead of the user
+	 * (~/.pi/agent/prospector/sources) and project (./.prospector/sources)
+	 * conventions. The loader looks up `<dir>/<name>/index.{ts,js,mjs}` for each
+	 * name in `sources`, and a leading ~ is expanded.
+	 */
+	sourcePaths?: string[];
 }
 
 // ─── Session ───

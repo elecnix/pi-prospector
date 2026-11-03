@@ -466,6 +466,14 @@ Then enable it in `~/.pi/agent/prospector.json`:
 { "sources": ["pi-subagent", "<name>"] }
 ```
 
+`sourcePaths` adds search directories ahead of those two, which keeps a source outside the home directory or the project:
+
+```json
+{ "sources": ["<name>"], "sourcePaths": ["~/work/sources", "~/.config/my-sources"] }
+```
+
+A `sources` entry names one directory below a search path. The loader fails when a value has a path separator, `.`, `..` or an absolute path, so a config entry never selects a module outside the search paths.
+
 Built-in sources you can enable without authoring anything:
 
 | Source | Config key | What it discovers |

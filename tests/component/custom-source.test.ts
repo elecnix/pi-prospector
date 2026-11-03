@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { loadCustomSources, resolveSourcePaths } from "../../src/sync/source-loader.js";
+import { buildCustomAdapters } from "../../src/commands/sync.js";
 import { runSync } from "../../src/sync/index.js";
 import { makeTempRoot, tempDb } from "./helpers.js";
 
@@ -145,6 +146,21 @@ describe("loadCustomSources", () => {
 		assert.equal(result.loaded[0]!.source, "classy");
 	});
 
+	it("refuses a name that would step outside the discovery directories", async () => {
+		// A source directory sits beside the discovery dir, reachable as ../outside/escape.
+		const escapeDir = path.join(root, "outside", "escape");
+		fs.mkdirSync(escapeDir, { recursive: true });
+		fs.writeFileSync(path.join(escapeDir, "index.mjs"), echoSource("escape"));
+		const discovery = path.join(root, "discovery");
+		fs.mkdirSync(discovery, { recursive: true });
+		for (const name of ["../outside/escape", "..", ".", path.join(root, "outside", "escape")]) {
+			const result = await loadCustomSources({ names: [name], paths: [discovery] });
+			assert.equal(result.loaded.length, 0, `${name} must not load`);
+			assert.equal(result.errors.length, 1, `${name} must report one error`);
+			assert.match(result.errors[0]!.message, /single directory name/, name);
+		}
+	});
+
 	it("re-imports an edited source file instead of returning the cached module", async () => {
 		writeSource("echo", "echo-v1");
 		const first = await loadCustomSources({ names: ["echo"], paths: [root] });
@@ -180,5 +196,15 @@ describe("a custom source through runSync", () => {
 		} finally {
 			await t.close();
 		}
+	});
+});
+
+describe("buildCustomAdapters", () => {
+	it("finds a source named in config sourcePaths", async () => {
+		writeSource("echo", "echo");
+		const { adapters, errors } = await buildCustomAdapters({ sources: ["echo"], sourcePaths: [root] });
+		assert.deepEqual(errors, []);
+		assert.equal(adapters.length, 1);
+		assert.equal(adapters[0]!.source, "echo");
 	});
 });
