@@ -197,6 +197,7 @@ describe("message-answers", () => {
 			await (await frameworkFor(db, model)).run("s1", { revise: ["config"] });
 			for (const call of model.calls.slice(sent)) assert.deepEqual(Object.keys(call.questions), ["is-greeting.v2"]);
 			const newest = (await answers(db)).filter((a) => "is-greeting.v2" in a.answers);
+			assert.equal(newest.length, 2, "each message has a revised node");
 			assert.ok(newest.every((a) => !("is-greeting.v1" in a.answers) && "tone.v1" in a.answers), "the old version is dropped and the other answer kept");
 		} finally {
 			await close();
