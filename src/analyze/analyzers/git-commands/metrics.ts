@@ -5,7 +5,7 @@ import { LIMIT_HARNESS, LIMIT_VERSIONS } from "../../metrics/limits.js";
 const SHARED = [
 	"Only a shell command counts. A commit made through an editor integration, a tool that is not the shell, or a script the shell started and the transcript does not show is invisible.",
 	"A success is the host's verdict checked against the result text. When a result row holds several results their texts are joined and cannot be attributed to one call, so the host's verdict stands alone there. Each event says whether its text was checked.",
-	"A call that chained several commands (`&&`, `;`, or lines) and failed has one verdict for all of them. The host cannot say which command failed or whether the later ones ran, so every git command event in it is marked failed with `verdict_shared` true. Read a failure count with those events set apart.",
+	"A call that chained several commands (`&&`, `;`, a pipe, or lines) and failed has one verdict for all of them. The host cannot say which command failed or whether the later ones ran, so every git command event in it is marked failed with `verdict_shared` true. Read a failure count with those events set apart.",
 	"A count says the commands ran and worked, never that the work was right.",
 	LIMIT_HARNESS,
 	LIMIT_VERSIONS,

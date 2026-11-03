@@ -109,6 +109,8 @@ describe("findGitCommandEvents", () => {
 		assert.deepEqual([commit?.succeeded, commit?.verdict_shared, push?.succeeded, push?.verdict_shared], [false, true, false, true]);
 		const [alone] = findGitCommandEvents(shell("b", "git push", "rejected", true));
 		assert.equal(alone?.verdict_shared, false, "a call with one command owns its verdict");
+		const [grep] = findGitCommandEvents(shell("d", "git commit -m x | grep -q Signed-off-by", "", true));
+		assert.deepEqual([grep?.succeeded, grep?.verdict_shared], [false, true], "a pipe's last stage may be what failed");
 		const [piped] = findGitCommandEvents(shell("c", "git commit -m x | tail -3", "nothing to commit, working tree clean"));
 		assert.equal(piped?.succeeded, false);
 		assert.equal(piped?.verdict_shared, false, "a refusal read from the text belongs to its command");

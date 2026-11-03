@@ -29,7 +29,7 @@ export interface GitCommandEvent {
 	kind: GitCommandKind;
 	/**
 	 * True when the host reported the call failed and the call chained several
-	 * commands (`&&`, `;`, or lines). The host's verdict covers the whole call and
+	 * commands (`&&`, `;`, a pipe, or lines). The host's verdict covers the whole call and
 	 * cannot say which command failed, or whether the later ones ever ran, so
 	 * this event's failure is not attributed to it.
 	 */
@@ -105,7 +105,7 @@ export function findGitCommandEvents(
 			const hostFailed = outcome !== null && outcome.isError;
 			events.push({
 				kind,
-				verdict_shared: hostFailed && /&&|;|\n/.test(stripCommandText(command.trim(), "_")),
+				verdict_shared: hostFailed && /&&|\||;|\n/.test(stripCommandText(command.trim(), "_")),
 				succeeded,
 				result_checked: checked,
 				at: byId.get(call.messageId)?.timestamp ?? null,
