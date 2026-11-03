@@ -26,6 +26,8 @@
           "pr-opened",
           "skill-use",
           "attention-gaps",
+          "message-answers",
+          "prompt-form",
           "time-economy",
           "verification-commands",
           "stale-verification",
@@ -75,7 +77,7 @@
         "rejected",
         "acceptedModified"
       ],
-      "maxRows": 150,
+      "maxRows": 200,
       "maxCount": 10000000
     }
   },
