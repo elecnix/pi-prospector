@@ -18,10 +18,10 @@ export const metrics: MetricDefinition[] = [
 	{
 		id: "cache-economy.cache-classification",
 		name: "Cache turn classification",
-		definition: "The class of one billed turn by how its prompt cache behaved, including the cause of a cold miss.",
+		definition: "The class of one assistant turn by how its prompt cache behaved, including the cause of a cold miss, or unbilled when the turn recorded no usage.",
 		measurement: "rule-based",
 		unit: "turns per class",
-		denominator: "billed assistant turns",
+		denominator: "assistant turns, with unbilled turns as a class of their own so the shares sum to one",
 		values: [
 			{ value: "hit", meaning: "The ratio is at or above the configured healthy threshold." },
 			{ value: "cold-ttl", meaning: "The cache missed after a gap longer than the cache lifetime, so the prefix was rebuilt from scratch." },
