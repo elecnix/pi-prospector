@@ -21,7 +21,22 @@ import { CORE_OWNER } from "../../src/analyze/metrics/types.js";
 import { CLASSIFY_TOOL } from "../../src/analyze/analyzers/turn-pair-llm/prompt.js";
 import { MESSAGE_ORIGINS } from "../../src/analyze/message-origin.js";
 import { TEXT_ORIGINS } from "../../src/analyze/text-origin.js";
+import { CacheClassification } from "../../src/analyze/analyzers/cache-economy/index.js";
+import { ContextEconomyFlag, CompactionCycle } from "../../src/analyze/analyzers/context-economy/index.js";
+import { RoutingVerdict } from "../../src/analyze/analyzers/routing-opportunity/index.js";
+import { TOOL_INVENTORY_TAX_PROPERTIES } from "../../src/analyze/analyzers/tool-inventory-tax/index.js";
+import { PhaseName } from "../../src/analyze/analyzers/phase-trajectory/config.js";
+import { PhaseSignalKind } from "../../src/analyze/analyzers/phase-trajectory/classify.js";
+import { GROUNDED_CLAIMS_PROPERTIES } from "../../src/analyze/analyzers/grounded-claims/index.js";
+import { PULL_REQUEST_PROPERTIES } from "../../src/analyze/analyzers/pr-opened/index.js";
+import { SKILL_USE_ENTRY } from "../../src/analyze/analyzers/skill-use/index.js";
+import { ClusterFindingSchema } from "../../src/analyze/analyzers/similarity-cluster/index.js";
 import { EndingLabelSchema } from "../../src/analyze/analyzers/session-ending/detect.js";
+import { NavPattern } from "../../src/analyze/analyzers/navigation-efficiency/detect.js";
+import { TargetResolutionKind } from "../../src/analyze/analyzers/task-tool-mismatch/detect.js";
+import { LeadTypeSchema } from "../../src/analyze/analyzers/uncompleted-leads/config.js";
+import { StaleRunSchema } from "../../src/analyze/analyzers/stale-verification/detect.js";
+import { VERIFICATION_VERDICTS } from "../../src/analyze/analyzers/verification-commands/decision.js";
 
 const SRC = path.resolve(import.meta.dirname, "..", "..", "src");
 const IDS = BUILTIN_ANALYZERS.map((a) => a.def.id);
@@ -32,7 +47,9 @@ function values(id: string): string[] {
 
 /** The literal members of a TypeBox union of literals. */
 function literals(schema: { anyOf?: Array<{ const?: unknown }> }): string[] {
-	return (schema.anyOf ?? []).map((m) => String(m.const));
+	const members = (schema.anyOf ?? []).map((m) => String(m.const));
+	assert.ok(members.length > 0, "the schema is not a union of literals, so a comparison against it proves nothing");
+	return members;
 }
 
 describe("metric definitions", () => {
@@ -69,6 +86,40 @@ describe("metric definitions", () => {
 		const params = CLASSIFY_TOOL.parameters.properties;
 		assert.deepEqual(values("turn-pair-llm.friction-type").sort(), literals(params.friction_type).sort());
 		assert.deepEqual(values("turn-pair-llm.sentiment").sort(), literals(params.sentiment).sort());
+	});
+
+	it("list the economy analyzers' values as the code produces them", () => {
+		assert.deepEqual(values("cache-economy.cache-classification").sort(), literals(CacheClassification).sort());
+		assert.deepEqual(values("routing-opportunity.routing-verdict").sort(), literals(RoutingVerdict).sort());
+		const kinds = ContextEconomyFlag.anyOf.map((m) => String(m.properties.kind.const));
+		assert.deepEqual(values("context-economy.waste-flag").sort(), kinds.sort());
+		const flags = Object.keys(CompactionCycle.properties).filter((k) => k.startsWith("fired"));
+		assert.deepEqual(values("context-economy.compaction-policy").sort(), flags.sort());
+		assert.deepEqual(
+			values("tool-inventory-tax.estimated-tax").sort(),
+			literals(TOOL_INVENTORY_TAX_PROPERTIES.properties.pricing_method).sort(),
+		);
+	});
+
+	it("list the same values as the planning and shape analyzers produce", () => {
+		assert.deepEqual(values("phase-trajectory.turn-phase").sort(), literals(PhaseName).sort());
+		assert.deepEqual(values("phase-trajectory.phase-signal").sort(), literals(PhaseSignalKind).sort());
+		const claims = GROUNDED_CLAIMS_PROPERTIES.properties;
+		const kinds = literals(claims.claim_kind);
+		assert.deepEqual(values("grounded-claims.ungrounded-claim").sort(), kinds.filter((k) => k !== "request").sort());
+		assert.deepEqual(values("grounded-claims.unacted-request"), kinds.filter((k) => k === "request"));
+		assert.deepEqual(values("pr-opened.pull-request-opened").sort(), literals(PULL_REQUEST_PROPERTIES.properties.via).sort());
+		assert.deepEqual(values("skill-use.skill-calls").sort(), literals(SKILL_USE_ENTRY.properties.via).sort());
+		assert.deepEqual(values("similarity-cluster.cluster").sort(), literals(ClusterFindingSchema.properties.detector).sort());
+	});
+
+	it("list the same values as the code of the tool-use analyzers", () => {
+		assert.deepEqual(values("navigation-efficiency.navigation-pattern").sort(), literals(NavPattern).sort());
+		assert.deepEqual(values("task-tool-mismatch.target-resolution").sort(), literals(TargetResolutionKind).sort());
+		assert.deepEqual(values("uncompleted-leads.lead").sort(), literals(LeadTypeSchema).sort());
+		assert.deepEqual(values("stale-verification.stale-cause").sort(), literals(StaleRunSchema.properties.cause).sort());
+		assert.deepEqual(values("stale-verification.stale-outcome").sort(), literals(StaleRunSchema.properties.outcome).sort());
+		assert.deepEqual(values("verification-commands.verdict").sort(), [...VERIFICATION_VERDICTS].sort());
 	});
 
 	it("list every rule code that session-ending can emit", () => {

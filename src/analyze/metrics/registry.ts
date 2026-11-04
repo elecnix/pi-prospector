@@ -18,17 +18,37 @@ import { CORE_OWNER, MetricDefinition } from "./types.js";
 import { metrics as activityWindows } from "../analyzers/activity-windows/metrics.js";
 import { metrics as attentionGaps } from "../analyzers/attention-gaps/metrics.js";
 import { metrics as delegationOutcomes } from "../analyzers/delegation-outcomes/metrics.js";
+import { metrics as cacheEconomy } from "../analyzers/cache-economy/metrics.js";
+import { metrics as contextEconomy } from "../analyzers/context-economy/metrics.js";
 import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
+import { metrics as frictionAccumulation } from "../analyzers/friction-accumulation/metrics.js";
+import { metrics as compressionChecklist } from "../analyzers/compression-checklist/metrics.js";
+import { metrics as filesInPlay } from "../analyzers/files-in-play/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
 import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
+import { metrics as groundedClaims } from "../analyzers/grounded-claims/metrics.js";
 import { metrics as messageOrigin } from "../analyzers/message-origin/metrics.js";
 import { metrics as repoIdentity } from "../analyzers/repo-identity/metrics.js";
+import { metrics as routingOpportunity } from "../analyzers/routing-opportunity/metrics.js";
+import { metrics as phaseTrajectory } from "../analyzers/phase-trajectory/metrics.js";
+import { metrics as planCompliance } from "../analyzers/plan-compliance/metrics.js";
+import { metrics as prOpened } from "../analyzers/pr-opened/metrics.js";
 import { metrics as sessionEnding } from "../analyzers/session-ending/metrics.js";
+import { metrics as similarityCluster } from "../analyzers/similarity-cluster/metrics.js";
+import { metrics as skillUse } from "../analyzers/skill-use/metrics.js";
+import { metrics as navigationEfficiency } from "../analyzers/navigation-efficiency/metrics.js";
+import { metrics as reviveChains } from "../analyzers/revive-chains/metrics.js";
+import { metrics as staleVerification } from "../analyzers/stale-verification/metrics.js";
+import { metrics as taskToolMismatch } from "../analyzers/task-tool-mismatch/metrics.js";
 import { metrics as timeEconomy } from "../analyzers/time-economy/metrics.js";
+import { metrics as tokenUnits } from "../analyzers/token-units/metrics.js";
+import { metrics as toolInventoryTax } from "../analyzers/tool-inventory-tax/metrics.js";
 import { metrics as toolTrajectory } from "../analyzers/tool-trajectory/metrics.js";
 import { metrics as turnFrustration } from "../analyzers/turn-frustration/metrics.js";
 import { metrics as turnPairCore } from "../analyzers/turn-pair-core/metrics.js";
 import { metrics as turnPairLlm } from "../analyzers/turn-pair-llm/metrics.js";
+import { metrics as uncompletedLeads } from "../analyzers/uncompleted-leads/metrics.js";
+import { metrics as verificationCommands } from "../analyzers/verification-commands/metrics.js";
 
 /** Every owner's definitions: an analyzer id, or `sessions`. */
 const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
@@ -36,17 +56,37 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "activity-windows", metrics: activityWindows },
 	{ owner: "attention-gaps", metrics: attentionGaps },
 	{ owner: "delegation-outcomes", metrics: delegationOutcomes },
+	{ owner: "cache-economy", metrics: cacheEconomy },
+	{ owner: "context-economy", metrics: contextEconomy },
 	{ owner: "failure-modes", metrics: failureModes },
+	{ owner: "friction-accumulation", metrics: frictionAccumulation },
+	{ owner: "compression-checklist", metrics: compressionChecklist },
+	{ owner: "files-in-play", metrics: filesInPlay },
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
 	{ owner: "git-commands", metrics: gitCommands },
+	{ owner: "grounded-claims", metrics: groundedClaims },
 	{ owner: "message-origin", metrics: messageOrigin },
 	{ owner: "repo-identity", metrics: repoIdentity },
+	{ owner: "routing-opportunity", metrics: routingOpportunity },
+	{ owner: "phase-trajectory", metrics: phaseTrajectory },
+	{ owner: "plan-compliance", metrics: planCompliance },
+	{ owner: "pr-opened", metrics: prOpened },
 	{ owner: "session-ending", metrics: sessionEnding },
+	{ owner: "similarity-cluster", metrics: similarityCluster },
+	{ owner: "skill-use", metrics: skillUse },
+	{ owner: "navigation-efficiency", metrics: navigationEfficiency },
+	{ owner: "revive-chains", metrics: reviveChains },
+	{ owner: "stale-verification", metrics: staleVerification },
+	{ owner: "task-tool-mismatch", metrics: taskToolMismatch },
 	{ owner: "time-economy", metrics: timeEconomy },
+	{ owner: "token-units", metrics: tokenUnits },
+	{ owner: "tool-inventory-tax", metrics: toolInventoryTax },
 	{ owner: "tool-trajectory", metrics: toolTrajectory },
 	{ owner: "turn-frustration", metrics: turnFrustration },
 	{ owner: "turn-pair-core", metrics: turnPairCore },
 	{ owner: "turn-pair-llm", metrics: turnPairLlm },
+	{ owner: "uncompleted-leads", metrics: uncompletedLeads },
+	{ owner: "verification-commands", metrics: verificationCommands },
 ];
 
 /**
@@ -57,42 +97,24 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
  */
 export const METRICS_PENDING: readonly string[] = [
 	"assistant-cognition",
-	"cache-economy",
-	"compression-checklist",
-	"context-economy",
 	"dataprofiler",
 	"decode-collapse",
 	"detect-secrets",
-	"files-in-play",
-	"friction-accumulation",
 	"gitleaks",
-	"grounded-claims",
 	"language-mismatch",
 	"lexicon-candidates",
-	"navigation-efficiency",
+	"message-answers",
 	"nosey-parker",
-	"phase-trajectory",
 	"piicatcher",
-	"plan-compliance",
-	"pr-opened",
 	"presidio",
+	"prompt-form",
 	"repetition-collapse",
 	"request-classes",
-	"revive-chains",
-	"routing-opportunity",
 	"rule-restatement",
 	"secret-leak",
 	"secret-scanner",
 	"session-overview",
-	"similarity-cluster",
-	"skill-use",
-	"stale-verification",
-	"task-tool-mismatch",
-	"token-units",
-	"tool-inventory-tax",
 	"trufflehog",
-	"uncompleted-leads",
-	"verification-commands",
 ];
 
 /** The definitions of one owner, or of all of them in registration order. */

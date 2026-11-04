@@ -120,11 +120,51 @@ describe("classifyMessageOrigin: agent", () => {
 		assert.equal(label("The operator is away."), "typed/undecided");
 	});
 
+	it("labels the other ways an orchestrator points a worker at a prompt file", () => {
+		assert.equal(label("Do what @/tmp/prompts/job-7.md says."), "agent/spawn-pointer");
+		assert.equal(label("Task is in file /tmp/prompts/job-7.md"), "agent/spawn-pointer");
+		assert.equal(label("Read /tmp/common.md, then /tmp/brief-a.md, and do that work. Your card tools come from the card server."), "agent/spawn-pointer");
+	});
+
+	it("labels a message one session relays for another by the handles in its opening", () => {
+		assert.equal(label("lane-b9 relaying lane-2e: verify the two open points and report both with evidence."), "agent/relay-header");
+		assert.equal(label("lane-b9 (per lane-2e, conflict listener): three pull requests edit the same files, merge in order."), "agent/relay-header");
+		assert.equal(label("the retry relaying code is wrong, please look"), "typed/no-marker");
+	});
+
+	it("labels a one-shot prompt that tells the agent exactly which tool to call", () => {
+		assert.equal(label("Call the probe server tool slow_job once, wait for it to finish, then say what it returned in one line."), "agent/probe");
+		assert.equal(label("Now call the probe server tool ask_user once and tell me what happened in one line."), "agent/probe");
+		assert.equal(label("Call the Agent tool with name t1 and prompt 'Reply with IDLE and stop.' Quote the exact Agent result and stop."), "agent/probe");
+		assert.equal(label("Call the issue tool exactly once with action='view', then reply with only the title."), "agent/probe");
+		assert.equal(label("Run this exact shell command with the Bash tool and report its output: echo hello-probe"), "agent/probe");
+		assert.equal(label("List the exact names of every tool available to you, one per line, nothing else."), "agent/probe");
+		assert.equal(label("Run ListAgents and report its exact output in full."), "agent/probe");
+		assert.equal(label("What is the code word in the document? Answer with the word only."), "agent/probe");
+	});
+
+	it("keeps a person\'s sentence typed when it only looks like a pointer or a probe", () => {
+		assert.equal(label("Do what Alice says about the retry policy."), "typed/no-marker");
+		assert.equal(label("do what he says"), "typed/no-marker");
+		assert.equal(label("Call the build tool once the tests pass and tell me what it prints."), "typed/no-marker");
+		assert.equal(label("Call the deploy tool once you have fixed the import, then tell me."), "typed/no-marker");
+	});
+
+	it("keeps a person's own request about a tool typed", () => {
+		assert.equal(label("can you call the build tool again after you fix the import, and tell me if it passes?"), "typed/no-marker");
+		assert.equal(label("Call the fleet tool and retire the finished agents now."), "typed/no-marker");
+		assert.equal(label("which tool lists the agents that are running right now"), "typed/no-marker");
+	});
+
 	it("labels a header an agent puts on a relayed message", () => {
 		assert.equal(label("Orchestrator: rebase onto main and resolve the conflict."), "agent/relay-header");
 		assert.equal(label("From an unsigned sender: the answer to your question is yes."), "agent/relay-header");
 		assert.equal(label("Your task: make the report say DEGRADED under throttle. ".repeat(6)), "agent/role-preamble");
 		assert.equal(label("cc-swift-koala-42: you have been idle for ten minutes, report status."), "agent/relay-header");
+	});
+
+	it("labels a brief that gives the worker a worktree path", () => {
+		assert.equal(label("Fix the flaky retry test in acme/widgets. Read the issue first.\nWorktree: /work/widgets-retry (branch fix/retry)"), "agent/brief");
 	});
 
 	it("labels a long markdown brief that opens on a title", () => {
@@ -165,8 +205,42 @@ describe("classifyMessageOrigin: pasted", () => {
 	});
 
 	it("sends a paste that reads like an agent's brief to the model instead of calling it a paste", () => {
-		const brief = Array.from({ length: 9 }, (_, i) => `Worktree: /work/repo-${i}\nBranch: fix/thing-${i}`).join("\n");
+		const brief = Array.from({ length: 9 }, (_, i) => `Ticket: PRI-${i}\nBranch: fix/thing-${i}`).join("\n");
 		assert.equal(classifyMessageOrigin(brief, USER).decided, false);
+	});
+
+	it("sends a paste with a person's own sentences beside it to the model, because the label depends on the sentences", () => {
+		const log = Array.from({ length: 12 }, (_, i) => `2026-01-01 10:00:${String(i).padStart(2, "0")} ERROR request failed`).join("\n");
+		const v = classifyMessageOrigin(`the retry never fires after the second failure, why is that?\n\n${log}`, USER);
+		assert.deepEqual([v.origin, v.rule, v.decided], ["typed", "undecided", false]);
+		assert.ok(v.suspicions.includes("paste-with-prose"));
+	});
+
+	it("still labels a paste with only a few words beside it pasted", () => {
+		const log = Array.from({ length: 12 }, (_, i) => `2026-01-01 10:00:${String(i).padStart(2, "0")} ERROR request failed`).join("\n");
+		assert.equal(label(`see this\n\n${log}`), "pasted/pasted-block");
+	});
+
+	it("does not call the person's own multi-line prompt a paste, however many short lines it has", () => {
+		const prompt = [
+			"I want to know the options for the retry policy:",
+			"- a fixed delay between every attempt",
+			"- an exponential delay that doubles each time",
+			"- a jitter added to either of the two above",
+			"- a cap on the number of attempts we make",
+			"- a separate cap on the total time we wait",
+			"- a way to turn it off for the tests we run",
+			"Tell me which one fits this service best.",
+			"Explain what the tradeoffs are for each choice.",
+		].join("\n");
+		const v = classifyMessageOrigin(prompt, USER);
+		assert.notEqual(v.origin + "/" + v.rule, "pasted/pasted-block");
+		assert.deepEqual([v.origin, v.decided], ["typed", false], "a long run of sentences may be the person's or an agent's, so the model decides");
+	});
+
+	it("does not call a Claude Code prompt echo a terminal capture", () => {
+		assert.equal(label("❯ restore the worktree and clean up the stranded ones, then record the incident\nit was removed by mistake\nplease check the others too"), "typed/no-marker");
+		assert.equal(label("❯ brew install iterm2\nWarning: the following taps are not trusted\nDone"), "pasted/terminal-output");
 	});
 
 	it("labels a message that is a fenced block", () => {
@@ -209,6 +283,10 @@ describe("classifyMessageOrigin: typed and undecided", () => {
 	it("labels a slash command with no arguments a notification, because a command carries no words", () => {
 		assert.equal(label("/compact"), "notification/slash-command");
 		assert.equal(label("<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>"), "notification/slash-command");
+	});
+
+	it("keeps a skill expansion typed when the person's instruction is only a link", () => {
+		assert.equal(label("<instructions>\nhttps://example.invalid/acme/widgets/issues/7\n</instructions>\n\n<guidelines>\n- Proceed test-first.\n</guidelines>"), "typed/no-marker");
 	});
 
 	it("keeps the arguments of a slash command typed", () => {

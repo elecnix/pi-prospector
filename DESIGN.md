@@ -845,13 +845,25 @@ list — the system **learns the vocabulary from the corpus**.
   it matched and its occurrences per origin, so a report can count typed text
   only. The label is a property of the hit, never part of its identity: adding
   it left each hit's source set unchanged, and the occurrences per origin add
-  up to the hit's count. The rules are in `src/analyze/text-origin.ts`.
+  up to the hit's count. The rules are in `src/analyze/text-origin.ts`. Text
+  origin labels the spans inside a message. A turn-frustration hit also reads the
+  **message origin** (below) of its turn: when that node is decided and is not
+  `typed`, every occurrence in the message takes its label, so a brief an
+  orchestrator wrote or a short terminal capture is not the person's words. A
+  `typed` or undecided message keeps the span labels, because a typed message can
+  hold a pasted block or a quoted line. The message-level rules (child agent,
+  signature, pi entry, compaction) live only in `message-origin.ts`. The span
+  labeller keeps `fork-copy`, which compares a turn with the parent session's turns.
 - **Message origin**: the label on a whole user-role message that says who wrote
   it. There are four, a closed list. `typed` means the person composed or
   dictated the words. `pasted` means the person sent material they copied, such
-  as a log, a terminal capture or a bare link. `agent` means an agent or a script
-  wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
-  a message relayed from a peer session, a one-shot probe. `notification` means
+  as a log, a terminal capture or a bare link, with few words of their own
+  beside it. A paste with sentences beside it is not decided by its layout. Neither
+  is a long run of short lines that reads as sentences, because a person who
+  presses return often writes eight lines, and an agent's brief looks the same.
+  Those messages are undecided and go to the decision model. `agent` means
+  an agent or a script wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
+  a message relayed from a peer session, a one-shot probe (a prompt that tells the agent which tool to call or which exact command to run, and what to report). `notification` means
   the harness or an extension injected it: a monitor event, a task notification,
   a slash command with no arguments, a tool result filed under the user role.
   The `message-origin` analyzer writes one metric node per turn-starting message,
@@ -859,7 +871,24 @@ list — the system **learns the vocabulary from the corpus**.
   serves a frustration hit. Message origin labels the whole message and serves any
   analyzer that must count only what a person wrote. Both read the harness
   blocks that `text-origin.ts` knows, and a report joins a hit to its message's
-  node through the message anchor.
+  node through the message anchor, and turn-frustration records the node as an
+  input by a `consumes` edge. The edge is a record and the hit's identity does not
+  include the node, the way the lexicon verdict a hit copies is not part of it: a
+  revised origin node reaches its hits when they are next recomputed, which a
+  version bump forces, and a hit never becomes a second subject beside its
+  predecessor.
+  `turn-pair-core` reads the node too: a
+  correction or a rebuttal candidate is something the person says to the agent,
+  so a message decided as `agent`, `notification` or `pasted` has no correction
+  and no rebuttal candidate, and the core node records the `origin` it read. The node is an input by a
+  `consumes` edge and stays out of the source set, so a turn keeps its identity
+  and `--revise minor` redraws it. Readers of frustration hits count the person's
+  own words: a hit's weight is scaled by its typed share (`typed_count` of
+  `count`), and a hit with no typed occurrence is dropped. A hit drawn before
+  the origin fields existed is read as it always was.
+  A revised origin node reaches its consumers when the consumer is next recomputed, which a
+  version bump forces, and not before. Run the model pass over `message-origin` first and
+  revise its consumers after it, so they read the final labels.
 - **Relayed request**: the copy of a person's request that a workflow script
   relays, word for word, into a child session under a banner that says so. The
   origin is `notification`, by the rule `relayed-request`. The person typed those
@@ -937,6 +966,20 @@ contain the new word have anything to compute.
 - **Delegation** is a call that hands work to a child agent. The child's own transcript is a separate session that records the parent.
 - **Delegation outcome** is how the host recorded the end of a delegation: **completed** (the host didn't report a failure), **failed**, **killed** (stopped before it finished), **revived** (the call resumed an earlier run), **unanswered** (no result ever arrived), or **other** (a background status the analyzer doesn't know). A background-task completion decides first, because the call itself only acknowledged the start. **Completed** never says the child's work was right.
 - **Work moved to children** is the child agents' sessions that name a session as their parent, with the messages they contain, beside the parent's own message count. It is a measure of volume, not of value. A Pi session's parent link marks a fork, which copies the parent's history, so a Pi session is never counted as a child. Pi's own subagent runs record no link to a parent session (the host joins them by project only), so a Pi parent reports zero child sessions while its delegation calls and their outcomes still count.
+
+### Message questions (decision model, message-level)
+
+- **Message question** is a small classifier question about one message, such as the kind of prompt it is. An analyzer registers it with an id, a version, the analyzer that reads the answer, the message origins it applies to, and a Choice, Score or Noul question. The registry is a table that an analyzer loaded from disk can add to. The question judges the person's own words, with pasted and quoted text and harness blocks cut out.
+- **Message answer** is the decision model's answer to one message question for one message. The `message-answers` analyzer stores all the answers for a message on one node, anchored to the message, under the keys `id.v<version>`. The node records the `message-origin` node it read by a `consumes` edge.
+- **Question batch** is the questions one request carries. A request includes every question a message has no answer for, whoever registered it. The message goes to the model once, however many analyzers ask. An answer belongs to one question id and version for one message. The layer sends a question only when that pair has no stored answer.
+- **Adding or changing a question** moves the registered set, which is part of the analyzer's config identity. The nodes go stale for the `config` reason, and `--revise config` writes a revised node for each message. The revised node keeps every answer whose id and version are unchanged and asks the model for the rest. A message with nothing new to ask costs no call.
+- **Unknown** is the reading of a message with no answer: no decision model is configured, or the answer is below the reader's confidence. A reader reports unknown apart from zero.
+
+### Prompt form (session-level)
+
+- **Prompt** is a user-role message a person typed: its message origin is `typed` and settled. Pasted blocks, quotes and harness envelopes inside it are cut, and the rest is the person's own words.
+- **Prompt kind** is the classifier's answer to the message question `prompt-kind`: **question**, **instruction**, **correction** or **other**. The classifier reads meaning, so a question without a question mark, or in a language that has none, is still a question. A prompt with no answer, or one below the configured confidence, is **unknown**.
+- **Prompt form** is a session's prompts folded into counts per kind, a length distribution, and the number of prompts that held a list, a heading, or a code block. Counts and buckets add across sessions. An undecided message is counted apart and its form isn't read, because its label is provisional.
 
 ### Language-model access
 

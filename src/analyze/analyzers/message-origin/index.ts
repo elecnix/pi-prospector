@@ -35,7 +35,6 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { decisionIdentity } from "../../decision-model.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { getSessionLineage } from "../../../db/queries.js";
 import { classifyMessageOrigin, MessageOrigin, OriginRule, OriginSuspicion, OriginVerdict } from "../../message-origin.js";
 import { DEFAULT_MESSAGE_ORIGIN_CONFIG, type MessageOriginConfig } from "./config.js";
@@ -68,7 +67,7 @@ export const MESSAGE_ORIGIN_DEF: AnalyzerDef = {
 	description:
 		"Labels each turn-starting user-role message with who wrote it: typed (a person composed it), pasted (a person sent copied material), agent (an agent or script wrote it) or notification (the harness injected it). Named rules decide almost every message; a message with only a weak sign of machine authorship goes to a decision model when one is configured.",
 	anchorSpan: "pair",
-	dependencies: [TURN_PAIR_CORE_DEF.id],
+	dependencies: [],
 	outputSchema: MessageOriginProperties,
 };
 
@@ -78,7 +77,23 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// 1.1: a workflow's relayed copy of a person's request gets its own rule,
 	// `relayed-request`. It was `notification/harness-line`, so only the rule name
 	// moves and no label changes.
-	minor: 1,
+	// 1.2: a better `pasted`. A message is a paste only when copied material is
+	// most of it and the person's own words are few (under 40 characters). A paste
+	// with sentences beside it, and a long run of sentences that the span labeller
+	// took for a paste, go to the decision model as `paste-with-prose`. A Claude Code
+	// prompt echo (`❯ please fix the failing build now`) is no shell capture, a bare link inside
+	// a skill command is the person's, and a `Worktree: /path` line marks an
+	// agent's brief.
+	// 1.3: three forms of agent or script prompt that carried no marker and read as
+	// typed. A pointer to a prompt file in other wording (`Do what @file says`, `Task is
+	// in file ...`, `Read a, then b, and do that work`). A message one session relays for
+	// another, opening on two handles (`a relaying b`, `a (per b ...)`). A one-shot probe
+	// that names the tool to call or the exact command to run. Only the rule name and the
+	// label of such messages move.
+	// 1.4: two of the 1.3 patterns were too wide. `Do what @file says` needs the `@`, so
+	// `Do what Alice says` stays a person's sentence. A tool probe needs `once` as a count
+	// (`once,` `once.` `once and`) or `with name`, not `once the tests pass`.
+	minor: 4,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/message-origin/index.ts",
 };
