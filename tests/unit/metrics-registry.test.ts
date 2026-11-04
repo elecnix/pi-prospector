@@ -25,6 +25,12 @@ import { CacheClassification } from "../../src/analyze/analyzers/cache-economy/i
 import { ContextEconomyFlag, CompactionCycle } from "../../src/analyze/analyzers/context-economy/index.js";
 import { RoutingVerdict } from "../../src/analyze/analyzers/routing-opportunity/index.js";
 import { TOOL_INVENTORY_TAX_PROPERTIES } from "../../src/analyze/analyzers/tool-inventory-tax/index.js";
+import { PhaseName } from "../../src/analyze/analyzers/phase-trajectory/config.js";
+import { PhaseSignalKind } from "../../src/analyze/analyzers/phase-trajectory/classify.js";
+import { GROUNDED_CLAIMS_PROPERTIES } from "../../src/analyze/analyzers/grounded-claims/index.js";
+import { PULL_REQUEST_PROPERTIES } from "../../src/analyze/analyzers/pr-opened/index.js";
+import { SKILL_USE_ENTRY } from "../../src/analyze/analyzers/skill-use/index.js";
+import { ClusterFindingSchema } from "../../src/analyze/analyzers/similarity-cluster/index.js";
 import { EndingLabelSchema } from "../../src/analyze/analyzers/session-ending/detect.js";
 
 const SRC = path.resolve(import.meta.dirname, "..", "..", "src");
@@ -86,6 +92,18 @@ describe("metric definitions", () => {
 			values("tool-inventory-tax.estimated-tax").sort(),
 			literals(TOOL_INVENTORY_TAX_PROPERTIES.properties.pricing_method).sort(),
 		);
+	});
+
+	it("list the same values as the planning and shape analyzers produce", () => {
+		assert.deepEqual(values("phase-trajectory.turn-phase").sort(), literals(PhaseName).sort());
+		assert.deepEqual(values("phase-trajectory.phase-signal").sort(), literals(PhaseSignalKind).sort());
+		const claims = GROUNDED_CLAIMS_PROPERTIES.properties;
+		const kinds = literals(claims.claim_kind);
+		assert.deepEqual(values("grounded-claims.ungrounded-claim").sort(), kinds.filter((k) => k !== "request").sort());
+		assert.deepEqual(values("grounded-claims.unacted-request"), kinds.filter((k) => k === "request"));
+		assert.deepEqual(values("pr-opened.pull-request-opened").sort(), literals(PULL_REQUEST_PROPERTIES.properties.via).sort());
+		assert.deepEqual(values("skill-use.skill-calls").sort(), literals(SKILL_USE_ENTRY.properties.via).sort());
+		assert.deepEqual(values("similarity-cluster.cluster").sort(), literals(ClusterFindingSchema.properties.detector).sort());
 	});
 
 	it("list every rule code that session-ending can emit", () => {
