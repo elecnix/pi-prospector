@@ -136,10 +136,18 @@ describe("classifyMessageOrigin: agent", () => {
 		assert.equal(label("Call the probe server tool slow_job once, wait for it to finish, then say what it returned in one line."), "agent/probe");
 		assert.equal(label("Now call the probe server tool ask_user once and tell me what happened in one line."), "agent/probe");
 		assert.equal(label("Call the Agent tool with name t1 and prompt 'Reply with IDLE and stop.' Quote the exact Agent result and stop."), "agent/probe");
+		assert.equal(label("Call the issue tool exactly once with action='view', then reply with only the title."), "agent/probe");
 		assert.equal(label("Run this exact shell command with the Bash tool and report its output: echo hello-probe"), "agent/probe");
 		assert.equal(label("List the exact names of every tool available to you, one per line, nothing else."), "agent/probe");
 		assert.equal(label("Run ListAgents and report its exact output in full."), "agent/probe");
 		assert.equal(label("What is the code word in the document? Answer with the word only."), "agent/probe");
+	});
+
+	it("keeps a person\'s sentence typed when it only looks like a pointer or a probe", () => {
+		assert.equal(label("Do what Alice says about the retry policy."), "typed/no-marker");
+		assert.equal(label("do what he says"), "typed/no-marker");
+		assert.equal(label("Call the build tool once the tests pass and tell me what it prints."), "typed/no-marker");
+		assert.equal(label("Call the deploy tool once you have fixed the import, then tell me."), "typed/no-marker");
 	});
 
 	it("keeps a person's own request about a tool typed", () => {
