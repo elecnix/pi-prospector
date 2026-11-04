@@ -42,6 +42,14 @@ import { TargetResolutionKind } from "../../src/analyze/analyzers/task-tool-mism
 import { LeadTypeSchema } from "../../src/analyze/analyzers/uncompleted-leads/config.js";
 import { StaleRunSchema } from "../../src/analyze/analyzers/stale-verification/detect.js";
 import { VERIFICATION_VERDICTS } from "../../src/analyze/analyzers/verification-commands/decision.js";
+import { LeakConfidence, LeakSeverity } from "../../src/analyze/analyzers/secret-scanner.js";
+import { ARTIFACT_KINDS } from "../../src/analyze/analyzers/secret-scanner/extractors.js";
+import { DETECT_SECRETS_PLUGINS } from "../../src/analyze/analyzers/detect-secrets/generators.js";
+import { VerificationSummary } from "../../src/analyze/analyzers/trufflehog/detectors.js";
+import { PII_ENTITY_TYPES, PII_SEVERITIES } from "../../src/analyze/analyzers/presidio/recognizers.js";
+import { FRAGMENT_KINDS } from "../../src/analyze/analyzers/piicatcher/fragments.js";
+import { FileFormatSchema } from "../../src/analyze/analyzers/dataprofiler/file-touches.js";
+import { COLUMN_VERDICTS } from "../../src/analyze/analyzers/dataprofiler/profile.js";
 
 const SRC = path.resolve(import.meta.dirname, "..", "..", "src");
 const IDS = BUILTIN_ANALYZERS.map((a) => a.def.id);
@@ -145,6 +153,22 @@ describe("metric definitions", () => {
 		assert.deepEqual(values("session-overview.positive-signal").sort(), literals(params.key_positive_signals.items.properties.signal).sort());
 		assert.deepEqual(values("session-overview.improvement-proposal").sort(), literals(params.improvement_proposals.items.properties.target_type).sort());
 		assert.deepEqual(values("rule-restatement.rule-status").sort(), literals(RuleStatus).sort());
+	});
+
+	it("list the same values as the security scanners produce", () => {
+		for (const id of ["secret-leak", "gitleaks", "nosey-parker", "detect-secrets", "trufflehog"]) {
+			assert.deepEqual(values(`${id}.leak-severity`).sort(), literals(LeakSeverity).sort(), id);
+			assert.deepEqual(values(`${id}.leak-confidence`).sort(), literals(LeakConfidence).sort(), id);
+		}
+		assert.deepEqual(values("detect-secrets.plugin").sort(), [...DETECT_SECRETS_PLUGINS].sort());
+		assert.deepEqual(values("secret-scanner.artifact-kind").sort(), [...ARTIFACT_KINDS].sort());
+		const tally = Object.keys(VerificationSummary.properties).filter((k) => k !== "probes_issued");
+		assert.deepEqual(values("trufflehog.verification").sort(), tally.sort());
+		assert.deepEqual(values("presidio.entity-type").sort(), [...PII_ENTITY_TYPES].sort());
+		assert.deepEqual(values("presidio.pii-severity").sort(), [...PII_SEVERITIES].sort());
+		assert.deepEqual(values("piicatcher.fragment-kind").sort(), [...FRAGMENT_KINDS].sort());
+		assert.deepEqual(values("dataprofiler.file-format").sort(), literals(FileFormatSchema).sort());
+		assert.deepEqual(values("dataprofiler.column-verdict").sort(), [...COLUMN_VERDICTS].sort());
 	});
 
 	it("list every rule code that session-ending can emit", () => {

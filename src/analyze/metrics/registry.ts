@@ -25,23 +25,31 @@ import { metrics as repetitionCollapse } from "../analyzers/repetition-collapse/
 import { metrics as requestClasses } from "../analyzers/request-classes/metrics.js";
 import { metrics as activityWindows } from "../analyzers/activity-windows/metrics.js";
 import { metrics as attentionGaps } from "../analyzers/attention-gaps/metrics.js";
+import { metrics as dataprofiler } from "../analyzers/dataprofiler/metrics.js";
 import { metrics as delegationOutcomes } from "../analyzers/delegation-outcomes/metrics.js";
 import { metrics as cacheEconomy } from "../analyzers/cache-economy/metrics.js";
 import { metrics as contextEconomy } from "../analyzers/context-economy/metrics.js";
+import { metrics as detectSecrets } from "../analyzers/detect-secrets/metrics.js";
 import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
 import { metrics as frictionAccumulation } from "../analyzers/friction-accumulation/metrics.js";
 import { metrics as compressionChecklist } from "../analyzers/compression-checklist/metrics.js";
 import { metrics as filesInPlay } from "../analyzers/files-in-play/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
 import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
+import { metrics as gitleaks } from "../analyzers/gitleaks/metrics.js";
 import { metrics as groundedClaims } from "../analyzers/grounded-claims/metrics.js";
 import { metrics as messageOrigin } from "../analyzers/message-origin/metrics.js";
+import { metrics as noseyParker } from "../analyzers/nosey-parker/metrics.js";
+import { metrics as piicatcher } from "../analyzers/piicatcher/metrics.js";
+import { metrics as presidio } from "../analyzers/presidio/metrics.js";
 import { metrics as repoIdentity } from "../analyzers/repo-identity/metrics.js";
 import { metrics as routingOpportunity } from "../analyzers/routing-opportunity/metrics.js";
 import { metrics as ruleRestatement } from "../analyzers/rule-restatement/metrics.js";
 import { metrics as phaseTrajectory } from "../analyzers/phase-trajectory/metrics.js";
 import { metrics as planCompliance } from "../analyzers/plan-compliance/metrics.js";
 import { metrics as prOpened } from "../analyzers/pr-opened/metrics.js";
+import { metrics as secretLeak } from "../analyzers/secret-leak/metrics.js";
+import { metrics as secretScanner } from "../analyzers/secret-scanner/metrics.js";
 import { metrics as sessionEnding } from "../analyzers/session-ending/metrics.js";
 import { metrics as sessionOverview } from "../analyzers/session-overview/metrics.js";
 import { metrics as similarityCluster } from "../analyzers/similarity-cluster/metrics.js";
@@ -54,6 +62,7 @@ import { metrics as timeEconomy } from "../analyzers/time-economy/metrics.js";
 import { metrics as tokenUnits } from "../analyzers/token-units/metrics.js";
 import { metrics as toolInventoryTax } from "../analyzers/tool-inventory-tax/metrics.js";
 import { metrics as toolTrajectory } from "../analyzers/tool-trajectory/metrics.js";
+import { metrics as trufflehog } from "../analyzers/trufflehog/metrics.js";
 import { metrics as turnFrustration } from "../analyzers/turn-frustration/metrics.js";
 import { metrics as turnPairCore } from "../analyzers/turn-pair-core/metrics.js";
 import { metrics as turnPairLlm } from "../analyzers/turn-pair-llm/metrics.js";
@@ -73,23 +82,31 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "request-classes", metrics: requestClasses },
 	{ owner: "activity-windows", metrics: activityWindows },
 	{ owner: "attention-gaps", metrics: attentionGaps },
+	{ owner: "dataprofiler", metrics: dataprofiler },
 	{ owner: "delegation-outcomes", metrics: delegationOutcomes },
 	{ owner: "cache-economy", metrics: cacheEconomy },
 	{ owner: "context-economy", metrics: contextEconomy },
+	{ owner: "detect-secrets", metrics: detectSecrets },
 	{ owner: "failure-modes", metrics: failureModes },
 	{ owner: "friction-accumulation", metrics: frictionAccumulation },
 	{ owner: "compression-checklist", metrics: compressionChecklist },
 	{ owner: "files-in-play", metrics: filesInPlay },
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
 	{ owner: "git-commands", metrics: gitCommands },
+	{ owner: "gitleaks", metrics: gitleaks },
 	{ owner: "grounded-claims", metrics: groundedClaims },
 	{ owner: "message-origin", metrics: messageOrigin },
+	{ owner: "nosey-parker", metrics: noseyParker },
+	{ owner: "piicatcher", metrics: piicatcher },
+	{ owner: "presidio", metrics: presidio },
 	{ owner: "repo-identity", metrics: repoIdentity },
 	{ owner: "routing-opportunity", metrics: routingOpportunity },
 	{ owner: "phase-trajectory", metrics: phaseTrajectory },
 	{ owner: "plan-compliance", metrics: planCompliance },
 	{ owner: "pr-opened", metrics: prOpened },
 	{ owner: "rule-restatement", metrics: ruleRestatement },
+	{ owner: "secret-leak", metrics: secretLeak },
+	{ owner: "secret-scanner", metrics: secretScanner },
 	{ owner: "session-ending", metrics: sessionEnding },
 	{ owner: "session-overview", metrics: sessionOverview },
 	{ owner: "similarity-cluster", metrics: similarityCluster },
@@ -102,6 +119,7 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "token-units", metrics: tokenUnits },
 	{ owner: "tool-inventory-tax", metrics: toolInventoryTax },
 	{ owner: "tool-trajectory", metrics: toolTrajectory },
+	{ owner: "trufflehog", metrics: trufflehog },
 	{ owner: "turn-frustration", metrics: turnFrustration },
 	{ owner: "turn-pair-core", metrics: turnPairCore },
 	{ owner: "turn-pair-llm", metrics: turnPairLlm },
@@ -116,15 +134,6 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
  * none.
  */
 export const METRICS_PENDING: readonly string[] = [
-	"dataprofiler",
-	"detect-secrets",
-	"gitleaks",
-	"nosey-parker",
-	"piicatcher",
-	"presidio",
-	"secret-leak",
-	"secret-scanner",
-	"trufflehog",
 ];
 
 /** The definitions of one owner, or of all of them in registration order. */
