@@ -90,7 +90,10 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// another, opening on two handles (`a relaying b`, `a (per b ...)`). A one-shot probe
 	// that names the tool to call or the exact command to run. Only the rule name and the
 	// label of such messages move.
-	minor: 3,
+	// 1.4: two of the 1.3 patterns were too wide. `Do what @file says` needs the `@`, so
+	// `Do what Alice says` stays a person's sentence. A tool probe needs `once` as a count
+	// (`once,` `once.` `once and`) or `with name`, not `once the tests pass`.
+	minor: 4,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/message-origin/index.ts",
 };
