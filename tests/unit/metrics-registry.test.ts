@@ -21,6 +21,10 @@ import { CORE_OWNER } from "../../src/analyze/metrics/types.js";
 import { CLASSIFY_TOOL } from "../../src/analyze/analyzers/turn-pair-llm/prompt.js";
 import { MESSAGE_ORIGINS } from "../../src/analyze/message-origin.js";
 import { TEXT_ORIGINS } from "../../src/analyze/text-origin.js";
+import { CacheClassification } from "../../src/analyze/analyzers/cache-economy/index.js";
+import { ContextEconomyFlag, CompactionCycle } from "../../src/analyze/analyzers/context-economy/index.js";
+import { RoutingVerdict } from "../../src/analyze/analyzers/routing-opportunity/index.js";
+import { TOOL_INVENTORY_TAX_PROPERTIES } from "../../src/analyze/analyzers/tool-inventory-tax/index.js";
 import { EndingLabelSchema } from "../../src/analyze/analyzers/session-ending/detect.js";
 
 const SRC = path.resolve(import.meta.dirname, "..", "..", "src");
@@ -69,6 +73,19 @@ describe("metric definitions", () => {
 		const params = CLASSIFY_TOOL.parameters.properties;
 		assert.deepEqual(values("turn-pair-llm.friction-type").sort(), literals(params.friction_type).sort());
 		assert.deepEqual(values("turn-pair-llm.sentiment").sort(), literals(params.sentiment).sort());
+	});
+
+	it("list the economy analyzers' values as the code produces them", () => {
+		assert.deepEqual(values("cache-economy.cache-classification").sort(), literals(CacheClassification).sort());
+		assert.deepEqual(values("routing-opportunity.routing-verdict").sort(), literals(RoutingVerdict).sort());
+		const kinds = ContextEconomyFlag.anyOf.map((m) => String(m.properties.kind.const));
+		assert.deepEqual(values("context-economy.waste-flag").sort(), kinds.sort());
+		const flags = Object.keys(CompactionCycle.properties).filter((k) => k.startsWith("fired"));
+		assert.deepEqual(values("context-economy.compaction-policy").sort(), flags.sort());
+		assert.deepEqual(
+			values("tool-inventory-tax.estimated-tax").sort(),
+			literals(TOOL_INVENTORY_TAX_PROPERTIES.properties.pricing_method).sort(),
+		);
 	});
 
 	it("list every rule code that session-ending can emit", () => {

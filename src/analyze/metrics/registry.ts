@@ -18,13 +18,18 @@ import { CORE_OWNER, MetricDefinition } from "./types.js";
 import { metrics as activityWindows } from "../analyzers/activity-windows/metrics.js";
 import { metrics as attentionGaps } from "../analyzers/attention-gaps/metrics.js";
 import { metrics as delegationOutcomes } from "../analyzers/delegation-outcomes/metrics.js";
+import { metrics as cacheEconomy } from "../analyzers/cache-economy/metrics.js";
+import { metrics as contextEconomy } from "../analyzers/context-economy/metrics.js";
 import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
 import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
 import { metrics as messageOrigin } from "../analyzers/message-origin/metrics.js";
 import { metrics as repoIdentity } from "../analyzers/repo-identity/metrics.js";
+import { metrics as routingOpportunity } from "../analyzers/routing-opportunity/metrics.js";
 import { metrics as sessionEnding } from "../analyzers/session-ending/metrics.js";
 import { metrics as timeEconomy } from "../analyzers/time-economy/metrics.js";
+import { metrics as tokenUnits } from "../analyzers/token-units/metrics.js";
+import { metrics as toolInventoryTax } from "../analyzers/tool-inventory-tax/metrics.js";
 import { metrics as toolTrajectory } from "../analyzers/tool-trajectory/metrics.js";
 import { metrics as turnFrustration } from "../analyzers/turn-frustration/metrics.js";
 import { metrics as turnPairCore } from "../analyzers/turn-pair-core/metrics.js";
@@ -36,13 +41,18 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "activity-windows", metrics: activityWindows },
 	{ owner: "attention-gaps", metrics: attentionGaps },
 	{ owner: "delegation-outcomes", metrics: delegationOutcomes },
+	{ owner: "cache-economy", metrics: cacheEconomy },
+	{ owner: "context-economy", metrics: contextEconomy },
 	{ owner: "failure-modes", metrics: failureModes },
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
 	{ owner: "git-commands", metrics: gitCommands },
 	{ owner: "message-origin", metrics: messageOrigin },
 	{ owner: "repo-identity", metrics: repoIdentity },
+	{ owner: "routing-opportunity", metrics: routingOpportunity },
 	{ owner: "session-ending", metrics: sessionEnding },
 	{ owner: "time-economy", metrics: timeEconomy },
+	{ owner: "token-units", metrics: tokenUnits },
+	{ owner: "tool-inventory-tax", metrics: toolInventoryTax },
 	{ owner: "tool-trajectory", metrics: toolTrajectory },
 	{ owner: "turn-frustration", metrics: turnFrustration },
 	{ owner: "turn-pair-core", metrics: turnPairCore },
@@ -57,9 +67,7 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
  */
 export const METRICS_PENDING: readonly string[] = [
 	"assistant-cognition",
-	"cache-economy",
 	"compression-checklist",
-	"context-economy",
 	"dataprofiler",
 	"decode-collapse",
 	"detect-secrets",
@@ -81,7 +89,6 @@ export const METRICS_PENDING: readonly string[] = [
 	"repetition-collapse",
 	"request-classes",
 	"revive-chains",
-	"routing-opportunity",
 	"rule-restatement",
 	"secret-leak",
 	"secret-scanner",
@@ -90,8 +97,6 @@ export const METRICS_PENDING: readonly string[] = [
 	"skill-use",
 	"stale-verification",
 	"task-tool-mismatch",
-	"token-units",
-	"tool-inventory-tax",
 	"trufflehog",
 	"uncompleted-leads",
 	"verification-commands",
