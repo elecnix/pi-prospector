@@ -31,6 +31,9 @@ import { GROUNDED_CLAIMS_PROPERTIES } from "../../src/analyze/analyzers/grounded
 import { PULL_REQUEST_PROPERTIES } from "../../src/analyze/analyzers/pr-opened/index.js";
 import { SKILL_USE_ENTRY } from "../../src/analyze/analyzers/skill-use/index.js";
 import { ClusterFindingSchema } from "../../src/analyze/analyzers/similarity-cluster/index.js";
+import { PromptKindOrUnknown } from "../../src/analyze/analyzers/prompt-form/detect.js";
+import { SCRIPT_NAMES } from "../../src/analyze/analyzers/language-mismatch/detect.js";
+import { CollapseChannel } from "../../src/analyze/analyzers/repetition-collapse/detect.js";
 import { EndingLabelSchema } from "../../src/analyze/analyzers/session-ending/detect.js";
 import { NavPattern } from "../../src/analyze/analyzers/navigation-efficiency/detect.js";
 import { TargetResolutionKind } from "../../src/analyze/analyzers/task-tool-mismatch/detect.js";
@@ -62,11 +65,17 @@ describe("metric definitions", () => {
 		for (const owner of owners) assert.ok(owner === CORE_OWNER || IDS.includes(owner), `${owner} is neither an analyzer nor '${CORE_OWNER}'`);
 	});
 
-	it("call a metric inferred only when the analyzer calls a model", () => {
+	it("call a metric inferred only when the analyzer, or one it reads, calls a model", () => {
+		const callsModel = (id: string, seen = new Set<string>()): boolean => {
+			const analyzer = BUILTIN_ANALYZERS.find((a) => a.def.id === id);
+			if (analyzer === undefined || seen.has(id)) return false;
+			seen.add(id);
+			return analyzer.version.implementationKind === "in_process_llm" || (analyzer.def.dependencies ?? []).some((d) => callsModel(d, seen));
+		};
 		for (const metric of listMetrics()) {
 			const owner = metric.id.slice(0, metric.id.indexOf("."));
 			const analyzer = BUILTIN_ANALYZERS.find((a) => a.def.id === owner);
-			if (metric.measurement === "inferred") assert.equal(analyzer?.version.implementationKind, "in_process_llm", `${metric.id} is inferred`);
+			if (metric.measurement === "inferred") assert.ok(callsModel(owner), `${metric.id} is inferred`);
 			if (analyzer?.version.implementationKind === "in_process_llm" && metric.measurement !== "inferred") {
 				assert.fail(`${metric.id} comes from a model-calling analyzer, so it is not ${metric.measurement}`);
 			}
@@ -120,6 +129,12 @@ describe("metric definitions", () => {
 		assert.deepEqual(values("stale-verification.stale-cause").sort(), literals(StaleRunSchema.properties.cause).sort());
 		assert.deepEqual(values("stale-verification.stale-outcome").sort(), literals(StaleRunSchema.properties.outcome).sort());
 		assert.deepEqual(values("verification-commands.verdict").sort(), [...VERIFICATION_VERDICTS].sort());
+	});
+
+	it("list the same values as the language and cognition analyzers produce", () => {
+		assert.deepEqual(values("prompt-form.prompt-kind").sort(), literals(PromptKindOrUnknown).sort());
+		assert.deepEqual(values("language-mismatch.mismatched-turns").sort(), [...SCRIPT_NAMES].sort());
+		assert.deepEqual(values("repetition-collapse.collapsed-steps").sort(), literals(CollapseChannel).sort());
 	});
 
 	it("list every rule code that session-ending can emit", () => {
