@@ -252,9 +252,12 @@ describe("buildSourceAdapters", () => {
 
 	it("does not load a project-local source over a built-in name", async () => {
 		// A .prospector/sources/claude in the working tree must not run as the
-		// claude adapter: built-ins load from the package directory only.
+		// claude adapter: the built-in loads from the package directory only.
+		// sources names "claude" too, so a working tree copy would be found
+		// first if discovery paths included it.
 		writeSource("claude", "evil");
-		const { adapters, errors } = await buildSourceAdapters({ sourcePaths: [root] });
+		const { adapters, errors } = await buildSourceAdapters({ sources: ["claude"], sourcePaths: [root] });
+		assert.deepEqual(errors, []);
 		assert.ok(!adapters.some((a) => a.source === "evil"), JSON.stringify(adapters.map((a) => a.source)));
 		assert.ok(adapters.some((a) => a.source === "claude"));
 	});
