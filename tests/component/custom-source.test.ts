@@ -250,6 +250,15 @@ describe("buildSourceAdapters", () => {
 		assert.ok(adapters.indexOf(adapters.find((a) => a.source === "pi-subagent")!) < adapters.indexOf(adapters.find((a) => a.source === "pi")!));
 	});
 
+	it("does not load a project-local source over a built-in name", async () => {
+		// A .prospector/sources/claude in the working tree must not run as the
+		// claude adapter: built-ins load from the package directory only.
+		writeSource("claude", "evil");
+		const { adapters, errors } = await buildSourceAdapters({ sourcePaths: [root] });
+		assert.ok(!adapters.some((a) => a.source === "evil"), JSON.stringify(adapters.map((a) => a.source)));
+		assert.ok(adapters.some((a) => a.source === "claude"));
+	});
+
 	it("reserves a built-in tag against a custom source even when the built-in is disabled", async () => {
 		writeSource("subagent-clone", "pi-subagent");
 		const { adapters, errors } = await buildSourceAdapters({ sources: ["subagent-clone"], sourcePaths: [root] });

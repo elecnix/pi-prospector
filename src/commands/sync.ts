@@ -22,39 +22,48 @@ const PROJECT_SOURCES_DIR = path.join(".prospector", "sources");
 
 /**
  * The package's own built-in sources: one directory per source under
- * `src/sync/sources`, the lowest-precedence discovery path, so a custom source
- * may shadow a built-in name and every built-in resolves from here when no
- * discovery path supplies one.
+ * `src/sync/sources`, the same directory shape the custom-source loader
+ * resolves, but read directly — a discovery path where precedence does not
+ * apply — so a working tree cannot displace a built-in.
  */
 const BUILTIN_SOURCES_DIR = fileURLToPath(new URL("../sync/sources/", import.meta.url));
 
+/**
+ * Where config, project, and user custom sources are discovered, highest
+ * precedence first. The built-ins are not part of this list: they load from
+ * the package's own sources directory in `buildSourceAdapters`, so a working
+ * tree cannot displace one by dropping a same-named directory into a
+ * project-local dir.
+ */
 export function sourceDiscoveryPaths(config: ProspectorConfig = loadConfig()): string[] {
-	const paths = resolveSourcePaths({
+	return resolveSourcePaths({
 		config,
 		projectDir: path.resolve(process.cwd(), PROJECT_SOURCES_DIR),
 		userDir: PI_AGENT_SOURCES_DIR,
 	});
-	return paths.includes(BUILTIN_SOURCES_DIR) ? paths : [...paths, BUILTIN_SOURCES_DIR];
 }
 
 /**
  * The adapters one sync runs: the built-in sources plus every custom source
  * config `sources` names, ordered by each adapter's declared priority.
  *
- * Built-ins and customs load through the same loader. The built-ins load first
- * so their tags can be collected into the reserved set a custom source must not
- * claim; the names themselves are discovered from `src/sync/sources`, never a
- * hand-kept list. A built-in runs unless it declares `enabledByDefault: false`
- * and config does not name it (pi-subagent). A name that matches no directory, a
- * module that fails to import, and a tag collision are returned as errors — the
- * caller decides whether they are fatal (the sync command surfaces them in its
- * output).
+ * Built-ins and customs load through the same loader. The built-ins load from
+ * the package's own sources directory only, so a working tree cannot displace
+ * one by dropping a same-named directory into a project-local dir; their tags
+ * are then collected into the reserved set a custom source must not claim
+ * (including one that fails to load, which still reserves its name). The
+ * names themselves are discovered from `src/sync/sources`, never a hand-kept
+ * list. A built-in runs unless it declares `enabledByDefault: false` and
+ * config does not name it (pi-subagent). A name that matches no directory, a
+ * module that fails to import, and a tag collision are returned as errors —
+ * the caller decides whether they are fatal (the sync command surfaces them
+ * in its output).
  */
 export async function buildSourceAdapters(config: ProspectorConfig = loadConfig()): Promise<{ adapters: SessionSourceAdapter[]; errors: string[] }> {
 	const { names: selected, error } = sourceNames(config);
 	const paths = sourceDiscoveryPaths(config);
 	const builtinNames = discoverSourceNames(BUILTIN_SOURCES_DIR);
-	const builtins = await loadCustomSources({ names: builtinNames, paths });
+	const builtins = await loadCustomSources({ names: builtinNames, paths: [BUILTIN_SOURCES_DIR] });
 	const errors: string[] = [];
 	if (error) errors.push(error);
 	for (const e of builtins.errors) errors.push(e.file ? `${e.name} (${e.file}): ${e.message}` : e.message);
