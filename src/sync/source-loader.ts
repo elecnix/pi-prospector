@@ -4,10 +4,12 @@
  * The composition root resolves a source by name: config `sources` may name a
  * custom one beside the built-in keys, and a matching directory holding
  * `index.{ts,js,mjs}` under a discovery path supplies the adapter. The
- * built-in sources are directories of the same shape in the package's own
- * `src/sync/sources`, the lowest-precedence discovery path, so built-ins and
- * custom sources load through this one code path. Because the extension runs
- * under `tsx`, a source can be plain `.ts`; `.js`/`.mjs` work too.
+ * built-in sources are directories of the same form in the package's own
+ * `src/sync/sources`. The composition root passes that directory to this
+ * loader directly, so built-ins and custom sources use the same discovery,
+ * import, and validation code. Custom discovery paths cannot replace a
+ * built-in. Because the extension runs under `tsx`, a source can be plain
+ * `.ts`; `.js`/`.mjs` work too.
  *
  * Discovery resolves a precedence-ordered list of directories — the user (Pi
  * agent) sources dir, a project-local dir, and any extra paths config or tests
