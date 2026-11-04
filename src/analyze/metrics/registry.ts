@@ -15,6 +15,14 @@
 import { Check } from "typebox/value";
 import { CORE_METRICS } from "./core.js";
 import { CORE_OWNER, MetricDefinition } from "./types.js";
+import { metrics as assistantCognition } from "../analyzers/assistant-cognition/metrics.js";
+import { metrics as decodeCollapse } from "../analyzers/decode-collapse/metrics.js";
+import { metrics as languageMismatch } from "../analyzers/language-mismatch/metrics.js";
+import { metrics as lexiconCandidates } from "../analyzers/lexicon-candidates/metrics.js";
+import { metrics as messageAnswers } from "../analyzers/message-answers/metrics.js";
+import { metrics as promptForm } from "../analyzers/prompt-form/metrics.js";
+import { metrics as repetitionCollapse } from "../analyzers/repetition-collapse/metrics.js";
+import { metrics as requestClasses } from "../analyzers/request-classes/metrics.js";
 import { metrics as activityWindows } from "../analyzers/activity-windows/metrics.js";
 import { metrics as attentionGaps } from "../analyzers/attention-gaps/metrics.js";
 import { metrics as delegationOutcomes } from "../analyzers/delegation-outcomes/metrics.js";
@@ -53,6 +61,14 @@ import { metrics as verificationCommands } from "../analyzers/verification-comma
 /** Every owner's definitions: an analyzer id, or `sessions`. */
 const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: CORE_OWNER, metrics: CORE_METRICS },
+	{ owner: "assistant-cognition", metrics: assistantCognition },
+	{ owner: "decode-collapse", metrics: decodeCollapse },
+	{ owner: "language-mismatch", metrics: languageMismatch },
+	{ owner: "lexicon-candidates", metrics: lexiconCandidates },
+	{ owner: "message-answers", metrics: messageAnswers },
+	{ owner: "prompt-form", metrics: promptForm },
+	{ owner: "repetition-collapse", metrics: repetitionCollapse },
+	{ owner: "request-classes", metrics: requestClasses },
 	{ owner: "activity-windows", metrics: activityWindows },
 	{ owner: "attention-gaps", metrics: attentionGaps },
 	{ owner: "delegation-outcomes", metrics: delegationOutcomes },
@@ -96,20 +112,12 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
  * none.
  */
 export const METRICS_PENDING: readonly string[] = [
-	"assistant-cognition",
 	"dataprofiler",
-	"decode-collapse",
 	"detect-secrets",
 	"gitleaks",
-	"language-mismatch",
-	"lexicon-candidates",
-	"message-answers",
 	"nosey-parker",
 	"piicatcher",
 	"presidio",
-	"prompt-form",
-	"repetition-collapse",
-	"request-classes",
 	"rule-restatement",
 	"secret-leak",
 	"secret-scanner",
