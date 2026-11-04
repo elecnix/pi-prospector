@@ -12,9 +12,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runSync } from "../../src/sync/index.js";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
-import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
-import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
+import { PiSubagentSource } from "../../src/sync/sources/pi-subagent/index.js";
 import { makeTempRoot, messageLine, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
 
 /**

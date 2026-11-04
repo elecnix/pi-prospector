@@ -18,7 +18,7 @@ import * as os from "node:os";
 import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
 import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
-import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { getBackgroundTasksForSession } from "../../src/db/queries.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { createMockLLM } from "../../src/analyze/mock-llm.js";

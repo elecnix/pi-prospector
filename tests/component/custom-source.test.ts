@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadCustomSources, resolveSourcePaths } from "../../src/sync/source-loader.js";
-import { buildCustomAdapters, composeAdapters, runProspectSync } from "../../src/commands/sync.js";
-import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
+import { discoverSourceNames, loadCustomSources, resolveSourcePaths } from "../../src/sync/source-loader.js";
+import { buildSourceAdapters, runProspectSync } from "../../src/commands/sync.js";
+import { sortSourceAdapters } from "../../src/sync/adapter.js";
+import { PiSubagentSource } from "../../src/sync/sources/pi-subagent/index.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
 import type { SessionSourceAdapter } from "../../src/sync/adapter.js";
 import type { ProspectorConfig } from "../../src/types.js";
 import { runSync } from "../../src/sync/index.js";
@@ -90,6 +91,18 @@ describe("resolveSourcePaths", () => {
 });
 
 describe("loadCustomSources", () => {
+	it("discovers the source names under one directory", () => {
+		writeSource("echo", "echo");
+		writeSource("zeta", "zeta", "index.js");
+		fs.mkdirSync(path.join(root, "not-a-source"), { recursive: true });
+		const names = discoverSourceNames(root);
+		assert.deepEqual(names, ["echo", "zeta"]);
+	});
+
+	it("discovers no source names under a missing directory", () => {
+		assert.deepEqual(discoverSourceNames(path.join(root, "absent")), []);
+	});
+
 	it("loads a valid source directory and keeps its adapter", async () => {
 		writeSource("echo", "echo");
 		const result = await loadCustomSources({ names: ["echo"], paths: [root] });
@@ -203,13 +216,45 @@ describe("a custom source through runSync", () => {
 	});
 });
 
-describe("buildCustomAdapters", () => {
+describe("buildSourceAdapters", () => {
 	it("finds a source named in config sourcePaths", async () => {
 		writeSource("echo", "echo");
-		const { adapters, errors } = await buildCustomAdapters({ sources: ["echo"], sourcePaths: [root] });
+		const { adapters, errors } = await buildSourceAdapters({ sources: ["echo"], sourcePaths: [root] });
 		assert.deepEqual(errors, []);
-		assert.equal(adapters.length, 1);
-		assert.equal(adapters[0]!.source, "echo");
+		assert.ok(adapters.some((a) => a.source === "echo"));
+	});
+
+	it("loads the default built-ins without config and leaves pi-subagent out", async () => {
+		const { adapters, errors } = await buildSourceAdapters({});
+		assert.deepEqual(errors, []);
+		assert.deepEqual(
+			adapters.map((a) => a.source),
+			["claude", "codex", "opencode", "cline", "pi"],
+		);
+	});
+
+	it("loads pi-subagent only when sources names it", async () => {
+		const { adapters, errors } = await buildSourceAdapters({ sources: ["pi-subagent"] });
+		assert.deepEqual(errors, []);
+		assert.deepEqual(
+			adapters.map((a) => a.source),
+			["claude", "codex", "opencode", "cline", "pi-subagent", "pi"],
+		);
+	});
+
+	it("orders a custom source after every built-in", async () => {
+		writeSource("echo", "echo");
+		const { adapters, errors } = await buildSourceAdapters({ sources: ["pi-subagent", "echo"], sourcePaths: [root] });
+		assert.deepEqual(errors, []);
+		assert.equal(adapters.at(-1)!.source, "echo");
+		assert.ok(adapters.indexOf(adapters.find((a) => a.source === "pi-subagent")!) < adapters.indexOf(adapters.find((a) => a.source === "pi")!));
+	});
+
+	it("reserves a built-in tag against a custom source even when the built-in is disabled", async () => {
+		writeSource("subagent-clone", "pi-subagent");
+		const { adapters, errors } = await buildSourceAdapters({ sources: ["subagent-clone"], sourcePaths: [root] });
+		assert.ok(errors.some((e) => /built-in/.test(e)), JSON.stringify(errors));
+		assert.ok(!adapters.some((a) => a.source === "pi-subagent"));
 	});
 });
 
@@ -250,7 +295,7 @@ function overlappingSource(root: string): SessionSourceAdapter {
 }
 
 describe("adapter order", () => {
-	it("keeps the built-in adapters ahead of custom ones, so pi-subagent keeps the child runs", async () => {
+	it("keeps pi-subagent ahead of pi, and every built-in ahead of a custom source, so pi-subagent keeps the child runs", async () => {
 		const parentId = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 		const projectDir = path.join(root, "--Users-test--proj");
 		writeJsonl(projectDir, piSessionFileName(parentId, "2026-08-19T01-00-00"), [
@@ -263,7 +308,9 @@ describe("adapter order", () => {
 			messageLine("child-0", 1, "user", "hello from the child", "2026-08-19T01:02:20Z"),
 		]);
 
-		const composed = composeAdapters([new PiSubagentSource(root), new PiFileSource(root)], [overlappingSource(root)]);
+		// Adapters declare their claim order; the sort must keep pi-subagent ahead
+		// of pi and both ahead of the custom source (which declares none).
+		const composed = sortSourceAdapters([new PiFileSource(root), overlappingSource(root), new PiSubagentSource(root)]);
 		assert.deepEqual(composed.map((a) => a.source), ["pi-subagent", "pi", "overlap"]);
 
 		const t = await tempDb();
@@ -286,9 +333,13 @@ describe("adapter order", () => {
 });
 
 describe("a config sources value that is not an array", () => {
-	it("reports it from buildCustomAdapters instead of throwing", async () => {
-		const { adapters, errors } = await buildCustomAdapters({ sources: "echo" } as unknown as ProspectorConfig);
-		assert.equal(adapters.length, 0);
+	it("reports it from buildSourceAdapters instead of throwing", async () => {
+		const { adapters, errors } = await buildSourceAdapters({ sources: "echo" } as unknown as ProspectorConfig);
+		// The built-in defaults still load; only the customs cannot be named.
+		assert.deepEqual(
+			adapters.map((a) => a.source),
+			["claude", "codex", "opencode", "cline", "pi"],
+		);
 		assert.equal(errors.length, 1);
 		assert.match(errors[0]!, /'sources' must be an array/);
 	});

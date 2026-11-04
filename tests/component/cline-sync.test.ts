@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { runSync } from "../../src/sync/index.js";
-import { ClineFileSource } from "../../src/sync/sources/cline-file.js";
+import { ClineFileSource } from "../../src/sync/sources/cline/index.js";
 import { makeTempRoot, tempDb } from "./helpers.js";
 import {
 	clineAssistant,

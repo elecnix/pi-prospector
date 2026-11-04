@@ -1,11 +1,13 @@
 /**
- * Custom-session-source loader — discovery + dynamic import + validation.
+ * Session-source loader — discovery + dynamic import + validation.
  *
- * The composition root resolves a custom source by name: config `sources` may
- * name one beside the built-in keys, and a matching directory holding
- * `index.{ts,js,mjs}` under a discovery path supplies the adapter. Because the
- * extension runs under `tsx`, a custom source can be plain `.ts`; `.js`/`.mjs`
- * work too.
+ * The composition root resolves a source by name: config `sources` may name a
+ * custom one beside the built-in keys, and a matching directory holding
+ * `index.{ts,js,mjs}` under a discovery path supplies the adapter. The
+ * built-in sources are directories of the same shape in the package's own
+ * `src/sync/sources`, the lowest-precedence discovery path, so built-ins and
+ * custom sources load through this one code path. Because the extension runs
+ * under `tsx`, a source can be plain `.ts`; `.js`/`.mjs` work too.
  *
  * Discovery resolves a precedence-ordered list of directories — the user (Pi
  * agent) sources dir, a project-local dir, and any extra paths config or tests
@@ -77,8 +79,28 @@ export function resolveSourcePaths(input: ResolveSourcePathsInput): string[] {
 }
 
 /**
- * Load the named custom sources from the given directories. Never throws for a
- * bad source; failures are returned in `errors`.
+ * The names of every source under one discovery directory: each subdirectory
+ * holding an `index.{ts,js,mjs}`, sorted, or empty when the directory is absent.
+ * This is how the composition root finds the built-in sources — the package's
+ * own `src/sync/sources` — without keeping a list of them in two places.
+ */
+export function discoverSourceNames(dir: string): string[] {
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	return entries
+		.filter((e) => e.isDirectory() && findSourceFile([dir], e.name) !== undefined)
+		.map((e) => e.name)
+		.sort();
+}
+
+/**
+ * Load sources by name from the given directories. The built-in sources load
+ * through here exactly like custom ones do. Never throws for a bad source;
+ * failures are returned in `errors`.
  */
 export async function loadCustomSources(opts: SourceLoadOptions): Promise<SourceLoadResult> {
 	const builtinIds = new Set(opts.builtinIds ?? []);

@@ -514,7 +514,7 @@ Built-in sources you can enable without authoring anything:
 
 The built-in `PiFileSource`, `ClaudeFileSource`, `CodexFileSource`, `OpenCodeDbSource` and `ClineFileSource` are always active and don't appear in the `sources` array. Every source type gets its own `source` tag on every session and message row, so you can segment stats by source.
 
-Reference implementations: [`src/sync/sources/pi-file.ts`](./src/sync/sources/pi-file.ts) (file-based), [`src/sync/sources/codex-file.ts`](./src/sync/sources/codex-file.ts) (a date-organised tree) and [`src/sync/sources/pi-subagent.ts`](./src/sync/sources/pi-subagent.ts) (nested discovery). The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
+Reference implementations: [`src/sync/sources/pi/index.ts`](./src/sync/sources/pi/index.ts) (file-based), [`src/sync/sources/codex/index.ts`](./src/sync/sources/codex/index.ts) (a date-organised tree) and [`src/sync/sources/pi-subagent/index.ts`](./src/sync/sources/pi-subagent/index.ts) (nested discovery). Each built-in is one directory under `src/sync/sources/`, the same `index.ts` module shape a custom source exports, and loads through the same loader. The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
 
 ### `/prospect-analyze [--revise <reasons>] [--revise-where key=value] [--source pi|claude|codex|opencode|cline] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
 

@@ -6,12 +6,13 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
-import type { DiscoveredSession } from "../../types.js";
-import type { SessionInsert, MessageInsert } from "../../db/queries.js";
-import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../parser.js";
-import { extractBackgroundTasks } from "../background-tasks.js";
-import { walkSessionDir } from "../scanner.js";
+import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
+import type { DiscoveredSession } from "../../../types.js";
+import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
+import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../../parser.js";
+import { extractBackgroundTasks } from "../../background-tasks.js";
+import { walkSessionDir } from "../../scanner.js";
+import { getClaudeSessionsDir } from "../../../config.js";
 
 /**
  * Claude Code's session-file naming: `<session-uuid>.jsonl`, directly under a
@@ -64,8 +65,10 @@ function parentSessionFromPath(filePath: string): string | null {
 
 export class ClaudeFileSource implements SessionSourceAdapter {
 	readonly source = "claude";
+	/** Claim order: the built-ins' fixed file shapes are disjoint, so the numbers only pin sync's long-standing claiming order. */
+	readonly priority = 10;
 
-	constructor(private claudeSessionsDir: string) {}
+	constructor(private claudeSessionsDir: string = getClaudeSessionsDir()) {}
 
 	async discover(): Promise<DiscoveredSession[]> {
 		return walkSessionDir(this.claudeSessionsDir, "claude", {
@@ -162,3 +165,5 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 		};
 	}
 }
+
+export default ClaudeFileSource;

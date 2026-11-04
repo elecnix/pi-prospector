@@ -26,8 +26,8 @@ import * as path from "node:path";
 import * as os from "node:os";
 import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { runSync } from "../../src/sync/index.js";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
-import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { tempDb, NO_CLAUDE_DIR, piSessionFileName } from "./helpers.js";
 
 function adps(piDir: string, claudeDir: string) {

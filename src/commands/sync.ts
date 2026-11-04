@@ -4,29 +4,16 @@ import type { AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
 import { runSync } from "../sync/index.js";
 import type { SyncResult } from "../types.js";
+import { sortSourceAdapters } from "../sync/adapter.js";
 import type { SessionSourceAdapter } from "../sync/adapter.js";
-import { PiFileSource } from "../sync/sources/pi-file.js";
-import { ClaudeFileSource } from "../sync/sources/claude-file.js";
-import { CodexFileSource } from "../sync/sources/codex-file.js";
-import { OpenCodeDbSource } from "../sync/sources/opencode-db.js";
-import { ClineFileSource } from "../sync/sources/cline-file.js";
-import { PiSubagentSource } from "../sync/sources/pi-subagent.js";
 import { parseHarnessSource } from "../harness.js";
-import { loadCustomSources, resolveSourcePaths } from "../sync/source-loader.js";
-import {
-	loadConfig,
-	getDbPath,
-	getSessionsDir,
-	getClaudeSessionsDir,
-	getCodexSessionsDir,
-	getOpenCodeDataDir,
-	getClineSessionsDir,
-} from "../config.js";
+import { discoverSourceNames, loadCustomSources, resolveSourcePaths } from "../sync/source-loader.js";
+import { loadConfig, getDbPath } from "../config.js";
 import type { HarnessSource } from "../harness.js";
 import type { ProspectorConfig } from "../types.js";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 
 /** Where the Pi coding agent hosts locally-authored custom sources. */
 const PI_AGENT_SOURCES_DIR = path.join(os.homedir(), ".pi", "agent", "prospector", "sources");
@@ -34,36 +21,51 @@ const PI_AGENT_SOURCES_DIR = path.join(os.homedir(), ".pi", "agent", "prospector
 const PROJECT_SOURCES_DIR = path.join(".prospector", "sources");
 
 /**
- * Composition root for session sources: the built-in harness sources, plus
- * any extra source named in config `sources` (e.g. "pi-subagent").
- *
- * The pi-subagent adapter is deliberately registered *before* PiFileSource:
- * since #157 the shared walker recurses into nested run directories, so both
- * adapters discover <project>/<ts>_<uuid>/<runhash>/run-N/session.jsonl files.
- * runSync claims each file once, first adapter wins — and the subagent adapter
- * parses strictly more than the plain one (it additionally recovers the parent
- * session id from the enclosing UUID directory), so it must claim them first.
+ * The package's own built-in sources: one directory per source under
+ * `src/sync/sources`, the lowest-precedence discovery path, so a custom source
+ * may shadow a built-in name and every built-in resolves from here when no
+ * discovery path supplies one.
  */
+const BUILTIN_SOURCES_DIR = fileURLToPath(new URL("../sync/sources/", import.meta.url));
+
 export function sourceDiscoveryPaths(config: ProspectorConfig = loadConfig()): string[] {
-	return resolveSourcePaths({
+	const paths = resolveSourcePaths({
 		config,
-		userDir: PI_AGENT_SOURCES_DIR,
 		projectDir: path.resolve(process.cwd(), PROJECT_SOURCES_DIR),
+		userDir: PI_AGENT_SOURCES_DIR,
 	});
+	return paths.includes(BUILTIN_SOURCES_DIR) ? paths : [...paths, BUILTIN_SOURCES_DIR];
 }
 
 /**
- * Discover and load the custom sources config `sources` names beyond the
- * built-in tags. A name that matches no directory, a module that fails to
- * import, and a tag collision are all returned as errors — the caller decides
- * whether they are fatal (the sync command surfaces them in its output).
+ * The adapters one sync runs: the built-in sources plus every custom source
+ * config `sources` names, ordered by each adapter's declared priority.
+ *
+ * Built-ins and customs load through the same loader. The built-ins load first
+ * so their tags can be collected into the reserved set a custom source must not
+ * claim; the names themselves are discovered from `src/sync/sources`, never a
+ * hand-kept list. A built-in runs unless it declares `enabledByDefault: false`
+ * and config does not name it (pi-subagent). A name that matches no directory, a
+ * module that fails to import, and a tag collision are returned as errors — the
+ * caller decides whether they are fatal (the sync command surfaces them in its
+ * output).
  */
-export async function buildCustomAdapters(config: ProspectorConfig = loadConfig()): Promise<{ adapters: SessionSourceAdapter[]; errors: string[] }> {
+export async function buildSourceAdapters(config: ProspectorConfig = loadConfig()): Promise<{ adapters: SessionSourceAdapter[]; errors: string[] }> {
 	const { names: selected, error } = sourceNames(config);
-	if (error) return { adapters: [], errors: [error] };
-	const names = selected.filter((s) => !isBuiltinSourceName(s));
-	const { loaded, errors } = await loadCustomSources({ names, paths: sourceDiscoveryPaths(config), builtinIds: BUILTIN_SOURCE_TAGS });
-	return { adapters: loaded, errors: errors.map((e) => (e.file ? `${e.name} (${e.file}): ${e.message}` : e.message)) };
+	const paths = sourceDiscoveryPaths(config);
+	const builtinNames = discoverSourceNames(BUILTIN_SOURCES_DIR);
+	const builtins = await loadCustomSources({ names: builtinNames, paths });
+	const errors: string[] = [];
+	if (error) errors.push(error);
+	for (const e of builtins.errors) errors.push(e.file ? `${e.name} (${e.file}): ${e.message}` : e.message);
+
+	const enabledBuiltins = builtins.loaded.filter((a) => a.enabledByDefault !== false || selected.includes(a.source));
+	const reservedTags = [...new Set([...builtinNames, ...builtins.loaded.map((a) => a.source)])];
+	const customNames = selected.filter((s) => !builtinNames.includes(s));
+	const customs = await loadCustomSources({ names: customNames, paths, builtinIds: reservedTags });
+	for (const e of customs.errors) errors.push(e.file ? `${e.name} (${e.file}): ${e.message}` : e.message);
+
+	return { adapters: sortSourceAdapters([...enabledBuiltins, ...customs.loaded]), errors };
 }
 
 /**
@@ -83,57 +85,18 @@ function sourceNames(config: ProspectorConfig): { names: string[]; error?: strin
 	return { names: raw as string[] };
 }
 
-/**
- * The adapters one sync runs, built-ins first.
- *
- * `runSync` claims each file once and the first adapter wins. The pi-subagent
- * adapter must claim the nested run directories before the plain pi adapter,
- * because it also recovers the parent session id. A custom source that
- * rediscovers the same run files would take them from the subagent adapter if
- * it came first, so custom adapters follow every built-in.
- */
-export function composeAdapters(builtin: SessionSourceAdapter[], custom: SessionSourceAdapter[]): SessionSourceAdapter[] {
-	return [...builtin, ...custom];
-}
-
-/** Tags the built-in adapters claim, which a custom source must not take. */
-const BUILTIN_SOURCE_TAGS = ["pi", "claude", "codex", "opencode", "cline", "pi-subagent"];
-
-/** True when a config `sources` entry names a built-in source. */
-function isBuiltinSourceName(name: string): boolean {
-	return name === "pi-subagent" || BUILTIN_SOURCE_TAGS.includes(name);
-}
-
-export function buildAdapters(): SessionSourceAdapter[] {
-	const adapters: SessionSourceAdapter[] = [
-		new ClaudeFileSource(getClaudeSessionsDir()),
-		new CodexFileSource(getCodexSessionsDir()),
-		new OpenCodeDbSource(getOpenCodeDataDir()),
-		new ClineFileSource(getClineSessionsDir()),
-	];
-
-	const sources = sourceNames(loadConfig()).names;
-
-	if (sources.includes("pi-subagent")) {
-		adapters.push(new PiSubagentSource(getSessionsDir()));
-	}
-	adapters.push(new PiFileSource(getSessionsDir()));
-
-	return adapters;
-}
-
 /** Sync the built-in adapters plus any custom sources config `sources` names, surfacing load errors in the result. */
 export async function runProspectSync(db: AsyncDatabase, opts?: { project?: string; source?: HarnessSource }): Promise<SyncResult> {
-	const { adapters, errors } = await buildCustomAdapters();
+	const { adapters, errors } = await buildSourceAdapters();
 	// A source that reads local evidence (dedup against this very index)
 	// declares a writable `db` field and gets the sync's own handle. The field
 	// is optional: sources without it never see the database.
 	for (const a of adapters) {
 		if ("db" in a) (a as { db: unknown }).db = db;
 	}
-	const result = await runSync(db, composeAdapters(buildAdapters(), adapters), opts);
-	// A custom source that failed to load is a sync error like any other, but
-	// it produces no session rows, so surface it even when every adapter ran.
+	const result = await runSync(db, adapters, opts);
+	// A source that failed to load is a sync error like any other, but it
+	// produces no session rows, so surface it even when every adapter ran.
 	result.errors.push(...errors);
 	return result;
 }

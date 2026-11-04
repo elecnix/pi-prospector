@@ -29,11 +29,12 @@ import * as path from "node:path";
 import Database from "better-sqlite3";
 import { Type, type Static, type TSchema } from "typebox";
 import { Check } from "typebox/value";
-import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
-import type { DiscoveredSession } from "../../types.js";
-import type { SessionInsert, MessageInsert } from "../../db/queries.js";
-import { classifyToolError } from "../tool-errors.js";
-import { projectFromCwd } from "../project.js";
+import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
+import type { DiscoveredSession } from "../../../types.js";
+import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
+import { classifyToolError } from "../../tool-errors.js";
+import { projectFromCwd } from "../../project.js";
+import { getOpenCodeDataDir } from "../../../config.js";
 
 /** The file OpenCode's stable channel writes. Other channels name theirs `opencode-<channel>.db`. */
 const OPENCODE_DB_FILE_RE = /^opencode(?:-[a-zA-Z0-9._-]+)?\.db$/;
@@ -168,9 +169,11 @@ export function openCodeToolArguments(input: Record<string, unknown>): Record<st
 
 export class OpenCodeDbSource implements SessionSourceAdapter {
 	readonly source = "opencode";
+	/** Claim order: the built-ins' fixed file shapes are disjoint, so the numbers only pin sync's long-standing claiming order. */
+	readonly priority = 30;
 
 	/** @param dataDir OpenCode's data directory, which holds `opencode.db`. */
-	constructor(private dataDir: string) {}
+	constructor(private dataDir: string = getOpenCodeDataDir()) {}
 
 	async discover(): Promise<DiscoveredSession[]> {
 		let entries: string[];
@@ -428,3 +431,5 @@ function usageOf(data: MessageData): string | null {
 	if (input === 0 && output === 0 && reasoning === 0 && cacheRead === 0 && cacheWrite === 0) return null;
 	return JSON.stringify({ input, output: output + reasoning, cacheRead, cacheWrite, totalTokens: input + output + reasoning, cost: null });
 }
+
+export default OpenCodeDbSource;
