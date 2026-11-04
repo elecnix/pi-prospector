@@ -34,6 +34,14 @@ export const metrics: MetricDefinition[] = [
 			"A revive marker whose run has no artifact row is unattributed and never counted as zero.",
 			"Values the host did not record stay null.",
 			"Only some harnesses record a billed cost.",
+			LIMIT_CALL_ID,
+		],
+		seriesBreaks: [
+			{
+				version: "1.1",
+				effect: "The action stream pairs results with id-less stored calls, so a revived child's run id is found and its usage is attributed. Delegated tokens rise for those sessions with no change in spend. The unit fingerprint folds in the outcome, so a re-run fills new nodes beside the old ones.",
+				repair: "prospect analyze --analyzer revive-chains --revise minor, then read one node per session",
+			},
 		],
 	},
 ];

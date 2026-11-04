@@ -38,6 +38,14 @@ export const metrics: MetricDefinition[] = [
 		limitations: [
 			"A proposal needs the same class to recur across a session, so one stray lead is a measurement and not a finding.",
 			"The class list is closed: path, url and command.",
+			LIMIT_CALL_ID,
+		],
+		seriesBreaks: [
+			{
+				version: "1.1",
+				effect: "The action stream pairs results with id-less stored calls, so those sessions yield the leads their tool results held, and the per-class counts rise from zero.",
+				repair: "prospect analyze --analyzer uncompleted-leads --revise minor",
+			},
 		],
 	},
 ];
