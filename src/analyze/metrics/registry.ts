@@ -22,6 +22,8 @@ import { metrics as cacheEconomy } from "../analyzers/cache-economy/metrics.js";
 import { metrics as contextEconomy } from "../analyzers/context-economy/metrics.js";
 import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
 import { metrics as frictionAccumulation } from "../analyzers/friction-accumulation/metrics.js";
+import { metrics as compressionChecklist } from "../analyzers/compression-checklist/metrics.js";
+import { metrics as filesInPlay } from "../analyzers/files-in-play/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
 import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
 import { metrics as groundedClaims } from "../analyzers/grounded-claims/metrics.js";
@@ -34,6 +36,10 @@ import { metrics as prOpened } from "../analyzers/pr-opened/metrics.js";
 import { metrics as sessionEnding } from "../analyzers/session-ending/metrics.js";
 import { metrics as similarityCluster } from "../analyzers/similarity-cluster/metrics.js";
 import { metrics as skillUse } from "../analyzers/skill-use/metrics.js";
+import { metrics as navigationEfficiency } from "../analyzers/navigation-efficiency/metrics.js";
+import { metrics as reviveChains } from "../analyzers/revive-chains/metrics.js";
+import { metrics as staleVerification } from "../analyzers/stale-verification/metrics.js";
+import { metrics as taskToolMismatch } from "../analyzers/task-tool-mismatch/metrics.js";
 import { metrics as timeEconomy } from "../analyzers/time-economy/metrics.js";
 import { metrics as tokenUnits } from "../analyzers/token-units/metrics.js";
 import { metrics as toolInventoryTax } from "../analyzers/tool-inventory-tax/metrics.js";
@@ -41,6 +47,8 @@ import { metrics as toolTrajectory } from "../analyzers/tool-trajectory/metrics.
 import { metrics as turnFrustration } from "../analyzers/turn-frustration/metrics.js";
 import { metrics as turnPairCore } from "../analyzers/turn-pair-core/metrics.js";
 import { metrics as turnPairLlm } from "../analyzers/turn-pair-llm/metrics.js";
+import { metrics as uncompletedLeads } from "../analyzers/uncompleted-leads/metrics.js";
+import { metrics as verificationCommands } from "../analyzers/verification-commands/metrics.js";
 
 /** Every owner's definitions: an analyzer id, or `sessions`. */
 const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
@@ -52,6 +60,8 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "context-economy", metrics: contextEconomy },
 	{ owner: "failure-modes", metrics: failureModes },
 	{ owner: "friction-accumulation", metrics: frictionAccumulation },
+	{ owner: "compression-checklist", metrics: compressionChecklist },
+	{ owner: "files-in-play", metrics: filesInPlay },
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
 	{ owner: "git-commands", metrics: gitCommands },
 	{ owner: "grounded-claims", metrics: groundedClaims },
@@ -64,6 +74,10 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "session-ending", metrics: sessionEnding },
 	{ owner: "similarity-cluster", metrics: similarityCluster },
 	{ owner: "skill-use", metrics: skillUse },
+	{ owner: "navigation-efficiency", metrics: navigationEfficiency },
+	{ owner: "revive-chains", metrics: reviveChains },
+	{ owner: "stale-verification", metrics: staleVerification },
+	{ owner: "task-tool-mismatch", metrics: taskToolMismatch },
 	{ owner: "time-economy", metrics: timeEconomy },
 	{ owner: "token-units", metrics: tokenUnits },
 	{ owner: "tool-inventory-tax", metrics: toolInventoryTax },
@@ -71,6 +85,8 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "turn-frustration", metrics: turnFrustration },
 	{ owner: "turn-pair-core", metrics: turnPairCore },
 	{ owner: "turn-pair-llm", metrics: turnPairLlm },
+	{ owner: "uncompleted-leads", metrics: uncompletedLeads },
+	{ owner: "verification-commands", metrics: verificationCommands },
 ];
 
 /**
@@ -81,32 +97,24 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
  */
 export const METRICS_PENDING: readonly string[] = [
 	"assistant-cognition",
-	"compression-checklist",
 	"dataprofiler",
 	"decode-collapse",
 	"detect-secrets",
-	"files-in-play",
 	"gitleaks",
 	"language-mismatch",
 	"lexicon-candidates",
 	"message-answers",
-	"navigation-efficiency",
 	"nosey-parker",
 	"piicatcher",
 	"presidio",
 	"prompt-form",
 	"repetition-collapse",
 	"request-classes",
-	"revive-chains",
 	"rule-restatement",
 	"secret-leak",
 	"secret-scanner",
 	"session-overview",
-	"stale-verification",
-	"task-tool-mismatch",
 	"trufflehog",
-	"uncompleted-leads",
-	"verification-commands",
 ];
 
 /** The definitions of one owner, or of all of them in registration order. */
