@@ -491,6 +491,16 @@ Then enable it in `~/.pi/agent/prospector.json`:
 { "sources": ["pi-subagent", "<name>"] }
 ```
 
+`sourcePaths` adds search directories ahead of those two, which keeps a source outside the home directory or the project:
+
+```json
+{ "sources": ["<name>"], "sourcePaths": ["~/work/sources", "~/.config/my-sources"] }
+```
+
+A `sources` entry names one directory below a search path. The loader fails when a value has a path separator, `.`, `..` or an absolute path, so a config entry never selects a module outside the search paths.
+
+Custom sources run after the built-in adapters, and each session file goes to the first adapter that claims it. A custom source therefore fills in sessions no built-in scanner finds, and cannot take a nested subagent run from `pi-subagent`, which recovers the parent session id.
+
 Built-in sources you can enable without authoring anything:
 
 | Source | Config key | What it discovers |
