@@ -84,7 +84,13 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// prompt echo (`❯ please fix the failing build now`) is no shell capture, a bare link inside
 	// a skill command is the person's, and a `Worktree: /path` line marks an
 	// agent's brief.
-	minor: 2,
+	// 1.3: three forms of agent or script prompt that carried no marker and read as
+	// typed. A pointer to a prompt file in other wording (`Do what @file says`, `Task is
+	// in file ...`, `Read a, then b, and do that work`). A message one session relays for
+	// another, opening on two handles (`a relaying b`, `a (per b ...)`). A one-shot probe
+	// that names the tool to call or the exact command to run. Only the rule name and the
+	// label of such messages move.
+	minor: 3,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/message-origin/index.ts",
 };

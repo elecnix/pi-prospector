@@ -15,9 +15,14 @@
 import { Check } from "typebox/value";
 import { CORE_METRICS } from "./core.js";
 import { CORE_OWNER, MetricDefinition } from "./types.js";
+import { metrics as activityWindows } from "../analyzers/activity-windows/metrics.js";
+import { metrics as attentionGaps } from "../analyzers/attention-gaps/metrics.js";
+import { metrics as delegationOutcomes } from "../analyzers/delegation-outcomes/metrics.js";
 import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
+import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
 import { metrics as messageOrigin } from "../analyzers/message-origin/metrics.js";
+import { metrics as repoIdentity } from "../analyzers/repo-identity/metrics.js";
 import { metrics as sessionEnding } from "../analyzers/session-ending/metrics.js";
 import { metrics as timeEconomy } from "../analyzers/time-economy/metrics.js";
 import { metrics as toolTrajectory } from "../analyzers/tool-trajectory/metrics.js";
@@ -28,9 +33,14 @@ import { metrics as turnPairLlm } from "../analyzers/turn-pair-llm/metrics.js";
 /** Every owner's definitions: an analyzer id, or `sessions`. */
 const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: CORE_OWNER, metrics: CORE_METRICS },
+	{ owner: "activity-windows", metrics: activityWindows },
+	{ owner: "attention-gaps", metrics: attentionGaps },
+	{ owner: "delegation-outcomes", metrics: delegationOutcomes },
 	{ owner: "failure-modes", metrics: failureModes },
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
+	{ owner: "git-commands", metrics: gitCommands },
 	{ owner: "message-origin", metrics: messageOrigin },
+	{ owner: "repo-identity", metrics: repoIdentity },
 	{ owner: "session-ending", metrics: sessionEnding },
 	{ owner: "time-economy", metrics: timeEconomy },
 	{ owner: "tool-trajectory", metrics: toolTrajectory },
@@ -47,7 +57,6 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
  */
 export const METRICS_PENDING: readonly string[] = [
 	"assistant-cognition",
-	"attention-gaps",
 	"cache-economy",
 	"compression-checklist",
 	"context-economy",

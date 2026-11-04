@@ -863,7 +863,7 @@ list — the system **learns the vocabulary from the corpus**.
   presses return often writes eight lines, and an agent's brief looks the same.
   Those messages are undecided and go to the decision model. `agent` means
   an agent or a script wrote it: a child agent's prompt, a brief an orchestrator wrote for a worker,
-  a message relayed from a peer session, a one-shot probe. `notification` means
+  a message relayed from a peer session, a one-shot probe (a prompt that tells the agent which tool to call or which exact command to run, and what to report). `notification` means
   the harness or an extension injected it: a monitor event, a task notification,
   a slash command with no arguments, a tool result filed under the user role.
   The `message-origin` analyzer writes one metric node per turn-starting message,
@@ -945,6 +945,27 @@ contain the new word have anything to compute.
 - **Attended message** is a user-role message whose message origin a rule or the decision model settled as `typed`. Other origins say nothing about when a person looked at the screen. A message whose origin node is `decided: false` carries a provisional `typed` label that nothing settled. Its gap is counted apart, and the statistics ignore it.
 - **Unmeasured** describes a typed message with no gap: the first turn, or a missing timestamp. It is counted and never read as zero seconds.
 - **Agent wait** is the distribution of attention gaps in a session. A long wait means the agent sat idle for a person. It doesn't say the person was busy elsewhere.
+### Git commands (deterministic, session-level)
+
+- **Git command event** is a shell command that commits, pushes, or merges a pull request, with the host's verdict on whether it worked. It is read from the command with heredoc bodies and quoted strings removed, and the program must be the first word of its command, so `echo git commit` runs nothing. A dry run and a help request are not events, and neither is `gh pr merge --auto`, which only arms a later merge, or `--disable-auto`, which cancels one. The host's success verdict is checked against the result text when the result row contains one result, because git exits 0 for some refusals and a pipe hides the exit status. A call that chained several commands (`&&`, `;`, a pipe, or lines) and failed has one verdict for all of them, so each of its events is marked **shared**: the failure is not pinned on one command. Each event says whether its text was checked: a row with several results joins their texts, which cannot be attributed to one call, so only the host's verdict decides there.
+- **Git commands record** is the list of a session's git command events with a count per kind. A session that ran none gets an empty list and still has a record, so a rate over sessions keeps its denominator. A commit shows the session ran `git commit` and it worked. It never shows the work was right, so the system still assigns no outcome to a session. Opening a pull request belongs to `pr-opened`.
+
+### Repository identity (deterministic, session-level)
+
+- **Repository key** is the one name a session's repository goes by: the forge address `host/owner/name`, lowercase, without credentials or a trailing `.git`. It comes from the session's own git commands and never from a folder name.
+- **Repository hint** is a forge address a session's git commands touched: **remote_output** (printed by `git remote`, `git push`, `git fetch` or `git pull`), **pr_url** (printed by a `gh pr` command), **gh_repo_flag** (the `--repo` value of a `gh` command), or **command_url** (written in `git clone` or `git remote add`). They are listed from strongest to weakest, and the most-supported address among the strongest basis present decides.
+- **Working-directory scope** limits the hints to commands that ran in the session's working directory or below it. A command with a directory outside it, or one held in a variable, is left out.
+- A session with no hint has a null key and the basis **none**. The share of such sessions is the share left unplaced, and the coverage is its complement. A concentration figure is read beside that share.
+### Activity and concurrency (deterministic)
+
+- **Activity window** is a stretch of wall-clock time in which a session was running. Each gap between two messages counts up to the idle cap, and each timed tool call counts for its whole span. Overlapping stretches merge, so a session's windows never overlap. A message without a timestamp doesn't add to a window, and the node counts it.
+- **Concurrency** is how many sessions were active at the same moment. It belongs to the corpus, so no node stores it: a session's node would change whenever another session was added. It is a read-time fold of the sessions' activity windows (the `concurrency` output), which keeps rendering a pure read and the graph append-only.
+- **Agent time** is the sum of sessions' active time. With concurrent agents it exceeds the operator's own time, so a total of it is never read as hours the operator worked.
+### Delegation (deterministic, session-level)
+
+- **Delegation** is a call that hands work to a child agent. The child's own transcript is a separate session that records the parent.
+- **Delegation outcome** is how the host recorded the end of a delegation: **completed** (the host didn't report a failure), **failed**, **killed** (stopped before it finished), **revived** (the call resumed an earlier run), **unanswered** (no result ever arrived), or **other** (a background status the analyzer doesn't know). A background-task completion decides first, because the call itself only acknowledged the start. **Completed** never says the child's work was right.
+- **Work moved to children** is the child agents' sessions that name a session as their parent, with the messages they contain, beside the parent's own message count. It is a measure of volume, not of value. A Pi session's parent link marks a fork, which copies the parent's history, so a Pi session is never counted as a child. Pi's own subagent runs record no link to a parent session (the host joins them by project only), so a Pi parent reports zero child sessions while its delegation calls and their outcomes still count.
 
 ### Message questions (decision model, message-level)
 

@@ -24,8 +24,12 @@
           "repetition-collapse",
           "session-ending",
           "pr-opened",
+          "repo-identity",
           "skill-use",
           "attention-gaps",
+          "git-commands",
+          "activity-windows",
+          "delegation-outcomes",
           "message-answers",
           "prompt-form",
           "time-economy",
@@ -77,7 +81,7 @@
         "rejected",
         "acceptedModified"
       ],
-      "maxRows": 200,
+      "maxRows": 240,
       "maxCount": 10000000
     }
   },

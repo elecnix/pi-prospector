@@ -42,8 +42,12 @@ export const KNOWN_ANALYZER_IDS = [
 	"repetition-collapse",
 	"session-ending",
 	"pr-opened",
+	"repo-identity",
 	"skill-use",
 	"attention-gaps",
+	"git-commands",
+	"activity-windows",
+	"delegation-outcomes",
 	"message-answers",
 	"prompt-form",
 	"time-economy",
@@ -78,7 +82,7 @@ export const KNOWN_ANALYZER_IDS = [
 export const HARNESSES = ["pi", "claude", "other"] as const;
 
 /** Most rows one report may carry. */
-export const MAX_ROWS = 200;
+export const MAX_ROWS = 240;
 /** Largest value any count may take. */
 export const MAX_COUNT = 10_000_000;
 
