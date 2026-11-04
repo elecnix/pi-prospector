@@ -78,7 +78,20 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// 1.1: a workflow's relayed copy of a person's request gets its own rule,
 	// `relayed-request`. It was `notification/harness-line`, so only the rule name
 	// moves and no label changes.
-	minor: 1,
+	// 1.2: a better `pasted`. A message is a paste only when copied material is
+	// most of it and the person's own words are few (under 40 characters). A paste
+	// with sentences beside it, and a long run of sentences that the span labeller
+	// took for a paste, go to the decision model as `paste-with-prose`. A Claude Code
+	// prompt echo (`❯ please fix the failing build now`) is no shell capture, a bare link inside
+	// a skill command is the person's, and a `Worktree: /path` line marks an
+	// agent's brief.
+	// 1.3: three forms of agent or script prompt that carried no marker and read as
+	// typed. A pointer to a prompt file in other wording (`Do what @file says`, `Task is
+	// in file ...`, `Read a, then b, and do that work`). A message one session relays for
+	// another, opening on two handles (`a relaying b`, `a (per b ...)`). A one-shot probe
+	// that names the tool to call or the exact command to run. Only the rule name and the
+	// label of such messages move.
+	minor: 3,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/message-origin/index.ts",
 };
