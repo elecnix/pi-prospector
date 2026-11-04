@@ -38,10 +38,12 @@ import { metrics as groundedClaims } from "../analyzers/grounded-claims/metrics.
 import { metrics as messageOrigin } from "../analyzers/message-origin/metrics.js";
 import { metrics as repoIdentity } from "../analyzers/repo-identity/metrics.js";
 import { metrics as routingOpportunity } from "../analyzers/routing-opportunity/metrics.js";
+import { metrics as ruleRestatement } from "../analyzers/rule-restatement/metrics.js";
 import { metrics as phaseTrajectory } from "../analyzers/phase-trajectory/metrics.js";
 import { metrics as planCompliance } from "../analyzers/plan-compliance/metrics.js";
 import { metrics as prOpened } from "../analyzers/pr-opened/metrics.js";
 import { metrics as sessionEnding } from "../analyzers/session-ending/metrics.js";
+import { metrics as sessionOverview } from "../analyzers/session-overview/metrics.js";
 import { metrics as similarityCluster } from "../analyzers/similarity-cluster/metrics.js";
 import { metrics as skillUse } from "../analyzers/skill-use/metrics.js";
 import { metrics as navigationEfficiency } from "../analyzers/navigation-efficiency/metrics.js";
@@ -87,7 +89,9 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "phase-trajectory", metrics: phaseTrajectory },
 	{ owner: "plan-compliance", metrics: planCompliance },
 	{ owner: "pr-opened", metrics: prOpened },
+	{ owner: "rule-restatement", metrics: ruleRestatement },
 	{ owner: "session-ending", metrics: sessionEnding },
+	{ owner: "session-overview", metrics: sessionOverview },
 	{ owner: "similarity-cluster", metrics: similarityCluster },
 	{ owner: "skill-use", metrics: skillUse },
 	{ owner: "navigation-efficiency", metrics: navigationEfficiency },
@@ -118,10 +122,8 @@ export const METRICS_PENDING: readonly string[] = [
 	"nosey-parker",
 	"piicatcher",
 	"presidio",
-	"rule-restatement",
 	"secret-leak",
 	"secret-scanner",
-	"session-overview",
 	"trufflehog",
 ];
 

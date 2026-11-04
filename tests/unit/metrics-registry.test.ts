@@ -34,6 +34,8 @@ import { ClusterFindingSchema } from "../../src/analyze/analyzers/similarity-clu
 import { PromptKindOrUnknown } from "../../src/analyze/analyzers/prompt-form/detect.js";
 import { SCRIPT_NAMES } from "../../src/analyze/analyzers/language-mismatch/detect.js";
 import { CollapseChannel } from "../../src/analyze/analyzers/repetition-collapse/detect.js";
+import { ReduceToolParameters } from "../../src/analyze/analyzers/session-overview/prompt-reduce.js";
+import { RuleStatus } from "../../src/analyze/analyzers/rule-restatement/index.js";
 import { EndingLabelSchema } from "../../src/analyze/analyzers/session-ending/detect.js";
 import { NavPattern } from "../../src/analyze/analyzers/navigation-efficiency/detect.js";
 import { TargetResolutionKind } from "../../src/analyze/analyzers/task-tool-mismatch/detect.js";
@@ -135,6 +137,14 @@ describe("metric definitions", () => {
 		assert.deepEqual(values("prompt-form.prompt-kind").sort(), literals(PromptKindOrUnknown).sort());
 		assert.deepEqual(values("language-mismatch.mismatched-turns").sort(), [...SCRIPT_NAMES].sort());
 		assert.deepEqual(values("repetition-collapse.collapsed-steps").sort(), literals(CollapseChannel).sort());
+	});
+
+	it("list the same values as the synthesis analyzers produce", () => {
+		const params = ReduceToolParameters.properties;
+		assert.deepEqual(values("session-overview.friction-point").sort(), literals(params.friction_points.items.properties.severity).sort());
+		assert.deepEqual(values("session-overview.positive-signal").sort(), literals(params.key_positive_signals.items.properties.signal).sort());
+		assert.deepEqual(values("session-overview.improvement-proposal").sort(), literals(params.improvement_proposals.items.properties.target_type).sort());
+		assert.deepEqual(values("rule-restatement.rule-status").sort(), literals(RuleStatus).sort());
 	});
 
 	it("list every rule code that session-ending can emit", () => {
