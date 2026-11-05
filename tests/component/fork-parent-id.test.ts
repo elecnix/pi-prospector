@@ -11,7 +11,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { runSync } from "../../src/sync/index.js";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
 import { makeTempRoot, messageLine, piSessionFileName, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
 
 const PARENT_ID = "019ed12d-96e3-7290-8619-4b7480e9ee44";

@@ -16,8 +16,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
-import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 
 const PI_SESSION = "aaaa0001-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const CLAUDE_SESSION = "cccc0001-bbbb-4ccc-8ddd-eeeeeeeeeeee";

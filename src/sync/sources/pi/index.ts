@@ -6,12 +6,13 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
-import type { DiscoveredSession } from "../../types.js";
-import type { SessionInsert, MessageInsert } from "../../db/queries.js";
-import { parseLine, extractSessionName } from "../parser.js";
-import { resolveFork } from "../forks.js";
-import { walkSessionDir } from "../scanner.js";
+import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
+import type { DiscoveredSession } from "../../../types.js";
+import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
+import { parseLine, extractSessionName } from "../../parser.js";
+import { resolveFork } from "../../forks.js";
+import { walkSessionDir } from "../../scanner.js";
+import { getSessionsDir } from "../../../config.js";
 
 /**
  * Pi's own session-file naming, as the harness's session store writes it:
@@ -76,10 +77,16 @@ const RUN_DIR_RE = /^run-\d+$/;
 
 export class PiFileSource implements SessionSourceAdapter {
 	readonly source = "pi";
+	/**
+	 * Claim order, just after pi-subagent: both sources discover a child run's
+	 * `session.jsonl`, and this one parses strictly less (it does not recover the
+	 * parent session id), so the subagent source must claim those files first.
+	 */
+	readonly priority = 60;
 	/** Child-run artifacts live under the same root as the sessions themselves. */
 	readonly artifactsRoot: string;
 
-	constructor(sessionsDir: string) {
+	constructor(sessionsDir: string = getSessionsDir()) {
 		this.artifactsRoot = sessionsDir;
 	}
 
@@ -99,7 +106,7 @@ export class PiFileSource implements SessionSourceAdapter {
 		let parentSession: string | null = null;
 		let cwd = "";
 		let startedAt = "";
-		let parsedHeader: import("../../types.js").SessionHeader | null = null;
+		let parsedHeader: import("../../../types.js").SessionHeader | null = null;
 
 		for (const line of lines) {
 			if (!line.trim()) continue;
@@ -206,7 +213,7 @@ export class PiFileSource implements SessionSourceAdapter {
  *   - `tools: []`                  -> '{"tools":[]}' (captured AND empty)
  *   - `tools: [...]`               -> populated inventory with per-tool sizing
  */
-export function buildToolInventory(header: import("../../types.js").SessionHeader | null): string | null {
+export function buildToolInventory(header: import("../../../types.js").SessionHeader | null): string | null {
 	if (!header || header.tools === undefined) return null;
 	const inventory = {
 		source: "pi-session-header",
@@ -214,3 +221,5 @@ export function buildToolInventory(header: import("../../types.js").SessionHeade
 	};
 	return JSON.stringify(inventory);
 }
+
+export default PiFileSource;

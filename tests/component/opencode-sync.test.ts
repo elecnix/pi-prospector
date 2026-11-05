@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { runSync } from "../../src/sync/index.js";
-import { OpenCodeDbSource } from "../../src/sync/sources/opencode-db.js";
+import { OpenCodeDbSource } from "../../src/sync/sources/opencode/index.js";
 import { makeTempRoot, tempDb } from "./helpers.js";
 import {
 	OpenCodeFixtureDb,

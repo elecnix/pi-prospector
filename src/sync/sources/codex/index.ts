@@ -14,18 +14,19 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
-import type { DiscoveredSession } from "../../types.js";
-import type { SessionInsert, MessageInsert } from "../../db/queries.js";
+import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
+import type { DiscoveredSession } from "../../../types.js";
+import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
 import {
   parseCodexLine,
   codexToolName,
   codexFormatOf,
   type CodexFormat,
   type CodexLine,
-} from "../codex-parser.js";
-import { classifyToolError } from "../tool-errors.js";
-import { projectFromCwd } from "../project.js";
+} from "../../codex-parser.js";
+import { classifyToolError } from "../../tool-errors.js";
+import { projectFromCwd } from "../../project.js";
+import { getCodexSessionsDir } from "../../../config.js";
 
 /**
  * The name Codex gives a rollout file: `rollout-<timestamp>-<uuid>.jsonl`.
@@ -168,8 +169,10 @@ function newState(): CodexState {
 
 export class CodexFileSource implements SessionSourceAdapter {
   readonly source = "codex";
+  /** Claim order: the built-ins' fixed file shapes are disjoint, so the numbers only pin sync's long-standing claiming order. */
+  readonly priority = 20;
 
-  constructor(private codexSessionsDir: string) {}
+  constructor(private codexSessionsDir: string = getCodexSessionsDir()) {}
 
   async discover(): Promise<DiscoveredSession[]> {
     const results: DiscoveredSession[] = [];
@@ -779,3 +782,5 @@ function metaString(
   const value = meta[key];
   return typeof value === "string" && value ? value : null;
 }
+
+export default CodexFileSource;

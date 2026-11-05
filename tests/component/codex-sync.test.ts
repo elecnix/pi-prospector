@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runSync } from "../../src/sync/index.js";
-import { CodexFileSource, codexSessionRowId } from "../../src/sync/sources/codex-file.js";
+import { CodexFileSource, codexSessionRowId } from "../../src/sync/sources/codex/index.js";
 import { tempDb } from "./helpers.js";
 import {
 	codexCommandExecutionLine,

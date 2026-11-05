@@ -20,8 +20,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { runSync } from "../../src/sync/index.js";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
-import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
+import { PiSubagentSource } from "../../src/sync/sources/pi-subagent/index.js";
 import { makeTempRoot, messageLine, piSessionFileName, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
 import { MAX_DISCOVERY_DEPTH } from "../../src/sync/scanner.js";
 
@@ -120,7 +120,7 @@ describe("nested subagent session recursion (#157)", () => {
 		try {
 			writeNestedTree(fx.root, ["2b83bd26", "4b5387b8"]);
 
-			// Same registration order as buildAdapters(): subagent before plain pi.
+			// The priority order sync uses: pi-subagent (50) claims before pi (60).
 			const result = await runSync(db, [
 				new PiSubagentSource(fx.root),
 				new PiFileSource(fx.root),

@@ -35,6 +35,22 @@ export interface SessionSourceAdapter {
 	readonly source: string;
 
 	/**
+	 * Claim order for the sync loop: `runSync` claims each file once and the
+	 * first adapter wins, so adapters are tried in ascending priority order.
+	 * A source that declares none sorts after every built-in — a custom source
+	 * therefore fills in sessions no built-in claims and cannot take nested
+	 * child runs from pi-subagent unless it deliberately declares a lower
+	 * priority than 50.
+	 */
+	readonly priority?: number;
+
+	/**
+	 * Whether sync loads this source without config `sources` naming it.
+	 * Absent means true. A built-in that is opt-in (pi-subagent) declares false.
+	 */
+	readonly enabledByDefault?: boolean;
+
+	/**
 	 * Root directory whose child-run artifact metadata is ingested beside this
 	 * source's sessions, when the host writes artifacts under it (Pi only).
 	 * Absent for sources that have none — the sync loop skips artifact ingest.
@@ -55,4 +71,16 @@ export interface SessionSourceAdapter {
 	 * @param resumeLine - line/event offset to resume from (0 = full parse)
 	 */
 	read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession>;
+}
+
+/** Priority of an adapter that declares none: after every built-in. */
+export const DEFAULT_SOURCE_PRIORITY = 100;
+
+/**
+ * Order adapters for the sync loop's claiming: ascending priority, stable for
+ * equal priorities, so the order adapters were loaded in breaks ties. Returns a
+ * new array; the input is not mutated.
+ */
+export function sortSourceAdapters(adapters: SessionSourceAdapter[]): SessionSourceAdapter[] {
+	return [...adapters].sort((a, b) => (a.priority ?? DEFAULT_SOURCE_PRIORITY) - (b.priority ?? DEFAULT_SOURCE_PRIORITY));
 }

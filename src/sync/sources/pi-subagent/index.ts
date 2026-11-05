@@ -5,19 +5,28 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
-import type { DiscoveredSession } from "../../types.js";
-import type { SessionInsert, MessageInsert } from "../../db/queries.js";
-import { parseLine, extractSessionName } from "../parser.js";
-import { buildToolInventory, parentSessionFromRunPath } from "./pi-file.js";
-import { walkSessionDir } from "../scanner.js";
+import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
+import type { DiscoveredSession } from "../../../types.js";
+import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
+import { parseLine, extractSessionName } from "../../parser.js";
+import { buildToolInventory, parentSessionFromRunPath } from "../pi/index.js";
+import { walkSessionDir } from "../../scanner.js";
+import { getSessionsDir } from "../../../config.js";
 
 const RUN_DIR_RE = /^run-\d+$/;
 
 export class PiSubagentSource implements SessionSourceAdapter {
 	readonly source = "pi-subagent";
+	/**
+	 * Claim order, just before pi: both sources discover a child run's
+	 * `session.jsonl`, and this one parses strictly more (it additionally recovers
+	 * the parent session id), so it must claim those files first.
+	 */
+	readonly priority = 50;
+	/** Opt-in: sync loads this source only when config `sources` names it. */
+	readonly enabledByDefault = false;
 
-	constructor(private sessionsDir: string) {}
+	constructor(private sessionsDir: string = getSessionsDir()) {}
 
 	async discover(): Promise<DiscoveredSession[]> {
 		// The shared walker owns the traversal itself — directory error handling,
@@ -37,7 +46,7 @@ export class PiSubagentSource implements SessionSourceAdapter {
 		let sessionId = "";
 		let cwd = "";
 		let startedAt = "";
-		let parsedHeader: import("../../types.js").SessionHeader | null = null;
+		let parsedHeader: import("../../../types.js").SessionHeader | null = null;
 		for (const line of lines) {
 			if (!line.trim()) continue;
 			const p = parseLine(line);
@@ -106,3 +115,5 @@ export class PiSubagentSource implements SessionSourceAdapter {
 		};
 	}
 }
+
+export default PiSubagentSource;

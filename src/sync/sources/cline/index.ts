@@ -27,11 +27,12 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Type, type Static, type TSchema } from "typebox";
 import { Check } from "typebox/value";
-import type { SessionSourceAdapter, ParsedSession } from "../adapter.js";
-import type { DiscoveredSession } from "../../types.js";
-import type { SessionInsert, MessageInsert } from "../../db/queries.js";
-import { classifyToolError } from "../tool-errors.js";
-import { projectFromCwd } from "../project.js";
+import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
+import type { DiscoveredSession } from "../../../types.js";
+import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
+import { classifyToolError } from "../../tool-errors.js";
+import { projectFromCwd } from "../../project.js";
+import { getClineSessionsDir } from "../../../config.js";
 
 const MESSAGES_SUFFIX = ".messages.json";
 
@@ -159,9 +160,11 @@ function parseJson<S extends TSchema>(schema: S, raw: string): Static<S> | null 
 
 export class ClineFileSource implements SessionSourceAdapter {
 	readonly source = "cline";
+	/** Claim order: the built-ins' fixed file shapes are disjoint, so the numbers only pin sync's long-standing claiming order. */
+	readonly priority = 40;
 
 	/** @param sessionsDir Cline's sessions root, which holds one directory per session. */
-	constructor(private sessionsDir: string) {}
+	constructor(private sessionsDir: string = getClineSessionsDir()) {}
 
 	async discover(): Promise<DiscoveredSession[]> {
 		let dirs: string[];
@@ -403,3 +406,5 @@ function usageOf(m: Message): string | null {
 	if (input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0) return null;
 	return JSON.stringify({ input, output, cacheRead, cacheWrite, totalTokens: input + output, cost: null });
 }
+
+export default ClineFileSource;

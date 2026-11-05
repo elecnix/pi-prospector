@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { FIXTURES, tempDb } from "./helpers.js";
 import { runSync } from "../../src/sync/index.js";
-import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 import { createThrowingLLM } from "../../src/analyze/mock-llm.js";
