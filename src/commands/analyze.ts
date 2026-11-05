@@ -1,7 +1,7 @@
 import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
-import { getAllSessions, getRecentSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
+import { getAllSessions, getRecentSessions, getSessionMessageCount, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
 import {
 	getAnalyzerConfigOverrides,
 	getAnalyzerPaths,
@@ -47,7 +47,7 @@ interface AnalyzeArgs {
 	revise: ReviseReason[];
 	/** `--revise-where key=value`: revise only the stale nodes whose prior content matches every filter. */
 	reviseWhere: FilterSpec[];
-	/** Plain-fill every session, not just the not-yet-analysed ones. */
+	/** Plain-fill every session, not just the ones that still have work. */
 	all?: boolean;
 	/** Run only the analyzers each analysed session is missing (#195). */
 	backfillMissing?: boolean;
@@ -160,8 +160,9 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			return;
 		}
 
-		// A plain fill focuses on not-yet-analysed sessions; any revise reason
-		// re-scans every session so stale nodes can be picked up.
+		// A plain fill takes the sessions that still have work: never analysed, or
+		// grown since their last clean analysis (see getUnanalyzedSessions). Any
+		// revise reason re-scans every session so stale nodes can be picked up.
 		//
 		// `--all` is the back-fill path for the learned frustration lexicon. When a
 		// session teaches the corpus a new frustration word, turns in *earlier*
@@ -265,6 +266,9 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 
 		await mapWithConcurrency(sessions, sessionConcurrency, async (session) => {
 			let outcome: SessionRunOutcome;
+			// Read the session's reach before the run: this is what a clean run
+			// records as covered, so anything synced meanwhile stays pending.
+			const coveredMessages = await getSessionMessageCount(db, session.id);
 			try {
 				const summary = await framework.run(session.id, {
 					revise: args.revise,
@@ -302,8 +306,12 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			// queue when it completed cleanly. If any unit failed, leave `analyzed_at`
 			// NULL so the next plain fill re-scans it and recomputes the still-missing
 			// units (the failures left no result behind).
+			//
+			// The count recorded is the one read before the run: messages synced
+			// while it was in flight leave the session reading as grown, so the next
+			// fill picks them up instead of treating them as covered.
 			if (outcome.ok) {
-				markAnalyzed(db, session.id);
+				markAnalyzed(db, session.id, coveredMessages);
 			}
 
 			// Throttled progress so a slow run is distinguishable from a stuck one

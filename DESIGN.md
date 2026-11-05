@@ -1342,7 +1342,14 @@ stays missing and **self-heals on the next plain fill**, with no special retry
 mode. To make that automatic, a session is only retired from the unanalysed queue
 once it completes with no errors; a session that had any failure stays queued, so
 the next fill re-scans it, recomputes only the still-missing units, and leaves its
-prior error nodes intact. This is a deliberate departure from earlier designs that
+prior error nodes intact. Retirement is per *covered content*, not a one-way
+flag: a clean run records the message count it read, and a session whose count has
+grown since then stays in the queue, because the units its later messages add are
+missing work like any other. The watermark is a scheduling hint, never the source
+of truth — it is read only to decide whether to scan, and what to compute is still
+whatever the scan classifies as missing. It is also conservative: a count read
+before the run can only under-claim, so a message synced mid-run costs a re-scan
+and never goes unanalysed. This is a deliberate departure from earlier designs that
 tracked per-session cursors and recovery status.
 
 ### Versioned lineage and the reach of a run

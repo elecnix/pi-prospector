@@ -76,16 +76,41 @@ export async function updateMessageCount(db: AsyncDatabase, sessionId: string, c
 	await prep(db, "UPDATE sessions SET message_count = ? WHERE id = ?").run(count, sessionId);
 }
 
-export async function markAnalyzed(db: AsyncDatabase, sessionId: string): Promise<void> {
-	await prep(db, "UPDATE sessions SET analyzed_at = ? WHERE id = ?").run(new Date().toISOString(), sessionId);
+/** The session's current message count, read before a run so it can record its reach. */
+export async function getSessionMessageCount(db: AsyncDatabase, sessionId: string): Promise<number> {
+	const row = (await prep(db, "SELECT message_count FROM sessions WHERE id = ?").get(sessionId)) as { message_count: number } | undefined;
+	return row?.message_count ?? 0;
 }
 
+/**
+ * Retire a session from the analysis queue, recording how much of it the run
+ * covered. `coveredMessages` is the count observed *before* the run: if messages
+ * are synced while the run is in flight, the session reads as grown afterwards
+ * and is scanned again, which costs a re-scan rather than losing the work.
+ */
+export async function markAnalyzed(db: AsyncDatabase, sessionId: string, coveredMessages?: number): Promise<void> {
+	const count = coveredMessages ?? (await getSessionMessageCount(db, sessionId));
+	await prep(db, "UPDATE sessions SET analyzed_at = ?, analyzed_message_count = ? WHERE id = ?").run(new Date().toISOString(), count, sessionId);
+}
+
+/**
+ * Sessions a plain fill still has work for: never analysed, or grown since the
+ * last clean analysis. A session that gained messages after it was analysed
+ * presents missing units — new turn pairs, a new pull request, a new session
+ * total — and filling only missing work means filling those too. Retirement is
+ * per analysed *content*, not a one-way flag.
+ *
+ * Never-analysed sessions come first, in their existing order, so a `--limit`
+ * run drains the backlog before revisiting sessions it has already covered.
+ */
 export async function getUnanalyzedSessions(db: AsyncDatabase, limit?: number, source?: string): Promise<Array<{ id: string; file_path: string; started_at: string }>> {
 	const sourceClause = source ? " AND source = ?" : "";
 	const params = source ? [source] : [];
+	const pending = "(analyzed_at IS NULL OR analyzed_message_count IS NULL OR message_count > analyzed_message_count";
+	const order = "ORDER BY (analyzed_at IS NOT NULL), started_at ASC";
 	const sql = limit
-		? `SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL${sourceClause} ORDER BY started_at ASC LIMIT ?`
-		: `SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL${sourceClause} ORDER BY started_at ASC`;
+		? `SELECT id, file_path, started_at FROM sessions WHERE ${pending})${sourceClause} ${order} LIMIT ?`
+		: `SELECT id, file_path, started_at FROM sessions WHERE ${pending})${sourceClause} ${order}`;
 	return (await (limit
 		? prep(db, sql).all(...[...params, limit])
 		: prep(db, sql).all(...params))) as Array<{ id: string; file_path: string; started_at: string }>;
