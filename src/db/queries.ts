@@ -76,16 +76,41 @@ export async function updateMessageCount(db: AsyncDatabase, sessionId: string, c
 	await prep(db, "UPDATE sessions SET message_count = ? WHERE id = ?").run(count, sessionId);
 }
 
-export async function markAnalyzed(db: AsyncDatabase, sessionId: string): Promise<void> {
-	await prep(db, "UPDATE sessions SET analyzed_at = ? WHERE id = ?").run(new Date().toISOString(), sessionId);
+/** The session's current message count, read before a run so it can record its reach. */
+export async function getSessionMessageCount(db: AsyncDatabase, sessionId: string): Promise<number> {
+	const row = (await prep(db, "SELECT message_count FROM sessions WHERE id = ?").get(sessionId)) as { message_count: number } | undefined;
+	return row?.message_count ?? 0;
 }
 
+/**
+ * Retire a session from the analysis queue, recording how much of it the run
+ * covered. `coveredMessages` is the count observed *before* the run: if messages
+ * are synced while the run is in flight, the session reads as grown afterwards
+ * and is scanned again, which costs a re-scan rather than losing the work.
+ */
+export async function markAnalyzed(db: AsyncDatabase, sessionId: string, coveredMessages?: number): Promise<void> {
+	const count = coveredMessages ?? (await getSessionMessageCount(db, sessionId));
+	await prep(db, "UPDATE sessions SET analyzed_at = ?, analyzed_message_count = ? WHERE id = ?").run(new Date().toISOString(), count, sessionId);
+}
+
+/**
+ * Sessions a plain fill still has work for: never analysed, or grown since the
+ * last clean analysis. A session that gained messages after it was analysed
+ * presents missing units — new turn pairs, a new pull request, a new session
+ * total — and filling only missing work means filling those too. Retirement is
+ * per analysed *content*, not a one-way flag.
+ *
+ * Never-analysed sessions come first, in their existing order, so a `--limit`
+ * run drains the backlog before revisiting sessions it has already covered.
+ */
 export async function getUnanalyzedSessions(db: AsyncDatabase, limit?: number, source?: string): Promise<Array<{ id: string; file_path: string; started_at: string }>> {
 	const sourceClause = source ? " AND source = ?" : "";
 	const params = source ? [source] : [];
+	const pending = "(analyzed_at IS NULL OR analyzed_message_count IS NULL OR message_count > analyzed_message_count";
+	const order = "ORDER BY (analyzed_at IS NOT NULL), started_at ASC";
 	const sql = limit
-		? `SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL${sourceClause} ORDER BY started_at ASC LIMIT ?`
-		: `SELECT id, file_path, started_at FROM sessions WHERE analyzed_at IS NULL${sourceClause} ORDER BY started_at ASC`;
+		? `SELECT id, file_path, started_at FROM sessions WHERE ${pending})${sourceClause} ${order} LIMIT ?`
+		: `SELECT id, file_path, started_at FROM sessions WHERE ${pending})${sourceClause} ${order}`;
 	return (await (limit
 		? prep(db, sql).all(...[...params, limit])
 		: prep(db, sql).all(...params))) as Array<{ id: string; file_path: string; started_at: string }>;
@@ -136,6 +161,20 @@ export type SessionScope = Static<typeof SessionScope>;
 /** Which harness ran a session and where — what decides the instruction files in scope for it. */
 export async function getSessionScope(db: AsyncDatabase, sessionId: string): Promise<SessionScope | undefined> {
 	return (await prep(db, "SELECT source, cwd FROM sessions WHERE id = ?").get(sessionId)) as SessionScope | undefined;
+}
+
+export const SessionLineage = Type.Object({
+	/** The coding harness that wrote the session. */
+	source: Type.String(),
+	/** The session this one forked from (pi) or was spawned by (a child agent), or null. */
+	parent_session: Type.Union([Type.String(), Type.Null()]),
+	started_at: Type.Union([Type.String(), Type.Null()]),
+});
+export type SessionLineage = Static<typeof SessionLineage>;
+
+/** Where a session came from: its harness, its parent link, and when it started. */
+export async function getSessionLineage(db: AsyncDatabase, sessionId: string): Promise<SessionLineage | undefined> {
+	return (await prep(db, "SELECT source, parent_session, started_at FROM sessions WHERE id = ?").get(sessionId)) as SessionLineage | undefined;
 }
 
 // ── Subagent runs ──
@@ -189,6 +228,28 @@ export async function getSubagentRunsForSession(db: AsyncDatabase, sessionId: st
 		"FROM subagent_runs r JOIN sessions s ON s.project = r.project " +
 		"WHERE s.id = ? ORDER BY r.run_id ASC",
 	).all(sessionId)) as SubagentRunRow[];
+}
+
+/** How much work the child agents of one parent session carry out. */
+export interface ChildSessionStats {
+	child_session_count: number;
+	child_message_count: number;
+}
+
+/**
+ * The child agents spawned by a session, and how many messages they contain.
+ * `parent_session` also links a Pi fork to the session it forked from, and a
+ * fork copies the parent's history, so a Pi session is a fork and not a child.
+ * Only other harnesses' sessions count, the rule `turn-frustration` uses for a
+ * child agent. A parent's own `message_count` is read from its row, so a caller
+ * can state the share of the work that went to children.
+ */
+export async function getChildSessionStats(db: AsyncDatabase, sessionId: string): Promise<ChildSessionStats & { own_message_count: number }> {
+	const children = (await prep(db,
+		"SELECT COUNT(*) AS child_session_count, COALESCE(SUM(message_count), 0) AS child_message_count FROM sessions WHERE parent_session = ? AND source <> 'pi'",
+	).get(sessionId)) as ChildSessionStats;
+	const own = (await prep(db, "SELECT message_count FROM sessions WHERE id = ?").get(sessionId)) as { message_count?: number } | undefined;
+	return { ...children, own_message_count: own?.message_count ?? 0 };
 }
 
 // ── Background tasks ──

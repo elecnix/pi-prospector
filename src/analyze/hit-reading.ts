@@ -19,7 +19,14 @@
  *      ranking that totals weights lets such a word win on volume alone. The
  *      share is measured from the corpus, in any language, with no vocabulary.
  *
- * The three compose in that order, and this module exists so they are composed
+ *   4. **Whose words.** A hit records how many of its occurrences the person
+ *      typed (`typed_count` of `count`). A swear word inside a quote, a pasted
+ *      log or a brief another agent wrote says nothing about how the person
+ *      feels, so the reading scales the weight by the typed share and drops a hit
+ *      with none. A hit drawn before the origin fields existed has no
+ *      `typed_count` and is read as it always was.
+ *
+ * The four compose in that order, and this module exists so they are composed
  * **once**. Every reader that computes a number from hits calls `pricedHits`;
  * none of them re-implements the sequence, so none of them can drift from
  * another's idea of what counts.
@@ -86,24 +93,40 @@ export async function pricedHits(
 
 	const priced: AnalysisNodeRow[] = [];
 	for (const node of current) {
+		const typed = typedShare(node);
+		if (typed <= 0) continue;
 		const signal = hitSignal(node);
 		// A marker hit (`shouting`, `repeated_punctuation`, `elongation`) has no
 		// spelling and no lexicon entry: it is not vocabulary, so there is no share
 		// to take and nothing to price. Its signal id is namespaced, which is what
 		// distinguishes it from a term.
 		if (signal === null || signal.startsWith("paralinguistic:")) {
-			priced.push(node);
+			priced.push(typed === 1 ? node : withWeight(node, typed));
 			continue;
 		}
 		const specificity = termSpecificity(prevalence.hitDocuments.get(signal) ?? 0, prevalence.documents, options.maxDocumentShare);
 		if (specificity <= 0) continue;
-		if (specificity === 1) {
+		if (specificity * typed === 1) {
 			priced.push(node);
 			continue;
 		}
-		priced.push(withWeight(node, specificity));
+		priced.push(withWeight(node, specificity * typed));
 	}
 	return priced;
+}
+
+/** The share of the hit's occurrences that the person typed, or 1 for a hit with no origin fields. */
+function typedShare(node: AnalysisNodeRow): number {
+	let props: Record<string, unknown>;
+	try {
+		props = JSON.parse(node.content_json) as Record<string, unknown>;
+	} catch {
+		return 1;
+	}
+	const typed = props["typed_count"];
+	const count = props["count"];
+	if (typeof typed !== "number" || typeof count !== "number" || count <= 0) return 1;
+	return Math.min(1, typed / count);
 }
 
 /**

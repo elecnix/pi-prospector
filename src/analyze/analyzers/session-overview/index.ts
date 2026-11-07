@@ -146,13 +146,16 @@ export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	// the other readers about which signals exist. The source set names the current
 	// generation of each upstream rather than every live one. Minor: the digest
 	// content narrows; the synthesis contract is otherwise unchanged.
-	// 1.13: prior-occurrence recall (RAW-RAG, arXiv:2610.30755) — opt-in via
+	// 1.13: the frustration hits it reads count the person's own words only (`pricedHits`
+	// scales a hit by its typed share and drops one with none), and turn-pair-core no
+	// longer marks a correction in a message another agent or the harness wrote.
+	// 1.14: prior-occurrence recall (RAW-RAG, arXiv:2610.30755) — opt-in via
 	// `recallPriorOccurrences`. Raw windows of earlier sessions that resemble this
 	// session's friction turns are folded into the source set (message ref + window
 	// hash) and handed to the reduce step as PRIOR OCCURRENCES, with a `recalls` edge
 	// per message. Off by default, so the source set and the synthesis are unchanged
 	// until it is enabled. Minor: additive channel.
-	minor: 13,
+	minor: 14,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -328,7 +331,8 @@ export const sessionOverviewAnalyzer: Analyzer = {
 					system: ctx.prompts["map"] ?? MAP_PROMPT,
 					user: buildMapPrompt(seg.text),
 					temperature: config.temperature,
-					maxTokens: 800,
+					// A segment summary; 800 truncated occasionally (4 calls) — see #369.
+					maxTokens: 1500,
 					tool: MAP_TOOL,
 				});
 				costUsd += res.costUsd;
@@ -365,7 +369,9 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			system: ctx.prompts["reduce"] ?? REDUCE_PROMPT,
 			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals, contrastContext, recallContext }),
 			temperature: config.temperature,
-			maxTokens: 2000,
+			// The session digest; 2,000 truncated ~0.3% of sessions on a model that
+			// reasons first, and each truncation costs the whole session's summary.
+			maxTokens: 4000,
 			tool: REDUCE_TOOL,
 		});
 		costUsd += reduceRes.costUsd;

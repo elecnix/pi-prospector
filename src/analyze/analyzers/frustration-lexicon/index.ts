@@ -43,7 +43,7 @@ import {
 } from "./prompt.js";
 import { TERM_DECISION_QUESTIONS, TERM_DECISION_QUESTIONS_HASH, parseTermDecision } from "./decision.js";
 import { decisionIdentity } from "../../decision-model.js";
-import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, type FrustrationLexiconConfig } from "./config.js";
+import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, DEFAULT_FRUSTRATION_LEXICON_MAX_TOKENS, type FrustrationLexiconConfig } from "./config.js";
 import { Type, type Static } from "typebox";
 
 /** The stored verdict for one term. */
@@ -107,7 +107,13 @@ export const FRUSTRATION_LEXICON_VERSION: AnalyzerVersion = {
 	// is unchanged — it always asked the model to judge meaning, and the guard was
 	// applied to the parsed answer — so a verdict cached under the guard keeps its
 	// stored polarity and is simply no longer overridden on the way out.
-	minor: 6,
+	// 1.7: an `insult` category, apart from profanity. An insult names or demeans
+	// the assistant or its work ("idiot", "moron"); profanity is swearing that names
+	// no one. Before, both landed under profanity, so insults aimed at the assistant
+	// could not be counted on their own. Only a verdict filed under profanity can
+	// move, so re-judge just those with `--revise minor --revise-where
+	// category=profanity`; every other verdict stays valid and stale.
+	minor: 7,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/frustration-lexicon/index.ts",
 };
@@ -136,11 +142,18 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 
 	modelsForIdentity(config, modelTiers): string[] {
 		const cfg = (config as unknown as FrustrationLexiconConfig) ?? DEFAULT_FRUSTRATION_LEXICON_CONFIG;
+		// No adjudication means no model to resolve, so a dictionary-only setup
+		// needs no credentials for this analyzer.
+		if (cfg.adjudicate === false) return [];
 		if (cfg.decisionModel) return [decisionIdentity(cfg.decisionModel, TERM_DECISION_QUESTIONS_HASH)];
 		return [resolveModelSpec(cfg.tier, modelTiers)];
 	},
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
+		// `lexicon.mode: "dictionary"`: the user's dictionary replaces the learned
+		// lexicon, so nothing is judged and no model is called.
+		if ((ctx.config as unknown as FrustrationLexiconConfig | undefined)?.adjudicate === false) return [];
+
 		// This session's nominations, kept in the frequency order nomination chose.
 		// Nodes are read in a fixed order and a duplicate keeps its first position, so
 		// this list is reproducible.
@@ -233,7 +246,8 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 			system: ctx.prompts["classify_term"] ?? CLASSIFY_TERM_PROMPT,
 			user: buildClassifyTermPrompt(term),
 			temperature: config.temperature,
-			maxTokens: 300,
+			// Room for the verdict and its rationale — see the budget's note in config.ts.
+			maxTokens: config.maxTokens ?? DEFAULT_FRUSTRATION_LEXICON_MAX_TOKENS,
 			reasoning: config.reasoning,
 			tool: CLASSIFY_TERM_TOOL,
 		});

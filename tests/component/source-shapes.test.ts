@@ -17,9 +17,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
-import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
-import { PiSubagentSource } from "../../src/sync/sources/pi-subagent.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
+import { PiSubagentSource } from "../../src/sync/sources/pi-subagent/index.js";
 import { makeTempRoot } from "./helpers.js";
 
 const PI_SESSION_UUID = "aaaa0001-bbbb-4ccc-8ddd-eeeeeeeeeeee";

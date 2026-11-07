@@ -115,8 +115,12 @@ export const FAILURE_MODES_VERSION: AnalyzerVersion = {
 	// 1.2 (issue #255): a rejected no-op edit — pi's "replacement produced
 	// identical content" — is its own class, no-effect-edit, instead of being
 	// counted as an edit-anchor miss it never was.
+	// 1.3: the action stream pairs a result that carries a call id with a stored
+	// call that has none (sessions indexed before sync kept the id). Those
+	// sessions, June to August, counted zero tool failures whatever their
+	// transcripts recorded.
 	major: 1,
-	minor: 2,
+	minor: 3,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/failure-modes/index.ts",
 };

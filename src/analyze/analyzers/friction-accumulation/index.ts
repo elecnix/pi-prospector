@@ -119,7 +119,10 @@ export const FRICTION_ACCUMULATION_VERSION: AnalyzerVersion = {
 	// any language. Hits now arrive already priced from `pricedHits`, so the sum
 	// below cannot count a background word. Minor: the score narrows.
 	major: 1,
-	minor: 2,
+	// 1.3: the frustration hits it reads count the person's own words only (`pricedHits`
+	// scales a hit by its typed share and drops one with none), and turn-pair-core no
+	// longer marks a correction in a message another agent or the harness wrote.
+	minor: 3,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/friction-accumulation/index.ts",
 };

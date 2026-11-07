@@ -13,8 +13,8 @@ import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js"
 import { migrate } from "../../src/db/schema.js";
 import { getAllSessions, getStats, listProposals, acceptProposal, rejectProposal } from "../../src/db/queries.js";
 import { runSync } from "../../src/sync/index.js";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
-import { ClaudeFileSource } from "../../src/sync/sources/claude-file.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
+import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { AnalyzerFramework } from "../../src/analyze/framework.js";
 import { registerDefaults } from "../../src/analyze/defaults.js";
 import { createMockLLM, type MockLLMReply } from "../../src/analyze/mock-llm.js";

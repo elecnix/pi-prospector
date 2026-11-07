@@ -48,6 +48,10 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			last_line INTEGER NOT NULL DEFAULT 0,
 			last_modified REAL NOT NULL DEFAULT 0,
 			analyzed_at TEXT,
+			-- message_count at the last clean analysis. A session whose count has
+			-- grown since then still has work: the units its new messages add. NULL
+			-- means it was analysed before this column existed — re-scanned once.
+			analyzed_message_count INTEGER,
 			message_count INTEGER NOT NULL DEFAULT 0,
 			branch_count INTEGER NOT NULL DEFAULT 0,
 			-- Active tool set carried by the session (NOT backfillable — see
@@ -552,6 +556,15 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 	// existing rows are backfilled only by a full re-sync from transcripts.
 	if (!await hasColumn("sessions", "name")) {
 		await db.exec("ALTER TABLE sessions ADD COLUMN name TEXT");
+	}
+
+	// sessions: the message count a clean analysis covered. Without it a plain
+	// fill cannot tell a finished session from one that kept running after it was
+	// analysed, and the units those later messages add would never be computed.
+	// NULL on rows analysed before the column existed: they read as grown, so the
+	// next plain fill scans each once and the queue settles.
+	if (!(await hasColumn("sessions", "analyzed_message_count"))) {
+		await db.exec("ALTER TABLE sessions ADD COLUMN analyzed_message_count INTEGER");
 	}
 
 	// sessions: tool_inventory (active tool set capture; NULL = UNKNOWN)

@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { FIXTURES } from "./helpers.js";
 import { main } from "../../src/cli.js";
+import { METRICS_PENDING } from "../../src/analyze/metrics/registry.js";
 import type { ModelRegistry } from "../../src/pi-stubs.js";
 
 /**
@@ -93,6 +94,20 @@ describe("prospect CLI", () => {
 		const stats = await capture(["stats"]);
 		assert.equal(stats.code, 0);
 		assert.match(stats.out, /Sessions/i);
+	});
+
+	it("prints one analyzer's metric definitions and lists the analyzers that have none", async () => {
+		const one = await capture(["metrics", "--analyzer", "session-ending"]);
+		assert.equal(one.code, 0);
+		assert.match(one.out, /Session ending label/);
+		assert.match(one.out, /version \d+\.\d+, deterministic/);
+		const gaps = await capture(["metrics", "--gaps"]);
+		assert.equal(gaps.code, 0);
+		const first = METRICS_PENDING[0];
+		if (first === undefined) assert.match(gaps.out, /Every analyzer has metric definitions/);
+		else assert.ok(gaps.out.includes(first), "the gap list names a pending analyzer");
+		assert.equal((await capture(["metrics", "--analyzer", "nope"])).code, 1);
+		assert.equal((await capture(["metrics", "--analyzer"])).code, 1);
 	});
 
 	it("passes the remaining arguments to the command", async () => {

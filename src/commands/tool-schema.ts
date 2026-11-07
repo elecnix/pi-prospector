@@ -83,6 +83,12 @@ export const PROSPECT_TOOL = {
 				{ description: "analyze: revise reasons — which stale nodes the run may recompute (major/minor = analyzer version bumps graded by the author, config = user setup changed, all = every reason). Omit for a frugal plain fill that only fills missing work." },
 			),
 		),
+		revise_where: Type.Optional(
+			Type.Array(Type.String(), {
+				description:
+					"analyze: key=value filters, repeatable, that narrow a revise to the stale nodes whose prior content matches every one (e.g. category=profanity re-judges only the lexicon terms filed under profanity). Needs revise. Missing work is still filled.",
+			}),
+		),
 		recent: Type.Optional(Type.Number({ description: "analyze: run over the N most-recent sessions (by started_at DESC), e.g. for pilots." })),
 		model: Type.Optional(Type.String({ description: "analyze: provider/model pinning every tier to one model for this run (the resolved model is part of node identity)." })),
 		analyzer: Type.Optional(Type.String({ description: "Analyzer id to read (nodes action; required unless all=true) or to run (analyze action)." })),

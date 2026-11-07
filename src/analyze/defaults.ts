@@ -22,6 +22,10 @@ import { routingOpportunityAnalyzer } from "./analyzers/routing-opportunity/inde
 import { lexiconCandidatesAnalyzer } from "./analyzers/lexicon-candidates/index.js";
 import { frustrationLexiconAnalyzer } from "./analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer } from "./analyzers/turn-frustration/index.js";
+import { messageOriginAnalyzer } from "./analyzers/message-origin/index.js";
+import { attentionGapsAnalyzer } from "./analyzers/attention-gaps/index.js";
+import { messageAnswersAnalyzer } from "./analyzers/message-answers/index.js";
+import { promptFormAnalyzer } from "./analyzers/prompt-form/index.js";
 import { secretLeakAnalyzer } from "./analyzers/secret-leak/index.js";
 import { gitleaksAnalyzer } from "./analyzers/gitleaks/index.js";
 import { noseyParkerAnalyzer } from "./analyzers/nosey-parker/index.js";
@@ -40,6 +44,11 @@ import { languageMismatchAnalyzer } from "./analyzers/language-mismatch/index.js
 import { decodeCollapseAnalyzer } from "./analyzers/decode-collapse/index.js";
 import { sessionEndingAnalyzer } from "./analyzers/session-ending/index.js";
 import { prOpenedAnalyzer } from "./analyzers/pr-opened/index.js";
+import { repoIdentityAnalyzer } from "./analyzers/repo-identity/index.js";
+import { skillUseAnalyzer } from "./analyzers/skill-use/index.js";
+import { gitCommandsAnalyzer } from "./analyzers/git-commands/index.js";
+import { activityWindowsAnalyzer } from "./analyzers/activity-windows/index.js";
+import { delegationOutcomesAnalyzer } from "./analyzers/delegation-outcomes/index.js";
 import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { staleVerificationAnalyzer } from "./analyzers/stale-verification/index.js";
 import { verificationCommandsAnalyzer } from "./analyzers/verification-commands/index.js";
@@ -53,10 +62,14 @@ import { requestClassesAnalyzer } from "./analyzers/request-classes/index.js";
 import { ruleRestatementAnalyzer } from "./analyzers/rule-restatement/index.js";
 
 export const DEFAULT_ANALYZER_IDS = [
+	"message-origin",
 	"turn-pair-core",
 	"lexicon-candidates",
 	"frustration-lexicon",
 	"turn-frustration",
+	"attention-gaps",
+	"message-answers",
+	"prompt-form",
 	"turn-pair-llm",
 	"assistant-cognition",
 	"tool-trajectory",
@@ -76,6 +89,11 @@ export const DEFAULT_ANALYZER_IDS = [
 	"verification-commands",
 	"stale-verification",
 	"pr-opened",
+	"repo-identity",
+	"skill-use",
+	"git-commands",
+	"activity-windows",
+	"delegation-outcomes",
 	"files-in-play",
 	"navigation-efficiency",
 	"similarity-cluster",
@@ -101,6 +119,9 @@ export const DEFAULT_ANALYZER_IDS = [
 
 /** The built-in analyzers registered by a plain analyze run, in dependency order. */
 export const BUILTIN_ANALYZERS: Analyzer[] = [
+	// Who wrote each user-role message: rules first, a decision model for the undecided.
+	// First, because turn-pair-core and turn-frustration read these nodes.
+	messageOriginAnalyzer,
 	turnPairCoreAnalyzer,
 	// The learned frustration lexicon: nominate vocabulary, judge each unseen word
 	// once for the whole corpus, then match turns against it. Ordered before
@@ -108,6 +129,12 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	lexiconCandidatesAnalyzer,
 	frustrationLexiconAnalyzer,
 	turnFrustrationAnalyzer,
+	// How long the agent waited for a person, from the typed messages message-origin settled.
+	attentionGapsAnalyzer,
+	// The classifier questions analyzers registered about a message, asked in one request each.
+	// Without a decisionModel it plans nothing. prompt-form reads its answers.
+	messageAnswersAnalyzer,
+	promptFormAnalyzer,
 	turnPairLLMAnalyzer,
 	// The assistant's own cognitive state, per turn: confusion, indecision, and
 	// surprise read from the thinking trace and response text. Depends only on
@@ -212,6 +239,21 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// deterministic graders, before the synthesizer, so a future consumer can
 	// declare it as a dependency without reordering.
 	prOpenedAnalyzer,
+	// The repository each session worked in, as one key read from the forge address its own
+	// git commands touched. Deterministic, standalone, one metric node per session.
+	repoIdentityAnalyzer,
+	// Which skills each session loaded and how often, by name. Deterministic,
+	// standalone, one metric node per session; it proposes nothing.
+	skillUseAnalyzer,
+	// The commits, pushes, and pull request merges each session ran. Deterministic,
+	// standalone, one metric node per session; it proposes nothing.
+	gitCommandsAnalyzer,
+	// When each session was running, as merged activity windows. The `concurrency`
+	// output folds them across sessions at read time. Deterministic, standalone.
+	activityWindowsAnalyzer,
+	// How each hand-off to a child agent ended, and how much work moved to child
+	// sessions. Deterministic, standalone, one metric node per session.
+	delegationOutcomesAnalyzer,
 	// Where each session's wall-clock time went (#306): seconds per command
 	// family, active versus idle time, waits that block inside one tool call,
 	// and wait loops whose pgrep -f / ps | grep pattern matches the loop itself.

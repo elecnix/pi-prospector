@@ -79,7 +79,7 @@ const PairwiseSimilaritySchema = Type.Object({
 	similarity: Type.Number(),
 });
 
-const ClusterFindingSchema = Type.Object({
+export const ClusterFindingSchema = Type.Object({
 	detector: Type.Union([
 		Type.Literal("tool_call"),
 		Type.Literal("tool_result"),

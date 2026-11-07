@@ -104,7 +104,7 @@ export const COMMANDS: ProspectCommand[] = [
 		name: "prospect-analyze",
 		flag: "analyze",
 		description:
-			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --backfill-missing (run only the analyzers each analysed session is missing — closes coverage gaps after a new or previously-unselected analyzer ships, without re-running everything), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --source pi|claude|codex|opencode|cline (restrict to sessions from one coding harness), --analyzer ID (run one analyzer and its dependencies, even one outside the defaultAnalyzers/disabledAnalyzers set in prospector.json), --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
+			"Run analyzer framework over sessions (incremental). Flags: --revise major|minor|config|all (recompute stale nodes: major/minor analyzer bumps, config = your setup changed; default fills only missing work), --revise-where key=value (repeatable; revise only the stale nodes whose prior content matches, e.g. category=profanity to re-judge only the lexicon terms filed under profanity; needs --revise), --all (plain-fill every session, not just unanalysed ones — use after the frustration lexicon learns new words), --backfill-missing (run only the analyzers each analysed session is missing — closes coverage gaps after a new or previously-unselected analyzer ships, without re-running everything), --limit N, --recent N (most-recent N sessions, for pilots), --session ID, --source pi|claude|codex|opencode|cline (restrict to sessions from one coding harness), --analyzer ID (run one analyzer and its dependencies, even one outside the defaultAnalyzers/disabledAnalyzers set in prospector.json), --model provider/model (pin every tier to one model for this run; the model is part of node identity), --analyzer-path FILE|DIR (load a locally-authored custom analyzer; repeatable — the Pi agent dir ~/.pi/agent/prospector/analyzers and ./.prospector/analyzers are always scanned), --llm-concurrency N (max concurrent LLM calls, and the per-analyzer unit fan-out; default 10), --analyzer-concurrency N (session fan-out for deterministic-only runs, default 20)",
 		load: () => import("./analyze.js"),
 		handler: (module) => module.prospectAnalyze,
 	}),
@@ -115,6 +115,14 @@ export const COMMANDS: ProspectCommand[] = [
 			"Inspect locally-authored custom analyzers. Subcommands: list (built-ins + discovered custom analyzers, each with its declared output properties, and any load errors), list --schema <analyzer-id> (print that analyzer's declared node-content schema as JSON), validate <file|dir> (check one analyzer file/dir, including its outputSchema declaration). Custom analyzers are loaded from ~/.pi/agent/prospector/analyzers, ./.prospector/analyzers, and config analyzerPaths.",
 		load: () => import("./analyzers.js"),
 		handler: (module) => module.prospectAnalyzers,
+	}),
+	spec({
+		name: "prospect-metrics",
+		flag: "metrics",
+		description:
+			"Print what each metric means: definition, how it is measured (counted, rule-based or inferred), unit and denominator, limits, and the series breaks where an analyzer version changed its meaning. Flags: --analyzer <id> (one analyzer; `sessions` for figures counted from the index), --format md|json, --gaps (list the analyzers that have no definitions yet). Reads the definitions that analyzers declare; touches no database and runs no analysis.",
+		load: () => import("./metrics.js"),
+		handler: (module) => module.prospectMetrics,
 	}),
 	spec({
 		name: "prospect-output",

@@ -4,6 +4,12 @@ import * as os from "node:os";
 import type { ProspectorConfig } from "./types.js";
 import { DEFAULT_MODEL_TIERS } from "./analyze/model-tiers.js";
 import type { ModelTierConfig } from "./analyze/types.js";
+import { Check } from "typebox/value";
+import { LexiconMode, normalizeDictionary } from "./analyze/analyzers/turn-frustration/dictionary.js";
+
+/** The analyzers `lexicon` configures, by id. */
+const TURN_FRUSTRATION_ID = "turn-frustration";
+const FRUSTRATION_LEXICON_ID = "frustration-lexicon";
 
 const DEFAULT_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "prospector.json");
 const DEFAULT_DB_PATH = path.join(os.homedir(), ".pi", "agent", "prospector.db");
@@ -89,7 +95,58 @@ export function getClineSessionsDir(): string {
  */
 export function getAnalyzerConfigOverrides(config?: ProspectorConfig): Record<string, Record<string, unknown>> {
 	const c = config ?? loadConfig();
-	return c.analyzers ?? {};
+	const overrides: Record<string, Record<string, unknown>> = { ...(c.analyzers ?? {}) };
+	for (const [id, fields] of Object.entries(lexiconOverrides(c))) {
+		overrides[id] = { ...overrides[id], ...fields };
+	}
+	return overrides;
+}
+
+/**
+ * The analyzer config fields that `lexicon` in prospector.json sets.
+ *
+ * Nothing at all in `model` mode, so the default leaves every config
+ * fingerprint, and therefore every node, exactly as it was. In `dictionary` and
+ * `both` mode, turn-frustration gets the mode and the normalised dictionary, so
+ * editing an entry marks its hits stale for `config`. frustration-lexicon gets
+ * `adjudicate: false` in `dictionary` mode only: `both` keeps its fingerprint,
+ * so every verdict the corpus already paid for stays current.
+ */
+function lexiconOverrides(c: ProspectorConfig): Record<string, Record<string, unknown>> {
+	const mode: unknown = c.lexicon?.mode ?? "model";
+	if (!Check(LexiconMode, mode)) {
+		throw new Error(`lexicon.mode must be "model", "dictionary", or "both", not ${JSON.stringify(mode)}.`);
+	}
+	if (mode === "model") return {};
+	const dictionary = normalizeDictionary(readDictionary(c.lexicon?.dictionary));
+	if (dictionary.length === 0) {
+		throw new Error(`lexicon.mode is "${mode}", but lexicon.dictionary has no entries.`);
+	}
+	const out: Record<string, Record<string, unknown>> = {
+		[TURN_FRUSTRATION_ID]: { lexiconMode: mode, dictionary },
+	};
+	if (mode === "dictionary") out[FRUSTRATION_LEXICON_ID] = { adjudicate: false };
+	return out;
+}
+
+/** The dictionary entries, read from a JSON file when `lexicon.dictionary` is a path. */
+function readDictionary(value: unknown): unknown[] {
+	if (value === undefined) return [];
+	if (Array.isArray(value)) return value;
+	if (typeof value !== "string") {
+		throw new Error("lexicon.dictionary must be an array of entries or the path to a JSON file holding one.");
+	}
+	const file = path.resolve(path.dirname(configPath()), value.replace(/^~/, os.homedir()));
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+	} catch (err) {
+		throw new Error(`Cannot read lexicon.dictionary file ${file}: ${(err as Error).message}`);
+	}
+	if (!Array.isArray(parsed)) {
+		throw new Error(`lexicon.dictionary file ${file} must hold a JSON array of entries.`);
+	}
+	return parsed;
 }
 
 /**

@@ -7,6 +7,7 @@
           "lexicon-candidates",
           "frustration-lexicon",
           "turn-frustration",
+          "message-origin",
           "turn-pair-llm",
           "assistant-cognition",
           "tool-trajectory",
@@ -23,6 +24,14 @@
           "repetition-collapse",
           "session-ending",
           "pr-opened",
+          "repo-identity",
+          "skill-use",
+          "attention-gaps",
+          "git-commands",
+          "activity-windows",
+          "delegation-outcomes",
+          "message-answers",
+          "prompt-form",
           "time-economy",
           "verification-commands",
           "stale-verification",
@@ -72,7 +81,7 @@
         "rejected",
         "acceptedModified"
       ],
-      "maxRows": 150,
+      "maxRows": 240,
       "maxCount": 10000000
     }
   },

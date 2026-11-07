@@ -30,7 +30,7 @@ conversation; there is none.
 Return your judgement by calling the \`classify_term\` tool with exactly these fields:
 {
   "polarity": "frustration" | "praise" | "neutral",
-  "category": "profanity" | "negation" | "correction" | "repetition" | "urgency" | "confusion" | "dissatisfaction" | "praise" | "none",
+  "category": "profanity" | "insult" | "negation" | "correction" | "repetition" | "urgency" | "confusion" | "dissatisfaction" | "praise" | "none",
   "language": "an ISO 639-1 code, or \\"und\\" if the token is language-neutral or unknown",
   "confidence": 0.0 to 1.0,
   "rationale": "one short sentence"
@@ -41,9 +41,13 @@ it names a thing, a tool, a status, or a topic, it is "neutral" — however
 negative that thing may be.
 
 Guidance:
-- "frustration" covers profanity, negation and correction markers ("no", "wrong",
-  "nope", "faux"), repetition markers ("again", "encore", "still"), impatience,
-  and angry emoji.
+- "frustration" covers profanity, insults, negation and correction markers ("no",
+  "wrong", "nope", "faux"), repetition markers ("again", "encore", "still"),
+  impatience, and angry emoji.
+- Keep insults apart from profanity. An "insult" names or demeans the assistant or
+  its work: "idiot", "moron", "stupid", or "useless" said of the assistant.
+  "profanity" is swearing that names no one: "fuck", "merde", "damn". A word that
+  is both, such as "dumbass", is "insult".
 - "praise" covers thanks, approval, and celebratory emoji — these are just as
   useful, because they mark what the assistant did right.
 - Be strict. The great majority of entries are ordinary vocabulary: if an entry
@@ -88,6 +92,7 @@ export const CLASSIFY_TERM_TOOL = {
 		polarity: Type.Union([Type.Literal("frustration"), Type.Literal("praise"), Type.Literal("neutral")]),
 		category: Type.Union([
 			Type.Literal("profanity"),
+			Type.Literal("insult"),
 			Type.Literal("negation"),
 			Type.Literal("correction"),
 			Type.Literal("repetition"),
@@ -125,6 +130,7 @@ export type ClassifyTermResult = Static<typeof ClassifyTermResult>;
 const VALID_POLARITY = new Set(["frustration", "praise", "neutral"]);
 const VALID_CATEGORY = new Set([
 	"profanity",
+	"insult",
 	"negation",
 	"correction",
 	"repetition",

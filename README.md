@@ -150,6 +150,22 @@ The `rebuttal` type is the one the deterministic layer cannot settle on its own:
 
 Source: [`turn-pair-llm/index.ts`](./src/analyze/analyzers/turn-pair-llm/index.ts) · classifier prompt + evidence formatting in [`prompt.ts`](./src/analyze/analyzers/turn-pair-llm/prompt.ts) · tier + enrichment cap in [`config.ts`](./src/analyze/analyzers/turn-pair-llm/config.ts).
 
+### message-origin, the author of each user-role message
+
+Hosts file many things under the user role that the person never typed. `message-origin` writes one node per turn-starting message and labels it `typed`, `pasted`, `agent` or `notification` (definitions in [DESIGN.md](./DESIGN.md)). Named rules in [`message-origin.ts`](./src/analyze/message-origin.ts) decide nearly every message, and the node records the rule. To count only a person's words, filter on the label:
+
+```sh
+prospect nodes --analyzer message-origin --filter origin=typed
+```
+
+A message with only a weak sign of machine authorship is undecided. It keeps the provisional label `typed` and `decided: false`, and a run makes no model call. To settle those messages, set a decision model in `~/.pi/agent/prospector.json`:
+
+```json
+{ "analyzers": { "message-origin": { "decisionModel": "jev/jev-1.13.0" } } }
+```
+
+The model reads only the undecided messages, through two questions (`author` and `copied`), and the node keeps its probabilities. An answer below `minConfidence` (0.6 by default) leaves the message undecided.
+
 ### lexicon-candidates / frustration-lexicon / turn-frustration — the learned frustration lexicon
 
 The correction patterns in `turn-pair-core` are English regexes. Write `putain, c'est encore faux` or `не то` and they see nothing. Instead of shipping more languages — an unbounded list that is always partial — these three analyzers **learn the vocabulary from your own corpus**.
@@ -157,6 +173,14 @@ The correction patterns in `turn-pair-core` are English regexes. Write `putain, 
 1. **lexicon-candidates** (deterministic) tokenises your messages and nominates the distinct terms worth judging, ranked by frequency and capped per session. It is language-blind on purpose: no stopwords, no stemming, just a shape filter that drops code, paths, and identifiers.
 2. **frustration-lexicon** (cheap LLM) judges each *previously unseen* term — polarity (frustration / praise / neutral), category, language, confidence. **A word is judged once for the whole corpus.** A unit's source set is the word itself, and `input_key` is unique graph-wide, so every later session that uses the word finds the verdict already `current` and pays nothing. The graph *is* the cache; there is no dictionary table and no state outside it. The verdict is stored exactly as the model judged it, and the **readers** decide what a verdict is worth: a term is priced by **term specificity**, the share of the corpus's analysed turns that carry it. A word in nearly every turn cannot distinguish one turn from another, so it contributes no weight however often it appears — which is what keeps `do`, `no`, and `never` out of the ranking. The share is measured from the corpus, so the rule needs no word list and works in any language; it is applied when a number is computed, never frozen into a hit node, so it stays current as the corpus grows.
 3. **turn-frustration** (deterministic) matches each turn against the learned lexicon, emitting one node per (turn, signal). A hit promotes the turn into `turn-pair-llm` enrichment even when the deterministic score missed it, and lands in the `session-overview` digest as `frustration=[term:category/lang]`.
+
+Each hit also records the **text origin** of the words it matched. A user message often carries text the person did not type. It may hold a pasted log or a quoted line. Another agent or the harness may have written it, or a fork may have copied it from its parent. The hit's `origin` is `typed` when any occurrence is in typed text, `origins` gives the occurrences per label, and `typed_count` counts the typed ones. The count and the weight stay as before. To list the hits on typed text only:
+
+```
+prospect nodes --analyzer turn-frustration --filter origin=typed
+```
+
+[`text-origin.ts`](./src/analyze/text-origin.ts) documents the labelling rules, for pi and Claude Code transcripts alike. Hits drawn before turn-frustration 1.10 have no label. Run `prospect analyze --analyzer turn-frustration --revise minor` to redraw them. Hits drawn before 1.11 also label a Claude Code paste `typed`, because the paste's closing tag repeats its attributes and the earlier rule missed it. The same run redraws them. From 1.12 a hit also reads the `message-origin` node of its turn: a message that node labels `agent`, `notification` or `pasted` gives every occurrence in it that label, so `origin=typed` leaves out orchestrator briefs and short terminal captures that no tag marks.
 
 Praise vocabulary is collected the same way, and feeds `reinforcement` proposals.
 
@@ -169,7 +193,40 @@ Frustration lexicon: learned 12 new term(s).
   Sessions analysed earlier may use them — run '/prospect-analyze --all' to back-fill.
 ```
 
-`--all` plain-fills every session rather than only unanalysed ones. It stays cheap: scanning is fingerprint lookups, and only turns that actually contain a newly learned word have anything to compute.
+`--all` plain-fills every session rather than only the ones that still have work. It stays cheap: scanning is fingerprint lookups, and only turns that actually contain a newly learned word have anything to compute.
+
+#### Your own frustration dictionary
+
+You can file your own words and phrases under a category, in `lexicon` in `~/.pi/agent/prospector.json`. `turn-frustration` matches them the same way it matches learned terms. A phrase of two or more words matches when its words appear in that order within one sentence.
+
+```json
+{
+  "lexicon": {
+    "mode": "both",
+    "dictionary": [
+      { "term": "laisse tomber", "category": "dissatisfaction", "language": "fr" },
+      { "term": "not again", "category": "repetition", "language": "en" },
+      { "term": "nickel", "category": "praise" }
+    ]
+  }
+}
+```
+
+`mode` sets where lexicon hits come from:
+
+| Mode | Hits from | Model calls |
+|------|-----------|-------------|
+| `model` (default) | the learned lexicon | `frustration-lexicon` judges each new term |
+| `dictionary` | your entries only | none: `frustration-lexicon` plans no work |
+| `both` | the learned lexicon and your entries | as in `model` |
+
+Each entry needs a `term` and a `category`. The shipped categories are `profanity`, `insult`, `negation`, `correction`, `repetition`, `urgency`, `confusion`, `dissatisfaction`, and `praise`, and you can use your own. `polarity` is `praise` for the `praise` category and `frustration` otherwise, unless you set it. `language` is an ISO 639-1 code, `und` when you leave it out. `dictionary` can also be the path to a JSON file that holds the same array. A relative path resolves against the directory of `prospector.json`.
+
+Every lexicon hit records `lexicon_source`, `model` or `dictionary`, so a report can tell them apart. In `both` mode, your entry wins when the model has also judged the same term: you wrote the entry for your own sessions, and the model judged the word in general. The model still judges the term, so its verdict is ready if you remove the entry.
+
+Prospector normalises each term the way it tokenises your messages: lowercase, with single spaces between words. It refuses an entry that could never match as written, such as `v2` (a digit) or `à bout` (a one-letter word), and a term listed twice. A muted term stays muted, whichever source filed it.
+
+The mode and the dictionary are part of the `turn-frustration` config, so editing an entry marks the hits drawn under the old dictionary stale for `config`. `--revise config` redraws them. The default `model` mode adds nothing to any config, so every existing node keeps its fingerprint. `dictionary` mode leaves the verdicts you already have in the graph, and switching back to `model` uses them again.
 
 Source: [`lexicon-candidates/index.ts`](./src/analyze/analyzers/lexicon-candidates/index.ts) · tokeniser + paralinguistic markers in [`tokenize.ts`](./src/analyze/analyzers/lexicon-candidates/tokenize.ts) · [`frustration-lexicon/index.ts`](./src/analyze/analyzers/frustration-lexicon/index.ts) · term prompt in [`prompt.ts`](./src/analyze/analyzers/frustration-lexicon/prompt.ts) · [`turn-frustration/index.ts`](./src/analyze/analyzers/turn-frustration/index.ts).
 
@@ -217,7 +274,7 @@ Source: [`verification-commands/index.ts`](./src/analyze/analyzers/verification-
 
 #### What leaves your machine
 
-`verification-commands` is the only analyzer in the project that sends anything from your sessions to a remote service. Here is the whole of it.
+`verification-commands` sends command lines and nothing else from your sessions. Here is the whole of it. `message-origin` and `message-answers` also send message text to a decision model when you set their `decisionModel`. `message-origin` sends the messages its rules could not place. `message-answers` sends the typed words of the messages that registered questions cover. Both stay off until you set a model, and neither redacts the text.
 
 **What is sent:** the distinct command lines a session ran, one per command, and nothing else. A command line is the text of a shell call, such as `tools/ci/verify-all` or `npm test -- --coverage`. The request carries that one line in a `command` field, together with the fixed question text the analyzer ships. No prompt, no reply, no file path, no timestamp, no tool result, and no message of any kind travels with it. A test in the suite asserts exactly that, and asserts it against a request that has been given extra session text to catch a regression.
 
@@ -260,6 +317,62 @@ Source: [`stale-verification/index.ts`](./src/analyze/analyzers/stale-verificati
 Records what a session produced, when what it produced was a pull request. A session opened one when it ran the creation call **and** the forge answered with the pull request's URL. The call states the title (`gh pr create --title`, or a hosted-forge tool's own arguments), and the result states the URL. Both halves must hold, and the second one is what separates opening a pull request from reading or monitoring one. `gh pr create` prints the URL alone on a line, so a URL sharing its line with other text came from a grep hit or a document the session read. A stacked-PR tool reports differently: `gh stack link --open` prints `✓ Created PR #2351 (url) for feat/x (base: feat/y)`, and the analyzer takes the URL from that `Created PR` line, because the same verb prints only `Added 1 PR to stack` when it linked a pull request that already existed. The analyzer stores one session-anchored metric node per pull request, with the URL, repository, number, and title, and edges to the call and the result behind it. It proposes nothing, and it never calls a model.
 
 Source: [`pr-opened/index.ts`](./src/analyze/analyzers/pr-opened/index.ts) · creation detection in [`detect.ts`](./src/analyze/analyzers/pr-opened/detect.ts) · tool names and caps in [`config.ts`](./src/analyze/analyzers/pr-opened/config.ts).
+
+### skill-use — which skills a session loaded (deterministic)
+
+Records which skills a session loaded and how often. A skill counts as loaded when the agent called the host's skill tool, or, on a host with no such tool, read the skill's `SKILL.md`. The analyzer stores one session-anchored metric node per session with each skill's name, call count, and failed calls, and an edge to the first call of each skill. A session that loaded nothing gets an empty list, so a monthly rate has a denominator. The node records use. Which skills were installed in a past session is not recoverable. The analyzer calls no model and proposes nothing.
+
+Source: [`skill-use/index.ts`](./src/analyze/analyzers/skill-use/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/skill-use/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/skill-use/config.ts).
+### message-answers, classifier questions about a message
+
+Several analyzers want a small judgement about the same message, such as the kind of prompt it is. `message-answers` is the shared layer that asks. An analyzer registers a question (an id, a version, the origins it applies to, and a Choice, Score or Noul question). The layer writes one node per message and stores the answer to every registered question on it. A request to the decision model includes all the questions the message has no answer for, so the message is sent once however many analyzers ask. The model reads the person's own words, with pasted and quoted text and harness blocks cut out.
+
+A question that has an answer is never sent again. Adding a question, or raising a question's version, moves the registered set, so the nodes go stale for `config`. `prospect analyze --analyzer message-answers --revise config` then writes a revised node for each message. The revised node keeps every answer whose question is unchanged, and the model answers only the new one. The analyzer plans nothing until you configure a model:
+
+```json
+{ "analyzers": { "message-answers": { "decisionModel": "jev/jev-1.13.0" } } }
+```
+
+Source: [`message-answers/index.ts`](./src/analyze/analyzers/message-answers/index.ts) · the registry in [`message-questions.ts`](./src/analyze/message-questions.ts).
+
+### prompt-form, the form of the prompts a person typed
+
+Measures the form of the prompts a person typed, one session-anchored node per session. The node counts questions, instructions, corrections and other prompts, gives the length of the prompts (sum, median, 90th percentile, maximum, and buckets that add across sessions), and counts the prompts with a list, a heading or a code block, so a monthly series is a sum of nodes. It reads `message-origin` and only messages settled as `typed`, and it measures the person's own words after pasted and quoted text is cut.
+
+The kind of a prompt is the classifier's answer from `message-answers`, so it doesn't depend on a question mark or a language. A prompt with no answer is counted as `unknown`, not as zero, and without a configured decision model every typed prompt is unknown. A message whose origin is undecided is counted apart and its form isn't read. A session with no typed message has every count at zero. The analyzer never calls a model itself, and it proposes nothing.
+
+Source: [`prompt-form/index.ts`](./src/analyze/analyzers/prompt-form/index.ts) · the measures in [`detect.ts`](./src/analyze/analyzers/prompt-form/detect.ts) · the question in [`question.ts`](./src/analyze/analyzers/prompt-form/question.ts).
+
+### attention-gaps — how long the agent waited for a person (deterministic)
+
+Measures the time from the agent's last activity to each message a person typed. The analyzer reads the `message-origin` nodes and counts only messages settled as `typed`, so a prompt another agent wrote or a harness notification isn't attention. A message whose origin is undecided keeps a provisional `typed` label, and its gap is counted apart and kept out of the statistics. The node, one per session, stores the typed message count, the count, median, 90th percentile and maximum of the gaps, buckets from seconds to hours, and the longest gaps with their messages. A first turn or a message without a timestamp has no gap and is counted, never measured as zero. A session with no typed message has every count at zero, so the share of sessions that wait on a person has a denominator. No model is called and nothing is proposed.
+
+Source: [`attention-gaps/index.ts`](./src/analyze/analyzers/attention-gaps/index.ts) · the scan in [`detect.ts`](./src/analyze/analyzers/attention-gaps/detect.ts) · bucket bounds in [`config.ts`](./src/analyze/analyzers/attention-gaps/config.ts).
+### git-commands: the commits, pushes and merges a session ran (deterministic)
+
+Records the git commands that publish work: commits, pushes, and pull request merges. Each event has its time and whether it worked, and the node counts each kind separately. The shell command is read as a command, so a quoted `git commit` runs nothing, and a dry run, a help request, `gh pr merge --auto` and `--disable-auto` are not events. When the host reports success, the result text is checked once more, because git can refuse with exit 0 and a pipe hides the exit status. A session that ran none gets an empty list, so a monthly rate has a denominator. A commit shows the session ran `git commit` and it worked, not that the work was right. The `pr-opened` analyzer records opened pull requests. No model is called and nothing is proposed. The definitions of each count are in [`metrics.ts`](./src/analyze/analyzers/git-commands/metrics.ts) and print with `prospect metrics --analyzer git-commands`.
+
+Source: [`git-commands/index.ts`](./src/analyze/analyzers/git-commands/index.ts) · detection in [`detect.ts`](./src/analyze/analyzers/git-commands/detect.ts) · failure markers in [`config.ts`](./src/analyze/analyzers/git-commands/config.ts).
+
+### repo-identity: the repository a session worked in (deterministic)
+
+Gives each session one repository key, `host/owner/name` in lowercase. The host records only the working directory, and a directory name says little: a worktree is named for a branch and a folder layout is one person's habit. The analyzer reads the forge address the session's own git commands touched. In order of strength, these are the remote that `git remote`, `git push`, `git fetch` or `git pull` printed, a pull request URL that a `gh pr` command printed, the `--repo` flag of a `gh` command, and an address written in `git clone` or `git remote add`. The working directory scopes the hints: a command that ran elsewhere (`cd /elsewhere && git push`, `git -C /elsewhere`) says nothing about this session. Credentials in an address are dropped. A session with no hint has a null key and the basis `none`, because a key guessed from a folder name would count the session under the wrong repository. The node also stores the name of the working directory, the number of hints behind the key, and an edge to the message that contains the first one. No model is called and nothing is proposed. The definitions print with `prospect metrics --analyzer repo-identity`.
+
+Source: [`repo-identity/index.ts`](./src/analyze/analyzers/repo-identity/index.ts) · the hints in [`detect.ts`](./src/analyze/analyzers/repo-identity/detect.ts) · tool names in [`config.ts`](./src/analyze/analyzers/repo-identity/config.ts).
+### activity-windows — when each session was running (deterministic)
+
+Records the stretches a session was active, from the host's own timestamps. Each gap between two messages counts up to an idle cap (300 seconds by default, the same cap as `time-economy`), and each timed tool call counts for its whole span, because a ten-minute test run was running even though nobody wrote anything. The stretches are merged into non-overlapping windows on one session-anchored metric node, with the total and a count of messages that had no timestamp. How many sessions ran at once is a corpus question, so no node stores it. The `concurrency` output folds every session's windows at read time into one row per hour or day with the distinct sessions, the peak number active at the same moment, and the summed active minutes. Those minutes are agent time, not the operator's. Render it with `prospect output activity-windows:concurrency`, which takes `--bucket hour|day` and `--day YYYY-MM-DD`. The analyzer doesn't call a model and proposes nothing.
+
+The definitions print with `prospect metrics --analyzer activity-windows`.
+
+Source: [`activity-windows/index.ts`](./src/analyze/analyzers/activity-windows/index.ts) · windows in [`detect.ts`](./src/analyze/analyzers/activity-windows/detect.ts) · the fold in [`concurrency.ts`](./src/analyze/analyzers/activity-windows/concurrency.ts).
+### delegation-outcomes — how hand-offs to child agents ended (deterministic)
+
+Records how each call that hands work to a child agent ended: `completed`, `failed`, `killed`, `revived`, `unanswered`, or `other`. The outcome comes from the host's records. A missing result means `unanswered`. Otherwise a background-task completion decides, then the error flag on the result, then Pi's orchestration classification. `completed` means the host didn't report a failure. It doesn't say the child's work was right. The node also stores the per-outcome counts, the child agents' sessions that name this session as their parent, and the messages they contain, so a reader can state what share of the work moved to children. A Pi session's parent link marks a fork, so Pi sessions don't count as children, and Pi's own subagent runs have no parent link, so a Pi parent reports zero child sessions. A session that delegated nothing has every count at zero and keeps its place in a rate's denominator. No model is called and nothing is proposed.
+
+The definitions print with `prospect metrics --analyzer delegation-outcomes`.
+
+Source: [`delegation-outcomes/index.ts`](./src/analyze/analyzers/delegation-outcomes/index.ts) · the outcome order in [`detect.ts`](./src/analyze/analyzers/delegation-outcomes/detect.ts) · tool names and statuses in [`config.ts`](./src/analyze/analyzers/delegation-outcomes/config.ts).
 
 ### routing-opportunity — model routing labels (deterministic)
 
@@ -400,6 +513,16 @@ Then enable it in `~/.pi/agent/prospector.json`:
 { "sources": ["pi-subagent", "<name>"] }
 ```
 
+`sourcePaths` adds search directories ahead of those two, which keeps a source outside the home directory or the project:
+
+```json
+{ "sources": ["<name>"], "sourcePaths": ["~/work/sources", "~/.config/my-sources"] }
+```
+
+A `sources` entry names one directory below a search path. The loader fails when a value has a path separator, `.`, `..` or an absolute path, so a config entry never selects a module outside the search paths.
+
+Custom sources run after the built-in adapters, and each session file goes to the first adapter that claims it. A custom source therefore fills in sessions no built-in scanner finds, and cannot take a nested subagent run from `pi-subagent`, which recovers the parent session id.
+
 Built-in sources you can enable without authoring anything:
 
 | Source | Config key | What it discovers |
@@ -413,9 +536,9 @@ Built-in sources you can enable without authoring anything:
 
 The built-in `PiFileSource`, `ClaudeFileSource`, `CodexFileSource`, `OpenCodeDbSource` and `ClineFileSource` are always active and don't appear in the `sources` array. Every source type gets its own `source` tag on every session and message row, so you can segment stats by source.
 
-Reference implementations: [`src/sync/sources/pi-file.ts`](./src/sync/sources/pi-file.ts) (file-based), [`src/sync/sources/codex-file.ts`](./src/sync/sources/codex-file.ts) (a date-organised tree) and [`src/sync/sources/pi-subagent.ts`](./src/sync/sources/pi-subagent.ts) (nested discovery). The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
+Reference implementations: [`src/sync/sources/pi/index.ts`](./src/sync/sources/pi/index.ts) (file-based), [`src/sync/sources/codex/index.ts`](./src/sync/sources/codex/index.ts) (a date-organised tree) and [`src/sync/sources/pi-subagent/index.ts`](./src/sync/sources/pi-subagent/index.ts) (nested discovery). Each built-in is one directory under `src/sync/sources/`, the same `index.ts` module shape a custom source exports, and loads through the same loader. The adapter contract is defined in [`src/sync/adapter.ts`](./src/sync/adapter.ts).
 
-### `/prospect-analyze [--revise <reasons>] [--source pi|claude|codex|opencode|cline] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
+### `/prospect-analyze [--revise <reasons>] [--revise-where key=value] [--source pi|claude|codex|opencode|cline] [--limit N] [--session ID] [--analyzer ID] [--model provider/model]`
 
 Build the analysis graph over synced sessions and materialise proposals. By default it does the cheapest useful thing: it **fills only missing work**. Nodes that are already current are skipped; nodes that are out of date are left alone unless you ask for them with `--revise`.
 
@@ -425,13 +548,23 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
   - `config` — *your* setup changed (a threshold, a prompt override, the tier→model mapping, or a model pin — including the resolved model)
   - `all` — every reason; combinable as a list, e.g. `--revise minor,config`
 
-  Reasons only *select* which out-of-date nodes a run touches. A selected node is always recomputed to the **current recipe in full** (latest version, latest config, latest resolved model), and the new node is linked to its predecessor by a `revises` edge so lineage stays navigable. A plain fill scans only not-yet-analysed sessions; any `--revise` reason re-scans every session so stale work can be found.
+  Reasons only *select* which out-of-date nodes a run touches. A selected node is always recomputed to the **current recipe in full** (latest version, latest config, latest resolved model), and the new node is linked to its predecessor by a `revises` edge so lineage stays navigable. A plain fill scans the sessions that still have work: never analysed, or grown since their last clean analysis. It fills the units those new messages add — new turn pairs, a new pull request, a new session total — because they are missing work like any other. Any `--revise` reason re-scans every session so stale work can be found too.
+- `--revise-where key=value` — narrow a revise to the stale nodes whose **prior** content matches every filter (repeatable; needs `--revise`). Missing work is still filled, and every other stale node stays stale for a later, wider revise. Use it when a version bump can only change some conclusions. frustration-lexicon 1.7 split `insult` out of `profanity`, so only the terms filed under profanity need a new verdict. turn-frustration 1.8 lets their hits pick up the new category. Run the lexicon first, so that every term is re-judged before any hit copies its category:
+
+  ```
+  prospect analyze --analyzer frustration-lexicon --revise minor --revise-where category=profanity
+  prospect analyze --analyzer turn-frustration --revise minor --revise-where category=profanity
+  ```
 - `--limit N` — cap how many sessions are scanned
 - `--session ID` — analyse a single session
 - `--analyzer ID` — run a single analyzer (`turn-pair-core`, `turn-pair-llm`, `tool-trajectory`, `secret-leak`, or `session-overview`) and its dependencies. This runs the analyzer even when `defaultAnalyzers` or `disabledAnalyzers` leaves it out of plain runs.
 - `--model provider/model` — pin **every** model tier to one concrete model for this run. Because the resolved model is part of a node's identity, a pinned run produces its own nodes; switching back to the normal mapping marks them stale (reason `config`).
 
 Proposals are never auto-applied. They sit in the database with status `open` until you accept or reject them.
+
+### `/prospect-metrics [--analyzer <id>] [--format md|json] [--gaps]`
+
+Print what each metric means. An entry gives the definition, how the value is decided (counted, rule-based or inferred), the unit and denominator, the limits, and the series breaks where an analyzer version changed the meaning, with the command that brings older nodes up to date. `--analyzer <id>` shows one analyzer (`sessions` shows the figures counted from the index), `--format json` prints the same as JSON, and `--gaps` lists the analyzers that have no definitions yet. Each analyzer declares its metrics in a `metrics.ts` beside its code. The command reads those definitions and never opens the database. Read the entry before drawing a trend from a number.
 
 ### `/prospect-output [list | <analyzer>[:<output>]] [--out DIR] [--as-of TS] [--key value]`
 
@@ -651,6 +784,7 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 | `modelTiers` | Claude haiku-4-5 / sonnet-4-5 / opus-4-1 | Maps the abstract tiers analyzers request (`cheap`/`mid`/`expensive`) to concrete `provider/model` strings. Each must be a model Pi has credentials for. Override every tier for a single run with `--model`. |
 | `defaultAnalyzers` | every registered analyzer | The analyzers `/prospect-analyze` runs when you don't pass `--analyzer`. |
 | `disabledAnalyzers` | `[]` | Analyzers to take out of that default set, for example one you want to try on a few sessions before running it everywhere. |
+| `lexicon` | `{ "mode": "model" }` | Your own frustration dictionary, and whether lexicon hits come from the learned lexicon, the dictionary, or both. See [Your own frustration dictionary](#your-own-frustration-dictionary). |
 
 Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. Any model Pi supports works. The deterministic `turn-pair-core` layer needs no model.
 
@@ -667,7 +801,7 @@ Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one p
 
 The `jev` provider reads its key from `JEV_API_KEY` or `TYPESAFE_API_KEY`. `decisionProviders` adds other endpoints that serve the System One API, each with a `baseUrl`, the `apiKeyEnv` variables to read, and `inputUsdPerMtok` for the node's cost. The decision model and the question set are part of a node's identity, so switching marks earlier nodes stale for `config`. `assistant-cognition` still calls its `tier` model to copy the verbatim quote for a turn that shows surprise. The generative path stays the default.
 
-`verification-commands` has no generative path: it is a decision model or nothing. Set its `decisionModel` and it starts learning which commands verify your tree; leave it unset and it nominates nothing, so `stale-verification` falls back to its pattern list. It is the only analyzer that sends anything from your sessions to a remote service: the distinct command lines and nothing else. The section [What leaves your machine](#what-leaves-your-machine) says exactly what goes where, and how to keep it on your machine with `allowRemoteVerdicts: false`.
+`verification-commands` has no generative path: it is a decision model or nothing. Set its `decisionModel` and it starts learning which commands verify your tree; leave it unset and it nominates nothing, so `stale-verification` falls back to its pattern list. Its requests include the distinct command lines and nothing else. (`message-origin` and `message-answers` send message text if you give them a `decisionModel`. See [What leaves your machine](#what-leaves-your-machine).) The section [What leaves your machine](#what-leaves-your-machine) says exactly what goes where, and how to keep it on your machine with `allowRemoteVerdicts: false`.
 
 `scripts/measure-decision-model.ts` compares the two paths on up to 20 sessions already analysed, read-only, and prints agreement per field, time, and cost.
 

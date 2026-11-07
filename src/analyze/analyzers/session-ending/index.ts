@@ -80,8 +80,11 @@ export const SESSION_ENDING_VERSION: AnalyzerVersion = {
 	// 1.0 (issue #102): tail-of-transcript ending classification over the shared
 	// action stream with config-driven verification/closure patterns and the
 	// generous `unclear` default.
+	// 1.1: the action stream pairs a result that carries a call id with a stored
+	// call that has none (sessions indexed before sync kept the id). Those
+	// sessions ended `abandoned` by `no_recorded_results` whatever they did last.
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/session-ending/index.ts",
 };

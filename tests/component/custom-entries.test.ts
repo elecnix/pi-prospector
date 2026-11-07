@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import type { AsyncDatabase } from "../../src/db/async-db.js";
 import { runSync } from "../../src/sync/index.js";
-import { PiFileSource } from "../../src/sync/sources/pi-file.js";
+import { PiFileSource } from "../../src/sync/sources/pi/index.js";
 import { searchCorpus } from "../../src/db/search-queries.js";
 import { tempDb } from "./helpers.js";
 

@@ -49,6 +49,23 @@ export interface ProspectorConfig {
 	 */
 	analyzers?: Record<string, Record<string, unknown>>;
 	/**
+	 * The user's frustration dictionary and where lexicon hits come from.
+	 *
+	 * `mode` is `model` (the learned lexicon, the default), `dictionary` (only
+	 * these entries, and frustration-lexicon makes no model call), or `both`
+	 * (an entry wins over the model's verdict for the same term). `dictionary` is
+	 * the entries themselves, or the path to a JSON file holding that array; a
+	 * relative path resolves against the directory of prospector.json.
+	 *
+	 * ```json
+	 * { "lexicon": { "mode": "both", "dictionary": [{ "term": "laisse tomber", "category": "dissatisfaction", "language": "fr" }] } }
+	 * ```
+	 */
+	lexicon?: {
+		mode?: "model" | "dictionary" | "both";
+		dictionary?: string | Array<{ term: string; category: string; polarity?: "frustration" | "praise"; language?: string }>;
+	};
+	/**
 	 * Decision-model endpoints (#338) by provider id, merged over the built-in
 	 * `jev`. An analyzer whose config sets `decisionModel: "<provider>/<model>"`
 	 * posts its questions to `<baseUrl>/v1/systemone` with the key from the first
@@ -76,6 +93,13 @@ export interface ProspectorConfig {
 	 * or ./.prospector/sources/<name>/ are also resolved from this list.
 	 */
 	sources?: string[];
+	/**
+	 * Extra directories to find a custom source in, ahead of the user
+	 * (~/.pi/agent/prospector/sources) and project (./.prospector/sources)
+	 * conventions. The loader looks up `<dir>/<name>/index.{ts,js,mjs}` for each
+	 * name in `sources`, and a leading ~ is expanded.
+	 */
+	sourcePaths?: string[];
 }
 
 // ─── Session ───

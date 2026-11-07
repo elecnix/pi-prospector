@@ -89,7 +89,7 @@ export const CompactionPolicy = Type.Object({
 });
 export type CompactionPolicy = Static<typeof CompactionPolicy>;
 
-const ContextEconomyFlag = Type.Union([
+export const ContextEconomyFlag = Type.Union([
 	Type.Object({
 		kind: Type.Literal("high-carry-result"),
 		tool: Type.String(),

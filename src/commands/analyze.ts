@@ -1,7 +1,7 @@
 import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
-import { getAllSessions, getRecentSessions, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
+import { getAllSessions, getRecentSessions, getSessionMessageCount, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
 import {
 	getAnalyzerConfigOverrides,
 	getAnalyzerPaths,
@@ -41,10 +41,13 @@ import {
 	type RetryStats,
 } from "../analyze/concurrency.js";
 import type { ReviseReason, LLMCaller } from "../analyze/types.js";
+import { parseFilterSpec, type FilterSpec } from "../analyze/content-filter.js";
 
 interface AnalyzeArgs {
 	revise: ReviseReason[];
-	/** Plain-fill every session, not just the not-yet-analysed ones. */
+	/** `--revise-where key=value`: revise only the stale nodes whose prior content matches every filter. */
+	reviseWhere: FilterSpec[];
+	/** Plain-fill every session, not just the ones that still have work. */
 	all?: boolean;
 	/** Run only the analyzers each analysed session is missing (#195). */
 	backfillMissing?: boolean;
@@ -62,11 +65,11 @@ interface AnalyzeArgs {
 }
 
 export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
-	const args = parseArgs(rawArgs ?? "");
+	const args = parseAnalyzeArgs(rawArgs ?? "");
 	// A --source typo fails loudly (throws) rather than silently matching nothing.
 	parseHarnessSource(args.source);
 	const reviseActive = args.revise.length > 0;
-	const reach = reachLabel(args.revise);
+	const reach = reachLabel(args.revise, args.reviseWhere);
 	const config = loadConfig();
 	// A --model override pins every tier to that one model for this run. The
 	// same effective tiers feed both the LLM caller and the framework, so the
@@ -157,8 +160,9 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			return;
 		}
 
-		// A plain fill focuses on not-yet-analysed sessions; any revise reason
-		// re-scans every session so stale nodes can be picked up.
+		// A plain fill takes the sessions that still have work: never analysed, or
+		// grown since their last clean analysis (see getUnanalyzedSessions). Any
+		// revise reason re-scans every session so stale nodes can be picked up.
 		//
 		// `--all` is the back-fill path for the learned frustration lexicon. When a
 		// session teaches the corpus a new frustration word, turns in *earlier*
@@ -262,9 +266,13 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 
 		await mapWithConcurrency(sessions, sessionConcurrency, async (session) => {
 			let outcome: SessionRunOutcome;
+			// Read the session's reach before the run: this is what a clean run
+			// records as covered, so anything synced meanwhile stays pending.
+			const coveredMessages = await getSessionMessageCount(db, session.id);
 			try {
 				const summary = await framework.run(session.id, {
 					revise: args.revise,
+					reviseWhere: args.reviseWhere,
 					// Targeted backfill: only the analyzers this session is actually
 					// missing (dependencies are re-added by the framework's topological
 					// order). Everything else stays untouched.
@@ -298,8 +306,12 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			// queue when it completed cleanly. If any unit failed, leave `analyzed_at`
 			// NULL so the next plain fill re-scans it and recomputes the still-missing
 			// units (the failures left no result behind).
+			//
+			// The count recorded is the one read before the run: messages synced
+			// while it was in flight leave the session reading as grown, so the next
+			// fill picks them up instead of treating them as covered.
 			if (outcome.ok) {
-				markAnalyzed(db, session.id);
+				markAnalyzed(db, session.id, coveredMessages);
 			}
 
 			// Throttled progress so a slow run is distinguishable from a stuck one
@@ -390,8 +402,9 @@ function out(ctx: ExtensionCommandContext, text: string, level: string): void {
 	console.log(text);
 }
 
-function parseArgs(raw: string): AnalyzeArgs {
-	const result: AnalyzeArgs = { revise: [], analyzerPaths: [] };
+/** Parse `prospect analyze` arguments. Throws an Error with a user-facing message on a malformed filter. */
+export function parseAnalyzeArgs(raw: string): AnalyzeArgs {
+	const result: AnalyzeArgs = { revise: [], reviseWhere: [], analyzerPaths: [] };
 	const parts = raw.trim().split(/\s+/).filter((p) => p.length > 0);
 	for (let i = 0; i < parts.length; i++) {
 		const p = parts[i];
@@ -399,6 +412,8 @@ function parseArgs(raw: string): AnalyzeArgs {
 			for (const r of parseReviseArg(parts[++i]!)) {
 				if (!result.revise.includes(r)) result.revise.push(r);
 			}
+		} else if (p === "--revise-where" && parts[i + 1]) {
+			result.reviseWhere.push(parseFilterSpec(parts[++i]!, "--revise-where"));
 		} else if (p === "--limit" && parts[i + 1]) {
 			const n = parseInt(parts[++i]!, 10);
 			if (!Number.isNaN(n)) result.limit = n;
@@ -419,6 +434,11 @@ function parseArgs(raw: string): AnalyzeArgs {
 			const n = parseInt(parts[++i]!, 10);
 			if (!Number.isNaN(n) && n >= 1) result.analyzerConcurrency = n;
 		}
+	}
+	// A filter only narrows which stale nodes a revise touches. With no reason there
+	// is no revise to narrow, and the run would quietly be a plain fill.
+	if (result.reviseWhere.length > 0 && result.revise.length === 0) {
+		throw new Error("--revise-where narrows a revise: pass --revise <reasons> too, e.g. --revise minor --revise-where category=profanity.");
 	}
 	return result;
 }

@@ -25,6 +25,9 @@ import { type TurnPair } from "./build.js";
 import { classifyCorrection, detectRepetition, countDeliberationParagraphs } from "./patterns.js";
 import { matchRebuttalCandidates } from "../../speech-acts.js";
 import { DEFAULT_TURN_PAIR_CORE_CONFIG, type TurnPairCoreConfig } from "./config.js";
+import { MESSAGE_ORIGIN_DEF, type MessageOriginProperties } from "../message-origin/index.js";
+import { MessageOrigin } from "../../message-origin.js";
+import { currentHits } from "../../../db/muted-terms.js";
 
 export const TurnPairCoreProperties = Type.Object({
 	pair_index: Type.Number(),
@@ -59,6 +62,13 @@ export const TurnPairCoreProperties = Type.Object({
 	empty_response: Type.Boolean(),
 	friction_score: Type.Number(),
 	high_signal: Type.Boolean(),
+	/**
+	 * Who wrote the turn's message, from its message-origin node. Absent when the turn
+	 * has no node. A correction or rebuttal is detected only in a message that is the
+	 * person's (`typed`, or not decided), so a decided `agent`, `notification` or
+	 * `pasted` message carries neither.
+	 */
+	origin: Type.Optional(MessageOrigin),
 });
 export type TurnPairCoreProperties = Static<typeof TurnPairCoreProperties>;
 
@@ -68,7 +78,7 @@ export const TURN_PAIR_CORE_DEF: AnalyzerDef = {
 	description:
 		"Scores every user→assistant turn pair deterministically (corrections, rebuttal candidates, tool failures, empty replies, wasted tool output) and extracts a compact tool-action trace — call names, truncated arguments, and failed-result error heads — for downstream analyzers. No LLM; flags high-signal pairs.",
 	anchorSpan: "pair",
-	dependencies: [],
+	dependencies: [MESSAGE_ORIGIN_DEF.id],
 	outputSchema: TurnPairCoreProperties,
 };
 
@@ -82,14 +92,29 @@ export const TURN_PAIR_CORE_VERSION: AnalyzerVersion = {
 	// and never becomes a rebuttal. The model layer (turn-pair-llm) reads the
 	// candidate and decides. Additive fields change the node's content, so the
 	// version moves and prior verdicts stay reachable through `revises`.
-	minor: 2,
+	// 1.3: the turn's message-origin node is an input (a `consumes` edge, kept out of
+	// the source set). A message that node labels `agent`, `notification` or `pasted`
+	// (decided) is not the person's, so it gets no correction and no rebuttal
+	// candidate, and the node records the `origin` it read. Words that disputed the
+	// agent inside a brief or a harness notification no longer count as friction.
+	minor: 3,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-pair-core/index.ts",
 };
 
-export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairCoreProperties {
-	const isRepetition = detectRepetition(pair.userText, pair.priorUserText);
-	const correction = classifyCorrection(pair.userText, isRepetition);
+/** What a turn's message-origin node says about its message. */
+export const ReadOrigin = Type.Object({ origin: MessageOrigin, decided: Type.Boolean() });
+export type ReadOrigin = Static<typeof ReadOrigin>;
+
+/** Whether the message's words are the person's to dispute the agent with: not decided as another origin. */
+function isPersonsWords(read: ReadOrigin | undefined): boolean {
+	return !read || !read.decided || read.origin === "typed";
+}
+
+export function scorePair(pair: TurnPair, config: TurnPairCoreConfig, read?: ReadOrigin): TurnPairCoreProperties {
+	const persons = isPersonsWords(read);
+	const isRepetition = persons && detectRepetition(pair.userText, pair.priorUserText);
+	const correction = classifyCorrection(persons ? pair.userText : "", isRepetition);
 
 	const toolFailureCount = pair.toolResults.filter((r) => r.isError).length;
 	const toolResultBytes = pair.toolResults.reduce((sum, r) => sum + r.textLength, 0);
@@ -107,7 +132,7 @@ export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairC
 	// whose wording is a dispute of fact and a turn whose wording is an
 	// instruction keep their own identities. The candidate is what the model
 	// layer confirms; on its own it is a proposal, not a finding.
-	const rebuttalMatches = matchRebuttalCandidates(pair.userText);
+	const rebuttalMatches = persons ? matchRebuttalCandidates(pair.userText) : [];
 
 	let score = 0;
 	if (correction.detected) score += config.correctionWeight;
@@ -134,6 +159,7 @@ export function scorePair(pair: TurnPair, config: TurnPairCoreConfig): TurnPairC
 		empty_response: emptyResponse,
 		friction_score: frictionScore,
 		high_signal: frictionScore >= config.highSignalThreshold,
+		...(read ? { origin: read.origin } : {}),
 	};
 }
 
@@ -151,14 +177,26 @@ export const turnPairCoreAnalyzer: Analyzer = {
 
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		const pairs = await ctx.getTurnPairs(ctx.sessionId);
+		// The newest message-origin node per message. A turn with none keeps the
+		// person's-words reading, so a setup that never ran the analyzer scores as before.
+		const origins = new Map<string, { read: ReadOrigin; outputKey: string }>();
+		for (const node of currentHits(ctx.dependencyNodes[MESSAGE_ORIGIN_DEF.id] ?? [])) {
+			try {
+				const props = JSON.parse(node.content_json) as MessageOriginProperties;
+				origins.set(props.user_message_id, { read: { origin: props.origin, decided: props.decided }, outputKey: node.output_key });
+			} catch {
+				continue;
+			}
+		}
 		return pairs.map((pair) => {
+			const found = origins.get(pair.userMessageId);
 			const sources: SourceRef[] = pair.messageIds.map((id) => ({ kind: "message" as const, id }));
 			return {
 				sources,
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "message" as const,
 				anchorRef: pair.userMessageId,
-				meta: { pair: pair as unknown as Record<string, unknown> },
+				meta: { pair: pair as unknown as Record<string, unknown>, origin: found?.read ?? null, originOutputKey: found?.outputKey ?? null },
 			};
 		});
 	},
@@ -166,16 +204,22 @@ export const turnPairCoreAnalyzer: Analyzer = {
 	analyze(unit: AnalysisUnit, ctx: AnalyzerRunContext): AnalysisResult {
 		const config = (ctx.config.configJson as unknown as TurnPairCoreConfig) ?? DEFAULT_TURN_PAIR_CORE_CONFIG;
 		const pair = unit.meta?.["pair"] as unknown as TurnPair;
-		const properties = scorePair(pair, config);
+		const read = (unit.meta?.["origin"] as ReadOrigin | null | undefined) ?? undefined;
+		const originOutputKey = (unit.meta?.["originOutputKey"] as string | null | undefined) ?? null;
+		const properties = scorePair(pair, config, read);
+		const edges: AnalysisResult["edges"] = [
+			{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
+		];
+		if (originOutputKey) {
+			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: originOutputKey, edgeKind: EDGE_KINDS.CONSUMES, ordinal: 1 });
+		}
 
 		return {
 			nodeKind: "metric",
 			contentJson: properties as unknown as Record<string, unknown>,
 			anchorKind: "message",
 			anchorRef: unit.anchorRef,
-			edges: [
-				{ toRefKind: REF_KINDS.MESSAGE, toRefId: unit.anchorRef, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
-			],
+			edges,
 		};
 	},
 };
