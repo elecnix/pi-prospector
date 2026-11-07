@@ -34,6 +34,7 @@ import { metrics as failureModes } from "../analyzers/failure-modes/metrics.js";
 import { metrics as frictionAccumulation } from "../analyzers/friction-accumulation/metrics.js";
 import { metrics as compressionChecklist } from "../analyzers/compression-checklist/metrics.js";
 import { metrics as filesInPlay } from "../analyzers/files-in-play/metrics.js";
+import { metrics as fileReads } from "../analyzers/file-reads/metrics.js";
 import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/metrics.js";
 import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
 import { metrics as gitleaks } from "../analyzers/gitleaks/metrics.js";
@@ -91,6 +92,7 @@ const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: "friction-accumulation", metrics: frictionAccumulation },
 	{ owner: "compression-checklist", metrics: compressionChecklist },
 	{ owner: "files-in-play", metrics: filesInPlay },
+	{ owner: "file-reads", metrics: fileReads },
 	{ owner: "frustration-lexicon", metrics: frustrationLexicon },
 	{ owner: "git-commands", metrics: gitCommands },
 	{ owner: "gitleaks", metrics: gitleaks },

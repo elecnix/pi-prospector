@@ -54,6 +54,7 @@ export const KNOWN_ANALYZER_IDS = [
 	"verification-commands",
 	"stale-verification",
 	"files-in-play",
+	"file-reads",
 	"navigation-efficiency",
 	"similarity-cluster",
 	"friction-accumulation",

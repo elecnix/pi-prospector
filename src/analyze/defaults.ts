@@ -53,6 +53,7 @@ import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { staleVerificationAnalyzer } from "./analyzers/stale-verification/index.js";
 import { verificationCommandsAnalyzer } from "./analyzers/verification-commands/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
+import { fileReadsAnalyzer } from "./analyzers/file-reads/index.js";
 import { navigationEfficiencyAnalyzer } from "./analyzers/navigation-efficiency/index.js";
 import { similarityClusterAnalyzer } from "./analyzers/similarity-cluster/index.js";
 import { frictionAccumulationAnalyzer } from "./analyzers/friction-accumulation/index.js";
@@ -95,6 +96,7 @@ export const DEFAULT_ANALYZER_IDS = [
 	"activity-windows",
 	"delegation-outcomes",
 	"files-in-play",
+	"file-reads",
 	"navigation-efficiency",
 	"similarity-cluster",
 	"friction-accumulation",
@@ -284,6 +286,8 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// the other session-level deterministic graders, before the synthesizer, so
 	// a future consumer can declare it as a dependency without reordering.
 	filesInPlayAnalyzer,
+	// The order of the reads files-in-play counts, folded into a graph per repository at read time.
+	fileReadsAnalyzer,
 	// The structural twin of files-in-play (#254): where that one sees the flat
 	// set of files a session touched, this reconstructs *how* it moved between
 	// them — directory ↦ file ↦ block depth — and flags Graphectory's

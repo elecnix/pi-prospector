@@ -366,6 +366,23 @@ Records the stretches a session was active, from the host's own timestamps. Each
 The definitions print with `prospect metrics --analyzer activity-windows`.
 
 Source: [`activity-windows/index.ts`](./src/analyze/analyzers/activity-windows/index.ts) · windows in [`detect.ts`](./src/analyze/analyzers/activity-windows/detect.ts) · the fold in [`concurrency.ts`](./src/analyze/analyzers/activity-windows/concurrency.ts).
+
+### file-reads — which files sessions read, and in what order (deterministic)
+
+Records each session's file reads in order: the path relative to the session's working directory, the file's rank among the session's distinct files, the tool, the size of the result, and whether the read asked for part of the file. The files the session edited are kept beside them, so a file read in many sessions and never edited reads as reference material, not working code. Reads come from the same extraction as `files-in-play`. A bash call counts only for commands that print a file (`cat`, `head`, `tail`, `sed` and a few more), so `grep -rn x src` is a search, not a read of `src`. A bash call that printed several files has one result text, so none of its reads gets a size.
+
+Which files a repository's sessions keep opening is a corpus question, so no node stores it. The `graph` output folds every session at read time into one graph per repository. Each session starts at a virtual `(session start)` root, and an edge goes to each next distinct file it read, labelled with the number of sessions that took it. A repository is the `repo-identity` key where that analyzer found one, so worktrees of one repository fold together. Otherwise it is the working directory. Render it with `prospect output file-reads:graph`, optionally with `--repo <part of the key>`:
+
+- `file-reads-files.csv` lists, per file, the sessions and reads, how often it was the first file or among the first five, its median rank and size, the share of whole-file reads, and the sessions that edited it.
+- `file-reads-edges.csv` lists every edge, the session root included.
+- `file-reads-report.md` holds a Mermaid graph per repository and three kinds of lead for spending fewer tokens:
+  - **Files sessions open on**, for documentation. A file among the first five reads of at least a quarter of the sessions is a candidate for a summary or a map in the instruction file, if agents read it to orient themselves. A root instruction file (`AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`) is reported differently: the harness already loaded it, so the lead is that sessions pay for it twice.
+  - **Large files read across sessions**, for refactoring. When most of those reads take the whole file, splitting it or adding an index that lets a ranged read suffice shrinks every one of them.
+  - **Files read one after the other**, for cross-links. When many sessions read B right after A, a pointer from A to B saves the search between them, and if the two always change together they may belong together.
+
+The leads are thresholds over the counts, computed when the report renders, and they are not proposals. Their token figures are upper bounds: they assume every listed read could be avoided and ignore what a summary would cost to read. The thresholds are in the analyzer's config (`openingReads`, `minSessions`, `minOpeningShare`, `largeFileChars`). The analyzer doesn't call a model.
+
+Source: [`file-reads/index.ts`](./src/analyze/analyzers/file-reads/index.ts) · extraction, the fold and the leads in [`detect.ts`](./src/analyze/analyzers/file-reads/detect.ts) · thresholds in [`config.ts`](./src/analyze/analyzers/file-reads/config.ts).
 ### delegation-outcomes — how hand-offs to child agents ended (deterministic)
 
 Records how each call that hands work to a child agent ended: `completed`, `failed`, `killed`, `revived`, `unanswered`, or `other`. The outcome comes from the host's records. A missing result means `unanswered`. Otherwise a background-task completion decides, then the error flag on the result, then Pi's orchestration classification. `completed` means the host didn't report a failure. It doesn't say the child's work was right. The node also stores the per-outcome counts, the child agents' sessions that name this session as their parent, and the messages they contain, so a reader can state what share of the work moved to children. A Pi session's parent link marks a fork, so Pi sessions don't count as children, and Pi's own subagent runs have no parent link, so a Pi parent reports zero child sessions. A session that delegated nothing has every count at zero and keeps its place in a rate's denominator. No model is called and nothing is proposed.

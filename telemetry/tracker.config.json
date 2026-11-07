@@ -36,6 +36,7 @@
           "verification-commands",
           "stale-verification",
           "files-in-play",
+          "file-reads",
           "navigation-efficiency",
           "similarity-cluster",
           "friction-accumulation",
