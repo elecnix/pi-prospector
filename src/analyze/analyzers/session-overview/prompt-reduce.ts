@@ -244,6 +244,8 @@ export function buildReducePrompt(params: {
 	positiveSignals?: string[];
 	/** Cross-session contrast: smooth sibling sessions in the same repo (issue #10). */
 	contrastContext?: string;
+	/** Raw windows from earlier sessions resembling this session's friction turns (recall.ts). */
+	recallContext?: string;
 }): string {
 	const parts = [
 		"AGGREGATE STATS:",
@@ -254,6 +256,9 @@ export function buildReducePrompt(params: {
 	}
 	if (params.contrastContext && params.contrastContext.length > 0) {
 		parts.push("", "CROSS-SESSION CONTRAST:", params.contrastContext);
+	}
+	if (params.recallContext && params.recallContext.length > 0) {
+		parts.push("", "PRIOR OCCURRENCES:", params.recallContext);
 	}
 	parts.push("", "SESSION SIGNALS / SEGMENT SUMMARIES:", params.digestOrSummaries);
 	return parts.join("\n");
