@@ -193,7 +193,7 @@ Frustration lexicon: learned 12 new term(s).
   Sessions analysed earlier may use them — run '/prospect-analyze --all' to back-fill.
 ```
 
-`--all` plain-fills every session rather than only unanalysed ones. It stays cheap: scanning is fingerprint lookups, and only turns that actually contain a newly learned word have anything to compute.
+`--all` plain-fills every session rather than only the ones that still have work. It stays cheap: scanning is fingerprint lookups, and only turns that actually contain a newly learned word have anything to compute.
 
 #### Your own frustration dictionary
 
@@ -546,7 +546,7 @@ Build the analysis graph over synced sessions and materialise proposals. By defa
   - `config` — *your* setup changed (a threshold, a prompt override, the tier→model mapping, or a model pin — including the resolved model)
   - `all` — every reason; combinable as a list, e.g. `--revise minor,config`
 
-  Reasons only *select* which out-of-date nodes a run touches. A selected node is always recomputed to the **current recipe in full** (latest version, latest config, latest resolved model), and the new node is linked to its predecessor by a `revises` edge so lineage stays navigable. A plain fill scans only not-yet-analysed sessions; any `--revise` reason re-scans every session so stale work can be found.
+  Reasons only *select* which out-of-date nodes a run touches. A selected node is always recomputed to the **current recipe in full** (latest version, latest config, latest resolved model), and the new node is linked to its predecessor by a `revises` edge so lineage stays navigable. A plain fill scans the sessions that still have work: never analysed, or grown since their last clean analysis. It fills the units those new messages add — new turn pairs, a new pull request, a new session total — because they are missing work like any other. Any `--revise` reason re-scans every session so stale work can be found too.
 - `--revise-where key=value` — narrow a revise to the stale nodes whose **prior** content matches every filter (repeatable; needs `--revise`). Missing work is still filled, and every other stale node stays stale for a later, wider revise. Use it when a version bump can only change some conclusions. frustration-lexicon 1.7 split `insult` out of `profanity`, so only the terms filed under profanity need a new verdict. turn-frustration 1.8 lets their hits pick up the new category. Run the lexicon first, so that every term is re-judged before any hit copies its category:
 
   ```
