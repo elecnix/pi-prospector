@@ -76,6 +76,10 @@ export const KNOWN_ANALYZER_IDS = [
 	"rule-restatement",
 	"proposal-validate",
 	"custom",
+	"regression-signal",
+	"regression-attribution",
+	"regression-verdict",
+	"regression-prevention",
 ] as const;
 
 /** Harnesses a report may name. A session from a custom source reports as `other`. */

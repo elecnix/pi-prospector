@@ -57,7 +57,11 @@
           "session-overview",
           "rule-restatement",
           "proposal-validate",
-          "custom"
+          "custom",
+          "regression-signal",
+          "regression-attribution",
+          "regression-verdict",
+          "regression-prevention"
         ],
         "harness": [
           "pi",
