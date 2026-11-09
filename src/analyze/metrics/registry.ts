@@ -38,6 +38,10 @@ import { metrics as frustrationLexicon } from "../analyzers/frustration-lexicon/
 import { metrics as gitCommands } from "../analyzers/git-commands/metrics.js";
 import { metrics as gitleaks } from "../analyzers/gitleaks/metrics.js";
 import { metrics as groundedClaims } from "../analyzers/grounded-claims/metrics.js";
+import { metrics as regressionSignal } from "../analyzers/regression-signal/metrics.js";
+import { metrics as regressionAttribution } from "../analyzers/regression-attribution/metrics.js";
+import { metrics as regressionVerdict } from "../analyzers/regression-verdict/metrics.js";
+import { metrics as regressionPrevention } from "../analyzers/regression-prevention/metrics.js";
 import { metrics as messageOrigin } from "../analyzers/message-origin/metrics.js";
 import { metrics as noseyParker } from "../analyzers/nosey-parker/metrics.js";
 import { metrics as piicatcher } from "../analyzers/piicatcher/metrics.js";
@@ -73,6 +77,10 @@ import { metrics as verificationCommands } from "../analyzers/verification-comma
 const SOURCES: ReadonlyArray<{ owner: string; metrics: MetricDefinition[] }> = [
 	{ owner: CORE_OWNER, metrics: CORE_METRICS },
 	{ owner: "assistant-cognition", metrics: assistantCognition },
+	{ owner: "regression-signal", metrics: regressionSignal },
+	{ owner: "regression-attribution", metrics: regressionAttribution },
+	{ owner: "regression-verdict", metrics: regressionVerdict },
+	{ owner: "regression-prevention", metrics: regressionPrevention },
 	{ owner: "decode-collapse", metrics: decodeCollapse },
 	{ owner: "language-mismatch", metrics: languageMismatch },
 	{ owner: "lexicon-candidates", metrics: lexiconCandidates },

@@ -43,3 +43,27 @@ describe("resolveDefaultAnalyzers (#291)", () => {
 		assert.deepEqual(resolveDefaultAnalyzers(REGISTERED, { defaultAnalyzers: [] }), { ids: [], unknown: [] });
 	});
 });
+
+describe("DEFAULT_ANALYZER_IDS matches what is registered", () => {
+	// The list and the registry drifted once already: four analyzers were registered and the
+	// id list still ended at the previous entry, so anything selecting the default set ran
+	// 53 analyzers and never ran the regression graph. A list that must mirror a registry is
+	// a thing to assert, not a thing to remember.
+	it("includes every regression analyzer the registry defines", async () => {
+		// Derive the set from the registry instead of restating four ids: a hardcoded list passes
+		// when a fifth regression analyzer is registered and the default list is not extended,
+		// which is exactly the drift that happened — all four were registered, the id list was
+		// never extended, and a default run executed the other analyzers and none of these.
+		//
+		// Not an equality check: DEFAULT_ANALYZER_IDS draws from a wider id space than
+		// BUILTIN_ANALYZERS, so the two are not the same set and never were.
+		const { DEFAULT_ANALYZER_IDS, BUILTIN_ANALYZERS } = await import("../../src/analyze/defaults.js");
+		const listed = DEFAULT_ANALYZER_IDS as readonly string[];
+		const regression = BUILTIN_ANALYZERS.map((a: { def: { id: string } }) => a.def.id).filter((id: string) => id.startsWith("regression-"));
+
+		assert.ok(regression.length >= 4, `expected four regression analyzers in the registry, found ${regression.length}`);
+		for (const id of regression) {
+			assert.ok(listed.includes(id), `${id} is registered but missing from DEFAULT_ANALYZER_IDS`);
+		}
+	});
+});
