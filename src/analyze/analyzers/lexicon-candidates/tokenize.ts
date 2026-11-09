@@ -197,7 +197,13 @@ export function rankByFrequency(candidates: Iterable<string>, limit: number): Te
  */
 export function rankTerms(texts: readonly string[], limit: number): TermCount[] {
 	const tokens: string[] = [];
-	for (const text of texts) tokens.push(...tokenize(text));
+	// Token by token, never `tokens.push(...tokenize(text))`: a spread passes one
+	// argument per token, and a single user message of about a megabyte carries
+	// more tokens than the engine allows arguments, which overflows the call stack
+	// (#392). A session that large is ordinary — a pasted log or a long brief.
+	for (const text of texts) {
+		for (const token of tokenize(text)) tokens.push(token);
+	}
 	return rankByFrequency(tokens, limit);
 }
 
