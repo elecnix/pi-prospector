@@ -51,6 +51,10 @@ import { activityWindowsAnalyzer } from "./analyzers/activity-windows/index.js";
 import { delegationOutcomesAnalyzer } from "./analyzers/delegation-outcomes/index.js";
 import { timeEconomyAnalyzer } from "./analyzers/time-economy/index.js";
 import { staleVerificationAnalyzer } from "./analyzers/stale-verification/index.js";
+import { regressionSignalAnalyzer } from "./analyzers/regression-signal/index.js";
+import { regressionAttributionAnalyzer } from "./analyzers/regression-attribution/index.js";
+import { regressionVerdictAnalyzer } from "./analyzers/regression-verdict/index.js";
+import { regressionPreventionAnalyzer } from "./analyzers/regression-prevention/index.js";
 import { verificationCommandsAnalyzer } from "./analyzers/verification-commands/index.js";
 import { filesInPlayAnalyzer } from "./analyzers/files-in-play/index.js";
 import { navigationEfficiencyAnalyzer } from "./analyzers/navigation-efficiency/index.js";
@@ -114,6 +118,10 @@ export const DEFAULT_ANALYZER_IDS = [
 	"token-units",
 	"request-classes",
 	"session-overview",
+	"regression-signal",
+	"regression-attribution",
+	"regression-verdict",
+	"regression-prevention",
 	"rule-restatement",
 ] as const;
 
@@ -426,6 +434,18 @@ export const BUILTIN_ANALYZERS: Analyzer[] = [
 	// Consumes session-overview, so it runs after it; plans nothing for a session
 	// with no rule-shaped proposal or no instruction file on disk.
 	ruleRestatementAnalyzer,
+	// The regression retrospective: each layer answers a question the previous one
+	// cannot. `regression-signal` labels a session that states a defect came from an
+	// earlier change. `regression-attribution` joins that blame to the pull request and
+	// to the session that opened it. `regression-verdict` judges what the transcript only
+	// implies, including a cause the agent never identified. `regression-prevention`
+	// groups those verdicts corpus-wide and files one proposal per recurring cause class.
+	// The deterministic layers come first so a reader meets the cheap gate before the
+	// one that calls a model.
+	regressionSignalAnalyzer,
+	regressionAttributionAnalyzer,
+	regressionVerdictAnalyzer,
+	regressionPreventionAnalyzer,
 ];
 
 export async function registerDefaults(framework: AnalyzerFramework): Promise<void> {
