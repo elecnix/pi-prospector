@@ -28,8 +28,11 @@
  *     current recipe in full — latest version, config, and resolved model.
  *   - `reviseWhere` narrows that selection further: a stale unit is revised only
  *     when its prior node's content matches every filter (for example, only the
- *     lexicon terms whose current verdict is `category=profanity`). It never
- *     touches `missing` work, which has no prior node to match.
+ *     lexicon terms whose current verdict is `category=profanity`). When the
+ *     latest node predates the current version, an earlier node of the same
+ *     lineage may match instead — the bump can move a conclusion the old version
+ *     later re-filed under another value. It never touches `missing` work, which
+ *     has no prior node to match.
  *
  * There is no crash-recovery bookkeeping. Idempotency is structural: a finished
  * node is `current` (skipped on the next run); an unfinished unit is still
@@ -83,6 +86,7 @@ import {
 	getAnchoredMessageIds,
 	getMessage,
 	getNode,
+	getNodeVersions,
 	getSessionNodes,
 	insertEdge,
 	insertNode,
@@ -284,15 +288,17 @@ export class AnalyzerFramework {
 		// converges: on a later scan the duplicate finds the existing node via
 		// findNodeByInputKey and classifies as `current`.)
 		const seenInputKeys = new Set<string>();
-		const todo = classified.filter((c) => {
+		const todo: ClassifiedUnit[] = [];
+		for (const c of classified) {
 			const selected =
 				c.status === "missing" ||
-				(c.status === "stale" && c.reasons.some((r) => requested.has(r)) && priorMatches(c, reviseWhere));
-			if (!selected) return false;
-			if (seenInputKeys.has(c.inputKey)) return false;
+				(c.status === "stale" &&
+					c.reasons.some((r) => requested.has(r)) &&
+					(await priorMatches(this.deps.db, analyzer.def.id, c, reviseWhere)));
+			if (!selected || seenInputKeys.has(c.inputKey)) continue;
 			seenInputKeys.add(c.inputKey);
-			return true;
-		});
+			todo.push(c);
+		}
 
 		const runId = uuidv7();
 		createRun(this.deps.db, {
@@ -904,20 +910,44 @@ export class AnalyzerFramework {
 }
 
 /**
- * Whether a stale unit's prior node passes the run's `reviseWhere` filters.
+ * Whether a stale unit's lineage passes the run's `reviseWhere` filters.
  *
  * Matching is the untyped comparison, not the analyzer's declared schema. One
  * run walks many analyzers, and a filter that names a property one analyzer
  * declares under another type, or does not declare at all, means "this node does
- * not match", not "the run is malformed". A prior node with unreadable content
+ * not match", not "the run is malformed". A node with unreadable content
  * matches nothing, so the filter can only narrow a revise, never widen it.
+ *
+ * The latest node is asked first. When it does not match and the unit is stale
+ * for a *version* reason, the earlier nodes of the same lineage are asked too: a
+ * version bump is the reason this filter exists, and the latest node was drawn
+ * by the old version, which copied that version's vocabulary into it. A category
+ * that an intervening generation carried and the latest one lost is still
+ * evidence the bump can move, and leaving it out strands the unit below the
+ * current version until a whole-corpus revise (#391). A unit stale for `config`
+ * alone gets no such reach: its latest node already holds the current version,
+ * so an earlier generation describes a conclusion the current logic has settled.
  */
-function priorMatches(unit: ClassifiedUnit, reviseWhere: readonly FilterSpec[]): boolean {
+async function priorMatches(
+	db: AsyncDatabase,
+	analyzerId: string,
+	unit: ClassifiedUnit,
+	reviseWhere: readonly FilterSpec[],
+): Promise<boolean> {
 	if (reviseWhere.length === 0) return true;
-	if (unit.priorContentJson === undefined) return false;
+	if (contentMatches(unit.priorContentJson, reviseWhere)) return true;
+	const versionStale = unit.reasons.some((r) => r === "major" || r === "minor");
+	if (!versionStale) return false;
+	const versions = await getNodeVersions(db, analyzerId, unit.unit.sourceSetHash);
+	return versions.some((v) => v.id !== unit.priorNodeId && contentMatches(v.content_json, reviseWhere));
+}
+
+/** Whether stored node content matches every filter. Unreadable content matches nothing. */
+function contentMatches(contentJson: string | undefined, reviseWhere: readonly FilterSpec[]): boolean {
+	if (contentJson === undefined) return false;
 	let content: unknown;
 	try {
-		content = JSON.parse(unit.priorContentJson);
+		content = JSON.parse(contentJson);
 	} catch {
 		return false;
 	}
