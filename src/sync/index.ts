@@ -72,6 +72,9 @@ export async function runSync(
 				// from the old cursor instead of skipping rows that were never
 				// committed (issue #59).
 				const syncSession = db.transaction(async () => {
+					// The host travels with the adapter, not with the transcript: a mirrored tree keeps
+					// the host name of the machine that wrote it, and a local root gets this machine.
+					if (adapter.host) parsed.session.host = adapter.host;
 					await upsertSession(db, parsed.session);
 					for (const m of parsed.messages) {
 						await insertMessage(db, m);

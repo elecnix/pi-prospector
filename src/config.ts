@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { ProspectorConfig } from "./types.js";
+import type { ProspectorConfig, RootConfig } from "./types.js";
 import { DEFAULT_MODEL_TIERS } from "./analyze/model-tiers.js";
 import type { ModelTierConfig } from "./analyze/types.js";
 import { Check } from "typebox/value";
@@ -39,6 +39,38 @@ export function getDbPath(config?: ProspectorConfig): string {
 	if (c.dbPath) return c.dbPath.replace(/^~/, os.homedir());
 	if (process.env["PROSPECTOR_DB_PATH"]) return process.env["PROSPECTOR_DB_PATH"]!;
 	return DEFAULT_DB_PATH;
+}
+
+/**
+ * Where sessions come from, one entry per adapter and machine.
+ *
+ * Absent `roots` in the config, this reproduces the single local root each adapter
+ * reads by default, all attributed to this machine. Present, the config replaces
+ * those defaults, which is how a mirrored tree from another computer gets read
+ * with its own host name. An entry naming no host falls back to this machine, so a
+ * half-written entry never loses the session.
+ */
+export function getRoots(config?: ProspectorConfig): RootConfig[] {
+	const c = config ?? loadConfig();
+	const raw: unknown = c.roots;
+	if (Array.isArray(raw) && raw.length > 0) {
+		return raw.map((r, i) => {
+			const entry = r as Partial<RootConfig>;
+			if (typeof entry.source !== "string" || typeof entry.root !== "string") {
+				throw new Error(`config 'roots[${i}]' needs a source and a root`);
+			}
+			return {
+				source: entry.source,
+				host: typeof entry.host === "string" && entry.host ? entry.host : os.hostname(),
+				root: entry.root.replace(/^~/, os.homedir()),
+			};
+		});
+	}
+	return [
+		{ source: "pi", host: os.hostname(), root: getSessionsDir() },
+		{ source: "claude", host: os.hostname(), root: getClaudeSessionsDir() },
+		{ source: "codex", host: os.hostname(), root: getCodexSessionsDir() },
+	];
 }
 
 export function getSessionsDir(): string {

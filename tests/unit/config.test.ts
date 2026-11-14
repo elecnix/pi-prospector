@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, getPiAgentAnalyzersDir, getSessionsDir, loadConfig } from "../../src/config.js";
+import { getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, getPiAgentAnalyzersDir, getRoots, getSessionsDir, loadConfig } from "../../src/config.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 
 const ENV_KEYS = ["PROSPECTOR_CONFIG", "PROSPECTOR_DB_PATH", "PROSPECTOR_SESSIONS_DIR", "PROSPECTOR_ANALYZERS_DIR", "PROSPECTOR_LLM_TIMEOUT_MS"];
@@ -83,5 +83,35 @@ describe("config", () => {
 		assert.equal(getLlmTimeoutMs({ llmTimeoutMs: 5000 }), 5000);
 		process.env["PROSPECTOR_LLM_TIMEOUT_MS"] = "0";
 		assert.equal(getLlmTimeoutMs({}), 120_000);
+	});
+});
+
+describe("getRoots", () => {
+	it("gives each local adapter its default directory, on this machine", () => {
+		const roots = getRoots({});
+		assert.deepEqual(roots.map((r) => r.source), ["pi", "claude", "codex"]);
+		for (const r of roots) assert.equal(r.host, os.hostname());
+		assert.equal(roots[0]?.root, getSessionsDir());
+	});
+
+	it("reads the configured roots instead, with their own host names", () => {
+		const roots = getRoots({
+			roots: [
+				{ source: "pi", host: "vandenberg", root: "~/.pi/agent/sessions" },
+				{ source: "pi", host: "hawthorne", root: "~/mirror/hosts/hawthorne/pi/sessions" },
+			],
+		});
+		assert.equal(roots.length, 2);
+		assert.equal(roots[0]?.root, path.join(os.homedir(), ".pi/agent/sessions"));
+		assert.equal(roots[1]?.host, "hawthorne");
+	});
+
+	it("keeps the local host name for an entry that names none", () => {
+		const roots = getRoots({ roots: [{ source: "claude", root: "/tmp/claude-projects" } as never] });
+		assert.equal(roots[0]?.host, os.hostname());
+	});
+
+	it("refuses an entry with no root, rather than indexing the default tree under a wrong host", () => {
+		assert.throws(() => getRoots({ roots: [{ source: "pi", host: "hawthorne" } as never] }), /roots\[0\]/);
 	});
 });
