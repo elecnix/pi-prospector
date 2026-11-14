@@ -31,6 +31,13 @@ export interface ProspectorConfig {
 	 * read, and each session keeps the host of the root it came from.
 	 */
 	roots?: RootConfig[];
+	/**
+	 * A command run before every sync, so a machine whose sessions live in a git archive
+	 * refreshes that archive first and a sync sees what was pushed from elsewhere. A
+	 * failing hook is reported in the sync summary and never stops the sync: stale
+	 * sessions on disk still beat no index at all.
+	 */
+	syncHook?: { command: string; timeoutMs?: number };
 	/** Model tiers used by analyzers (cheap/mid/expensive → provider/model). */
 	modelTiers?: {
 		cheap: string;
@@ -293,6 +300,8 @@ export interface SyncResult {
 	/** Child-run artifacts already current — re-read only when their mtime moves. */
 	subagentRunsSkipped: number;
 	errors: string[];
+	/** What the configured pre-sync hook did, when one ran. */
+	hook?: { command: string; ok: boolean; error?: string };
 }
 
 // ─── Proposals ───

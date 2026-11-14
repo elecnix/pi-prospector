@@ -15,6 +15,7 @@ import type { ProspectorConfig, RootConfig } from "../types.js";
 import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
 
 /** Where the Pi coding agent hosts locally-authored custom sources. */
 const PI_AGENT_SOURCES_DIR = path.join(os.homedir(), ".pi", "agent", "prospector", "sources");
@@ -100,7 +101,11 @@ function sourceNames(config: ProspectorConfig): { names: string[]; error?: strin
 
 /** Sync the built-in adapters plus any custom sources config `sources` names, surfacing load errors in the result. */
 export async function runProspectSync(db: AsyncDatabase, opts?: { project?: string; source?: HarnessSource }): Promise<SyncResult> {
-	const { adapters, errors } = await buildSourceAdapters();
+	const config = loadConfig();
+	// A machine whose sessions arrive by git runs its refresh here, so a sync started from
+	// the UI sees what the other computer pushed without anyone remembering the script.
+	const hook = await runSyncHook(config);
+	const { adapters, errors } = await buildSourceAdapters(config);
 	// A source that reads local evidence (dedup against this very index)
 	// declares a writable `db` field and gets the sync's own handle. The field
 	// is optional: sources without it never see the database.
@@ -111,6 +116,12 @@ export async function runProspectSync(db: AsyncDatabase, opts?: { project?: stri
 	// A source that failed to load is a sync error like any other, but it
 	// produces no session rows, so surface it even when every adapter ran.
 	result.errors.push(...errors);
+	if (hook) {
+		result.hook = hook;
+		// The sync still reads what is on disk: a hook that failed leaves the archive as it
+		// was, and indexing yesterday's sessions beats indexing nothing.
+		if (!hook.ok && hook.error) result.errors.push(`sync hook failed: ${hook.error}`);
+	}
 	return result;
 }
 
@@ -134,6 +145,9 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 			`  Forks resolved:     ${result.forksResolved}`,
 			`  Subagent runs:      ${result.subagentRunsProcessed} ingested, ${result.subagentRunsSkipped} unchanged`,
 		];
+		if (result.hook) {
+			lines.push(`  Hook: ${result.hook.ok ? "ok" : "failed"} (${result.hook.command})`);
+		}
 		if (args.project || args.source) {
 			lines.push(`  Scope: ${[args.project && `project ${args.project}`, args.source && `source ${args.source}`].filter(Boolean).join(" + ")}`);
 		}
@@ -200,4 +214,28 @@ function expandRoots(
 		const Ctor = adapter.constructor as new (dir?: string) => SessionSourceAdapter;
 		return mine.map((r) => Object.assign(new Ctor(r.root), { host: r.host }));
 	});
+}
+
+/**
+ * Run the configured pre-sync command, if there is one.
+ *
+ * The command goes through the shell, so a path with arguments works without quoting rules
+ * of its own. A leading `~` is expanded. The timeout keeps a hung git fetch from making the
+ * sync look frozen; nothing else here can stop it once it starts.
+ */
+export async function runSyncHook(
+	config: ProspectorConfig,
+): Promise<{ command: string; ok: boolean; error?: string } | undefined> {
+	const hook = config.syncHook;
+	if (!hook || typeof hook.command !== "string" || !hook.command.trim()) return undefined;
+	const command = hook.command.replace(/^~/, os.homedir());
+	const timeoutMs = typeof hook.timeoutMs === "number" && hook.timeoutMs > 0 ? hook.timeoutMs : 120_000;
+	const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+		execFile("/bin/sh", ["-c", command], { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, _stdout, stderr) => {
+			if (!err) return resolve({ ok: true });
+			const detail = (stderr || err.message).trim().split("\n").slice(-3).join(" | ");
+			resolve({ ok: false, error: detail.slice(0, 400) });
+		});
+	});
+	return { command, ...result };
 }
