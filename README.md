@@ -783,6 +783,8 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 | `defaultAnalyzers` | every registered analyzer | The analyzers `/prospect-analyze` runs when you don't pass `--analyzer`. |
 | `disabledAnalyzers` | `[]` | Analyzers to take out of that default set, for example one you want to try on a few sessions before running it everywhere. |
 | `lexicon` | `{ "mode": "model" }` | Your own frustration dictionary, and whether lexicon hits come from the learned lexicon, the dictionary, or both. See [Your own frustration dictionary](#your-own-frustration-dictionary). |
+| `roots` | one per harness, on this machine | Where sessions come from, when more than one machine writes them. Each entry names a `source`, a `host` and a `root`; every session keeps the host of the root it came from. A list replaces the defaults entirely, so a harness it does not name is not indexed. |
+| `syncHook` | none | A command run before every sync, through the shell, with `timeoutMs` (default two minutes). A machine whose sessions arrive by git points this at its refresh, so a sync started from the UI sees what another computer pushed. A hook that fails is reported in the sync summary and the sync still indexes what is on disk. |
 
 Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. Any model Pi supports works. The deterministic `turn-pair-core` layer needs no model.
 

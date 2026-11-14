@@ -13,6 +13,10 @@
  * Tests that exercise these paths point them at temp directories of their own.
  */
 process.env["PROSPECTOR_INSTRUCTIONS_HOME"] = "/nonexistent/prospector-test-home";
+// A `roots` list in the developer's own config overrides the directory variables below, so a
+// command test would read that developer's whole session tree. The config is therefore absent
+// unless a test names one.
+process.env["PROSPECTOR_CONFIG"] ||= "/nonexistent/prospector-test-config.json";
 // An empty value counts as unset: config reads it with `??`, so "" would be
 // used as a path relative to the working directory.
 process.env["PROSPECTOR_SESSIONS_DIR"] ||= "/nonexistent/prospector-test-sessions";
