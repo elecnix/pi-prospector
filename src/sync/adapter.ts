@@ -35,6 +35,14 @@ export interface SessionSourceAdapter {
 	readonly source: string;
 
 	/**
+	 * The machine whose sessions this adapter reads, recorded on every session it
+	 * discovers. Set when the composition root builds one adapter per configured
+	 * root, and absent for a single local root, where the sync records the local
+	 * hostname instead.
+	 */
+	readonly host?: string;
+
+	/**
 	 * Claim order for the sync loop: `runSync` claims each file once and the
 	 * first adapter wins, so adapters are tried in ascending priority order.
 	 * A source that declares none sorts after every built-in — a custom source

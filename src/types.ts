@@ -7,9 +7,30 @@
 
 // ─── Config ───
 
+/**
+ * One place sessions come from, and the machine that wrote them.
+ *
+ * `source` names the adapter that reads the root (`pi`, `claude`, `codex`, …).
+ * `host` is the machine name recorded on every session found under `root`, so a
+ * mirrored tree from another computer stays distinguishable from the local one.
+ * A leading `~` in `root` is expanded.
+ */
+export interface RootConfig {
+	source: string;
+	host: string;
+	root: string;
+}
+
 export interface ProspectorConfig {
 	model?: string; // provider/model format, e.g. "anthropic/claude-sonnet-4-5"
 	dbPath?: string; // defaults to ~/.pi/agent/prospector.db
+	/**
+	 * Where sessions come from, when more than one machine writes them. Absent,
+	 * each adapter reads its own default directory and the local hostname is
+	 * recorded. Present, it replaces those defaults entirely: every root here is
+	 * read, and each session keeps the host of the root it came from.
+	 */
+	roots?: RootConfig[];
 	/** Model tiers used by analyzers (cheap/mid/expensive → provider/model). */
 	modelTiers?: {
 		cheap: string;

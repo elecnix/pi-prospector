@@ -44,18 +44,21 @@ export interface SessionInsert {
 	name: string | null;
 	/** JSON ToolInventory, or null = UNKNOWN (never captured). '[]' = empty. */
 	tool_inventory: string | null;
+	/** The machine that wrote the session, or '' when the row predates the host column. */
+	host?: string;
 }
 
 export async function upsertSession(db: AsyncDatabase, s: SessionInsert): Promise<void> {
 	await prep(db, `
-		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count, name, tool_inventory)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count, name, tool_inventory, host)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			file_path=excluded.file_path, project=excluded.project, source=excluded.source, cwd=excluded.cwd,
 			parent_session=excluded.parent_session, last_line=excluded.last_line,
 			last_modified=excluded.last_modified, message_count=excluded.message_count,
-			branch_count=excluded.branch_count, name=excluded.name, tool_inventory=excluded.tool_inventory
-	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count, s.name, s.tool_inventory);
+			branch_count=excluded.branch_count, name=excluded.name, tool_inventory=excluded.tool_inventory,
+			host=CASE WHEN excluded.host <> '' THEN excluded.host ELSE sessions.host END
+	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count, s.name, s.tool_inventory, s.host ?? '');
 }
 
 export async function getCursor(db: AsyncDatabase, filePath: string): Promise<{ last_line: number; last_modified: number } | undefined> {

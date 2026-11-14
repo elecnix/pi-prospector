@@ -1,3 +1,4 @@
+import * as os from "node:os";
 import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
 import { NOT_REVISED_LIVE, NOT_MUTED_LIVE } from "./current-generation.js";
@@ -38,6 +39,10 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			file_path TEXT NOT NULL,
 			project TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL DEFAULT 'pi',
+			-- The machine that wrote the session. '' on a row indexed before this column
+			-- existed: those sessions are not re-read, because a full re-import costs a
+			-- model run per session and the attribution is worth little against that.
+			host TEXT NOT NULL DEFAULT '',
 			cwd TEXT NOT NULL DEFAULT '',
 			parent_session TEXT,
 			-- The human-readable session name from the host's session_info record
@@ -570,6 +575,18 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 	// sessions: tool_inventory (active tool set capture; NULL = UNKNOWN)
 	if (!(await hasColumn("sessions", "tool_inventory"))) {
 		await db.exec("ALTER TABLE sessions ADD COLUMN tool_inventory TEXT");
+	}
+
+	// sessions: the machine that wrote the session, so a mirrored tree from another
+	// computer stays distinguishable from the local one. Existing rows keep '' — they
+	// are not re-read, because a full re-import costs a model run per session and the
+	// attribution of an old session is worth little against that.
+	if (!(await hasColumn("sessions", "host"))) {
+		await db.exec("ALTER TABLE sessions ADD COLUMN host TEXT NOT NULL DEFAULT ''");
+		// A database that predates the column holds only this machine's sessions, because that is
+		// the only place sync read them. Naming the local host costs one UPDATE, where a re-import
+		// would cost a model run per session to attribute rows that are already here.
+		await db.prepare("UPDATE sessions SET host = ? WHERE host = ''").run(os.hostname());
 	}
 
 	// messages: add source column if missing

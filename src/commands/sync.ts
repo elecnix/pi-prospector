@@ -1,4 +1,5 @@
 import type { ExtensionCommandContext } from "../pi-stubs.js";
+import { getRoots } from "../config.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import type { AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
@@ -10,7 +11,7 @@ import { parseHarnessSource } from "../harness.js";
 import { discoverSourceNames, loadCustomSources, resolveSourcePaths } from "../sync/source-loader.js";
 import { loadConfig, getDbPath } from "../config.js";
 import type { HarnessSource } from "../harness.js";
-import type { ProspectorConfig } from "../types.js";
+import type { ProspectorConfig, RootConfig } from "../types.js";
 import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -74,7 +75,10 @@ export async function buildSourceAdapters(config: ProspectorConfig = loadConfig(
 	const customs = await loadCustomSources({ names: customNames, paths, builtinIds: reservedTags });
 	for (const e of customs.errors) errors.push(e.file ? `${e.name} (${e.file}): ${e.message}` : e.message);
 
-	return { adapters: sortSourceAdapters([...enabledBuiltins, ...customs.loaded]), errors };
+	// A configured root list turns one built-in adapter into one instance per root, each
+	// carrying the machine it reads. Adapters that take no root in their constructor keep a
+	// single instance: expanding one would read the same tree twice under two names.
+	return { adapters: sortSourceAdapters([...expandRoots(enabledBuiltins, config), ...customs.loaded]), errors };
 }
 
 /**
@@ -162,4 +166,38 @@ function parseSyncArgs(raw: string): SyncArgs {
 		}
 	}
 	return result;
+}
+
+/** The source tags whose adapter constructor takes the directory it reads as its first argument. */
+const ROOT_TAKING_SOURCES = new Set(["pi", "claude", "codex"]);
+
+/**
+ * One adapter instance per configured root, or the adapters unchanged when the config
+ * names no roots. An adapter is rebuilt through its own constructor, so a built-in that
+ * resolves its directory lazily keeps doing so; the host is attached to the instance,
+ * which is what the sync loop copies onto every session it inserts.
+ */
+function expandRoots(
+	adapters: SessionSourceAdapter[],
+	config: ProspectorConfig,
+): SessionSourceAdapter[] {
+	const roots = config.roots;
+	if (!Array.isArray(roots) || roots.length === 0) return adapters;
+	let configured: RootConfig[];
+	try {
+		configured = getRoots(config);
+	} catch {
+		// A malformed entry is reported by the caller's config checks; reading the defaults
+		// here would silently index this machine's sessions under a remote host name.
+		return adapters;
+	}
+	return adapters.flatMap((adapter) => {
+		if (!ROOT_TAKING_SOURCES.has(adapter.source)) return [adapter];
+		// The configured list replaces the defaults entirely: an adapter it does not name must not
+		// read its own default tree, because those sessions would land with no host at all.
+		const mine = configured.filter((r) => r.source === adapter.source);
+		if (mine.length === 0) return [];
+		const Ctor = adapter.constructor as new (dir?: string) => SessionSourceAdapter;
+		return mine.map((r) => Object.assign(new Ctor(r.root), { host: r.host }));
+	});
 }
