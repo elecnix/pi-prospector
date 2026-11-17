@@ -49,15 +49,38 @@ export function insideOut(outDir: string, rel: string): string {
 	return target;
 }
 
-async function writeAtomic(target: string, data: Uint8Array | string, lastModifiedMs: number): Promise<void> {
+/**
+ * Write `data` to a temp file, then give it the final name only if nothing has
+ * that name. `link` fails with EEXIST when the target exists, which `rename` would
+ * silently replace, so a file that appears between the early existence check and
+ * this step (Claude Code writing a live session) is never overwritten. Returns
+ * false when the target exists.
+ */
+async function writeAtomic(target: string, data: Uint8Array | string, lastModifiedMs: number, beforeCommit?: (target: string) => Promise<void>): Promise<boolean> {
 	await fs.mkdir(path.dirname(target), { recursive: true });
 	const tmp = `${target}.tmp-${process.pid}`;
-	await fs.writeFile(tmp, data);
-	if (lastModifiedMs > 0) {
-		const seconds = lastModifiedMs / 1000 - MTIME_MARGIN_S;
-		await fs.utimes(tmp, seconds, seconds);
+	try {
+		await fs.writeFile(tmp, data);
+		if (lastModifiedMs > 0) {
+			const seconds = lastModifiedMs / 1000 - MTIME_MARGIN_S;
+			await fs.utimes(tmp, seconds, seconds);
+		}
+		if (beforeCommit) await beforeCommit(target);
+		try {
+			await fs.link(tmp, target);
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+			throw err;
+		}
+		return true;
+	} finally {
+		await fs.rm(tmp, { force: true });
 	}
-	await fs.rename(tmp, target);
+}
+
+/** Test seam: runs after the temp file is written and before it takes the final name. */
+export interface ExportHooks {
+	beforeCommit?: (target: string) => Promise<void>;
 }
 
 /**
@@ -65,11 +88,12 @@ async function writeAtomic(target: string, data: Uint8Array | string, lastModifi
  * export reports it and moves on, so running it twice, or into a live sessions
  * root, cannot replace a transcript Claude Code still holds.
  */
-export async function exportClaudeSession(db: AsyncDatabase, s: ExportableSession, outDir: string, claudeRoot: string): Promise<ExportOutcome> {
+export async function exportClaudeSession(db: AsyncDatabase, s: ExportableSession, outDir: string, claudeRoot: string, hooks: ExportHooks = {}): Promise<ExportOutcome> {
 	const chunks = await getRawChunks(db, s.id);
 	const rel = chunks[0]?.rel_path ?? relPathUnderRoot(claudeRoot, s.file_path, s.project);
 	const target = insideOut(outDir, rel);
-	if (await exists(target)) return { kind: "skipped", session: s.id, reason: `${rel} already exists in the output directory` };
+	const taken: ExportOutcome = { kind: "skipped", session: s.id, reason: `${rel} already exists in the output directory` };
+	if (await exists(target)) return taken;
 
 	if (chunks.length > 0) {
 		const parts: Buffer[] = [];
@@ -82,7 +106,7 @@ export async function exportClaudeSession(db: AsyncDatabase, s: ExportableSessio
 			expectedStart += raw.length;
 		}
 		const content = Buffer.concat(parts);
-		await writeAtomic(target, content, s.last_modified);
+		if (!(await writeAtomic(target, content, s.last_modified, hooks.beforeCommit))) return taken;
 		const files = await getRawFiles(db, s.id);
 		for (const f of files) {
 			const bytes = decompress(f.codec, f.data);
@@ -100,7 +124,7 @@ export async function exportClaudeSession(db: AsyncDatabase, s: ExportableSessio
 		.all(s.id)) as StoredMessage[];
 	if (messages.length === 0) return { kind: "skipped", session: s.id, reason: "no stored messages and no stored original bytes" };
 	const { records, notes } = rebuildClaudeRecords(s, messages, rel);
-	await writeAtomic(target, serializeRecords(records), s.last_modified);
+	if (!(await writeAtomic(target, serializeRecords(records), s.last_modified, hooks.beforeCommit))) return taken;
 	const report = {
 		restoredFrom: RESTORED_FROM,
 		sessionId: s.id,
@@ -114,7 +138,7 @@ export async function exportClaudeSession(db: AsyncDatabase, s: ExportableSessio
 		inferences: notes,
 		notRestored: NOT_RESTORED,
 	};
-	await fs.writeFile(target.replace(/\.jsonl$/i, ".restore.json"), JSON.stringify(report, null, 2) + "\n");
+	await fs.writeFile(target.replace(/\.jsonl$/i, ".restore.json"), JSON.stringify(report, null, 2) + "\n", { flag: "w" });
 	return { kind: "rebuilt", session: s.id, path: target, records: records.length, notes };
 }
 

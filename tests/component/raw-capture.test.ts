@@ -468,6 +468,7 @@ describe("prospect export-session", () => {
 		} finally {
 			if (saved.db === undefined) delete process.env["PROSPECTOR_DB_PATH"]; else process.env["PROSPECTOR_DB_PATH"] = saved.db;
 			if (saved.root === undefined) delete process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"]; else process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] = saved.root;
+			if (!dbClosed) await env.db.close();
 			fs.rmSync(env.dir, { recursive: true, force: true });
 		}
 	});
@@ -617,6 +618,56 @@ describe("rebuild of a synced user record with empty tool results", () => {
 				assert.ok(again && again.kind === "message");
 				assert.equal(again.entry.text, row.content_text);
 				assert.deepEqual(again.entry.tool_results, JSON.parse(row.tool_results!));
+			} finally {
+				await env.cleanup();
+			}
+		});
+	}
+});
+
+describe("rebuild of stored rows with empty results next to an empty text part", () => {
+	const cases: Array<[string, string, number[]]> = [
+		["abc, empty text part, defg with results of length 3, 0 and 4", "abc\n\ndefg", [3, 0, 4]],
+		["a, empty text part, b with results of length 1, 0 and 1", "a\n\nb", [1, 0, 1]],
+		["a then a trailing empty text part with results of length 1 and 0", "a\n", [1, 0]],
+	];
+	for (const [label, text, lengths] of cases) {
+		it(`parses back into the stored row: ${label}`, () => {
+			const results = lengths.map((textLength, i) => ({ toolCallId: `toolu_${i}`, toolName: "read", isError: false, textLength }));
+			const stored: StoredMessage = {
+				id: "u", parent_id: null, timestamp: null, role: "toolResult", content_text: text, content_thinking: null,
+				tool_calls: null, tool_results: JSON.stringify(results), usage: null, model: null, provider_message_id: null, stop_reason: null, error_message: null,
+			};
+			const { records, notes } = rebuildClaudeRecords({ id: "s", cwd: "/tmp", name: null }, [stored], "p/s.jsonl");
+			assert.equal(notes["tool_result_layout_unrecoverable"], undefined);
+			const names = new Map(results.map((r) => [r.toolCallId, "read"]));
+			const again = parseClaudeLine(JSON.stringify(records[0]), names);
+			assert.ok(again && again.kind === "message");
+			assert.equal(again.entry.text, text);
+			assert.deepEqual(again.entry.tool_results?.map((r) => r.textLength), lengths);
+		});
+	}
+});
+
+describe("export never replaces a file that appears mid-export", () => {
+	for (const raw of [true, false]) {
+		it(`leaves a file created after the early check untouched (${raw ? "original bytes" : "rebuild"})`, async () => {
+			const env = await setup();
+			try {
+				const label = raw ? "race-raw" : "race-rebuilt";
+				const file = sessionPath(env, label);
+				write(file, richLines(label).join("\n") + "\n");
+				await sync(env, raw);
+				fs.rmSync(file);
+				const s = (await getExportableSession(env.db, claudeSessionId(label)))!;
+				const target = path.join(env.out, PROJECT, claudeSessionFileName(label));
+				const live = Buffer.from("a live session Claude Code is writing\n");
+				const outcome = await exportClaudeSession(env.db, s, env.out, env.root, {
+					beforeCommit: async (t) => { fs.writeFileSync(t, live); },
+				});
+				assert.equal(outcome.kind, "skipped");
+				assert.ok(fs.readFileSync(target).equals(live), "the file created mid-export was overwritten");
+				assert.deepEqual(fs.readdirSync(path.dirname(target)).filter((n) => n.includes(".tmp-")), []);
 			} finally {
 				await env.cleanup();
 			}
