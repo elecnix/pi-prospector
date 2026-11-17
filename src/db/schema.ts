@@ -573,17 +573,28 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
  * later `migrate()` leaves the cursors alone. A line lost before the upgrade is not
  * recovered by this: only a read from line 0 finds it.
  */
-async function lowerOldLineCursors(db: AsyncDatabase): Promise<void> {
-	// better-sqlite3 answers a pragma read with an array of rows: [{ user_version: n }].
-	// Any other shape stops the migration, because guessing "0" would lower every cursor
-	// again on each start.
+/** Read `PRAGMA user_version`. better-sqlite3 answers with an array of rows: [{ user_version: n }]. */
+async function readUserVersion(db: AsyncDatabase): Promise<number> {
 	const rows = (await db.pragma("user_version")) as unknown;
 	const first = Array.isArray(rows) ? (rows[0] as { user_version?: unknown } | undefined) : undefined;
+	// Any other shape stops the migration: guessing "0" would lower every cursor again on each start.
 	if (typeof first?.user_version !== "number") throw new Error(`unexpected PRAGMA user_version result: ${JSON.stringify(rows)}`);
-	const version = first.user_version;
-	if (version >= 1) return;
-	await db.exec("UPDATE sessions SET last_line = last_line - 1 WHERE source IN ('pi', 'pi-subagent', 'claude') AND last_line > 0");
-	await db.exec("PRAGMA user_version = 1");
+	return first.user_version;
+}
+
+export async function lowerOldLineCursors(db: AsyncDatabase, hooks: { afterUpdate?: () => Promise<void> } = {}): Promise<void> {
+	if ((await readUserVersion(db)) >= 1) return;
+	// The cursor change and the version that records it are one transaction: a crash
+	// between them rolls both back, and a second process that opened the database at the
+	// same moment reads the version again under the transaction, so the cursors are
+	// lowered once in total. SQLite keeps `user_version` in the database header, and it
+	// is written inside a transaction like any other change.
+	await db.transaction(async () => {
+		if ((await readUserVersion(db)) >= 1) return;
+		await db.exec("UPDATE sessions SET last_line = last_line - 1 WHERE source IN ('pi', 'pi-subagent', 'claude') AND last_line > 0");
+		if (hooks.afterUpdate) await hooks.afterUpdate();
+		await db.exec("PRAGMA user_version = 1");
+	})();
 }
 
 /**

@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js";
-import { migrate } from "../../src/db/schema.js";
+import { lowerOldLineCursors, migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
 import type { SessionSourceAdapter } from "../../src/sync/adapter.js";
 import { PiFileSource } from "../../src/sync/sources/pi/index.js";
@@ -59,6 +59,32 @@ describe("the migration's one-shot guard on the real database class", () => {
 			assert.deepEqual(await db.pragma("user_version"), [{ user_version: 1 }], "the guard reads the shape the real class returns");
 		} finally {
 			// Closing twice is safe to skip: the handle is closed here whether or not the test failed.
+			await closeQuietly(db);
+			cleanup();
+		}
+	});
+});
+
+describe("the migration's cursor change and its guard are one transaction", () => {
+	it("lowers a cursor once in total when the migration fails after the update", async () => {
+		const { root, cleanup } = makeTempRoot("prospect-atomic-");
+		let db: AsyncDatabase | undefined;
+		try {
+			db = openAsyncDatabase(path.join(root, "atomic.db"));
+			await migrate(db);
+			await db.exec("INSERT INTO sessions (id, file_path, source, last_line) VALUES ('s1', '/x/s1.jsonl', 'claude', 10)");
+			await db.exec("PRAGMA user_version = 0");
+			const cursor = async (): Promise<number> => ((await db!.prepare("SELECT last_line FROM sessions").get()) as { last_line: number }).last_line;
+			// A crash between the update and the version write.
+			await assert.rejects(lowerOldLineCursors(db, { afterUpdate: async () => { throw new Error("crash"); } }), /crash/);
+			assert.equal(await cursor(), 10, "the update rolled back with the failed migration");
+			assert.deepEqual(await db.pragma("user_version"), [{ user_version: 0 }]);
+			// The next open runs the migration, and it lowers once in total.
+			await migrate(db);
+			await migrate(db);
+			assert.equal(await cursor(), 9);
+			assert.deepEqual(await db.pragma("user_version"), [{ user_version: 1 }]);
+		} finally {
 			await closeQuietly(db);
 			cleanup();
 		}
