@@ -193,7 +193,8 @@ export function rebuildClaudeRecords(session: StoredSession, messages: StoredMes
  * a layout in which the results sit at their stored lengths, every cut falls on a
  * newline, and the text blocks fill what is left, so the parser joins the record
  * back into the identical string. Text may come before, between and after the
- * results. When the same string splits more than one way the earliest layout wins,
+ * results, and a text block may be empty, because the parser keeps an empty text
+ * part but adds none for an empty result. When the same string splits more than one way the earliest layout wins,
  * so which text belongs to which block is an inference, counted in the notes.
  * Lengths count UTF-16 code units, as the parser's `String.length` did.
  */
@@ -221,7 +222,7 @@ function toolResultBlocks(m: StoredMessage, notes: Record<string, number>): Arra
 			return false;
 		};
 		if (attempt(pos, null)) return true;
-		for (let e = body.indexOf("\n", pos + 1); e !== -1; e = body.indexOf("\n", e + 1)) {
+		for (let e = body.indexOf("\n", pos); e !== -1; e = body.indexOf("\n", e + 1)) {
 			if (attempt(e + 1, body.slice(pos, e))) return true;
 		}
 		return false;

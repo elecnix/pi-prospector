@@ -557,3 +557,69 @@ describe("rebuild with an empty tool result", () => {
 		assert.deepEqual(again.entry.tool_results, e.tool_results);
 	});
 });
+
+describe("rebuild of a synced user record with empty tool results", () => {
+	const ids = ["toolu_a", "toolu_b", "toolu_c"];
+	const use = (id: string, name: string) => ({ type: "tool_use", id, name, input: {} });
+	const shapes: Record<string, unknown[]> = {
+		"an empty string in the middle": [
+			{ type: "tool_result", tool_use_id: "toolu_a", content: "a" },
+			{ type: "tool_result", tool_use_id: "toolu_b", content: "" },
+			{ type: "tool_result", tool_use_id: "toolu_c", content: "b" },
+		],
+		"an empty content array in the middle": [
+			{ type: "tool_result", tool_use_id: "toolu_a", content: "a" },
+			{ type: "tool_result", tool_use_id: "toolu_b", content: [] },
+			{ type: "tool_result", tool_use_id: "toolu_c", content: "b" },
+		],
+		"empty first and last": [
+			{ type: "tool_result", tool_use_id: "toolu_a", content: "" },
+			{ type: "tool_result", tool_use_id: "toolu_b", content: "mid" },
+			{ type: "tool_result", tool_use_id: "toolu_c", content: [] },
+		],
+		"an empty text block beside an empty result": [
+			{ type: "tool_result", tool_use_id: "toolu_a", content: "a" },
+			{ type: "tool_result", tool_use_id: "toolu_b", content: "" },
+			{ type: "text", text: "" },
+			{ type: "tool_result", tool_use_id: "toolu_c", content: "b" },
+		],
+		"text around an empty result": [
+			{ type: "text", text: "before" },
+			{ type: "tool_result", tool_use_id: "toolu_a", content: "a" },
+			{ type: "tool_result", tool_use_id: "toolu_b", content: "" },
+			{ type: "text", text: "after" },
+			{ type: "tool_result", tool_use_id: "toolu_c", content: "b" },
+		],
+	};
+
+	for (const [label, content] of Object.entries(shapes)) {
+		it(`rebuilds into the stored row from a real sync: ${label}`, async () => {
+			const env = await setup();
+			try {
+				const name = label.replace(/\W+/g, "-");
+				const lines = [
+					JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/sample", message: { role: "user", content: "go" } }),
+					JSON.stringify({ type: "assistant", uuid: "a1", parentUuid: "u1", timestamp: "2026-02-01T09:00:01.000Z", message: { id: "m1", role: "assistant", model: "m", content: [use(ids[0]!, "Read"), use(ids[1]!, "Bash"), use(ids[2]!, "Grep")] } }),
+					JSON.stringify({ type: "user", uuid: "u2", parentUuid: "a1", timestamp: "2026-02-01T09:00:02.000Z", message: { role: "user", content } }),
+				];
+				write(sessionPath(env, name), lines.join("\n") + "\n");
+				await sync(env, false);
+				const id = claudeSessionId(name);
+				const stored = (await env.db
+					.prepare("SELECT id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, model, provider_message_id, stop_reason, error_message FROM messages WHERE session_id = ? ORDER BY rowid")
+					.all(id)) as StoredMessage[];
+				const row = stored.find((m) => m.id === "u2")!;
+				const { records, notes } = rebuildClaudeRecords({ id, cwd: "/tmp/sample", name: null }, stored, `${PROJECT}/${name}.jsonl`);
+				assert.equal(notes["tool_result_layout_unrecoverable"], undefined);
+				const names = new Map([["toolu_a", "read"], ["toolu_b", "bash"], ["toolu_c", "grep"]]);
+				const rec = records.find((r) => r["uuid"] === "u2")!;
+				const again = parseClaudeLine(JSON.stringify(rec), names);
+				assert.ok(again && again.kind === "message");
+				assert.equal(again.entry.text, row.content_text);
+				assert.deepEqual(again.entry.tool_results, JSON.parse(row.tool_results!));
+			} finally {
+				await env.cleanup();
+			}
+		});
+	}
+});
