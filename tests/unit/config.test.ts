@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getCaptureRaw, getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, getPiAgentAnalyzersDir, getRoots, getSessionsDir, loadConfig } from "../../src/config.js";
+import { getAnalyzerPaths, getDbPath, getLlmTimeoutMs, getModelTiers, getPiAgentAnalyzersDir, getRoots, getSessionsDir, loadConfig } from "../../src/config.js";
 import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
 
 const ENV_KEYS = ["PROSPECTOR_CONFIG", "PROSPECTOR_DB_PATH", "PROSPECTOR_SESSIONS_DIR", "PROSPECTOR_ANALYZERS_DIR", "PROSPECTOR_LLM_TIMEOUT_MS"];
@@ -113,30 +113,5 @@ describe("getRoots", () => {
 
 	it("refuses an entry with no root, rather than indexing the default tree under a wrong host", () => {
 		assert.throws(() => getRoots({ roots: [{ source: "pi", host: "hawthorne" } as never] }), /roots\[0\]/);
-	});
-});
-
-describe("getCaptureRaw", () => {
-	it("defaults to on, and reads a boolean from the config", () => {
-		const saved = process.env["PROSPECTOR_CAPTURE_RAW"];
-		delete process.env["PROSPECTOR_CAPTURE_RAW"];
-		try {
-			assert.equal(getCaptureRaw({}), true);
-			assert.equal(getCaptureRaw({ captureRaw: false }), false);
-			assert.equal(getCaptureRaw({ captureRaw: true }), true);
-		} finally {
-			if (saved !== undefined) process.env["PROSPECTOR_CAPTURE_RAW"] = saved;
-		}
-	});
-
-	it("throws on a value that is not a boolean instead of silently keeping capture on", () => {
-		const saved = process.env["PROSPECTOR_CAPTURE_RAW"];
-		delete process.env["PROSPECTOR_CAPTURE_RAW"];
-		try {
-			assert.throws(() => getCaptureRaw({ captureRaw: "false" as never }), /captureRaw must be true or false/);
-			assert.throws(() => getCaptureRaw({ captureRaw: 0 as never }), /captureRaw must be true or false/);
-		} finally {
-			if (saved !== undefined) process.env["PROSPECTOR_CAPTURE_RAW"] = saved;
-		}
 	});
 });

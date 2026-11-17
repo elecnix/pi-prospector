@@ -1,7 +1,11 @@
 /**
- * Best-effort rebuild of a Claude Code transcript from the reduced projection the
- * index kept (#400). Used only for a session synced before raw capture existed;
- * a session with its original bytes is exported exactly instead.
+ * Best-effort rebuild of a Claude Code transcript from the index (#400).
+ *
+ * A message synced with its extras (`message_extras`) is rebuilt from its columns
+ * plus those extras: the extras say where each block begins and ends, so the text
+ * columns split back into the original blocks. A message synced before the extras
+ * existed has only its columns, and is rebuilt from them with the inferences
+ * below. Records that are not messages come back from `session_events`.
  *
  * The rebuild writes records the parser reads back into the same rows. That is
  * what makes re-importing one harmless: messages insert with `INSERT OR IGNORE`
@@ -12,6 +16,7 @@
  * record from an original one.
  */
 import { denormalizeClaudeToolName } from "./parser.js";
+import { isOmitted, OMITTED_KEY, type BlockShape, type MessageExtras } from "./claude-extras.js";
 
 export const RESTORED_FROM = "pi-prospector";
 
@@ -30,6 +35,18 @@ export interface StoredMessage {
 	provider_message_id: string | null;
 	stop_reason: string | null;
 	error_message: string | null;
+	/** The message's `message_extras` row, parsed, or null for a message synced before extras. */
+	extras?: MessageExtras | null;
+	/** Its line in the source file, when extras recorded it. */
+	line?: number | null;
+}
+
+/** One stored `session_events` row, payload parsed. */
+export interface StoredEvent {
+	line: number;
+	kind: string;
+	ref: string | null;
+	payload: unknown;
 }
 
 /** The session columns a rebuild reads. */
@@ -53,13 +70,15 @@ interface StoredToolResult {
 }
 
 export interface RebuildResult {
-	records: Array<Record<string, unknown>>;
+	records: Array<Record<string, unknown> | string>;
 	/** Counts of the inferences the rebuild made, by name. */
 	notes: Record<string, number>;
+	/** Small files the host wrote beside the session: where they go and what they held. */
+	sidecars?: Array<{ ref: string; payload: unknown }>;
 }
 
-/** What a rebuild cannot restore, for the sidecar beside the file. */
-export const NOT_RESTORED: string[] = [
+/** What a message synced before the extras existed cannot give back. */
+export const PROJECTION_LOSSES: string[] = [
 	"every record that is not a user or assistant message: system, attachment, queue-operation, last-prompt, pr-link, file-history-snapshot, file-history-delta, mode, permission-mode, cost-state, session-owner, tools-used, api-request",
 	"user lines flagged isMeta (slash-command expansions, caveats, command output)",
 	"thinking signatures and redacted_thinking blocks",
@@ -70,6 +89,14 @@ export const NOT_RESTORED: string[] = [
 	"usage beyond four token counts: cache tiers, service tier, server tool use",
 	"the original casing of a tool Claude Code named in lower case",
 	"titles other than the last one the index kept",
+];
+
+/** What no session gives back, extras or not. */
+export const ALWAYS_LOST: string[] = [
+	"blank lines, key order and whitespace inside a record",
+	"a usage count the record left out: the rebuild writes all four token counts",
+	"a string the sync stored as a size and hash only (an image, a large attachment, an opaque signature); each is marked $omitted in the file",
+	"a user or assistant record whose message id another session already owns (the index stores each message once)",
 ];
 
 function bump(notes: Record<string, number>, key: string): void {
@@ -96,7 +123,7 @@ function parentSessionOf(relPath: string): string | null {
  * the sessions root and decides whether it is a child agent's file, whose records
  * carry the parent's session id and the agent id.
  */
-export function rebuildClaudeRecords(session: StoredSession, messages: StoredMessage[], relPath: string): RebuildResult {
+function rebuildFromProjection(session: StoredSession, messages: StoredMessage[], relPath: string): RebuildResult {
 	const notes: Record<string, number> = {};
 	const base = relPath.split("/").pop() ?? "";
 	const isAgent = base.startsWith("agent-");
@@ -283,6 +310,216 @@ function toolResultBlocks(m: StoredMessage, notes: Record<string, number>): Arra
 }
 
 /** The records as the bytes of a transcript: one compact JSON object per line. */
-export function serializeRecords(records: Array<Record<string, unknown>>): string {
-	return records.map((r) => JSON.stringify(r)).join("\n") + "\n";
+export function serializeRecords(records: Array<Record<string, unknown> | string>): string {
+	return records.map((r) => (typeof r === "string" ? r : JSON.stringify(r))).join("\n") + "\n";
+}
+
+
+// ─── Rebuild with extras ───
+
+type Rec = Record<string, unknown>;
+
+/**
+ * Split a joined text column into its parts by their lengths, or null when the
+ * lengths do not add up to the text (the extras and the column disagree).
+ */
+function splitParts(text: string | null, lengths: number[]): string[] | null {
+	if (lengths.length === 0) return text === null || text === "" ? [] : null;
+	if (text === null) return null;
+	const total = lengths.reduce((a, b) => a + b, 0) + lengths.length - 1;
+	if (total !== text.length) return null;
+	const parts: string[] = [];
+	let pos = 0;
+	for (const n of lengths) {
+		parts.push(text.slice(pos, pos + n));
+		pos += n + 1;
+	}
+	return parts;
+}
+
+function withExtra(block: Rec, x: Rec | undefined): Rec {
+	return x ? { ...block, ...x } : block;
+}
+
+function assistantContent(m: StoredMessage, shapes: BlockShape[]): Rec[] | null {
+	const textParts = splitParts(m.content_text, shapes.filter((b) => b.t === "text").map((b) => b.n ?? 0));
+	const thinkParts = splitParts(m.content_thinking, shapes.filter((b) => b.t === "thinking").map((b) => b.n ?? 0));
+	const calls = parseJson<StoredToolCall>(m.tool_calls);
+	if (!textParts || !thinkParts || calls.length !== shapes.filter((b) => b.t === "tool_use").length) return null;
+	let ti = 0;
+	let hi = 0;
+	let ci = 0;
+	return shapes.map((b): Rec => {
+		if (b.t === "text") return withExtra({ type: "text", text: textParts[ti++] }, b.x);
+		if (b.t === "thinking") return withExtra({ type: "thinking", thinking: thinkParts[hi++] }, b.x);
+		if (b.t === "tool_use") {
+			const c = calls[ci++]!;
+			const block: Rec = { type: "tool_use" };
+			if (c.id) block["id"] = c.id;
+			block["name"] = b.nm ?? denormalizeClaudeToolName(c.name ?? "");
+			block["input"] = c.arguments ?? {};
+			return withExtra(block, b.x);
+		}
+		return withExtra({ type: b.t }, b.x);
+	});
+}
+
+function userContent(m: StoredMessage, shapes: BlockShape[]): Rec[] | null {
+	const results = parseJson<StoredToolResult>(m.tool_results);
+	if (results.length !== shapes.filter((b) => b.t === "tool_result").length) return null;
+	// The joined text holds each text block and each non-empty tool result, in block order.
+	const lengths: number[] = [];
+	let ri = 0;
+	for (const b of shapes) {
+		if (b.t === "text") lengths.push(b.n ?? 0);
+		else if (b.t === "tool_result") {
+			const n = results[ri++]?.textLength ?? 0;
+			if (n > 0) lengths.push(n);
+		}
+	}
+	const parts = splitParts(m.content_text, lengths);
+	if (!parts) return null;
+	let pi = 0;
+	ri = 0;
+	const out: Rec[] = [];
+	for (const b of shapes) {
+		if (b.t === "text") {
+			out.push(withExtra({ type: "text", text: parts[pi++] }, b.x));
+		} else if (b.t === "tool_result") {
+			const r = results[ri++]!;
+			const body = (r.textLength ?? 0) > 0 ? parts[pi++]! : "";
+			const block: Rec = { type: "tool_result", tool_use_id: r.toolCallId ?? "" };
+			if (b.ci === "s") block["content"] = body;
+			else if (Array.isArray(b.ci)) {
+				const inner = splitParts(body, b.ci.filter((i) => i.t === "text").map((i) => i.n ?? 0));
+				if (!inner) return null;
+				let ii = 0;
+				block["content"] = b.ci.map((i): Rec => (i.t === "text" ? withExtra({ type: "text", text: inner[ii++] }, i.x) : withExtra({ type: i.t }, i.x)));
+			}
+			if (r.isError) block["is_error"] = true;
+			out.push(withExtra(block, b.x));
+		} else {
+			out.push(withExtra({ type: b.t }, b.x));
+		}
+	}
+	return out;
+}
+
+/** One message rebuilt from its columns and extras, or null when they disagree. */
+function recordFromExtras(m: StoredMessage, x: MessageExtras, flat: Rec): Rec | null {
+	const assistant = m.role === "assistant";
+	let content: unknown;
+	if (x.cs) content = m.content_text ?? "";
+	else if (x.b) {
+		const blocks = assistant ? assistantContent(m, x.b) : userContent(m, x.b);
+		if (!blocks) return null;
+		content = blocks;
+	}
+	// Split the flattened fields back into record, message and usage fields.
+	const fields: Rec = {};
+	const msg: Rec = {};
+	const usageExtras: Rec = {};
+	let usageValue: unknown;
+	for (const [k, v] of Object.entries(flat)) {
+		if (k.startsWith("message.")) msg[k.slice("message.".length)] = v;
+		else if (k.startsWith("usage.")) usageExtras[k.slice("usage.".length)] = v;
+		else if (k === "usage") usageValue = v;
+		else fields[k] = v;
+	}
+	if (assistant) {
+		if (m.provider_message_id) msg["id"] = m.provider_message_id;
+		if (m.model) msg["model"] = m.model;
+		if (m.stop_reason && m.stop_reason !== "error") msg["stop_reason"] = m.stop_reason;
+	}
+	if (!("role" in msg)) msg["role"] = assistant ? "assistant" : "user";
+	if (content !== undefined) msg["content"] = content;
+	if (m.usage) {
+		const u = JSON.parse(m.usage) as Record<string, number>;
+		msg["usage"] = { input_tokens: u["input"] ?? 0, output_tokens: u["output"] ?? 0, cache_read_input_tokens: u["cacheRead"] ?? 0, cache_creation_input_tokens: u["cacheWrite"] ?? 0, ...usageExtras };
+	} else if (usageValue !== undefined) msg["usage"] = usageValue;
+	else if (Object.keys(usageExtras).length > 0) msg["usage"] = usageExtras;
+	const r: Rec = { ...fields, parentUuid: m.parent_id, uuid: m.id, type: assistant ? "assistant" : "user" };
+	if (m.timestamp) r["timestamp"] = m.timestamp;
+	r["message"] = msg;
+	if (assistant && m.stop_reason === "error") r["isApiErrorMessage"] = true;
+	r["restoredFrom"] = RESTORED_FROM;
+	return r;
+}
+
+/** Count and total the strings the sync stored as a size and hash only. */
+function countOmitted(value: unknown, tally: { strings: number; bytes: number }): void {
+	if (Array.isArray(value)) value.forEach((v) => countOmitted(v, tally));
+	else if (value !== null && typeof value === "object") {
+		if (isOmitted(value)) {
+			tally.strings++;
+			tally.bytes += (value[OMITTED_KEY] as { bytes: number }).bytes;
+		} else for (const v of Object.values(value)) countOmitted(v, tally);
+	}
+}
+
+/**
+ * Rebuild the lines of one session. `relPath` is the transcript's path under the
+ * sessions root; `events` are the session's non-message records in line order.
+ */
+export function rebuildClaudeRecords(session: StoredSession, messages: StoredMessage[], relPath: string, events: StoredEvent[] = []): RebuildResult {
+	const legacy = rebuildFromProjection(session, messages, relPath);
+	const notes = legacy.notes;
+	const offset = legacy.records.length - messages.length; // 1 when the projection added a title record
+	const hasEvents = events.length > 0;
+	const lines: Array<Rec | string> = [];
+	const tally = { strings: 0, bytes: 0 };
+	const sidecars: Array<{ ref: string; payload: unknown }> = [];
+	const pending = events.filter((e) => e.line >= 0);
+	for (const e of events) if (e.line < 0) sidecars.push({ ref: e.ref ?? "", payload: e.payload });
+	let next = 0;
+	let sticky = new Set<string>();
+	const carried: { assistant: Rec; user: Rec } = { assistant: {}, user: {} };
+
+	const flush = (before: number): void => {
+		while (next < pending.length && pending[next]!.line < before) {
+			const e = pending[next++]!;
+			countOmitted(e.payload, tally);
+			bump(notes, `event:${e.kind}`);
+			if (e.kind === "unparsed") {
+				const text = (e.payload as { text?: unknown }).text;
+				if (typeof text === "string") lines.push(text);
+				else bump(notes, "unparsed_line_omitted");
+			} else if (e.payload !== null && typeof e.payload === "object") {
+				lines.push({ ...(e.payload as Rec), restoredFrom: RESTORED_FROM });
+			}
+		}
+	};
+
+	// A projection title record is dropped when real events exist: the title is one of them.
+	if (offset > 0 && !hasEvents) lines.push(legacy.records[0]!);
+	let withExtras = 0;
+	messages.forEach((m, i) => {
+		const x = m.extras ?? null;
+		let rec: Rec | null = null;
+		if (x) {
+			if (x.sk) {
+				sticky = new Set(x.sk);
+				carried.assistant = {};
+				carried.user = {};
+			}
+			const state = m.role === "assistant" ? carried.assistant : carried.user;
+			for (const k of x.del ?? []) delete state[k];
+			for (const [k, v] of Object.entries(x.f ?? {})) if (sticky.has(k)) state[k] = v;
+			if (m.line !== null && m.line !== undefined) flush(m.line);
+			rec = recordFromExtras(m, x, { ...state, ...(x.f ?? {}) });
+			if (rec) withExtras++;
+			else bump(notes, "extras_disagree_with_columns");
+		}
+		if (!rec) {
+			rec = legacy.records[i + offset] as Rec;
+			bump(notes, "message_from_projection");
+		}
+		countOmitted(rec, tally);
+		lines.push(rec);
+	});
+	flush(Number.MAX_SAFE_INTEGER);
+	notes["messages_with_extras"] = withExtras;
+	notes["omitted_strings"] = tally.strings;
+	notes["omitted_bytes"] = tally.bytes;
+	return { records: lines, notes, sidecars };
 }

@@ -1,13 +1,13 @@
 /**
- * `/prospect-export-session` — write a Claude Code transcript back from the index (#400).
+ * `/prospect-export-session` — rebuild a Claude Code transcript from the index (#400).
  *
  *   prospect export-session --session <id> [--out DIR]
  *   prospect export-session --all-missing [--out DIR]
  *
  * Claude Code deletes transcripts after its retention period, and the index is
- * then the only copy. A session captured with its original bytes comes back
- * byte for byte; an older one is rebuilt as far as its stored fields allow, with
- * a `.restore.json` beside it that lists what is lost. Nothing is written into
+ * then the only copy. The transcript is rebuilt best-effort from the message
+ * columns, the stored extras and the session events, with a `.restore.json`
+ * beside it that lists what is lost. Nothing is written into
  * the sessions root unless `--out` points there, and an existing file is never
  * replaced.
  */
@@ -64,16 +64,20 @@ export async function prospectExportSession(rawArgs: string, ctx: ExtensionComma
 			}
 		}
 
-		const exact = outcomes.filter((o) => o.kind === "exact").length;
-		const rebuilt = outcomes.filter((o) => o.kind === "rebuilt").length;
+		const rebuiltOutcomes = outcomes.filter((o): o is Extract<ExportOutcome, { kind: "rebuilt" }> => o.kind === "rebuilt");
+		const rebuilt = rebuiltOutcomes.length;
+		const fromExtras = rebuiltOutcomes.reduce((n, o) => n + o.fromExtras, 0);
+		const fromProjection = rebuiltOutcomes.reduce((n, o) => n + o.fromProjection, 0);
+		const omitted = rebuiltOutcomes.reduce((n, o) => n + o.omittedStrings, 0);
 		const skipped = outcomes.filter((o): o is Extract<ExportOutcome, { kind: "skipped" }> => o.kind === "skipped");
 		const lines = [
 			"⛏️ Prospect export-session complete",
 			`  Output:              ${outDir}`,
-			`  Exact (original bytes): ${exact}`,
-			`  Rebuilt (reduced):      ${rebuilt}  (each has a .restore.json listing what is lost)`,
-			`  Skipped:                ${skipped.length}`,
-			`  Failed:                 ${failures.length}`,
+			`  Rebuilt:             ${rebuilt} sessions (each has a .restore.json listing what is lost)`,
+			`  Messages:            ${fromExtras} from stored extras, ${fromProjection} from the reduced projection alone`,
+			`  Not restorable:      ${omitted} stored as size and hash only`,
+			`  Skipped:             ${skipped.length}`,
+			`  Failed:              ${failures.length}`,
 		];
 		for (const s of skipped.slice(0, 5)) lines.push(`    skipped ${s.session}: ${s.reason}`);
 		for (const f of failures.slice(0, 5)) lines.push(`    failed ${f}`);

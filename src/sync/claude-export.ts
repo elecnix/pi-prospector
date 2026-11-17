@@ -1,23 +1,22 @@
 /**
  * Write a Claude Code session transcript back to disk from the index (#400).
  *
- * Two routes. A session synced with raw capture on has its original bytes, and the
- * export writes them back unchanged, with the sidecar files beside it. A session
- * synced before that has only the reduced projection, and the export rebuilds
- * what it can (`claude-rebuild.ts`) and writes a `.restore.json` beside the file
- * that says what it could not.
+ * The transcript is rebuilt best-effort from the message columns, the extras and
+ * the session events (`claude-rebuild.ts`), and a `.restore.json` beside it says,
+ * per session, which pieces came back from stored extras, which from the reduced
+ * projection alone, and which could not be restored.
  *
- * Either way the file lands at its original path relative to the sessions root,
- * under `outDir`, and its modification time is set just below the one the index
+ * The file lands at its original path relative to the sessions root, under
+ * `outDir`, and its modification time is set just below the one the index
  * recorded. The sync skips a file whose time is not newer than the stored one, so
  * copying an export back into the sessions root re-reads nothing.
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AsyncDatabase } from "../db/async-db.js";
-import { getRawChunks, getRawFiles } from "../db/raw-queries.js";
-import { decompress, relPathUnderRoot, sha256 } from "./raw-capture.js";
-import { NOT_RESTORED, rebuildClaudeRecords, serializeRecords, RESTORED_FROM, type StoredMessage } from "./claude-rebuild.js";
+import { getSessionEvents, getSessionExtras } from "../db/extras-queries.js";
+import { ALWAYS_LOST, PROJECTION_LOSSES, rebuildClaudeRecords, serializeRecords, RESTORED_FROM, type StoredEvent, type StoredMessage } from "./claude-rebuild.js";
+import type { MessageExtras } from "./claude-extras.js";
 
 export interface ExportableSession {
 	id: string;
@@ -32,9 +31,19 @@ export interface ExportableSession {
 }
 
 export type ExportOutcome =
-	| { kind: "exact"; session: string; path: string; bytes: number; sidecars: number }
-	| { kind: "rebuilt"; session: string; path: string; records: number; notes: Record<string, number> }
+	| { kind: "rebuilt"; session: string; path: string; records: number; fromExtras: number; fromProjection: number; omittedStrings: number; notes: Record<string, number> }
 	| { kind: "skipped"; session: string; reason: string };
+
+/**
+ * The path a session file has under the sessions root, with `/` separators, which
+ * is where an export writes it back. A file outside the root (a root that moved
+ * since it was indexed) keeps its project directory and name.
+ */
+export function relPathUnderRoot(root: string, filePath: string, project: string): string {
+	const rel = path.relative(root, filePath);
+	if (rel && rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel)) return rel.split(path.sep).join("/");
+	return `${project}/${path.basename(filePath)}`;
+}
 
 /** How far below the recorded time an export's modification time is set, in seconds. */
 const MTIME_MARGIN_S = 2e-6;
@@ -89,57 +98,52 @@ export interface ExportHooks {
  * root, cannot replace a transcript Claude Code still holds.
  */
 export async function exportClaudeSession(db: AsyncDatabase, s: ExportableSession, outDir: string, claudeRoot: string, hooks: ExportHooks = {}): Promise<ExportOutcome> {
-	const chunks = await getRawChunks(db, s.id);
-	const rel = chunks[0]?.rel_path ?? relPathUnderRoot(claudeRoot, s.file_path, s.project);
+	const rel = relPathUnderRoot(claudeRoot, s.file_path, s.project);
 	const target = insideOut(outDir, rel);
 	const taken: ExportOutcome = { kind: "skipped", session: s.id, reason: `${rel} already exists in the output directory` };
 	if (await exists(target)) return taken;
-
-	if (chunks.length > 0) {
-		const parts: Buffer[] = [];
-		let expectedStart = 0;
-		for (const c of chunks) {
-			if (c.byte_start !== expectedStart) throw new Error(`session ${s.id}: stored chunks leave a gap at byte ${expectedStart}`);
-			const raw = decompress(c.codec, c.data);
-			if (raw.length !== c.raw_bytes) throw new Error(`session ${s.id}: chunk ${c.seq} holds ${raw.length} bytes, expected ${c.raw_bytes}`);
-			parts.push(raw);
-			expectedStart += raw.length;
-		}
-		const content = Buffer.concat(parts);
-		if (!(await writeAtomic(target, content, s.last_modified, hooks.beforeCommit))) return taken;
-		const files = await getRawFiles(db, s.id);
-		for (const f of files) {
-			const bytes = decompress(f.codec, f.data);
-			if (sha256(bytes) !== f.sha256) throw new Error(`session ${s.id}: stored sidecar ${f.rel_path} fails its checksum`);
-			const dest = insideOut(outDir, f.rel_path);
-			if (!(await exists(dest))) await writeAtomic(dest, bytes, s.last_modified);
-		}
-		return { kind: "exact", session: s.id, path: target, bytes: content.length, sidecars: files.length };
-	}
 
 	const messages = (await db
 		.prepare(
 			"SELECT id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, model, provider_message_id, stop_reason, error_message FROM messages WHERE session_id = ? ORDER BY rowid",
 		)
 		.all(s.id)) as StoredMessage[];
-	if (messages.length === 0) return { kind: "skipped", session: s.id, reason: "no stored messages and no stored original bytes" };
-	const { records, notes } = rebuildClaudeRecords(s, messages, rel);
+	const extras = await getSessionExtras(db, s.id);
+	for (const m of messages) {
+		const row = extras.get(m.id);
+		m.extras = row ? (JSON.parse(row.extras) as MessageExtras) : null;
+		m.line = row ? row.line : null;
+	}
+	const events: StoredEvent[] = (await getSessionEvents(db, s.id)).map((e) => ({ line: e.line, kind: e.kind, ref: e.ref, payload: JSON.parse(e.payload) as unknown }));
+	if (messages.length === 0 && events.length === 0) return { kind: "skipped", session: s.id, reason: "no stored messages or events" };
+
+	const { records, notes, sidecars = [] } = rebuildClaudeRecords(s, messages, rel, events);
 	if (!(await writeAtomic(target, serializeRecords(records), s.last_modified, hooks.beforeCommit))) return taken;
+	for (const side of sidecars) {
+		const dest = insideOut(outDir, side.ref);
+		if (!(await exists(dest))) await writeAtomic(dest, JSON.stringify(side.payload) + "\n", s.last_modified);
+	}
+	const fromExtras = notes["messages_with_extras"] ?? 0;
+	const fromProjection = messages.length - fromExtras;
 	const report = {
 		restoredFrom: RESTORED_FROM,
 		sessionId: s.id,
 		originalPath: s.file_path,
 		startedAt: s.started_at,
 		parentSession: s.parent_session,
-		recordsWritten: records.length,
+		linesWritten: records.length,
 		messagesInIndex: s.message_count,
-		content: "rebuilt from the reduced projection the index kept: no original bytes were stored for this session",
+		messagesRebuiltFromExtras: fromExtras,
+		messagesRebuiltFromProjectionOnly: fromProjection,
+		eventsRestored: events.filter((e) => e.line >= 0).length,
+		sidecarsRestored: sidecars.length,
+		omittedStrings: { count: notes["omitted_strings"] ?? 0, bytes: notes["omitted_bytes"] ?? 0 },
 		everyRebuiltRecordCarries: { restoredFrom: RESTORED_FROM },
 		inferences: notes,
-		notRestored: NOT_RESTORED,
+		notRestored: [...(fromProjection > 0 ? PROJECTION_LOSSES.map((l) => `${l} (for the ${fromProjection} messages synced before extras existed)`) : []), ...ALWAYS_LOST],
 	};
-	await fs.writeFile(target.replace(/\.jsonl$/i, ".restore.json"), JSON.stringify(report, null, 2) + "\n", { flag: "w" });
-	return { kind: "rebuilt", session: s.id, path: target, records: records.length, notes };
+	await fs.writeFile(target.replace(/\.jsonl$/i, ".restore.json"), JSON.stringify(report, null, 2) + "\n");
+	return { kind: "rebuilt", session: s.id, path: target, records: records.length, fromExtras, fromProjection, omittedStrings: notes["omitted_strings"] ?? 0, notes };
 }
 
 async function exists(p: string): Promise<boolean> {

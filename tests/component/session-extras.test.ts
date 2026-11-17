@@ -1,5 +1,5 @@
 /**
- * Lossless capture of Claude Code sessions and the export that writes them back (#400).
+ * The extras a Claude Code sync stores and the export that rebuilds a transcript from them (#400).
  *
  * Every transcript here is invented. Nothing reads a real session or the real database.
  */
@@ -12,11 +12,9 @@ import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js"
 import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
-import { relPathUnderRoot } from "../../src/sync/raw-capture.js";
-import { exportClaudeSession, getExportableSession, insideOut, listMissingClaudeSessions } from "../../src/sync/claude-export.js";
+import { exportClaudeSession, getExportableSession, insideOut, listMissingClaudeSessions, relPathUnderRoot } from "../../src/sync/claude-export.js";
 import { rebuildClaudeRecords, type StoredMessage } from "../../src/sync/claude-rebuild.js";
 import { parseClaudeLine } from "../../src/sync/parser.js";
-import { getRawChunks, getRawFiles } from "../../src/db/raw-queries.js";
 import { claudeSessionFileName, claudeSessionId, fixtureUuid, mockFramework } from "./helpers.js";
 import { turnPairCoreAnalyzer } from "../../src/analyze/analyzers/turn-pair-core/index.js";
 import { prospectExportSession } from "../../src/commands/export-session.js";
@@ -73,7 +71,7 @@ function richLines(label: string): string[] {
 		}),
 		JSON.stringify({ type: "queue-operation", operation: "enqueue", timestamp: "2026-02-01T09:00:07.000Z", content: "later" }),
 		JSON.stringify({ type: "attachment", attachment: { type: "diagnostics", files: [] } }),
-		JSON.stringify({ type: "assistant", uuid: "a2", parentUuid: "u2", timestamp: "2026-02-01T09:00:09.000Z", message: { id: "msg_2", role: "assistant", model: "model-x", stop_reason: "end_turn", content: [{ type: "text", text: "Done: häppy ünïcode ✓ 😀" }], usage: { input_tokens: 3, output_tokens: 4 } } }),
+		JSON.stringify({ type: "assistant", uuid: "a2", parentUuid: "u2", timestamp: "2026-02-01T09:00:09.000Z", message: { id: "msg_2", role: "assistant", model: "model-x", stop_reason: "end_turn", content: [{ type: "text", text: "Done: häppy ünïcode ✓ 😀" }], usage: { input_tokens: 3, output_tokens: 4, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }),
 		JSON.stringify({ type: "ai-title", aiTitle: "Add retry to the fetch helper", sessionId: sid }),
 		JSON.stringify({ type: "pr-link", prNumber: 12, prUrl: "https://example.invalid/pr/12", prRepository: "example/repo" }),
 		JSON.stringify({ type: "last-prompt", leafUuid: "a2", sessionId: sid }),
@@ -95,8 +93,15 @@ function bump(file: string): void {
 	fs.utimesSync(file, t, t);
 }
 
-async function sync(env: Env, captureRaw = true) {
-	return runSync(env.db, [new ClaudeFileSource(env.root)], { captureRaw });
+async function sync(env: Env, opts: { reread?: boolean } = {}) {
+	return runSync(env.db, [new ClaudeFileSource(env.root)], opts);
+}
+
+/** A database as it was before the extras existed: the messages are there, the extras are not. */
+async function syncOld(env: Env) {
+	const result = await sync(env);
+	await env.db.exec("DELETE FROM message_extras; DELETE FROM session_events;");
+	return result;
 }
 
 /** Every row the sync writes for the index, minus the columns that only record the sync itself. */
@@ -107,192 +112,214 @@ async function snapshot(db: AsyncDatabase): Promise<string> {
 	return JSON.stringify({ sessions, messages, nodes });
 }
 
-async function rawRowCount(db: AsyncDatabase): Promise<number> {
-	const a = (await db.prepare("SELECT COUNT(*) AS n FROM session_raw_chunks").get()) as { n: number };
-	const b = (await db.prepare("SELECT COUNT(*) AS n FROM session_raw_files").get()) as { n: number };
-	return a.n + b.n;
+async function extrasSnapshot(db: AsyncDatabase): Promise<string> {
+	return JSON.stringify({
+		extras: await db.prepare("SELECT * FROM message_extras ORDER BY message_id").all(),
+		events: await db.prepare("SELECT * FROM session_events ORDER BY session_id, line").all(),
+	});
 }
 
-describe("lossless Claude Code capture", () => {
-	it("exports a deleted session byte for byte, including records the sync skips and a line it cannot parse", async () => {
+/** The lines of a transcript as objects, without the provenance mark a rebuilt record carries. */
+function linesOf(file: string): unknown[] {
+	return fs.readFileSync(file, "utf-8").split("\n").filter((l) => l !== "").map((l) => {
+		try {
+			const o = JSON.parse(l) as Record<string, unknown>;
+			delete o["restoredFrom"];
+			return o;
+		} catch {
+			return l;
+		}
+	});
+}
+
+
+describe("session extras", () => {
+	it("rebuilds a deleted session line for line, including records the sync does not turn into messages", async () => {
 		const env = await setup();
 		try {
 			const file = sessionPath(env, "round-trip");
-			const original = Buffer.from(richLines("round-trip").join("\n") + "\n");
-			write(file, original);
+			const lines = richLines("round-trip");
+			write(file, lines.join("\n") + "\n");
 			const result = await sync(env);
 			assert.equal(result.errors.length, 0, result.errors.join("; "));
-			assert.equal(result.rawSessionsCaptured, 1);
-
+			const original = linesOf(file);
 			fs.rmSync(file);
-			const id = claudeSessionId("round-trip");
-			const s = await getExportableSession(env.db, id);
-			assert.ok(s);
-			const outcome = await exportClaudeSession(env.db, s, env.out, env.root);
-			assert.equal(outcome.kind, "exact");
-			const restored = path.join(env.out, PROJECT, claudeSessionFileName("round-trip"));
-			assert.ok(fs.readFileSync(restored).equals(original), "restored bytes differ from the original");
 
-			const chunks = await getRawChunks(env.db, id);
-			assert.equal(chunks.length, 1);
-			assert.equal(chunks[0]!.line_start, 0);
-			assert.equal(chunks[0]!.line_count, richLines("round-trip").length);
-			assert.equal(chunks[0]!.rel_path, `${PROJECT}/${claudeSessionFileName("round-trip")}`);
+			const s = (await getExportableSession(env.db, claudeSessionId("round-trip")))!;
+			const outcome = await exportClaudeSession(env.db, s, env.out, env.root);
+			assert.equal(outcome.kind, "rebuilt");
+			if (outcome.kind === "rebuilt") {
+				assert.equal(outcome.fromProjection, 0);
+				assert.equal(outcome.omittedStrings, 0);
+			}
+			assert.deepEqual(linesOf(path.join(env.out, PROJECT, claudeSessionFileName("round-trip"))), original);
 		} finally {
 			await env.cleanup();
 		}
 	});
 
-	it("restores a file without a trailing newline, CRLF endings and bytes that are not valid UTF-8", async () => {
+	it("keeps the shape of a record the columns cannot: block order, tool-name casing, usage extras and fields that change", async () => {
 		const env = await setup();
 		try {
-			const file = sessionPath(env, "odd-bytes");
-			const first = JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/sample", message: { role: "user", content: "hi" } });
-			const original = Buffer.concat([Buffer.from(first + "\r\n"), Buffer.from([0xff, 0xfe, 0x0a]), Buffer.from('{"type":"mode","mode":"x"}')]);
-			write(file, original);
+			write(sessionPath(env, "shape"), richLines("shape").join("\n") + "\n");
 			await sync(env);
-			fs.rmSync(file);
-			const s = await getExportableSession(env.db, claudeSessionId("odd-bytes"));
-			await exportClaudeSession(env.db, s!, env.out, env.root);
-			assert.ok(fs.readFileSync(path.join(env.out, PROJECT, claudeSessionFileName("odd-bytes"))).equals(original));
+			const row = (await env.db.prepare("SELECT extras FROM message_extras WHERE message_id = 'a1'").get()) as { extras: string };
+			const x = JSON.parse(row.extras) as { b: Array<{ t: string; x?: Record<string, unknown> }>; f?: Record<string, unknown> };
+			assert.deepEqual(x.b.map((b) => b.t), ["thinking", "text", "tool_use", "tool_use"]);
+			assert.equal(x.f?.["usage.service_tier"], "standard");
+			assert.equal(x.f?.["requestId"], "req_1");
+			assert.equal(x.f?.["message.type"], "message");
+			// Values a column holds are not stored again.
+			assert.equal(JSON.stringify(x).includes("Reading the file."), false);
+			assert.equal(JSON.stringify(x).includes("export const f"), false);
 		} finally {
 			await env.cleanup();
 		}
 	});
 
-	it("stores only the new bytes of a growing file and nothing for an unchanged one", async () => {
+	it("writes a field that repeats from record to record once, and one that differs every time on every record", async () => {
+		const env = await setup();
+		try {
+			const lines = [1, 2, 3, 4, 5].map((n) => JSON.stringify({ type: "user", uuid: `u${n}`, parentUuid: n === 1 ? null : `u${n - 1}`, timestamp: "2026-02-01T09:00:00.000Z", gitBranch: "main", version: "9.9.9", promptId: `p${n}`, message: { role: "user", content: `hi ${n}` } }));
+			const file = sessionPath(env, "sticky");
+			write(file, lines.join("\n") + "\n");
+			await sync(env);
+			const rows = (await env.db.prepare("SELECT extras FROM message_extras ORDER BY line").all()) as Array<{ extras: string }>;
+			const f = rows.map((r) => (JSON.parse(r.extras) as { f?: Record<string, unknown> }).f ?? {});
+			assert.equal(f[0]!["gitBranch"], "main");
+			for (const later of f.slice(1)) assert.equal("gitBranch" in later, false);
+			f.forEach((fields, i) => assert.equal(fields["promptId"], `p${i + 1}`));
+			const original = linesOf(file);
+			fs.rmSync(file);
+			await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("sticky")))!, env.out, env.root);
+			assert.deepEqual(linesOf(path.join(env.out, PROJECT, claudeSessionFileName("sticky"))), original);
+		} finally {
+			await env.cleanup();
+		}
+	});
+
+	it("stores a string over the limit as its size and hash, and the export says it could not restore it", async () => {
+		const env = await setup();
+		try {
+			const big = "A".repeat(5000);
+			const lines = [
+				JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/sample", message: { role: "user", content: [{ type: "text", text: "look" }, { type: "image", source: { type: "base64", media_type: "image/png", data: big } }] } }),
+				JSON.stringify({ type: "attachment", attachment: { type: "file", content: big } }),
+			];
+			const file = sessionPath(env, "heavy");
+			write(file, lines.join("\n") + "\n");
+			await sync(env);
+			const stored = (await env.db.prepare("SELECT extras FROM message_extras").get()) as { extras: string };
+			assert.equal(stored.extras.includes(big), false);
+			assert.match(stored.extras, /\$omitted/);
+			assert.ok(stored.extras.length < 400);
+			fs.rmSync(file);
+			const outcome = await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("heavy")))!, env.out, env.root);
+			assert.equal(outcome.kind === "rebuilt" && outcome.omittedStrings, 2);
+			const out = path.join(env.out, PROJECT, claudeSessionFileName("heavy"));
+			assert.equal(fs.readFileSync(out, "utf-8").includes(big), false);
+			const report = JSON.parse(fs.readFileSync(out.replace(/\.jsonl$/, ".restore.json"), "utf-8")) as { omittedStrings: { count: number; bytes: number } };
+			assert.equal(report.omittedStrings.count, 2);
+			assert.ok(report.omittedStrings.bytes >= 10000 && report.omittedStrings.bytes < 10300);
+		} finally {
+			await env.cleanup();
+		}
+	});
+
+	it("adds only the new lines of a growing file, and a record never changes once stored", async () => {
 		const env = await setup();
 		try {
 			const file = sessionPath(env, "growth");
 			const lines = richLines("growth");
 			write(file, lines.slice(0, 6).join("\n") + "\n");
 			await sync(env);
-			const afterFirst = await rawRowCount(env.db);
-
+			const first = await extrasSnapshot(env.db);
 			const again = await sync(env);
-			assert.equal(again.rawSessionsCaptured, undefined, "an unchanged file must not be captured again");
-			assert.equal(await rawRowCount(env.db), afterFirst);
+			assert.equal(again.sessionsProcessed, 0);
+			assert.equal(await extrasSnapshot(env.db), first);
 
-			// The host is mid-write: the last line is cut off, then completed.
-			const rest = lines.slice(6).join("\n") + "\n";
-			fs.appendFileSync(file, rest.slice(0, 40));
+			fs.appendFileSync(file, lines.slice(6).join("\n") + "\n");
 			bump(file);
 			await sync(env);
-			fs.appendFileSync(file, rest.slice(40));
-			bump(file);
-			await sync(env);
-
-			const id = claudeSessionId("growth");
-			const chunks = await getRawChunks(env.db, id);
-			assert.equal(chunks.length, 3);
-			assert.deepEqual(chunks.map((c) => c.line_start), [0, 6, 6 + (chunks[1]!.line_count)]);
-			assert.equal(chunks[0]!.byte_start, 0);
-			assert.equal(chunks[1]!.byte_start, chunks[0]!.raw_bytes);
-
-			const original = fs.readFileSync(file);
+			const original = linesOf(file);
 			fs.rmSync(file);
-			await exportClaudeSession(env.db, (await getExportableSession(env.db, id))!, env.out, env.root);
-			assert.ok(fs.readFileSync(path.join(env.out, PROJECT, claudeSessionFileName("growth"))).equals(original));
+			await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("growth")))!, env.out, env.root);
+			assert.deepEqual(linesOf(path.join(env.out, PROJECT, claudeSessionFileName("growth"))), original);
 		} finally {
 			await env.cleanup();
 		}
 	});
 
-	it("keeps the stored copy and reports it when a file is rewritten instead of appended to", async () => {
-		const env = await setup();
-		try {
-			const file = sessionPath(env, "rewrite");
-			const lines = richLines("rewrite");
-			const original = Buffer.from(lines.join("\n") + "\n");
-			write(file, original);
-			await sync(env);
-			write(file, Buffer.from(lines.map((l) => l.replace("Add a retry", "Add a TIMEOUT")).join("\n") + "\nextra\n"));
-			bump(file);
-			const result = await sync(env);
-			assert.ok(result.errors.some((e) => /raw capture skipped/.test(e)), result.errors.join("; "));
-			assert.equal((await getRawChunks(env.db, claudeSessionId("rewrite"))).length, 1);
-		} finally {
-			await env.cleanup();
-		}
-	});
-
-	it("captures a subagent's .meta.json beside its transcript and restores it", async () => {
+	it("stores a child agent's meta file as a session event and replaces it when it changes", async () => {
 		const env = await setup();
 		try {
 			const parent = claudeSessionId("parent-session");
-			const agentFile = path.join(env.root, PROJECT, parent, "subagents", "agent-a1b2c3.jsonl");
-			const meta = '{"agentType":"explore","description":"find the retry helper"}\n';
+			const dir = path.join(env.root, PROJECT, parent, "subagents");
+			const agentFile = path.join(dir, "agent-a1b2c3.jsonl");
 			write(agentFile, richLines("agent").join("\n") + "\n");
-			write(path.join(env.root, PROJECT, parent, "subagents", "agent-a1b2c3.meta.json"), meta);
+			write(path.join(dir, "agent-a1b2c3.meta.json"), '{"agentType":"explore","description":"find the retry helper"}\n');
 			await sync(env);
-
-			const files = await getRawFiles(env.db, "agent-a1b2c3");
-			assert.equal(files.length, 1);
-			assert.equal(files[0]!.rel_path, `${PROJECT}/${parent}/subagents/agent-a1b2c3.meta.json`);
-
-			// An unchanged sidecar is not stored twice, and a changed one replaces its row.
+			const row = (await env.db.prepare("SELECT kind, ref, payload FROM session_events WHERE session_id = 'agent-a1b2c3' AND line = -1").get()) as { kind: string; ref: string; payload: string };
+			assert.equal(row.kind, "sidecar");
+			assert.equal(row.ref, `${PROJECT}/${parent}/subagents/agent-a1b2c3.meta.json`);
+			write(path.join(dir, "agent-a1b2c3.meta.json"), '{"agentType":"plan"}\n');
 			bump(agentFile);
 			await sync(env);
-			assert.equal((await getRawFiles(env.db, "agent-a1b2c3")).length, 1);
-			write(path.join(env.root, PROJECT, parent, "subagents", "agent-a1b2c3.meta.json"), '{"agentType":"plan"}\n');
-			bump(agentFile);
-			await sync(env);
-			assert.equal((await getRawFiles(env.db, "agent-a1b2c3")).length, 1);
-
+			assert.equal(((await env.db.prepare("SELECT COUNT(*) AS n FROM session_events WHERE line = -1").get()) as { n: number }).n, 1);
 			fs.rmSync(path.join(env.root, PROJECT, parent), { recursive: true });
 			await exportClaudeSession(env.db, (await getExportableSession(env.db, "agent-a1b2c3"))!, env.out, env.root);
-			assert.equal(fs.readFileSync(path.join(env.out, PROJECT, parent, "subagents", "agent-a1b2c3.meta.json"), "utf-8"), '{"agentType":"plan"}\n');
+			assert.deepEqual(JSON.parse(fs.readFileSync(path.join(env.out, PROJECT, parent, "subagents", "agent-a1b2c3.meta.json"), "utf-8")), { agentType: "plan" });
 		} finally {
 			await env.cleanup();
 		}
 	});
 
-	it("fills in a session indexed before capture existed, without touching a row", async () => {
+	it("gains extras for an already indexed session on --reread, and no existing row changes", async () => {
 		const env = await setup();
 		try {
 			const file = sessionPath(env, "backfill");
-			const original = Buffer.from(richLines("backfill").join("\n") + "\n");
-			write(file, original);
-			await sync(env, false);
-			assert.equal(await rawRowCount(env.db), 0);
+			write(file, richLines("backfill").join("\n") + "\n");
+			await syncOld(env);
 			const before = await snapshot(env.db);
+			const skipped = await sync(env);
+			assert.equal(skipped.sessionsProcessed, 0, "an unchanged file is not read again");
+			assert.equal(await extrasSnapshot(env.db), JSON.stringify({ extras: [], events: [] }));
 
-			const result = await sync(env, true);
-			assert.equal(result.sessionsProcessed, 0, "the session must not be re-parsed");
-			assert.equal(result.rawSessionsCaptured, 1);
+			const reread = await sync(env, { reread: true });
+			assert.equal(reread.sessionsProcessed, 1);
 			assert.equal(await snapshot(env.db), before);
-
-			fs.rmSync(file);
-			await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("backfill")))!, env.out, env.root);
-			assert.ok(fs.readFileSync(path.join(env.out, PROJECT, claudeSessionFileName("backfill"))).equals(original));
+			assert.ok((JSON.parse(await extrasSnapshot(env.db)) as { extras: unknown[] }).extras.length > 0);
+			// A second reread adds nothing.
+			const stored = await extrasSnapshot(env.db);
+			await sync(env, { reread: true });
+			assert.equal(await extrasSnapshot(env.db), stored);
 		} finally {
 			await env.cleanup();
 		}
 	});
 
-	it("writes nothing when capture is off", async () => {
-		const env = await setup();
-		try {
-			write(sessionPath(env, "off"), richLines("off").join("\n") + "\n");
-			const result = await sync(env, false);
-			assert.equal(result.rawSessionsCaptured, undefined);
-			assert.equal(await rawRowCount(env.db), 0);
-		} finally {
-			await env.cleanup();
-		}
-	});
-
-	it("adds the capture tables to an existing database without touching a row", async () => {
+	it("adds the tables to an existing database without touching a row", async () => {
 		const env = await setup();
 		try {
 			write(sessionPath(env, "migrate"), richLines("migrate").join("\n") + "\n");
-			await sync(env, false);
-			await env.db.exec("DROP TABLE session_raw_chunks; DROP TABLE session_raw_files;");
+			await syncOld(env);
+			await env.db.exec("DROP TABLE message_extras; DROP TABLE session_events;");
 			const before = await snapshot(env.db);
 			await migrate(env.db);
 			await migrate(env.db);
-			assert.equal(await rawRowCount(env.db), 0);
 			assert.equal(await snapshot(env.db), before);
+			assert.equal(await extrasSnapshot(env.db), JSON.stringify({ extras: [], events: [] }));
+		} finally {
+			await env.cleanup();
+		}
+	});
+
+	it("names no harness in its tables or columns", async () => {
+		const env = await setup();
+		try {
+			const rows = (await env.db.prepare("SELECT m.name AS t, p.name AS c FROM sqlite_master m, pragma_table_info(m.name) p WHERE m.name IN ('message_extras', 'session_events')").all()) as Array<{ t: string; c: string }>;
+			assert.ok(rows.length >= 7);
+			for (const r of rows) assert.doesNotMatch(`${r.t} ${r.c}`, /claude|pi|codex|cline|opencode/i);
 		} finally {
 			await env.cleanup();
 		}
@@ -317,7 +344,7 @@ describe("rebuild from the reduced projection", () => {
 	async function syncedWithoutRaw(env: Env, label: string) {
 		const file = sessionPath(env, label);
 		write(file, richLines(label).join("\n") + "\n");
-		await sync(env, false);
+		await syncOld(env);
 		return file;
 	}
 
@@ -397,13 +424,13 @@ describe("rebuild from the reduced projection", () => {
 			assert.ok(report.notRestored.length > 0);
 
 			// 1. The file's modification time is not newer than the stored one: nothing is read.
-			const skipped = await sync(env, true);
+			const skipped = await sync(env);
 			assert.equal(skipped.sessionsProcessed, 0);
 			assert.equal(await snapshot(env.db), before);
 
 			// 2. Forced newer, the file is parsed again; every message row is kept as it was.
 			bump(file);
-			const reread = await sync(env, true);
+			const reread = await sync(env);
 			assert.equal(reread.sessionsProcessed, 1);
 			const after = JSON.parse(await snapshot(env.db)) as { sessions: unknown; messages: unknown; nodes: unknown };
 			const was = JSON.parse(before) as typeof after;
@@ -413,8 +440,6 @@ describe("rebuild from the reduced projection", () => {
 			// No analysis unit became stale or missing.
 			const units = await fw.scan(id);
 			assert.deepEqual([...new Set(units.map((u) => u.status))], ["current"]);
-			// The rebuilt file now exists on disk, so its bytes are captured like any other.
-			assert.equal((await getRawChunks(env.db, id)).length, 1);
 		} finally {
 			await env.cleanup();
 		}
@@ -444,6 +469,7 @@ describe("prospect export-session", () => {
 			const kept = sessionPath(env, "kept");
 			const original = Buffer.from(richLines("gone").join("\n") + "\n");
 			write(gone, original);
+			const originalLines = linesOf(gone);
 			write(kept, richLines("kept").join("\n") + "\n");
 			await sync(env);
 			fs.rmSync(gone);
@@ -455,8 +481,8 @@ describe("prospect export-session", () => {
 			const notes: string[] = [];
 			const ctx = { ui: { notify: (m: string) => notes.push(m) }, cwd: env.dir, hasUI: false } as never;
 			await prospectExportSession(`--all-missing --out ${env.out}`, ctx);
-			assert.match(notes.join("\n"), /Exact \(original bytes\): 1/);
-			assert.ok(fs.readFileSync(path.join(env.out, PROJECT, claudeSessionFileName("gone"))).equals(original));
+			assert.match(notes.join("\n"), /Rebuilt:\s+1 sessions/);
+			assert.deepEqual(linesOf(path.join(env.out, PROJECT, claudeSessionFileName("gone"))), originalLines);
 			assert.equal(fs.existsSync(path.join(env.out, PROJECT, claudeSessionFileName("kept"))), false);
 
 			notes.length = 0;
@@ -499,27 +525,6 @@ describe("rebuild of a user record with text around its tool results", () => {
 		assert.ok(again && again.kind === "message");
 		assert.equal(again.entry.text, e.text);
 		assert.deepEqual(again.entry.tool_results, e.tool_results);
-	});
-});
-
-describe("export path containment", () => {
-	it("accepts a filesystem root as the output directory", () => {
-		assert.equal(insideOut(path.parse(process.cwd()).root, "tmp/a.jsonl"), path.join(path.parse(process.cwd()).root, "tmp", "a.jsonl"));
-	});
-
-	it("refuses a stored path that climbs out of the output directory", async () => {
-		const env = await setup();
-		try {
-			write(sessionPath(env, "contain"), richLines("contain").join("\n") + "\n");
-			await sync(env);
-			const s = (await getExportableSession(env.db, claudeSessionId("contain")))!;
-			// Writing into "/" would touch the real root, so the climbing case is the one run for real.
-			await env.db.prepare("UPDATE session_raw_chunks SET rel_path = '../escape.jsonl' WHERE session_id = ?").run(s.id);
-			await assert.rejects(exportClaudeSession(env.db, s, env.out, env.root), /leaves the output directory/);
-			assert.equal(fs.existsSync(path.join(env.dir, "escape.jsonl")), false);
-		} finally {
-			await env.cleanup();
-		}
 	});
 });
 
@@ -604,7 +609,7 @@ describe("rebuild of a synced user record with empty tool results", () => {
 					JSON.stringify({ type: "user", uuid: "u2", parentUuid: "a1", timestamp: "2026-02-01T09:00:02.000Z", message: { role: "user", content } }),
 				];
 				write(sessionPath(env, name), lines.join("\n") + "\n");
-				await sync(env, false);
+				await syncOld(env);
 				const id = claudeSessionId(name);
 				const stored = (await env.db
 					.prepare("SELECT id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, model, provider_message_id, stop_reason, error_message FROM messages WHERE session_id = ? ORDER BY rowid")
@@ -657,7 +662,7 @@ describe("export never replaces a file that appears mid-export", () => {
 				const label = raw ? "race-raw" : "race-rebuilt";
 				const file = sessionPath(env, label);
 				write(file, richLines(label).join("\n") + "\n");
-				await sync(env, raw);
+				if (raw) await sync(env); else await syncOld(env);
 				fs.rmSync(file);
 				const s = (await getExportableSession(env.db, claudeSessionId(label)))!;
 				const target = path.join(env.out, PROJECT, claudeSessionFileName(label));
@@ -673,4 +678,63 @@ describe("export never replaces a file that appears mid-export", () => {
 			}
 		});
 	}
+});
+
+describe("export path containment", () => {
+	it("accepts a filesystem root as the output directory", () => {
+		assert.equal(insideOut(path.parse(process.cwd()).root, "tmp/a.jsonl"), path.join(path.parse(process.cwd()).root, "tmp", "a.jsonl"));
+	});
+
+	it("refuses a stored path that climbs out of the output directory", async () => {
+		const env = await setup();
+		try {
+			write(sessionPath(env, "contain"), richLines("contain").join("\n") + "\n");
+			await sync(env);
+			const s = (await getExportableSession(env.db, claudeSessionId("contain")))!;
+			// A stored sidecar path that climbs out of the output directory.
+			await env.db.prepare("INSERT INTO session_events (session_id, line, kind, ref, payload) VALUES (?, -1, 'sidecar', '../escape.json', '{}')").run(s.id);
+			await assert.rejects(exportClaudeSession(env.db, s, env.out, env.root), /leaves the output directory/);
+			assert.equal(fs.existsSync(path.join(env.dir, "escape.jsonl")), false);
+		} finally {
+			await env.cleanup();
+		}
+	});
+});
+
+describe("a file that grows between syncs", () => {
+	const user = (id: string) => JSON.stringify({ type: "user", uuid: id, timestamp: "2026-02-01T09:00:00.000Z", message: { role: "user", content: id } });
+
+	it("reads the first line appended since the last sync", async () => {
+		const env = await setup();
+		try {
+			const file = sessionPath(env, "append");
+			write(file, user("a") + "\n" + user("b") + "\n");
+			await sync(env);
+			fs.appendFileSync(file, user("c") + "\n");
+			bump(file);
+			await sync(env);
+			const ids = (await env.db.prepare("SELECT id FROM messages ORDER BY rowid").all()) as Array<{ id: string }>;
+			assert.deepEqual(ids.map((r) => r.id), ["a", "b", "c"]);
+		} finally {
+			await env.cleanup();
+		}
+	});
+
+	it("waits for a line the host has half written and reads it once it is whole", async () => {
+		const env = await setup();
+		try {
+			const file = sessionPath(env, "partial");
+			const second = user("b");
+			write(file, user("a") + "\n" + second.slice(0, 20));
+			await sync(env);
+			assert.deepEqual(((await env.db.prepare("SELECT id FROM messages").all()) as Array<{ id: string }>).map((r) => r.id), ["a"]);
+			assert.equal(((await env.db.prepare("SELECT COUNT(*) AS n FROM session_events").get()) as { n: number }).n, 0, "a half-written line is not an event");
+			fs.appendFileSync(file, second.slice(20) + "\n");
+			bump(file);
+			await sync(env);
+			assert.deepEqual(((await env.db.prepare("SELECT id FROM messages ORDER BY rowid").all()) as Array<{ id: string }>).map((r) => r.id), ["a", "b"]);
+		} finally {
+			await env.cleanup();
+		}
+	});
 });

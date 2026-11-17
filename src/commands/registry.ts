@@ -60,7 +60,7 @@ export const COMMANDS: ProspectCommand[] = [
 		name: "prospect-sync",
 		flag: "sync",
 		description:
-			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude|codex|opencode|cline (restrict to one coding harness)",
+			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude|codex|opencode|cline (restrict to one coding harness), --reread (read every file again, including ones already indexed, so sessions synced before an extras table existed gain their extras; messages already stored keep their rows)",
 		load: () => import("./sync.js"),
 		handler: (module) => module.prospectSync,
 	}),
@@ -221,7 +221,7 @@ export const COMMANDS: ProspectCommand[] = [
 		name: "prospect-export-session",
 		flag: "export-session",
 		description:
-			"Write a Claude Code transcript back from the index, for a session whose file Claude Code deleted. --session <id> or --all-missing (every Claude Code session whose file is gone), --out DIR (default: <claude sessions dir>-restored). A session synced with raw capture on comes back byte for byte, with its subagent .meta.json beside it; an older one is rebuilt from the reduced projection, every rebuilt record marked restoredFrom and a .restore.json listing what is lost. Never overwrites a file.",
+			"Rebuild a Claude Code transcript from the index, for a session whose file Claude Code deleted. --session <id> or --all-missing (every Claude Code session whose file is gone), --out DIR (default: <claude sessions dir>-restored). Best effort: messages come from their stored columns and extras, other records from the session events, every rebuilt record is marked restoredFrom, and a .restore.json lists what could not be restored. Never overwrites a file.",
 		load: () => import("./export-session.js"),
 		handler: (module) => module.prospectExportSession,
 	}),

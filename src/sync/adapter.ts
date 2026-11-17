@@ -7,7 +7,7 @@
  */
 import type { DiscoveredSession } from "../types.js";
 import type { SessionInsert, MessageInsert, BackgroundTaskInsert } from "../db/queries.js";
-import type { RawCapture, RawState } from "./raw-capture.js";
+import type { MessageExtrasInsert, SessionEventInsert } from "../db/extras-queries.js";
 
 export interface ParsedSession {
 	/** Ready for upsertSessions(). */
@@ -23,6 +23,14 @@ export interface ParsedSession {
 	 * record. Without it a background call times as near-instant (issue #306).
 	 */
 	backgroundTasks?: BackgroundTaskInsert[];
+	/**
+	 * What the source carried that no message column holds (#400): one entry per
+	 * message in `messages` it has any record of, and one per source record that is
+	 * not a message. Both are optional, so a source fills them when it can rebuild its
+	 * own transcript and leaves them out when it cannot.
+	 */
+	extras?: MessageExtrasInsert[];
+	events?: SessionEventInsert[];
 	/** Number of source units processed (lines for files, rows for DB sources). */
 	processedCount: number;
 	/** Timestamp to record in the cursor after successful insert. */
@@ -80,19 +88,6 @@ export interface SessionSourceAdapter {
 	 * @param resumeLine - line/event offset to resume from (0 = full parse)
 	 */
 	read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession>;
-
-	/**
-	 * Capture the session's original bytes, so the database can rebuild a file the
-	 * host later deletes (#400). `stored` says what a previous sync already kept;
-	 * the capture holds only what is new, and is empty when nothing changed.
-	 * Absent for a source whose host does not delete its transcripts, or whose
-	 * sessions are not one file.
-	 *
-	 * Called for every discovered session, changed or not, when raw capture is on,
-	 * so a session indexed before the capture existed is filled in without
-	 * re-parsing it.
-	 */
-	captureRaw?(disc: DiscoveredSession, stored: RawState): Promise<RawCapture>;
 }
 
 /** Priority of an adapter that declares none: after every built-in. */

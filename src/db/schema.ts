@@ -116,45 +116,39 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
-		-- ───────────────────────── raw session capture ─────────────────────────
-		-- The original bytes of a session file, so a transcript the host deletes can
-		-- be written back exactly (issue #400). Additive: both tables are new, no
-		-- existing table is touched, and no existing row is read or rewritten.
+		-- ───────────────────────── session extras ─────────────────────────
+		-- What the source carried that no column above holds, so a transcript can be
+		-- rebuilt from the index (issue #400). Neither table names a harness: the
+		-- vocabulary in a kind or a payload is the source's own. Additive: both are new
+		-- and nothing existing is read or rewritten. A value already in a column of
+		-- messages or sessions is not stored again here.
 		--
-		-- One row per sync that found the file longer: the bytes it gained, brotli-
-		-- compressed. Joined in seq order the chunks are the file. byte_start and
-		-- line_start say where a chunk sits; prefix_sha256 is the hash of the file up
-		-- to the end of the chunk, which is how the next sync knows the file still
-		-- starts with what is stored. rel_path (the transcript's path under the
-		-- sessions root) is set on the first chunk.
-		CREATE TABLE IF NOT EXISTS session_raw_chunks (
-			session_id TEXT NOT NULL,
-			seq INTEGER NOT NULL,
-			byte_start INTEGER NOT NULL,
-			raw_bytes INTEGER NOT NULL,
-			line_start INTEGER NOT NULL,
-			line_count INTEGER NOT NULL,
-			prefix_sha256 TEXT NOT NULL,
-			rel_path TEXT,
-			codec TEXT NOT NULL,
-			data BLOB NOT NULL,
-			PRIMARY KEY (session_id, seq),
-			FOREIGN KEY (session_id) REFERENCES sessions(id)
-		);
+		-- One row per message: its line in the source file, and a JSON object with the
+		-- ordered content blocks (kind and text length, so content_text and
+		-- content_thinking split back into blocks), the record fields the parser drops
+		-- (only those that changed since the previous record, carried forward), the
+		-- usage fields beyond the four token counts, and the original tool name where
+		-- its casing differs.
+		CREATE TABLE IF NOT EXISTS message_extras (
+			message_id TEXT PRIMARY KEY,
+			line INTEGER NOT NULL,
+			extras TEXT NOT NULL,
+			FOREIGN KEY (message_id) REFERENCES messages(id)
+		) WITHOUT ROWID;
 
-		-- Small files the host writes beside a transcript (a child agent's
-		-- agent-<id>.meta.json), stored whole. One row per file; a changed file
-		-- replaces its row.
-		CREATE TABLE IF NOT EXISTS session_raw_files (
+		-- One row per source record that is not a message (another record kind, a user
+		-- line flagged as meta, a line that is not JSON) and per small file the host
+		-- writes beside a session (line -1). The payload is the record itself, with
+		-- every string over 2048 characters replaced by its size and SHA-256.
+		CREATE TABLE IF NOT EXISTS session_events (
 			session_id TEXT NOT NULL,
-			rel_path TEXT NOT NULL,
-			sha256 TEXT NOT NULL,
-			raw_bytes INTEGER NOT NULL,
-			codec TEXT NOT NULL,
-			data BLOB NOT NULL,
-			PRIMARY KEY (session_id, rel_path),
+			line INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			ref TEXT,
+			payload TEXT NOT NULL,
+			PRIMARY KEY (session_id, line),
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
-		);
+		) WITHOUT ROWID;
 
 		-- ───────────────────────── subagent runs ─────────────────────────
 		-- The durable record of child-agent runs, ingested from the artifact

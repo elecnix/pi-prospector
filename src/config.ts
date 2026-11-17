@@ -73,23 +73,6 @@ export function getRoots(config?: ProspectorConfig): RootConfig[] {
 	];
 }
 
-/**
- * Whether sync keeps each session file's original bytes (#400). On unless the
- * config sets `captureRaw: false`; `PROSPECTOR_CAPTURE_RAW=0|1` overrides both.
- */
-export function getCaptureRaw(config?: ProspectorConfig): boolean {
-	const env = process.env["PROSPECTOR_CAPTURE_RAW"];
-	if (env !== undefined && env !== "") {
-		if (env === "0" || env === "false") return false;
-		if (env === "1" || env === "true") return true;
-		throw new Error(`PROSPECTOR_CAPTURE_RAW must be 0 or 1, not "${env}"`);
-	}
-	const value: unknown = (config ?? loadConfig()).captureRaw;
-	if (value === undefined) return true;
-	if (typeof value !== "boolean") throw new Error(`captureRaw must be true or false, not ${JSON.stringify(value)}`);
-	return value;
-}
-
 export function getSessionsDir(): string {
 	return process.env["PROSPECTOR_SESSIONS_DIR"] ?? DEFAULT_SESSIONS_DIR;
 }

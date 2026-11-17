@@ -478,12 +478,13 @@ Index session files into the database. No LLM is called. Fast and cheap.
 - Detects sessions that forked from another via the `parentSession` header — shared message trees are stored once, not duplicated
 - Tracks a cursor per session file (`{session_id, last_line, last_modified}`) and re-indexes a file only when its modification time changes
 
-- For Claude Code sessions it also stores the file's original bytes (and a child agent's `agent-<id>.meta.json`), compressed, so the index stays a backup after Claude Code deletes the transcript. A growing file adds only its new bytes, and an unchanged file adds nothing. See [Keeping a Claude Code transcript](#prospect-export-session)
+- Beside each message it stores what no column holds (the line it came from, the order and boundaries of its content blocks, record fields the parser drops, usage beyond four counts), in `message_extras`. Every source record that is not a message, and a child agent's `agent-<id>.meta.json`, goes in `session_events`. A value over 256 characters of JSON is stored as its size and SHA-256 only. See [`/prospect-export-session`](#prospect-export-session)
 
 Run it as often as you like. It's idempotent and incremental.
 
 - `--project NAME` — scope the sync to one **project** (derived from the session directory name). On a fresh install with hundreds of sessions across many repos, this is the escape hatch that syncs only the project you care about instead of paying for every session on disk.
 - `--source pi|claude|codex|opencode|cline` — restrict the sync to one coding harness.
+- `--reread` — read every file again, including ones already indexed. A session synced before the extras tables existed gains its extras and events this way. Messages already stored keep their rows, so nothing else changes. An unchanged file is otherwise skipped, so a plain sync never backfills.
 
 The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.
 
@@ -691,14 +692,12 @@ after operator feedback.
 
 ### `/prospect-export-session --session <id> | --all-missing [--out DIR]`
 
-Write a Claude Code transcript back from the database. Claude Code deletes transcripts after its retention period (30 days by default), and after that the index is the only copy.
+Rebuild a Claude Code transcript from the database, best effort. Claude Code deletes transcripts after its retention period (30 days by default), and after that the index is the only copy.
 
-- A session synced with raw capture on comes back **byte for byte**, at its original path under the sessions root, with its child agents' `.meta.json` files beside it.
-- A session synced before raw capture existed has only the reduced projection (the extracted text, thinking, tool calls and four token counts of each user and assistant line). The export rebuilds what those fields allow. Every rebuilt record carries `"restoredFrom": "pi-prospector"`, and a `<session>.restore.json` beside the file lists what could not be restored: every other record type, `isMeta` lines, thinking signatures, images, block order, and the per-record fields the sync never read. Copying the rebuilt file back into the sessions root changes no row: its modification time is set just below the stored one, so the sync skips it, and a forced re-read inserts nothing new because messages insert with `INSERT OR IGNORE` on their id.
-- `--all-missing` exports every Claude Code session whose file is gone from disk.
-- `--out DIR` defaults to a sibling of the sessions root, `~/.claude/projects-restored`, which neither Claude Code nor the sync reads. The export never replaces an existing file.
-
-Raw capture is on by default and costs about 14% of the transcript size on disk (brotli compresses a Claude Code transcript about 7 to 1). Set `"captureRaw": false` in `prospector.json`, or `PROSPECTOR_CAPTURE_RAW=0`, to keep only the reduced projection. The first sync after an upgrade also fills in sessions whose files still exist, without re-parsing them or touching a row.
+- Each message comes from its stored columns (text, thinking, tool calls and results, ids, model, token counts) plus its row in `message_extras`, which says where each content block starts and ends, what the record's other fields were, and the usage fields beyond four counts. Records that are not messages come back from `session_events`. A message synced before the extras existed is rebuilt from its columns alone, with the inferences listed in the report.
+- The file lands at its original path under the sessions root, with a child agent's `.meta.json` beside it. Every rebuilt record carries `"restoredFrom": "pi-prospector"`, and a `<session>.restore.json` says per session how many messages came from extras and how many from the columns alone, how many values were stored as size and hash only (an image, a large attachment, a signature: not restorable), and what no export gives back.
+- Copying the rebuilt file back into the sessions root changes no row: its modification time is set just below the stored one, so the sync skips it, and a forced re-read inserts nothing new because every table inserts with `INSERT OR IGNORE`.
+- `--all-missing` exports every Claude Code session whose file is gone. `--out DIR` defaults to a sibling of the sessions root, `~/.claude/projects-restored`, which nothing scans. The export never replaces an existing file, even one that appears while it runs.
 
 ### `/prospect-verify`
 
@@ -800,7 +799,6 @@ Create `~/.pi/agent/prospector.json` (all fields optional):
 | `lexicon` | `{ "mode": "model" }` | Your own frustration dictionary, and whether lexicon hits come from the learned lexicon, the dictionary, or both. See [Your own frustration dictionary](#your-own-frustration-dictionary). |
 | `roots` | one per harness, on this machine | Where sessions come from, when more than one machine writes them. Each entry names a `source`, a `host` and a `root`; every session keeps the host of the root it came from. A list replaces the defaults entirely, so a harness it does not name is not indexed. |
 | `syncHook` | none | A command run before every sync, through the shell, with `timeoutMs` (default two minutes). A machine whose sessions arrive by git points this at its refresh, so a sync started from the UI sees what another computer pushed. A hook that fails is reported in the sync summary and the sync still indexes what is on disk. |
-| `captureRaw` | `true` | Keep each Claude Code session file's original bytes in the database (a value that is not `true` or `false` is an error), so `/prospect-export-session` can write a deleted transcript back exactly. `PROSPECTOR_CAPTURE_RAW=0` or `1` overrides it. |
 
 Analyzers ask for a **tier**, not a model, so you tune cost vs. quality in one place. The resolved model is part of a node's identity: change the mapping and the affected nodes become stale (reason `config`), recomputed when you next run `--revise config`. Any model Pi supports works. The deterministic `turn-pair-core` layer needs no model.
 
@@ -858,7 +856,7 @@ A plain `/prospect-analyze` runs `defaultAnalyzers` minus `disabledAnalyzers`. W
 
 A selected analyzer still runs its dependencies, even ones you disabled. `--analyzer ID` runs any analyzer for one run. To make a trial analyzer permanent, add it to the default set and run `/prospect-analyze --backfill-missing`, which runs it on the sessions you analysed earlier. `--backfill-missing` and the coverage section of `/prospect-stats` count gaps for the default set only, and `/prospect-analyzers list` tags the rest `[off by default]`. The selection isn't part of any node's recipe, so editing these fields marks nothing stale. An id that matches no registered analyzer prints a warning on each run.
 
-The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CLAUDE_SESSIONS_DIR`, `PROSPECTOR_CONFIG`, `PROSPECTOR_CAPTURE_RAW`, and `PROSPECTOR_INSTRUCTIONS_HOME` (the home directory the rule-restatement check reads harness instruction files under).
+The following environment variables override paths and are mainly for testing: `PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CLAUDE_SESSIONS_DIR`, `PROSPECTOR_CONFIG`, and `PROSPECTOR_INSTRUCTIONS_HOME` (the home directory the rule-restatement check reads harness instruction files under).
 
 ## Running from the shell
 

@@ -9,11 +9,12 @@ import * as path from "node:path";
 import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
 import type { DiscoveredSession } from "../../../types.js";
 import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
-import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../../parser.js";
+import { parseClaudeRecord, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../../parser.js";
+import { claudeEventOf, claudeMessageExtras, elide, elideFields, flatFields, newExtrasState, newStickyCounts, observeFields, stickyKeys } from "../../claude-extras.js";
+import type { MessageExtrasInsert, SessionEventInsert } from "../../../db/extras-queries.js";
 import { extractBackgroundTasks } from "../../background-tasks.js";
 import { walkSessionDir } from "../../scanner.js";
 import { getClaudeSessionsDir } from "../../../config.js";
-import { nextChunk, relPathUnderRoot, sidecarFile, type RawCapture, type RawFile, type RawState } from "../../raw-capture.js";
 
 /**
  * Claude Code's session-file naming: `<session-uuid>.jsonl`, directly under a
@@ -86,27 +87,6 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 		});
 	}
 
-	async captureRaw(disc: DiscoveredSession, stored: RawState): Promise<RawCapture> {
-		const content = await fs.readFile(disc.filePath);
-		const relPath = relPathUnderRoot(this.claudeSessionsDir, disc.filePath, disc.project);
-		const { chunk, conflict } = nextChunk(content, stored);
-		const files: RawFile[] = [];
-		const sidecar = sidecarPathFor(disc.filePath);
-		if (sidecar) {
-			let bytes: Buffer | null = null;
-			try {
-				bytes = await fs.readFile(sidecar);
-			} catch (err) {
-				if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-			}
-			if (bytes) {
-				const file = sidecarFile(relPathUnderRoot(this.claudeSessionsDir, sidecar, disc.project), bytes, stored);
-				if (file) files.push(file);
-			}
-		}
-		return { sessionId: path.basename(disc.filePath, ".jsonl"), relPath, chunk, files, conflict };
-	}
-
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {
 		const content = await fs.readFile(disc.filePath, "utf-8");
 		const lines = content.split("\n");
@@ -151,13 +131,52 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 			tool_inventory: null, // Claude transcripts carry no tool manifest; UNKNOWN.
 		};
 
-		const messages: MessageInsert[] = [];
-		for (let i = resumeLine; i < lines.length; i++) {
-			const line = lines[i]?.trim();
-			if (!line) continue;
+		// The last element of the split is "" after a final newline, or a line the host is
+		// still writing. Counting it as read made the next sync resume one line late and
+		// skip the first line appended since. A last line that parses is complete.
+		const last = lines[lines.length - 1]?.trim() ?? "";
+		let lastIsComplete = false;
+		if (last) {
+			try {
+				JSON.parse(last);
+				lastIsComplete = true;
+			} catch {
+				lastIsComplete = false;
+			}
+		}
+		const complete = Math.max(0, lines.length - 1 + (lastIsComplete ? 1 : 0));
 
-			const parsed = parseLine(line, "claude", toolNamesById);
-			if (!parsed || parsed.kind !== "message") continue;
+		// First pass: decode each line, so the fields that repeat from record to record
+		// can be told from the ones that do not before any extras are written.
+		const items: Array<{ line: number; raw: string; obj: unknown; parsed: ReturnType<typeof parseClaudeRecord> }> = [];
+		const counts = newStickyCounts();
+		for (let i = resumeLine; i < complete; i++) {
+			const raw = lines[i]?.trim();
+			if (!raw) continue;
+			let obj: unknown;
+			try {
+				obj = JSON.parse(raw);
+			} catch {
+				obj = undefined;
+			}
+			const parsed = obj !== null && typeof obj === "object" ? parseClaudeRecord(obj as Record<string, unknown>, toolNamesById) : null;
+			items.push({ line: i, raw, obj, parsed });
+			if (parsed?.kind === "message") {
+				const o = obj as Record<string, unknown>;
+				observeFields(counts, o["type"] === "assistant" ? "assistant" : "user", flatFields(o, parsed.entry.usage !== null));
+			}
+		}
+		const state = newExtrasState(stickyKeys(counts));
+
+		const messages: MessageInsert[] = [];
+		const extras: MessageExtrasInsert[] = [];
+		const events: SessionEventInsert[] = [];
+		for (const { line: i, raw, obj, parsed } of items) {
+			if (!parsed || parsed.kind !== "message") {
+				const ev = claudeEventOf(obj, raw);
+				events.push({ session_id: sessionId, line: i, kind: ev.kind, ref: null, payload: JSON.stringify(ev.payload) });
+				continue;
+			}
 
 			const entry = parsed.entry;
 			messages.push({
@@ -178,6 +197,30 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 				stop_reason: entry.stopReason,
 				error_message: entry.errorMessage,
 			});
+			const x = claudeMessageExtras(obj as Record<string, unknown>, state, entry.usage !== null);
+			extras.push({ message_id: entry.id, line: i, extras: JSON.stringify(x) });
+		}
+
+		// A child agent's meta file sits beside its transcript and is stored whole.
+		const sidecar = sidecarPathFor(disc.filePath);
+		if (sidecar) {
+			let text: string | null = null;
+			try {
+				text = await fs.readFile(sidecar, "utf-8");
+			} catch (err) {
+				if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+			}
+			if (text !== null) {
+				let payload: unknown;
+				try {
+					const json: unknown = JSON.parse(text);
+					payload = json !== null && typeof json === "object" && !Array.isArray(json) ? elideFields(json as Record<string, unknown>) : { value: json };
+				} catch {
+					payload = { text: elide(text) };
+				}
+				const rel = path.relative(this.claudeSessionsDir, sidecar);
+				events.push({ session_id: sessionId, line: -1, kind: "sidecar", ref: rel.startsWith("..") ? path.basename(sidecar) : rel.split(path.sep).join("/"), payload: JSON.stringify(payload) });
+			}
 		}
 
 		return {
@@ -188,7 +231,9 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 			// from ALL lines (not just the resume point) so a completion that
 			// straddles the cursor is still found on an incremental sync.
 			backgroundTasks: extractBackgroundTasks(lines, sessionId),
-			processedCount: lines.length,
+			extras,
+			events,
+			processedCount: complete,
 			processedTimestamp: disc.mtime,
 			forksResolved: 0,
 		};

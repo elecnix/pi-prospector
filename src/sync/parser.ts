@@ -406,7 +406,7 @@ const CLAUDE_TOOL_NAME_MAP: Record<string, string> = {
 	"NotebookEdit": "notebookEdit",
 };
 
-function normalizeClaudeToolName(name: string): string {
+export function normalizeClaudeToolName(name: string): string {
 	return CLAUDE_TOOL_NAME_MAP[name] ?? name;
 }
 
@@ -468,6 +468,11 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 		return null;
 	}
 
+	return parseClaudeRecord(obj, toolNamesById);
+}
+
+/** Parse an already-decoded record, so a caller that needs the object too decodes the line once. */
+export function parseClaudeRecord(obj: Record<string, unknown>, toolNamesById?: Map<string, string>): ParsedLine | null {
 	if (typeof obj !== "object" || obj === null) return null;
 
 	const type = obj.type as string | undefined;
