@@ -16,7 +16,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AsyncDatabase } from "../db/async-db.js";
 import { getRawChunks, getRawFiles } from "../db/raw-queries.js";
-import { decompress, sha256 } from "./raw-capture.js";
+import { decompress, relPathUnderRoot, sha256 } from "./raw-capture.js";
 import { NOT_RESTORED, rebuildClaudeRecords, serializeRecords, RESTORED_FROM, type StoredMessage } from "./claude-rebuild.js";
 
 export interface ExportableSession {
@@ -40,10 +40,12 @@ export type ExportOutcome =
 const MTIME_MARGIN_S = 2e-6;
 
 /** `rel` joined under `outDir`, refusing a path that climbs out of it. */
-function insideOut(outDir: string, rel: string): string {
+export function insideOut(outDir: string, rel: string): string {
 	const target = path.resolve(outDir, rel);
 	const root = path.resolve(outDir);
-	if (target !== root && !target.startsWith(root + path.sep)) throw new Error(`stored path "${rel}" leaves the output directory`);
+	// A filesystem root already ends in a separator, so it must not get a second one.
+	const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+	if (target !== root && !target.startsWith(prefix)) throw new Error(`stored path "${rel}" leaves the output directory`);
 	return target;
 }
 
@@ -58,14 +60,6 @@ async function writeAtomic(target: string, data: Uint8Array | string, lastModifi
 	await fs.rename(tmp, target);
 }
 
-/** The relative path to write a session at: the stored one, else derived from `file_path`. */
-function relPathFor(storedRel: string | null, s: ExportableSession, claudeRoot: string): string {
-	if (storedRel) return storedRel;
-	const rel = path.relative(claudeRoot, s.file_path);
-	if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel.split(path.sep).join("/");
-	return `${path.basename(path.dirname(s.file_path))}/${path.basename(s.file_path)}`;
-}
-
 /**
  * Export one session. An existing file at the target is never overwritten: the
  * export reports it and moves on, so running it twice, or into a live sessions
@@ -73,7 +67,7 @@ function relPathFor(storedRel: string | null, s: ExportableSession, claudeRoot: 
  */
 export async function exportClaudeSession(db: AsyncDatabase, s: ExportableSession, outDir: string, claudeRoot: string): Promise<ExportOutcome> {
 	const chunks = await getRawChunks(db, s.id);
-	const rel = relPathFor(chunks[0]?.rel_path ?? null, s, claudeRoot);
+	const rel = chunks[0]?.rel_path ?? relPathUnderRoot(claudeRoot, s.file_path, s.project);
 	const target = insideOut(outDir, rel);
 	if (await exists(target)) return { kind: "skipped", session: s.id, reason: `${rel} already exists in the output directory` };
 

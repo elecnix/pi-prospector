@@ -12,7 +12,7 @@ import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js"
 import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
-import { exportClaudeSession, getExportableSession, listMissingClaudeSessions } from "../../src/sync/claude-export.js";
+import { exportClaudeSession, getExportableSession, insideOut, listMissingClaudeSessions } from "../../src/sync/claude-export.js";
 import { rebuildClaudeRecords, type StoredMessage } from "../../src/sync/claude-rebuild.js";
 import { parseClaudeLine } from "../../src/sync/parser.js";
 import { getRawChunks, getRawFiles } from "../../src/db/raw-queries.js";
@@ -466,6 +466,55 @@ describe("prospect export-session", () => {
 			if (saved.db === undefined) delete process.env["PROSPECTOR_DB_PATH"]; else process.env["PROSPECTOR_DB_PATH"] = saved.db;
 			if (saved.root === undefined) delete process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"]; else process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] = saved.root;
 			fs.rmSync(env.dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("rebuild of a user record with text around its tool results", () => {
+	it("parses back into the stored text and results when text comes before, between and after them", () => {
+		const original = {
+			type: "user", uuid: "u9", parentUuid: "a9", timestamp: "2026-02-01T09:10:00.000Z",
+			message: { role: "user", content: [
+				{ type: "text", text: "before" },
+				{ type: "tool_result", tool_use_id: "toolu_a", content: "first result" },
+				{ type: "text", text: "between the two" },
+				{ type: "tool_result", tool_use_id: "toolu_b", content: "second" },
+				{ type: "text", text: "after" },
+			] },
+		};
+		const names = new Map([["toolu_a", "read"], ["toolu_b", "bash"]]);
+		const parsed = parseClaudeLine(JSON.stringify(original), names);
+		assert.ok(parsed && parsed.kind === "message");
+		const e = parsed.entry;
+		const stored: StoredMessage = {
+			id: e.id, parent_id: e.parentId, timestamp: e.timestamp, role: e.role, content_text: e.text, content_thinking: null,
+			tool_calls: null, tool_results: JSON.stringify(e.tool_results), usage: null, model: null, provider_message_id: null, stop_reason: null, error_message: null,
+		};
+		const { records } = rebuildClaudeRecords({ id: "s", cwd: "/tmp", name: null }, [stored], "p/s.jsonl");
+		const again = parseClaudeLine(JSON.stringify(records[0]), names);
+		assert.ok(again && again.kind === "message");
+		assert.equal(again.entry.text, e.text);
+		assert.deepEqual(again.entry.tool_results, e.tool_results);
+	});
+});
+
+describe("export path containment", () => {
+	it("accepts a filesystem root as the output directory", () => {
+		assert.equal(insideOut(path.parse(process.cwd()).root, "tmp/a.jsonl"), path.join(path.parse(process.cwd()).root, "tmp", "a.jsonl"));
+	});
+
+	it("refuses a stored path that climbs out of the output directory", async () => {
+		const env = await setup();
+		try {
+			write(sessionPath(env, "contain"), richLines("contain").join("\n") + "\n");
+			await sync(env);
+			const s = (await getExportableSession(env.db, claudeSessionId("contain")))!;
+			// Writing into "/" would touch the real root, so the climbing case is the one run for real.
+			await env.db.prepare("UPDATE session_raw_chunks SET rel_path = '../escape.jsonl' WHERE session_id = ?").run(s.id);
+			await assert.rejects(exportClaudeSession(env.db, s, env.out, env.root), /leaves the output directory/);
+			assert.equal(fs.existsSync(path.join(env.dir, "escape.jsonl")), false);
+		} finally {
+			await env.cleanup();
 		}
 	});
 });

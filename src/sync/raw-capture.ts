@@ -14,6 +14,7 @@
  * beside it so a line is addressable without decompressing every chunk.
  */
 import * as crypto from "node:crypto";
+import * as path from "node:path";
 import * as zlib from "node:zlib";
 
 /** What is already stored for one session, read before the file is. */
@@ -128,4 +129,15 @@ export function sidecarFile(relPath: string, content: Buffer, state: RawState): 
 	const digest = sha256(content);
 	if (state.sidecars[relPath] === digest) return null;
 	return { relPath, sha256: digest, codec: CODEC_BROTLI, rawBytes: content.length, data: compress(content) };
+}
+
+/**
+ * The path a session file has under the sessions root, with `/` separators, which
+ * is where an export writes it back. A file outside the root (a root that moved
+ * since it was indexed) keeps its project directory and name.
+ */
+export function relPathUnderRoot(root: string, filePath: string, project: string): string {
+	const rel = path.relative(root, filePath);
+	if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel.split(path.sep).join("/");
+	return `${project}/${path.basename(filePath)}`;
 }

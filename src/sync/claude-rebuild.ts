@@ -189,54 +189,94 @@ export function rebuildClaudeRecords(session: StoredSession, messages: StoredMes
  * Split the joined text of a tool-result message back into its blocks.
  *
  * The parser joins every text part, user text blocks and tool-result texts alike,
- * with one newline, and keeps each result's text length. Slicing the string by
- * those lengths gives parts that join back to the identical string, which is what
- * makes the rebuilt record parse into the stored row. Lengths count UTF-16 code
- * units, as the parser's `String.length` did.
+ * with one newline, and keeps each result's text length. The rebuild searches for
+ * a layout in which the results sit at their stored lengths, every cut falls on a
+ * newline, and the text blocks fill what is left, so the parser joins the record
+ * back into the identical string. Text may come before, between and after the
+ * results. When the same string splits more than one way the earliest layout wins,
+ * so which text belongs to which block is an inference, counted in the notes.
+ * Lengths count UTF-16 code units, as the parser's `String.length` did.
  */
 function toolResultBlocks(m: StoredMessage, notes: Record<string, number>): Array<Record<string, unknown>> {
 	const results = parseJson<StoredToolResult>(m.tool_results);
-	const text = m.content_text ?? "";
-	const lengths = results.map((t) => t.textLength ?? 0);
-	const expected = lengths.reduce((a, b) => a + b, 0) + Math.max(0, lengths.filter((x) => x > 0).length - 1);
-	const extra = text.length - expected;
+	const text = m.content_text;
+	const sized = results.map((t, i) => ({ i, length: t.textLength ?? 0 })).filter((r) => r.length > 0);
+	const before = new Map<number, string>();
+	let tail: string | null = null;
 
-	// Text that came before the results (a user text block in the same message).
-	let lead = "";
-	let pos = 0;
-	if (extra > 0 && expected > 0 && text[extra - 1] === "\n") {
-		lead = text.slice(0, extra - 1);
-		pos = extra;
-	} else if (extra > 0 && expected === 0) {
-		lead = text;
-		pos = text.length;
-	}
+	const place = (k: number, pos: number): boolean => {
+		const body = text ?? "";
+		if (k === sized.length) {
+			if (pos >= body.length + 1) return true;
+			tail = body.slice(pos);
+			return true;
+		}
+		const { i, length } = sized[k]!;
+		const fits = (start: number): boolean => start + length <= body.length && (start + length === body.length || body[start + length] === "\n");
+		const attempt = (start: number, lead: string | null): boolean => {
+			if (!fits(start)) return false;
+			if (lead !== null) before.set(i, lead);
+			if (place(k + 1, start + length + 1)) return true;
+			before.delete(i);
+			return false;
+		};
+		if (attempt(pos, null)) return true;
+		for (let e = body.indexOf("\n", pos + 1); e !== -1; e = body.indexOf("\n", e + 1)) {
+			if (attempt(e + 1, body.slice(pos, e))) return true;
+		}
+		return false;
+	};
 
 	const blocks: Array<Record<string, unknown>> = [];
-	if (lead) {
-		blocks.push({ type: "text", text: lead });
-		bump(notes, "tool_result_extra_text");
-	}
-	let first = true;
-	for (const t of results) {
-		const length = t.textLength ?? 0;
-		let body = "";
-		if (length > 0) {
-			if (!first) pos += 1;
-			body = text.slice(pos, pos + length);
-			pos += length;
-			first = false;
-		}
+	const resultBlock = (t: StoredToolResult, body: string): Record<string, unknown> => {
 		const block: Record<string, unknown> = { tool_use_id: t.toolCallId ?? "", type: "tool_result", content: body };
 		if (t.isError) block["is_error"] = true;
-		blocks.push(block);
-	}
-	if (pos < text.length) {
-		const rest = (!first || pos > 0) && text[pos] === "\n" ? text.slice(pos + 1) : text.slice(pos);
-		if (rest) {
-			blocks.push({ type: "text", text: rest });
+		return block;
+	};
+
+	if (sized.length === 0) {
+		if (text !== null) {
+			blocks.push({ type: "text", text });
 			bump(notes, "tool_result_extra_text");
 		}
+		for (const t of results) blocks.push(resultBlock(t, ""));
+		return blocks;
+	}
+
+	if (text !== null && place(0, 0)) {
+		const starts = new Map<number, number>();
+		// Recompute each sized result's start from the pieces the search kept.
+		let pos = 0;
+		for (const { i, length } of sized) {
+			const lead = before.get(i);
+			if (lead !== undefined) pos += lead.length + 1;
+			starts.set(i, pos);
+			pos += length + 1;
+		}
+		results.forEach((t, i) => {
+			const lead = before.get(i);
+			if (lead !== undefined) {
+				blocks.push({ type: "text", text: lead });
+				bump(notes, "tool_result_extra_text");
+			}
+			const start = starts.get(i);
+			blocks.push(resultBlock(t, start === undefined ? "" : text.slice(start, start + (t.textLength ?? 0))));
+		});
+		if (tail !== null) {
+			blocks.push({ type: "text", text: tail });
+			bump(notes, "tool_result_extra_text");
+		}
+		return blocks;
+	}
+
+	// No layout puts every cut on a newline: keep each result at its stored length, taken
+	// from the text in order, and say the record is not an exact rebuild.
+	bump(notes, "tool_result_layout_unrecoverable");
+	let pos = 0;
+	for (const t of results) {
+		const length = t.textLength ?? 0;
+		blocks.push(resultBlock(t, (text ?? "").slice(pos, pos + length)));
+		pos += length + (length > 0 ? 1 : 0);
 	}
 	return blocks;
 }

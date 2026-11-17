@@ -13,7 +13,7 @@ import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../..
 import { extractBackgroundTasks } from "../../background-tasks.js";
 import { walkSessionDir } from "../../scanner.js";
 import { getClaudeSessionsDir } from "../../../config.js";
-import { nextChunk, sidecarFile, type RawCapture, type RawFile, type RawState } from "../../raw-capture.js";
+import { nextChunk, relPathUnderRoot, sidecarFile, type RawCapture, type RawFile, type RawState } from "../../raw-capture.js";
 
 /**
  * Claude Code's session-file naming: `<session-uuid>.jsonl`, directly under a
@@ -86,20 +86,9 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 		});
 	}
 
-	/**
-	 * The path a session file has under the sessions root, which is where an export
-	 * writes it back. A file outside the root (a root that moved since it was
-	 * indexed) keeps its project directory and name.
-	 */
-	relPathOf(filePath: string, project: string): string {
-		const rel = path.relative(this.claudeSessionsDir, filePath);
-		if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel.split(path.sep).join("/");
-		return `${project}/${path.basename(filePath)}`;
-	}
-
 	async captureRaw(disc: DiscoveredSession, stored: RawState): Promise<RawCapture> {
 		const content = await fs.readFile(disc.filePath);
-		const relPath = this.relPathOf(disc.filePath, disc.project);
+		const relPath = relPathUnderRoot(this.claudeSessionsDir, disc.filePath, disc.project);
 		const { chunk, conflict } = nextChunk(content, stored);
 		const files: RawFile[] = [];
 		const sidecar = sidecarPathFor(disc.filePath);
@@ -111,7 +100,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 				if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
 			}
 			if (bytes) {
-				const file = sidecarFile(this.relPathOf(sidecar, disc.project), bytes, stored);
+				const file = sidecarFile(relPathUnderRoot(this.claudeSessionsDir, sidecar, disc.project), bytes, stored);
 				if (file) files.push(file);
 			}
 		}
