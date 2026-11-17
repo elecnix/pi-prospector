@@ -24,17 +24,29 @@ import { claudeSessionFileName, makeTempRoot, mockFramework, piSessionFileName, 
 const SID = "11111111-2222-4333-a444-555555555555";
 const PARENT = "aaaa0001-bbbb-cccc-dddd-eeeeeeeeeeee";
 
+/** Close a database a failed test may have left open; a handle already closed is not an error. */
+async function closeQuietly(db: AsyncDatabase | undefined): Promise<void> {
+	if (!db) return;
+	try {
+		await db.close();
+	} catch {
+		/* already closed */
+	}
+}
+
 describe("the migration's one-shot guard on the real database class", () => {
 	it("lowers a cursor exactly once across three migrations and a close and reopen", async () => {
 		const { root, cleanup } = makeTempRoot("prospect-guard-");
 		const file = path.join(root, "guard.db");
+		let db: AsyncDatabase | undefined;
 		try {
-			let db = openAsyncDatabase(file);
+			db = openAsyncDatabase(file);
 			await migrate(db);
 			await db.exec("INSERT INTO sessions (id, file_path, source, last_line) VALUES ('s1', '/x/s1.jsonl', 'claude', 10), ('s2', '/x/s2.jsonl', 'codex', 10)");
 			// The database as the old code left it.
 			await db.exec("PRAGMA user_version = 0");
-			const cursors = async (): Promise<number[]> => ((await db.prepare("SELECT last_line FROM sessions ORDER BY id").all()) as Array<{ last_line: number }>).map((r) => r.last_line);
+			const open = db;
+			const cursors = async (): Promise<number[]> => ((await open.prepare("SELECT last_line FROM sessions ORDER BY id").all()) as Array<{ last_line: number }>).map((r) => r.last_line);
 			await migrate(db);
 			assert.deepEqual(await cursors(), [9, 10], "only the affected sources are lowered");
 			await migrate(db);
@@ -42,10 +54,12 @@ describe("the migration's one-shot guard on the real database class", () => {
 			db = openAsyncDatabase(file);
 			await migrate(db);
 			await migrate(db);
-			assert.deepEqual(await cursors(), [9, 10], "later migrations leave the cursor alone");
+			const reopened = db;
+			assert.deepEqual(((await reopened.prepare("SELECT last_line FROM sessions ORDER BY id").all()) as Array<{ last_line: number }>).map((r) => r.last_line), [9, 10], "later migrations leave the cursor alone");
 			assert.deepEqual(await db.pragma("user_version"), [{ user_version: 1 }], "the guard reads the shape the real class returns");
-			await db.close();
 		} finally {
+			// Closing twice is safe to skip: the handle is closed here whether or not the test failed.
+			await closeQuietly(db);
 			cleanup();
 		}
 	});
@@ -105,9 +119,11 @@ const cases: Case[] = [
 	{ name: "Pi subagent", adapter: (r) => new PiSubagentSource(r), file: (r) => path.join(r, "--tmp-p--", `2026-03-01T09-59-00Z_${PARENT}`, "2b83bd26", "run-0", "session.jsonl"), lines: piLines },
 ];
 
-async function syncOnce(root: string, c: Case, lines: string[]): Promise<{ db: AsyncDatabase; id: string; dbFile: string }> {
+/** Databases opened by `syncOnce`, closed by the test's `finally` even when it fails. */
+async function syncOnce(root: string, c: Case, lines: string[], opened: AsyncDatabase[]): Promise<{ db: AsyncDatabase; id: string }> {
 	const dbFile = path.join(root, `${Math.random().toString(36).slice(2)}.db`);
 	const db = openAsyncDatabase(dbFile);
+	opened.push(db);
 	await migrate(db);
 	const sessions = path.join(root, "sessions");
 	const target = c.file(sessions);
@@ -118,7 +134,7 @@ async function syncOnce(root: string, c: Case, lines: string[]): Promise<{ db: A
 	const result = await runSync(db, [c.adapter(sessions)], {});
 	assert.deepEqual(result.errors, []);
 	const row = (await db.prepare("SELECT id FROM sessions").get()) as { id: string };
-	return { db, id: row.id, dbFile };
+	return { db, id: row.id };
 }
 
 describe("re-reading one line that is already stored", () => {
@@ -127,10 +143,11 @@ describe("re-reading one line that is already stored", () => {
 			it(`${c.name}: leaves every table and derived value as a single fresh sync has them (last line is ${lastIsMessage ? "a message" : "not a message"})`, async () => {
 				const { root, cleanup } = makeTempRoot("prospect-reread-");
 				const lines = c.lines(lastIsMessage);
+				const opened: AsyncDatabase[] = [];
 				try {
-					const fresh = await syncOnce(root, c, lines);
-					const reread = await syncOnce(root, c, lines);
-					try {
+					const fresh = await syncOnce(root, c, lines, opened);
+					const reread = await syncOnce(root, c, lines, opened);
+					{
 						// The cursor is one past the last line the migration would lower: put it one before the end and sync again.
 						const before = ((await reread.db.prepare("SELECT last_line FROM sessions").get()) as { last_line: number }).last_line;
 						await reread.db.prepare("UPDATE sessions SET last_line = last_line - 1, last_modified = 0").run();
@@ -147,11 +164,9 @@ describe("re-reading one line that is already stored", () => {
 						for (const t of Object.keys(a)) if (t.startsWith("analy") || t === "prompt_registry") { delete a[t]; delete b[t]; }
 						assert.deepEqual(b, a);
 						assert.ok((a["messages"] as unknown[]).length >= 3, "the fixture holds messages");
-					} finally {
-						await fresh.db.close();
-						await reread.db.close();
 					}
 				} finally {
+					for (const d of opened) await closeQuietly(d);
 					cleanup();
 				}
 			});

@@ -34,7 +34,12 @@ interface Env {
 async function setup(): Promise<Env> {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prospect-raw-"));
 	const db = openAsyncDatabase(path.join(dir, "test.db"));
-	await migrate(db);
+	try {
+		await migrate(db);
+	} catch (err) {
+		await db.close();
+		throw err;
+	}
 	const root = path.join(dir, "projects");
 	fs.mkdirSync(root, { recursive: true });
 	let closed = false;
