@@ -16,13 +16,23 @@ export interface SessionEventInsert {
 	line: number;
 	/** The source's own name for the record: its `type`, `unparsed`, or `sidecar`. */
 	kind: string;
-	/** For a sidecar, its path relative to the sessions root, which tells two files of one session apart. Null for a record. */
-	ref: string | null;
+	/** For a sidecar, its path relative to the sessions root, which tells two files of one session apart. "" for a record: the column is part of the primary key, which cannot hold NULL. */
+	ref: string;
 	payload: string;
 }
 
-export async function insertMessageExtras(db: AsyncDatabase, e: MessageExtrasInsert): Promise<void> {
-	await db.prepare("INSERT OR IGNORE INTO message_extras (message_id, line, extras) VALUES (?, ?, ?)").run(e.message_id, e.line, e.extras);
+/**
+ * Store a message's extras, only when the message row belongs to `sessionId`. The
+ * index keeps each message once, under the first session that had it, so a second
+ * file that repeats the id (a resumed or forked session) must not put its own line
+ * number and fields on the first session's message.
+ */
+export async function insertMessageExtras(db: AsyncDatabase, e: MessageExtrasInsert, sessionId: string): Promise<void> {
+	await db
+		.prepare(
+			"INSERT OR IGNORE INTO message_extras (message_id, line, extras) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ? AND session_id = ?)",
+		)
+		.run(e.message_id, e.line, e.extras, e.message_id, sessionId);
 }
 
 /**
@@ -35,7 +45,7 @@ export async function upsertSessionEvent(db: AsyncDatabase, e: SessionEventInser
 		.prepare(
 			"INSERT INTO session_events (session_id, line, kind, ref, payload) VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, line, ref) DO UPDATE SET kind = excluded.kind, ref = excluded.ref, payload = excluded.payload WHERE excluded.line < 0",
 		)
-		.run(e.session_id, e.line, e.kind, e.ref ?? "", e.payload);
+		.run(e.session_id, e.line, e.kind, e.ref, e.payload);
 }
 
 export interface StoredExtrasRow {
@@ -54,7 +64,7 @@ export async function getSessionExtras(db: AsyncDatabase, sessionId: string): Pr
 export interface StoredEventRow {
 	line: number;
 	kind: string;
-	ref: string | null;
+	ref: string;
 	payload: string;
 }
 

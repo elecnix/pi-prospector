@@ -805,6 +805,73 @@ describe("messages inserted by a sync", () => {
 	});
 });
 
+describe("a message id that two session files share", () => {
+	const shared = (id: string, extra: string) => [
+		JSON.stringify({ type: "user", uuid: "shared-1", parentUuid: null, timestamp: "2026-02-01T09:00:00.000Z", gitBranch: extra, message: { role: "user", content: "the same first prompt" } }),
+		JSON.stringify({ type: "assistant", uuid: `${id}-a`, parentUuid: "shared-1", timestamp: "2026-02-01T09:00:01.000Z", message: { id: `m-${id}`, role: "assistant", model: "m", content: [{ type: "text", text: `reply ${id}` }] } }),
+	];
+
+	it("never attaches the second file's extras to the first session's message", async () => {
+		const env = await setup();
+		try {
+			// Session A is indexed before the extras existed: its message has a row and no extras.
+			write(sessionPath(env, "fork-a"), shared("a", "branch-from-a").join("\n") + "\n");
+			await syncOld(env);
+			// Session B resumes it: the same message id, in another file with other fields.
+			write(sessionPath(env, "fork-b"), shared("b", "branch-from-b").join("\n") + "\n");
+			await sync(env);
+			const owner = (await env.db.prepare("SELECT session_id FROM messages WHERE id = 'shared-1'").get()) as { session_id: string };
+			assert.equal(owner.session_id, claudeSessionId("fork-a"));
+			assert.equal(await env.db.prepare("SELECT 1 FROM message_extras WHERE message_id = 'shared-1'").get(), undefined, "extras of B's line must not attach to A's message");
+			// B's own message still has its extras.
+			assert.ok(await env.db.prepare("SELECT 1 FROM message_extras WHERE message_id = 'b-a'").get());
+		} finally {
+			await env.cleanup();
+		}
+	});
+
+	it("keeps the first owner's extras when the second file arrives later", async () => {
+		const env = await setup();
+		try {
+			write(sessionPath(env, "own-a"), shared("a", "branch-from-a").join("\n") + "\n");
+			await sync(env);
+			const before = await extrasSnapshot(env.db);
+			write(sessionPath(env, "own-b"), shared("b", "branch-from-b").join("\n") + "\n");
+			await sync(env);
+			const row = (await env.db.prepare("SELECT extras FROM message_extras WHERE message_id = 'shared-1'").get()) as { extras: string };
+			assert.match(row.extras, /branch-from-a/);
+			assert.equal(row.extras.includes("branch-from-b"), false);
+			assert.ok(before.length > 0);
+		} finally {
+			await env.cleanup();
+		}
+	});
+});
+
+describe("session_events on a reread", () => {
+	it("adds no row for a record event or a sidecar that is already stored", async () => {
+		const env = await setup();
+		try {
+			const parent = claudeSessionId("events-parent");
+			const dir = path.join(env.root, PROJECT, parent, "subagents");
+			const agent = path.join(dir, "agent-e1.jsonl");
+			write(agent, richLines("events").join("\n") + "\n");
+			write(path.join(dir, "agent-e1.meta.json"), '{"agentType":"explore"}\n');
+			await sync(env);
+			const rows = async () => (await env.db.prepare("SELECT session_id, line, kind, ref FROM session_events ORDER BY line, ref").all()) as Array<{ line: number; kind: string; ref: string }>;
+			const first = await rows();
+			assert.ok(first.some((r) => r.kind === "attachment" || r.kind === "system" || r.kind === "queue-operation"), "a record event is stored");
+			assert.ok(first.some((r) => r.kind === "sidecar"), "a sidecar is stored");
+			await sync(env, { reread: true });
+			await sync(env, { reread: true });
+			assert.deepEqual(await rows(), first);
+			assert.ok(first.filter((r) => r.line >= 0).every((r) => r.ref === ""), "a record event has the empty ref");
+		} finally {
+			await env.cleanup();
+		}
+	});
+});
+
 describe("restore report path", () => {
 	it("never replaces the transcript when the session file does not end in .jsonl", async () => {
 		const env = await setup();

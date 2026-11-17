@@ -45,7 +45,7 @@ export interface StoredMessage {
 export interface StoredEvent {
 	line: number;
 	kind: string;
-	ref: string | null;
+	ref: string;
 	payload: unknown;
 }
 
@@ -472,7 +472,7 @@ export function rebuildClaudeRecords(session: StoredSession, messages: StoredMes
 	const tally = { strings: 0, bytes: 0 };
 	const sidecars: Array<{ ref: string; payload: unknown }> = [];
 	const pending = events.filter((e) => e.line >= 0);
-	for (const e of events) if (e.line < 0) sidecars.push({ ref: e.ref ?? "", payload: e.payload });
+	for (const e of events) if (e.line < 0) sidecars.push({ ref: e.ref, payload: e.payload });
 	let next = 0;
 	let sticky = new Set<string>();
 	const carried: { assistant: Rec; user: Rec } = { assistant: {}, user: {} };

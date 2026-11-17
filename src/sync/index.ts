@@ -85,7 +85,7 @@ export async function runSync(
 					for (const m of parsed.messages) {
 						if (await insertMessage(db, m)) inserted++;
 					}
-					for (const x of parsed.extras ?? []) await insertMessageExtras(db, x);
+					for (const x of parsed.extras ?? []) await insertMessageExtras(db, x, parsed.session.id);
 					for (const ev of parsed.events ?? []) await upsertSessionEvent(db, ev);
 					// A backgrounded call's completion record, when the source has one.
 					// Same transaction as the messages: the completion is a fact

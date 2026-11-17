@@ -173,7 +173,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 			if (!parsed || parsed.kind !== "message") {
 				const ev = claudeEventOf(obj, raw);
 				if (!STORED_EVENT_KINDS.includes(ev.kind)) continue;
-				events.push({ session_id: sessionId, line: i, kind: ev.kind, ref: null, payload: JSON.stringify(ev.payload) });
+				events.push({ session_id: sessionId, line: i, kind: ev.kind, ref: "", payload: JSON.stringify(ev.payload) });
 				continue;
 			}
 
