@@ -574,8 +574,13 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
  * recovered by this: only a read from line 0 finds it.
  */
 async function lowerOldLineCursors(db: AsyncDatabase): Promise<void> {
-	const rows = (await db.pragma("user_version")) as Array<{ user_version: number }> | number;
-	const version = Array.isArray(rows) ? (rows[0]?.user_version ?? 0) : rows;
+	// better-sqlite3 answers a pragma read with an array of rows: [{ user_version: n }].
+	// Any other shape stops the migration, because guessing "0" would lower every cursor
+	// again on each start.
+	const rows = (await db.pragma("user_version")) as unknown;
+	const first = Array.isArray(rows) ? (rows[0] as { user_version?: unknown } | undefined) : undefined;
+	if (typeof first?.user_version !== "number") throw new Error(`unexpected PRAGMA user_version result: ${JSON.stringify(rows)}`);
+	const version = first.user_version;
 	if (version >= 1) return;
 	await db.exec("UPDATE sessions SET last_line = last_line - 1 WHERE source IN ('pi', 'pi-subagent', 'claude') AND last_line > 0");
 	await db.exec("PRAGMA user_version = 1");
