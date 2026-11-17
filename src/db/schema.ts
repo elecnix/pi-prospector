@@ -524,6 +524,27 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	// intact (they remain the reversible rollback) until a separate change drops
 	// them.
 	await migrateDecisionsToAssertions(db);
+
+	await lowerOldLineCursors(db);
+}
+
+/**
+ * Lower, once, the line cursor of every session whose adapter counted the empty
+ * element after a file's final newline as a line read.
+ *
+ * Pi, Pi subagent and Claude Code sessions indexed before that was fixed keep a
+ * cursor one too high, so the first line appended after the upgrade would still be
+ * skipped. Reading one line again is harmless: messages insert with INSERT OR
+ * IGNORE on their id. The database's `user_version` records that this ran, so a
+ * later `migrate()` leaves the cursors alone. A line lost before the upgrade is not
+ * recovered by this: only a read from line 0 finds it.
+ */
+async function lowerOldLineCursors(db: AsyncDatabase): Promise<void> {
+	const rows = (await db.pragma("user_version")) as Array<{ user_version: number }> | number;
+	const version = Array.isArray(rows) ? (rows[0]?.user_version ?? 0) : rows;
+	if (version >= 1) return;
+	await db.exec("UPDATE sessions SET last_line = last_line - 1 WHERE source IN ('pi', 'pi-subagent', 'claude') AND last_line > 0");
+	await db.exec("PRAGMA user_version = 1");
 }
 
 /**
