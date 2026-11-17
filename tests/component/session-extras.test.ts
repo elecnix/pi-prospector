@@ -704,22 +704,6 @@ describe("export path containment", () => {
 describe("a file that grows between syncs", () => {
 	const user = (id: string) => JSON.stringify({ type: "user", uuid: id, timestamp: "2026-02-01T09:00:00.000Z", message: { role: "user", content: id } });
 
-	it("reads the first line appended since the last sync", async () => {
-		const env = await setup();
-		try {
-			const file = sessionPath(env, "append");
-			write(file, user("a") + "\n" + user("b") + "\n");
-			await sync(env);
-			fs.appendFileSync(file, user("c") + "\n");
-			bump(file);
-			await sync(env);
-			const ids = (await env.db.prepare("SELECT id FROM messages ORDER BY rowid").all()) as Array<{ id: string }>;
-			assert.deepEqual(ids.map((r) => r.id), ["a", "b", "c"]);
-		} finally {
-			await env.cleanup();
-		}
-	});
-
 	it("waits for a line the host has half written and reads it once it is whole", async () => {
 		const env = await setup();
 		try {

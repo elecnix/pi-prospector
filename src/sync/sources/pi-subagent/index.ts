@@ -3,6 +3,7 @@
  * <sessionsDir>/<project>/<parent-dir>/[<short-id>/]<run-N>/session.jsonl
  * that the flat top-level scanner misses (#140).
  */
+import { processedLineCount } from "../../lines.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
@@ -109,7 +110,7 @@ export class PiSubagentSource implements SessionSourceAdapter {
 		return {
 			session,
 			messages,
-			processedCount: lines.length,
+			processedCount: processedLineCount(content, lines.length),
 			processedTimestamp: disc.mtime,
 			forksResolved: 0,
 		};
