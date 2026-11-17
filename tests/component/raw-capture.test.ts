@@ -12,6 +12,7 @@ import { openAsyncDatabase, type AsyncDatabase } from "../../src/db/async-db.js"
 import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
+import { relPathUnderRoot } from "../../src/sync/raw-capture.js";
 import { exportClaudeSession, getExportableSession, insideOut, listMissingClaudeSessions } from "../../src/sync/claude-export.js";
 import { rebuildClaudeRecords, type StoredMessage } from "../../src/sync/claude-rebuild.js";
 import { parseClaudeLine } from "../../src/sync/parser.js";
@@ -436,6 +437,7 @@ describe("rebuild from the reduced projection", () => {
 describe("prospect export-session", () => {
 	it("restores every session whose file is gone and leaves the others alone", async () => {
 		const env = await setup();
+		let dbClosed = false;
 		const saved = { db: process.env["PROSPECTOR_DB_PATH"], root: process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] };
 		try {
 			const gone = sessionPath(env, "gone");
@@ -446,6 +448,7 @@ describe("prospect export-session", () => {
 			await sync(env);
 			fs.rmSync(gone);
 			await env.db.close();
+			dbClosed = true;
 
 			process.env["PROSPECTOR_DB_PATH"] = path.join(env.dir, "test.db");
 			process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] = env.root;
@@ -516,5 +519,41 @@ describe("export path containment", () => {
 		} finally {
 			await env.cleanup();
 		}
+	});
+});
+
+describe("relative paths under the sessions root", () => {
+	it("keeps a directory whose name starts with two dots inside the root", () => {
+		const root = path.join(os.tmpdir(), "prospect-root");
+		assert.equal(relPathUnderRoot(root, path.join(root, "..cache", "s.jsonl"), "proj"), "..cache/s.jsonl");
+		assert.equal(relPathUnderRoot(root, path.join(os.tmpdir(), "elsewhere", "s.jsonl"), "proj"), "proj/s.jsonl");
+	});
+});
+
+describe("rebuild with an empty tool result", () => {
+	it("parses back into the stored text and results when a zero-length result sits between two others", () => {
+		const original = {
+			type: "user", uuid: "u7", parentUuid: "a7", timestamp: "2026-02-01T09:20:00.000Z",
+			message: { role: "user", content: [
+				{ type: "tool_result", tool_use_id: "toolu_a", content: "abc" },
+				{ type: "tool_result", tool_use_id: "toolu_b", content: "" },
+				{ type: "tool_result", tool_use_id: "toolu_c", content: "defg" },
+			] },
+		};
+		const names = new Map([["toolu_a", "read"], ["toolu_b", "bash"], ["toolu_c", "grep"]]);
+		const parsed = parseClaudeLine(JSON.stringify(original), names);
+		assert.ok(parsed && parsed.kind === "message");
+		const e = parsed.entry;
+		assert.equal(e.text, "abc\ndefg");
+		const stored: StoredMessage = {
+			id: e.id, parent_id: e.parentId, timestamp: e.timestamp, role: e.role, content_text: e.text, content_thinking: null,
+			tool_calls: null, tool_results: JSON.stringify(e.tool_results), usage: null, model: null, provider_message_id: null, stop_reason: null, error_message: null,
+		};
+		const { records, notes } = rebuildClaudeRecords({ id: "s", cwd: "/tmp", name: null }, [stored], "p/s.jsonl");
+		assert.equal(notes["tool_result_layout_unrecoverable"], undefined);
+		const again = parseClaudeLine(JSON.stringify(records[0]), names);
+		assert.ok(again && again.kind === "message");
+		assert.equal(again.entry.text, e.text);
+		assert.deepEqual(again.entry.tool_results, e.tool_results);
 	});
 });

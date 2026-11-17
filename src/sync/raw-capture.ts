@@ -138,6 +138,6 @@ export function sidecarFile(relPath: string, content: Buffer, state: RawState): 
  */
 export function relPathUnderRoot(root: string, filePath: string, project: string): string {
 	const rel = path.relative(root, filePath);
-	if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel.split(path.sep).join("/");
+	if (rel && rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel)) return rel.split(path.sep).join("/");
 	return `${project}/${path.basename(filePath)}`;
 }

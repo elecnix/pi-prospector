@@ -84,7 +84,10 @@ export function getCaptureRaw(config?: ProspectorConfig): boolean {
 		if (env === "1" || env === "true") return true;
 		throw new Error(`PROSPECTOR_CAPTURE_RAW must be 0 or 1, not "${env}"`);
 	}
-	return (config ?? loadConfig()).captureRaw !== false;
+	const value: unknown = (config ?? loadConfig()).captureRaw;
+	if (value === undefined) return true;
+	if (typeof value !== "boolean") throw new Error(`captureRaw must be true or false, not ${JSON.stringify(value)}`);
+	return value;
 }
 
 export function getSessionsDir(): string {
