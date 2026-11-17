@@ -182,6 +182,7 @@ describe("re-reading one line that is already stored", () => {
 						assert.equal(result.sessionsProcessed, 1, "the lowered cursor makes the sync read the file again");
 						const after = ((await reread.db.prepare("SELECT last_line FROM sessions").get()) as { last_line: number }).last_line;
 						assert.equal(after, before, "the cursor returns to the end of the file");
+						assert.equal(after, lines.length, "the cursor is the number of lines in the file");
 
 						assert.deepEqual(await derived(reread.db, reread.id), await derived(fresh.db, fresh.id));
 						const a = await dump(fresh.db);

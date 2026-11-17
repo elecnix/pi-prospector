@@ -75,13 +75,15 @@ export async function runSync(
 				// *and* no advanced `last_line` — so a resync reprocesses the file
 				// from the old cursor instead of skipping rows that were never
 				// committed (issue #59).
+				let inserted = 0;
 				const syncSession = db.transaction(async () => {
+					inserted = 0;
 					// The host travels with the adapter, not with the transcript: a mirrored tree keeps
 					// the host name of the machine that wrote it, and a local root gets this machine.
 					if (adapter.host) parsed.session.host = adapter.host;
 					await upsertSession(db, parsed.session);
 					for (const m of parsed.messages) {
-						await insertMessage(db, m);
+						if (await insertMessage(db, m)) inserted++;
 					}
 					for (const x of parsed.extras ?? []) await insertMessageExtras(db, x);
 					for (const ev of parsed.events ?? []) await upsertSessionEvent(db, ev);
@@ -98,7 +100,7 @@ export async function runSync(
 				await syncSession();
 
 				result.sessionsProcessed++;
-				result.messagesInserted += parsed.messages.length;
+				result.messagesInserted += inserted;
 				result.forksResolved += parsed.forksResolved;
 			} catch (err) {
 				result.errors.push(`${disc.filePath}: ${err instanceof Error ? err.message : String(err)}`);

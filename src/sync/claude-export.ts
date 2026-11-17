@@ -11,6 +11,7 @@
  * recorded. The sync skips a file whose time is not newer than the stored one, so
  * copying an export back into the sessions root re-reads nothing.
  */
+import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AsyncDatabase } from "../db/async-db.js";
@@ -67,9 +68,11 @@ export function insideOut(outDir: string, rel: string): string {
  */
 async function writeAtomic(target: string, data: Uint8Array | string, lastModifiedMs: number, beforeCommit?: (target: string) => Promise<void>): Promise<boolean> {
 	await fs.mkdir(path.dirname(target), { recursive: true });
-	const tmp = `${target}.tmp-${process.pid}`;
+	// An unpredictable name in the target's own directory, created exclusively: a path
+	// that already exists, a planted symlink included, fails instead of being followed.
+	const tmp = `${target}.tmp-${crypto.randomBytes(8).toString("hex")}`;
 	try {
-		await fs.writeFile(tmp, data);
+		await fs.writeFile(tmp, data, { flag: "wx" });
 		if (lastModifiedMs > 0) {
 			const seconds = lastModifiedMs / 1000 - MTIME_MARGIN_S;
 			await fs.utimes(tmp, seconds, seconds);

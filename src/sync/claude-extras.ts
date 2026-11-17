@@ -48,7 +48,7 @@ export const SKIPPED_FIELDS: readonly string[] = [
 	"toolUseResult", "serverClassifierContext", "serverClassifierRequest", "wireToolInputs", "requestRef", "permissionDecision", "usage.iterations",
 ];
 
-/** A value whose JSON is longer than this is stored as a size and a hash. */
+/** A value whose JSON is longer than this many bytes is stored as a size and a hash. */
 export const MAX_VALUE_CHARS = 256;
 
 /** The key that marks an elided string. */
@@ -61,15 +61,13 @@ export interface OmittedMarker {
 
 type Json = Record<string, unknown>;
 
-/** `value`, or a marker `{ "$omitted": { bytes, sha256 } }` when its JSON is over the limit. */
+/** `value`, or a marker `{ "$omitted": { bytes, sha256 } }` when its JSON is over the limit, counted in bytes as stored. */
 export function elide(value: unknown): unknown {
-	if (value === null || typeof value !== "object") {
-		if (typeof value !== "string" || value.length + 2 <= MAX_VALUE_CHARS) return value;
-		return { [OMITTED_KEY]: { bytes: Buffer.byteLength(value), sha256: crypto.createHash("sha256").update(value).digest("hex") } };
-	}
+	if (value === undefined) return value;
 	const json = JSON.stringify(value);
-	if (json.length <= MAX_VALUE_CHARS) return value;
-	return { [OMITTED_KEY]: { bytes: Buffer.byteLength(json), sha256: crypto.createHash("sha256").update(json).digest("hex") } };
+	const bytes = Buffer.byteLength(json);
+	if (bytes <= MAX_VALUE_CHARS) return value;
+	return { [OMITTED_KEY]: { bytes, sha256: crypto.createHash("sha256").update(json).digest("hex") } };
 }
 
 /** `obj` with each top-level value elided on its own, so one heavy field does not hide the others. */
@@ -137,6 +135,7 @@ function textLike(block: Json, key: "text" | "thinking"): BlockShape {
 	return shape(block["type"] as string, { n: (block[key] as string).length, x: rest(block, ["type", key]) });
 }
 
+/** "z" for content that is not a string or an array: absent, or an object kept in the block's fields. */
 function resultItems(content: unknown): "s" | "z" | BlockShape[] {
 	if (typeof content === "string") return "s";
 	if (!Array.isArray(content)) return "z";
@@ -160,8 +159,12 @@ function blockShape(block: unknown, assistant: boolean): BlockShape {
 	}
 	if (!assistant && type === "tool_result") {
 		const ci = resultItems(b["content"]);
-		// is_error is a column when true; a false or odd value is kept as a field.
-		return shape("tool_result", { ci, x: rest(b, b["is_error"] === true ? ["type", "tool_use_id", "content", "is_error"] : ["type", "tool_use_id", "content"]) });
+		// is_error is a column when true; a false or odd value is kept as a field. Content
+		// that is neither a string nor an array (an object) is kept as a field too.
+		const drop = ["type", "tool_use_id"];
+		if (b["is_error"] === true) drop.push("is_error");
+		if (typeof b["content"] === "string" || Array.isArray(b["content"]) || b["content"] === undefined) drop.push("content");
+		return shape("tool_result", { ci, x: rest(b, drop) });
 	}
 	return shape(String(type ?? "?"), { x: rest(b, ["type"]) });
 }

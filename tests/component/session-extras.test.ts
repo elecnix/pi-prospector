@@ -14,7 +14,7 @@ import { runSync } from "../../src/sync/index.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { exportClaudeSession, getExportableSession, insideOut, listMissingClaudeSessions, relPathUnderRoot } from "../../src/sync/claude-export.js";
 import { upsertSessionEvent } from "../../src/db/extras-queries.js";
-import { STORED_EVENT_KINDS } from "../../src/sync/claude-extras.js";
+import { MAX_VALUE_CHARS, STORED_EVENT_KINDS, elide, isOmitted } from "../../src/sync/claude-extras.js";
 import { rebuildClaudeRecords, type StoredMessage } from "../../src/sync/claude-rebuild.js";
 import { parseClaudeLine } from "../../src/sync/parser.js";
 import { claudeSessionFileName, claudeSessionId, fixtureUuid, mockFramework } from "./helpers.js";
@@ -729,6 +729,82 @@ describe("export never replaces a file that appears mid-export", () => {
 	}
 });
 
+describe("the size cap bounds the stored bytes", () => {
+	it("stores a string whose JSON is over the cap as a marker, however it escapes", () => {
+		const cases: Array<[string, string]> = [
+			["200 newlines (402 bytes of JSON)", "\n".repeat(200)],
+			["200 two-byte characters (402 bytes)", "\u00e9".repeat(200)],
+			["a control character repeated (1200 bytes of JSON)", "\u0001".repeat(200)],
+		];
+		for (const [label, value] of cases) {
+			assert.ok(value.length <= 254, label);
+			assert.equal(isOmitted(elide(value)), true, `${label} must be stored as a marker`);
+		}
+		assert.equal(elide("a".repeat(250)), "a".repeat(250));
+		assert.equal(Buffer.byteLength(JSON.stringify(elide("\n".repeat(120)))) <= MAX_VALUE_CHARS, true);
+	});
+});
+
+describe("tool-result content that is an object", () => {
+	it("is kept and rebuilt", async () => {
+		const env = await setup();
+		try {
+			const lines = [
+				JSON.stringify({ type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/sample", message: { role: "user", content: "go" } }),
+				JSON.stringify({ type: "assistant", uuid: "a1", parentUuid: "u1", timestamp: "2026-02-01T09:00:01.000Z", message: { id: "m1", role: "assistant", model: "m", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] } }),
+				JSON.stringify({ type: "user", uuid: "u2", parentUuid: "a1", timestamp: "2026-02-01T09:00:02.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: { file: "x" } }] } }),
+			];
+			const file = sessionPath(env, "object-result");
+			write(file, lines.join("\n") + "\n");
+			await sync(env);
+			const original = linesOf(file);
+			fs.rmSync(file);
+			await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("object-result")))!, env.out, env.root);
+			assert.deepEqual(linesOf(path.join(env.out, PROJECT, claudeSessionFileName("object-result"))), original);
+		} finally {
+			await env.cleanup();
+		}
+	});
+});
+
+describe("the temporary file of an export", () => {
+	it("is not a predictable name that a planted symlink can redirect", async () => {
+		const env = await setup();
+		try {
+			const file = sessionPath(env, "symlink");
+			write(file, richLines("symlink").join("\n") + "\n");
+			await sync(env);
+			fs.rmSync(file);
+			const target = path.join(env.out, PROJECT, claudeSessionFileName("symlink"));
+			const victim = path.join(env.dir, "victim.txt");
+			fs.writeFileSync(victim, "untouched\n");
+			fs.mkdirSync(path.dirname(target), { recursive: true });
+			fs.symlinkSync(victim, `${target}.tmp-${process.pid}`);
+			const outcome = await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("symlink")))!, env.out, env.root);
+			assert.equal(outcome.kind, "rebuilt");
+			assert.equal(fs.readFileSync(victim, "utf-8"), "untouched\n");
+		} finally {
+			await env.cleanup();
+		}
+	});
+});
+
+describe("messages inserted by a sync", () => {
+	it("counts only the rows written, so a reread of a stored session reports none", async () => {
+		const env = await setup();
+		try {
+			write(sessionPath(env, "count"), richLines("count").join("\n") + "\n");
+			const first = await sync(env);
+			assert.ok(first.messagesInserted >= 4);
+			const reread = await sync(env, { reread: true });
+			assert.equal(reread.sessionsProcessed, 1);
+			assert.equal(reread.messagesInserted, 0);
+		} finally {
+			await env.cleanup();
+		}
+	});
+});
+
 describe("restore report path", () => {
 	it("never replaces the transcript when the session file does not end in .jsonl", async () => {
 		const env = await setup();
@@ -742,9 +818,15 @@ describe("restore report path", () => {
 			const outcome = await exportClaudeSession(env.db, s, env.out, env.root);
 			assert.equal(outcome.kind, "rebuilt");
 			const target = path.join(env.out, PROJECT, "odd-name");
-			assert.match(fs.readFileSync(target, "utf-8").split("\n")[0]!, /^\{/, "the transcript is still a transcript");
-			assert.ok(fs.existsSync(`${target}.restore.json`));
-			assert.equal(fs.existsSync(target.replace(/\.jsonl$/i, ".restore.json")), true);
+			// The transcript is still a transcript: every line is one JSON record, none is the report.
+			const transcript = fs.readFileSync(target, "utf-8").split("\n").filter((l) => l.startsWith("{"));
+			assert.ok(transcript.length > 3);
+			for (const l of transcript) assert.equal("notRestored" in (JSON.parse(l) as object), false, "a report line is in the transcript");
+			assert.equal(transcript.some((l) => (JSON.parse(l) as { type?: string }).type === "user"), true);
+			// The report sits at its own path, and names the session.
+			const report = JSON.parse(fs.readFileSync(`${target}.restore.json`, "utf-8")) as { sessionId: string; notRestored: string[] };
+			assert.equal(report.sessionId, claudeSessionId("suffix"));
+			assert.ok(report.notRestored.length > 0);
 		} finally {
 			await env.cleanup();
 		}
@@ -799,9 +881,10 @@ describe("fields that repeat across both roles", () => {
 			const rec = (n: number) => {
 				const assistant = n % 2 === 0;
 				const base = { uuid: `r${n}`, parentUuid: n === 1 ? null : `r${n - 1}`, timestamp: "2026-02-01T09:00:00.000Z", gitBranch: "main", version: "9.9.9", cwd: "/tmp/sample" };
+				// One field each role repeats and the other never has, so the carried state of a role matters.
 				return JSON.stringify(assistant
-					? { type: "assistant", ...base, message: { id: `m${n}`, role: "assistant", model: "m", content: [{ type: "text", text: `a${n}` }] } }
-					: { type: "user", ...base, message: { role: "user", content: `u${n}` } });
+					? { type: "assistant", ...base, entrypoint: "cli", message: { id: `m${n}`, role: "assistant", model: "m", content: [{ type: "text", text: `a${n}` }] } }
+					: { type: "user", ...base, userType: "external", message: { role: "user", content: `u${n}` } });
 			};
 			const file = sessionPath(env, "roles");
 			write(file, [1, 2, 3, 4, 5, 6].map(rec).join("\n") + "\n");
@@ -833,7 +916,7 @@ describe("export path containment", () => {
 			// A stored sidecar path that climbs out of the output directory.
 			await env.db.prepare("INSERT INTO session_events (session_id, line, kind, ref, payload) VALUES (?, -1, 'sidecar', '../escape.json', '{}')").run(s.id);
 			await assert.rejects(exportClaudeSession(env.db, s, env.out, env.root), /leaves the output directory/);
-			assert.equal(fs.existsSync(path.join(env.dir, "escape.jsonl")), false);
+			assert.equal(fs.existsSync(path.join(env.dir, "escape.json")), false, "the sidecar was written outside the output directory");
 		} finally {
 			await env.cleanup();
 		}

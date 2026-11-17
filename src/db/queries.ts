@@ -322,11 +322,13 @@ export interface MessageInsert {
 	error_message: string | null;
 }
 
-export async function insertMessage(db: AsyncDatabase, m: MessageInsert): Promise<void> {
-	await prep(db, `
+/** Insert a message; false when its id was already stored and the row was left as it was. */
+export async function insertMessage(db: AsyncDatabase, m: MessageInsert): Promise<boolean> {
+	const result = await prep(db, `
 		INSERT OR IGNORE INTO messages (id, session_id, source, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, usage, content_hash, model, cost_usd, provider_message_id, stop_reason, error_message)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(m.id, m.session_id, m.source, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, m.usage, null, m.model, m.cost_usd, m.provider_message_id, m.stop_reason, m.error_message);
+	return result.changes > 0;
 }
 
 export async function countMessages(db: AsyncDatabase, sessionId: string): Promise<number> {
