@@ -13,7 +13,7 @@ import { parentPort, workerData } from "node:worker_threads";
  *
  * Results are deep-walked into structured-clone-safe values before crossing the
  * bridge, because `structuredClone` rejects values better-sqlite3 can return
- * (notably `Buffer` for BLOB columns).
+ * (a `Buffer` from a BLOB column is copied into a plain `Uint8Array`).
  */
 
 interface WorkerMsg {
@@ -29,8 +29,9 @@ function mono(v: unknown): unknown {
 	const t = typeof v;
 	if (t === "number" || t === "string" || t === "boolean" || t === "bigint") return v;
 	if (Array.isArray(v)) return v.map(mono);
-	if (v instanceof Buffer) return Array.from(v);
-	if (v instanceof Uint8Array) return Array.from(v);
+	// A BLOB crosses as the bytes themselves: structuredClone copies a Uint8Array, and
+	// Array.from would turn a multi-megabyte chunk into millions of boxed numbers.
+	if (v instanceof Uint8Array) return new Uint8Array(v);
 	if (v instanceof Date) return v.toISOString();
 	if (typeof v === "object") {
 		const out: Record<string, unknown> = {};

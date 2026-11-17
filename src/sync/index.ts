@@ -1,9 +1,13 @@
 import { type AsyncDatabase } from "../db/async-db.js";
 import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages, upsertBackgroundTask } from "../db/queries.js";
 import type { DiscoverOptions } from "./scanner.js";
+import { getRawProgress, getRawState, storeRawCapture } from "../db/raw-queries.js";
+import { getCaptureRaw } from "../config.js";
 import { ingestSubagentArtifacts } from "./subagent-artifacts.js";
 import type { SyncResult } from "../types.js";
 import type { SessionSourceAdapter } from "./adapter.js";
+import type { RawCapture } from "./raw-capture.js";
+import type { DiscoveredSession } from "../types.js";
 
 /**
  * Ingest every session discovered by the given adapters.
@@ -24,7 +28,7 @@ import type { SessionSourceAdapter } from "./adapter.js";
 export async function runSync(
 	db: AsyncDatabase,
 	adapters: SessionSourceAdapter[],
-	opts?: DiscoverOptions,
+	opts?: DiscoverOptions & { captureRaw?: boolean },
 ): Promise<SyncResult> {
 	const result: SyncResult = {
 		sessionsProcessed: 0,
@@ -47,6 +51,32 @@ export async function runSync(
 	// because cursors are keyed by file path.
 	const claimed = new Set<string>();
 
+	// Lossless capture of each session file's bytes (#400). Failing to capture never
+	// blocks indexing: the rows a sync writes are the same with or without it.
+	const captureRaw = opts?.captureRaw ?? getCaptureRaw();
+	const rawProgress = captureRaw ? await getRawProgress(db) : new Map<string, { id: string; bytes: number }>();
+	const tryCapture = async (adapter: SessionSourceAdapter, disc: DiscoveredSession, sessionId: string): Promise<RawCapture | null> => {
+		if (!captureRaw || !adapter.captureRaw) return null;
+		try {
+			const capture = await adapter.captureRaw(disc, await getRawState(db, sessionId));
+			if (capture.conflict) {
+				result.errors.push(`${disc.filePath}: raw capture skipped, ${capture.conflict}; the stored copy is kept`);
+				return null;
+			}
+			return capture.chunk || capture.files.length > 0 ? capture : null;
+		} catch (err) {
+			result.errors.push(`${disc.filePath}: raw capture failed: ${err instanceof Error ? err.message : String(err)}`);
+			return null;
+		}
+	};
+	const noteCapture = (capture: RawCapture | null): void => {
+		if (!capture) return;
+		if (capture.chunk) {
+			result.rawSessionsCaptured = (result.rawSessionsCaptured ?? 0) + 1;
+			result.rawBytesStored = (result.rawBytesStored ?? 0) + capture.chunk.data.length;
+		}
+	};
+
 	for (const adapter of active) {
 		for (const disc of await adapter.discover()) {
 			try {
@@ -59,10 +89,21 @@ export async function runSync(
 				// Skip unchanged files
 				if (cursor && cursor.last_modified >= disc.mtime) {
 					result.sessionsSkipped++;
+					// A session indexed before capture existed is filled in once, without
+					// re-parsing it or touching a row the sync wrote.
+					const known = rawProgress.get(disc.filePath);
+					if (captureRaw && adapter.captureRaw && known && known.bytes < disc.size) {
+						const capture = await tryCapture(adapter, disc, known.id);
+						if (capture) {
+							await db.transaction(async () => storeRawCapture(db, capture))();
+							noteCapture(capture);
+						}
+					}
 					continue;
 				}
 
 				const parsed = await adapter.read(disc, cursor?.last_line ?? 0);
+				const rawCapture = await tryCapture(adapter, disc, parsed.session.id);
 
 				// Every DB write for this session commits as one unit. The insert
 				// loop, the cursor advance and the message count are deliberately
@@ -85,11 +126,13 @@ export async function runSync(
 					for (const t of parsed.backgroundTasks ?? []) {
 						await upsertBackgroundTask(db, t);
 					}
+					if (rawCapture) await storeRawCapture(db, rawCapture);
 					await updateCursor(db, parsed.session.id, parsed.processedCount, parsed.processedTimestamp);
 					const total = await countMessages(db, parsed.session.id);
 					await updateMessageCount(db, parsed.session.id, total);
 				});
 				await syncSession();
+				noteCapture(rawCapture);
 
 				result.sessionsProcessed++;
 				result.messagesInserted += parsed.messages.length;

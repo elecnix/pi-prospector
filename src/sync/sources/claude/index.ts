@@ -13,6 +13,7 @@ import { parseLine, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../..
 import { extractBackgroundTasks } from "../../background-tasks.js";
 import { walkSessionDir } from "../../scanner.js";
 import { getClaudeSessionsDir } from "../../../config.js";
+import { nextChunk, sidecarFile, type RawCapture, type RawFile, type RawState } from "../../raw-capture.js";
 
 /**
  * Claude Code's session-file naming: `<session-uuid>.jsonl`, directly under a
@@ -63,6 +64,13 @@ function parentSessionFromPath(filePath: string): string | null {
 	return null;
 }
 
+/** The sidecar a child agent's transcript has beside it: `agent-<id>.jsonl` → `agent-<id>.meta.json`. */
+function sidecarPathFor(filePath: string): string | null {
+	const name = path.basename(filePath);
+	if (!CLAUDE_CHILD_AGENT_FILE_RE.test(name)) return null;
+	return path.join(path.dirname(filePath), name.replace(/\.jsonl$/i, ".meta.json"));
+}
+
 export class ClaudeFileSource implements SessionSourceAdapter {
 	readonly source = "claude";
 	/** Claim order: the built-ins' fixed file shapes are disjoint, so the numbers only pin sync's long-standing claiming order. */
@@ -76,6 +84,38 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 				CLAUDE_SESSION_FILE_RE.test(fileName) ||
 				(CLAUDE_CHILD_AGENT_FILE_RE.test(fileName) && underSubagentsDir(filePath)),
 		});
+	}
+
+	/**
+	 * The path a session file has under the sessions root, which is where an export
+	 * writes it back. A file outside the root (a root that moved since it was
+	 * indexed) keeps its project directory and name.
+	 */
+	relPathOf(filePath: string, project: string): string {
+		const rel = path.relative(this.claudeSessionsDir, filePath);
+		if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel.split(path.sep).join("/");
+		return `${project}/${path.basename(filePath)}`;
+	}
+
+	async captureRaw(disc: DiscoveredSession, stored: RawState): Promise<RawCapture> {
+		const content = await fs.readFile(disc.filePath);
+		const relPath = this.relPathOf(disc.filePath, disc.project);
+		const { chunk, conflict } = nextChunk(content, stored);
+		const files: RawFile[] = [];
+		const sidecar = sidecarPathFor(disc.filePath);
+		if (sidecar) {
+			let bytes: Buffer | null = null;
+			try {
+				bytes = await fs.readFile(sidecar);
+			} catch (err) {
+				if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+			}
+			if (bytes) {
+				const file = sidecarFile(this.relPathOf(sidecar, disc.project), bytes, stored);
+				if (file) files.push(file);
+			}
+		}
+		return { sessionId: path.basename(disc.filePath, ".jsonl"), relPath, chunk, files, conflict };
 	}
 
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {

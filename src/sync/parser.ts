@@ -410,6 +410,17 @@ function normalizeClaudeToolName(name: string): string {
 	return CLAUDE_TOOL_NAME_MAP[name] ?? name;
 }
 
+const CLAUDE_TOOL_NAME_REVERSE = new Map(Object.entries(CLAUDE_TOOL_NAME_MAP).map(([claude, pi]) => [pi, claude]));
+
+/**
+ * The name Claude Code gave a tool, from the normalized one the index stores.
+ * A tool Claude Code itself named in lower case (`bash`) cannot be told from a
+ * normalized `Bash`, so it comes back capitalized: the one name this cannot restore.
+ */
+export function denormalizeClaudeToolName(name: string): string {
+	return CLAUDE_TOOL_NAME_REVERSE.get(name) ?? name;
+}
+
 // ─── Claude line parser ───
 
 /**
@@ -610,7 +621,12 @@ export function parseClaudeLine(line: string, toolNamesById?: Map<string, string
 	return null;
 }
 
-/** Parse session metadata from the first few lines of a Claude session file. */
+/**
+ * Parse session metadata from a Claude session file: the first timestamp and
+ * `cwd` of a conversation line, and the last `ai-title`. The whole file is
+ * scanned, because Claude Code writes the title after the conversation has
+ * started, so a scan that stopped at the first `cwd` never saw it (#400).
+ */
 export function parseClaudeSessionMeta(lines: string[]): ClaudeSessionMeta | null {
 	if (lines.length === 0) return null;
 
@@ -620,6 +636,9 @@ export function parseClaudeSessionMeta(lines: string[]): ClaudeSessionMeta | nul
 
 	for (const line of lines) {
 		if (!line.trim()) continue;
+		// Once the first timestamp and cwd are in hand only a title line can still
+		// change the answer, so the others are not parsed a second time.
+		if (timestamp && cwd && !line.includes('"ai-title"')) continue;
 
 		let obj: Record<string, unknown>;
 		try { obj = JSON.parse(line); } catch { continue; }
@@ -637,8 +656,6 @@ export function parseClaudeSessionMeta(lines: string[]): ClaudeSessionMeta | nul
 			if (!cwd && typeof obj.cwd === "string" && obj.cwd) {
 				cwd = obj.cwd;
 			}
-			// Early exit once we have both
-			if (timestamp && cwd) break;
 		}
 	}
 

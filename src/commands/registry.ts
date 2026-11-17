@@ -218,6 +218,14 @@ export const COMMANDS: ProspectCommand[] = [
 		handler: (module) => module.prospectGc,
 	}),
 	spec({
+		name: "prospect-export-session",
+		flag: "export-session",
+		description:
+			"Write a Claude Code transcript back from the index, for a session whose file Claude Code deleted. --session <id> or --all-missing (every Claude Code session whose file is gone), --out DIR (default: <claude sessions dir>-restored). A session synced with raw capture on comes back byte for byte, with its subagent .meta.json beside it; an older one is rebuilt from the reduced projection, every rebuilt record marked restoredFrom and a .restore.json listing what is lost. Never overwrites a file.",
+		load: () => import("./export-session.js"),
+		handler: (module) => module.prospectExportSession,
+	}),
+	spec({
 		name: "prospect-retract",
 		flag: "retract",
 		description:

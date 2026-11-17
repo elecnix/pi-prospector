@@ -145,6 +145,9 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 			`  Forks resolved:     ${result.forksResolved}`,
 			`  Subagent runs:      ${result.subagentRunsProcessed} ingested, ${result.subagentRunsSkipped} unchanged`,
 		];
+		if (result.rawSessionsCaptured) {
+			lines.push(`  Original bytes:     ${result.rawSessionsCaptured} sessions, ${Math.round((result.rawBytesStored ?? 0) / 1024)} KiB stored compressed`);
+		}
 		if (result.hook) {
 			lines.push(`  Hook: ${result.hook.ok ? "ok" : "failed"} (${result.hook.command})`);
 		}

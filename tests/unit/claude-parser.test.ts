@@ -380,6 +380,19 @@ describe("parseClaudeSessionMeta", () => {
 		assert.equal(meta.cwd, "/home/user/project");
 	});
 
+	it("reads a title written after the first line that carries a cwd (#400)", () => {
+		const lines = [
+			JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-01-15T10:30:00.000Z", cwd: "/home/user/project", message: { role: "user", content: "hi" } }),
+			JSON.stringify({ type: "assistant", uuid: "a1", timestamp: "2026-01-15T10:30:05.000Z", cwd: "/home/user/project", message: { role: "assistant", content: [] } }),
+			JSON.stringify({ type: "ai-title", aiTitle: "First title", sessionId: "s1" }),
+			JSON.stringify({ type: "ai-title", aiTitle: "Later title", sessionId: "s1" }),
+		];
+		const meta = parseClaudeSessionMeta(lines);
+		assert.equal(meta?.title, "Later title");
+		assert.equal(meta?.timestamp, "2026-01-15T10:30:00.000Z");
+		assert.equal(meta?.cwd, "/home/user/project");
+	});
+
 	it("returns null for empty lines array", () => {
 		assert.equal(parseClaudeSessionMeta([]), null);
 	});
