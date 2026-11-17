@@ -13,6 +13,7 @@ import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { exportClaudeSession, getExportableSession, insideOut, listMissingClaudeSessions, relPathUnderRoot } from "../../src/sync/claude-export.js";
+import { STORED_EVENT_KINDS } from "../../src/sync/claude-extras.js";
 import { rebuildClaudeRecords, type StoredMessage } from "../../src/sync/claude-rebuild.js";
 import { parseClaudeLine } from "../../src/sync/parser.js";
 import { claudeSessionFileName, claudeSessionId, fixtureUuid, mockFramework } from "./helpers.js";
@@ -62,7 +63,7 @@ function richLines(label: string): string[] {
 		}),
 		"this line is not json at all",
 		JSON.stringify({
-			type: "user", uuid: "u2", parentUuid: "a1", timestamp: "2026-02-01T09:00:06.000Z", toolUseResult: { ok: true },
+			type: "user", uuid: "u2", parentUuid: "a1", timestamp: "2026-02-01T09:00:06.000Z",
 			message: { role: "user", content: [
 				{ type: "tool_result", tool_use_id: "toolu_01", content: "export const f = 1;" },
 				{ type: "tool_result", tool_use_id: "toolu_02", content: [{ type: "text", text: "fetch.ts\nREADME" }], is_error: false },
@@ -119,6 +120,12 @@ async function extrasSnapshot(db: AsyncDatabase): Promise<string> {
 	});
 }
 
+/** What the sync stores: the lines whose kind is a message or on the stored list. */
+function storedLines(lines: unknown[]): unknown[] {
+	const keep = new Set(["user", "assistant", ...STORED_EVENT_KINDS]);
+	return lines.filter((l) => typeof l === "string" || keep.has(String((l as Record<string, unknown>)["type"])));
+}
+
 /** The lines of a transcript as objects, without the provenance mark a rebuilt record carries. */
 function linesOf(file: string): unknown[] {
 	return fs.readFileSync(file, "utf-8").split("\n").filter((l) => l !== "").map((l) => {
@@ -142,7 +149,7 @@ describe("session extras", () => {
 			write(file, lines.join("\n") + "\n");
 			const result = await sync(env);
 			assert.equal(result.errors.length, 0, result.errors.join("; "));
-			const original = linesOf(file);
+			const original = storedLines(linesOf(file));
 			fs.rmSync(file);
 
 			const s = (await getExportableSession(env.db, claudeSessionId("round-trip")))!;
@@ -198,6 +205,37 @@ describe("session extras", () => {
 		}
 	});
 
+	it("stores only the declared record kinds and fields, and the report names what it left out", async () => {
+		const env = await setup();
+		try {
+			const lines = [
+				JSON.stringify({ type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/sample", message: { role: "user", content: "go" }, toolUseResult: { ok: true }, requestRef: "r1" }),
+				JSON.stringify({ type: "api-request", params: { model: "m" }, requestDigest: "abc" }),
+				JSON.stringify({ type: "mode", mode: "x" }),
+				JSON.stringify({ type: "attachment", attachment: { type: "date", date: "2026-02-01" } }),
+				JSON.stringify({ type: "queue-operation", operation: "enqueue", content: "later" }),
+				JSON.stringify({ type: "somenewkind", value: 1 }),
+				"this line is not json",
+			];
+			const file = sessionPath(env, "lean");
+			write(file, lines.join("\n") + "\n");
+			await sync(env);
+			const kinds = ((await env.db.prepare("SELECT kind FROM session_events ORDER BY line").all()) as Array<{ kind: string }>).map((r) => r.kind);
+			assert.deepEqual(kinds, ["attachment", "queue-operation", "unparsed"]);
+			const row = (await env.db.prepare("SELECT extras FROM message_extras").get()) as { extras: string };
+			assert.equal(row.extras.includes("toolUseResult"), false);
+			assert.equal(row.extras.includes("requestRef"), false);
+			fs.rmSync(file);
+			await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("lean")))!, env.out, env.root);
+			const out = path.join(env.out, PROJECT, claudeSessionFileName("lean"));
+			const report = JSON.parse(fs.readFileSync(out.replace(/\.jsonl$/, ".restore.json"), "utf-8")) as { notRestored: string[] };
+			const text = report.notRestored.join("\n");
+			for (const left of ["api-request", "mode", "file-history-snapshot", "toolUseResult", "usage.iterations"]) assert.match(text, new RegExp(left));
+		} finally {
+			await env.cleanup();
+		}
+	});
+
 	it("stores a string over the limit as its size and hash, and the export says it could not restore it", async () => {
 		const env = await setup();
 		try {
@@ -241,7 +279,7 @@ describe("session extras", () => {
 			fs.appendFileSync(file, lines.slice(6).join("\n") + "\n");
 			bump(file);
 			await sync(env);
-			const original = linesOf(file);
+			const original = storedLines(linesOf(file));
 			fs.rmSync(file);
 			await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("growth")))!, env.out, env.root);
 			assert.deepEqual(linesOf(path.join(env.out, PROJECT, claudeSessionFileName("growth"))), original);
@@ -469,7 +507,7 @@ describe("prospect export-session", () => {
 			const kept = sessionPath(env, "kept");
 			const original = Buffer.from(richLines("gone").join("\n") + "\n");
 			write(gone, original);
-			const originalLines = linesOf(gone);
+			const originalLines = storedLines(linesOf(gone));
 			write(kept, richLines("kept").join("\n") + "\n");
 			await sync(env);
 			fs.rmSync(gone);

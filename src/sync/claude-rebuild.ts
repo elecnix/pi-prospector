@@ -16,7 +16,7 @@
  * record from an original one.
  */
 import { denormalizeClaudeToolName } from "./parser.js";
-import { isOmitted, OMITTED_KEY, type BlockShape, type MessageExtras } from "./claude-extras.js";
+import { LEFT_OUT_EVENT_KINDS, SKIPPED_FIELDS, STORED_EVENT_KINDS, isOmitted, OMITTED_KEY, type BlockShape, type MessageExtras } from "./claude-extras.js";
 
 export const RESTORED_FROM = "pi-prospector";
 
@@ -93,6 +93,8 @@ export const PROJECTION_LOSSES: string[] = [
 
 /** What no session gives back, extras or not. */
 export const ALWAYS_LOST: string[] = [
+	`records of the kinds the sync leaves out: ${LEFT_OUT_EVENT_KINDS.join(", ")}, and any kind not in the stored list (${STORED_EVENT_KINDS.join(", ")})`,
+	`record, message and usage fields the sync leaves out: ${SKIPPED_FIELDS.join(", ")}`,
 	"blank lines, key order and whitespace inside a record",
 	"a usage count the record left out: the rebuild writes all four token counts",
 	"a string the sync stored as a size and hash only (an image, a large attachment, an opaque signature); each is marked $omitted in the file",

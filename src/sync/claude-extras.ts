@@ -19,6 +19,35 @@
 import * as crypto from "node:crypto";
 import { denormalizeClaudeToolName, normalizeClaudeToolName } from "./parser.js";
 
+/**
+ * The record kinds stored as `session_events`. This list is the whole policy: a
+ * kind not on it is not stored, and widening it needs no schema change, only the
+ * kind added here and a sync with `--reread` to fill in sessions already indexed.
+ * It holds every kind a user or the model sees (the conversation itself, hook and
+ * system messages, attachments, queued prompts) plus titles, pull request links,
+ * lines that are not JSON, and sidecar files.
+ */
+export const STORED_EVENT_KINDS: readonly string[] = ["user", "system", "attachment", "queue-operation", "ai-title", "pr-link", "unparsed", "sidecar"];
+
+/**
+ * Kinds Claude Code writes that the policy leaves out: request telemetry and
+ * bookkeeping. Named so the export report can say so. A kind in neither list is
+ * left out too, and the report says that as well.
+ */
+export const LEFT_OUT_EVENT_KINDS: readonly string[] = [
+	"api-request", "api-request-blob", "api-request-shape", "file-history-snapshot", "file-history-delta",
+	"mode", "permission-mode", "cost-state", "session-owner", "tools-used", "last-prompt", "atis-latch",
+];
+
+/**
+ * Record, `message.` and `usage.` fields that are not stored: the heaviest, and
+ * copies of data a column or an event already holds (tool inputs, tool results,
+ * the request a classifier saw). Flattened names, as `message_extras` writes them.
+ */
+export const SKIPPED_FIELDS: readonly string[] = [
+	"toolUseResult", "serverClassifierContext", "serverClassifierRequest", "wireToolInputs", "requestRef", "permissionDecision", "usage.iterations",
+];
+
 /** A value whose JSON is longer than this is stored as a size and a hash. */
 export const MAX_VALUE_CHARS = 256;
 
@@ -176,6 +205,7 @@ export function flatFields(obj: Json, hasUsageColumn: boolean): Json {
 	} else if (usage !== undefined) {
 		flat["usage"] = elide(usage);
 	}
+	for (const k of SKIPPED_FIELDS) delete flat[k];
 	return flat;
 }
 

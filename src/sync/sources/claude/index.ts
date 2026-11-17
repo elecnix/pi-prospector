@@ -10,7 +10,7 @@ import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
 import type { DiscoveredSession } from "../../../types.js";
 import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
 import { parseClaudeRecord, parseClaudeSessionMeta, buildClaudeToolNameMap } from "../../parser.js";
-import { claudeEventOf, claudeMessageExtras, elide, elideFields, flatFields, newExtrasState, newStickyCounts, observeFields, stickyKeys } from "../../claude-extras.js";
+import { STORED_EVENT_KINDS, claudeEventOf, claudeMessageExtras, elide, elideFields, flatFields, newExtrasState, newStickyCounts, observeFields, stickyKeys } from "../../claude-extras.js";
 import type { MessageExtrasInsert, SessionEventInsert } from "../../../db/extras-queries.js";
 import { extractBackgroundTasks } from "../../background-tasks.js";
 import { walkSessionDir } from "../../scanner.js";
@@ -174,6 +174,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 		for (const { line: i, raw, obj, parsed } of items) {
 			if (!parsed || parsed.kind !== "message") {
 				const ev = claudeEventOf(obj, raw);
+				if (!STORED_EVENT_KINDS.includes(ev.kind)) continue;
 				events.push({ session_id: sessionId, line: i, kind: ev.kind, ref: null, payload: JSON.stringify(ev.payload) });
 				continue;
 			}
