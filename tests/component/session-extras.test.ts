@@ -13,6 +13,7 @@ import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { exportClaudeSession, getExportableSession, insideOut, listMissingClaudeSessions, relPathUnderRoot } from "../../src/sync/claude-export.js";
+import { upsertSessionEvent } from "../../src/db/extras-queries.js";
 import { STORED_EVENT_KINDS } from "../../src/sync/claude-extras.js";
 import { rebuildClaudeRecords, type StoredMessage } from "../../src/sync/claude-rebuild.js";
 import { parseClaudeLine } from "../../src/sync/parser.js";
@@ -25,6 +26,8 @@ interface Env {
 	root: string;
 	out: string;
 	dir: string;
+	/** Closes the database once; safe to call again. */
+	close: () => Promise<void>;
 	cleanup: () => Promise<void>;
 }
 
@@ -34,7 +37,13 @@ async function setup(): Promise<Env> {
 	await migrate(db);
 	const root = path.join(dir, "projects");
 	fs.mkdirSync(root, { recursive: true });
-	return { db, root, out: path.join(dir, "restored"), dir, cleanup: async () => { await db.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
+	let closed = false;
+	const close = async (): Promise<void> => {
+		if (closed) return;
+		closed = true;
+		await db.close();
+	};
+	return { db, root, out: path.join(dir, "restored"), dir, close, cleanup: async () => { await close(); fs.rmSync(dir, { recursive: true, force: true }); } };
 }
 
 const PROJECT = "-tmp-sample-project";
@@ -500,7 +509,6 @@ describe("rebuild from the reduced projection", () => {
 describe("prospect export-session", () => {
 	it("restores every session whose file is gone and leaves the others alone", async () => {
 		const env = await setup();
-		let dbClosed = false;
 		const saved = { db: process.env["PROSPECTOR_DB_PATH"], root: process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] };
 		try {
 			const gone = sessionPath(env, "gone");
@@ -511,8 +519,7 @@ describe("prospect export-session", () => {
 			write(kept, richLines("kept").join("\n") + "\n");
 			await sync(env);
 			fs.rmSync(gone);
-			await env.db.close();
-			dbClosed = true;
+			await env.close();
 
 			process.env["PROSPECTOR_DB_PATH"] = path.join(env.dir, "test.db");
 			process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] = env.root;
@@ -532,8 +539,7 @@ describe("prospect export-session", () => {
 		} finally {
 			if (saved.db === undefined) delete process.env["PROSPECTOR_DB_PATH"]; else process.env["PROSPECTOR_DB_PATH"] = saved.db;
 			if (saved.root === undefined) delete process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"]; else process.env["PROSPECTOR_CLAUDE_SESSIONS_DIR"] = saved.root;
-			if (!dbClosed) await env.db.close();
-			fs.rmSync(env.dir, { recursive: true, force: true });
+			await env.cleanup();
 		}
 	});
 });
@@ -716,6 +722,96 @@ describe("export never replaces a file that appears mid-export", () => {
 			}
 		});
 	}
+});
+
+describe("restore report path", () => {
+	it("never replaces the transcript when the session file does not end in .jsonl", async () => {
+		const env = await setup();
+		try {
+			write(sessionPath(env, "suffix"), richLines("suffix").join("\n") + "\n");
+			await sync(env);
+			// A stored file path without the .jsonl ending.
+			const odd = path.join(env.root, PROJECT, "odd-name");
+			await env.db.prepare("UPDATE sessions SET file_path = ? WHERE id = ?").run(odd, claudeSessionId("suffix"));
+			const s = (await getExportableSession(env.db, claudeSessionId("suffix")))!;
+			const outcome = await exportClaudeSession(env.db, s, env.out, env.root);
+			assert.equal(outcome.kind, "rebuilt");
+			const target = path.join(env.out, PROJECT, "odd-name");
+			assert.match(fs.readFileSync(target, "utf-8").split("\n")[0]!, /^\{/, "the transcript is still a transcript");
+			assert.ok(fs.existsSync(`${target}.restore.json`));
+			assert.equal(fs.existsSync(target.replace(/\.jsonl$/i, ".restore.json")), true);
+		} finally {
+			await env.cleanup();
+		}
+	});
+
+	it("does not replace a report that already exists", async () => {
+		const env = await setup();
+		try {
+			const file = sessionPath(env, "report-exists");
+			write(file, richLines("report-exists").join("\n") + "\n");
+			await sync(env);
+			fs.rmSync(file);
+			const report = path.join(env.out, PROJECT, claudeSessionFileName("report-exists").replace(/\.jsonl$/, ".restore.json"));
+			fs.mkdirSync(path.dirname(report), { recursive: true });
+			fs.writeFileSync(report, "kept\n");
+			await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("report-exists")))!, env.out, env.root);
+			assert.equal(fs.readFileSync(report, "utf-8"), "kept\n");
+		} finally {
+			await env.cleanup();
+		}
+	});
+});
+
+describe("two sidecars for one session", () => {
+	it("keeps both, and the export writes both", async () => {
+		const env = await setup();
+		try {
+			write(sessionPath(env, "two-sidecars"), richLines("two-sidecars").join("\n") + "\n");
+			await sync(env);
+			const id = claudeSessionId("two-sidecars");
+			for (const name of ["agent-one.meta.json", "agent-two.meta.json"]) {
+				await upsertSessionEvent(env.db, { session_id: id, line: -1, kind: "sidecar", ref: `${PROJECT}/${name}`, payload: JSON.stringify({ name }) });
+			}
+			assert.equal(((await env.db.prepare("SELECT COUNT(*) AS n FROM session_events WHERE line = -1").get()) as { n: number }).n, 2);
+			// A changed file replaces its own row only.
+			await upsertSessionEvent(env.db, { session_id: id, line: -1, kind: "sidecar", ref: `${PROJECT}/agent-one.meta.json`, payload: JSON.stringify({ name: "changed" }) });
+			assert.equal(((await env.db.prepare("SELECT COUNT(*) AS n FROM session_events WHERE line = -1").get()) as { n: number }).n, 2);
+			fs.rmSync(sessionPath(env, "two-sidecars"));
+			await exportClaudeSession(env.db, (await getExportableSession(env.db, id))!, env.out, env.root);
+			assert.deepEqual(JSON.parse(fs.readFileSync(path.join(env.out, PROJECT, "agent-one.meta.json"), "utf-8")), { name: "changed" });
+			assert.deepEqual(JSON.parse(fs.readFileSync(path.join(env.out, PROJECT, "agent-two.meta.json"), "utf-8")), { name: "agent-two.meta.json" });
+		} finally {
+			await env.cleanup();
+		}
+	});
+});
+
+describe("fields that repeat across both roles", () => {
+	it("rebuilds every record of both roles, in the first read and after a later one", async () => {
+		const env = await setup();
+		try {
+			const rec = (n: number) => {
+				const assistant = n % 2 === 0;
+				const base = { uuid: `r${n}`, parentUuid: n === 1 ? null : `r${n - 1}`, timestamp: "2026-02-01T09:00:00.000Z", gitBranch: "main", version: "9.9.9", cwd: "/tmp/sample" };
+				return JSON.stringify(assistant
+					? { type: "assistant", ...base, message: { id: `m${n}`, role: "assistant", model: "m", content: [{ type: "text", text: `a${n}` }] } }
+					: { type: "user", ...base, message: { role: "user", content: `u${n}` } });
+			};
+			const file = sessionPath(env, "roles");
+			write(file, [1, 2, 3, 4, 5, 6].map(rec).join("\n") + "\n");
+			await sync(env);
+			fs.appendFileSync(file, [7, 8, 9, 10].map(rec).join("\n") + "\n");
+			bump(file);
+			await sync(env);
+			const original = linesOf(file);
+			fs.rmSync(file);
+			await exportClaudeSession(env.db, (await getExportableSession(env.db, claudeSessionId("roles")))!, env.out, env.root);
+			assert.deepEqual(linesOf(path.join(env.out, PROJECT, claudeSessionFileName("roles"))), original);
+		} finally {
+			await env.cleanup();
+		}
+	});
 });
 
 describe("export path containment", () => {

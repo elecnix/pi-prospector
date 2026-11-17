@@ -138,15 +138,15 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 
 		-- One row per source record that is not a message (another record kind, a user
 		-- line flagged as meta, a line that is not JSON) and per small file the host
-		-- writes beside a session (line -1). The payload is the record itself, with
+		-- writes beside a session (line -1, one row per file, told apart by ref). The payload is the record itself, with
 		-- every string over 2048 characters replaced by its size and SHA-256.
 		CREATE TABLE IF NOT EXISTS session_events (
 			session_id TEXT NOT NULL,
 			line INTEGER NOT NULL,
 			kind TEXT NOT NULL,
-			ref TEXT,
+			ref TEXT NOT NULL DEFAULT '',
 			payload TEXT NOT NULL,
-			PRIMARY KEY (session_id, line),
+			PRIMARY KEY (session_id, line, ref),
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		) WITHOUT ROWID;
 

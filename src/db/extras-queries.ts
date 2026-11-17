@@ -16,7 +16,7 @@ export interface SessionEventInsert {
 	line: number;
 	/** The source's own name for the record: its `type`, `unparsed`, or `sidecar`. */
 	kind: string;
-	/** For a sidecar, its path relative to the sessions root. */
+	/** For a sidecar, its path relative to the sessions root, which tells two files of one session apart. Null for a record. */
 	ref: string | null;
 	payload: string;
 }
@@ -27,14 +27,15 @@ export async function insertMessageExtras(db: AsyncDatabase, e: MessageExtrasIns
 
 /**
  * Records at a line never change, so a second write of one is ignored. A sidecar
- * (line -1) is a whole file that can change, so its row is replaced.
+ * (line -1) is a whole file that can change, so its row is replaced. A session can
+ * have several sidecars: each is a row of its own, keyed by its path.
  */
 export async function upsertSessionEvent(db: AsyncDatabase, e: SessionEventInsert): Promise<void> {
 	await db
 		.prepare(
-			"INSERT INTO session_events (session_id, line, kind, ref, payload) VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, line) DO UPDATE SET kind = excluded.kind, ref = excluded.ref, payload = excluded.payload WHERE excluded.line < 0",
+			"INSERT INTO session_events (session_id, line, kind, ref, payload) VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, line, ref) DO UPDATE SET kind = excluded.kind, ref = excluded.ref, payload = excluded.payload WHERE excluded.line < 0",
 		)
-		.run(e.session_id, e.line, e.kind, e.ref, e.payload);
+		.run(e.session_id, e.line, e.kind, e.ref ?? "", e.payload);
 }
 
 export interface StoredExtrasRow {

@@ -142,7 +142,12 @@ export async function exportClaudeSession(db: AsyncDatabase, s: ExportableSessio
 		inferences: notes,
 		notRestored: [...(fromProjection > 0 ? PROJECTION_LOSSES.map((l) => `${l} (for the ${fromProjection} messages synced before extras existed)`) : []), ...ALWAYS_LOST],
 	};
-	await fs.writeFile(target.replace(/\.jsonl$/i, ".restore.json"), JSON.stringify(report, null, 2) + "\n");
+	// Beside the transcript, never on it: a name that already ends in the report's own
+	// suffix gets the suffix added, and the write never replaces an existing report.
+	const stem = target.replace(/\.jsonl$/i, "");
+	let reportPath = `${stem}.restore.json`;
+	if (reportPath === target) reportPath = `${target}.restore.json`;
+	await writeAtomic(reportPath, JSON.stringify(report, null, 2) + "\n", 0);
 	return { kind: "rebuilt", session: s.id, path: target, records: records.length, fromExtras, fromProjection, omittedStrings: notes["omitted_strings"] ?? 0, notes };
 }
 
