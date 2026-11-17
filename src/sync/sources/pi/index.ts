@@ -4,6 +4,7 @@
  * Migrated from the inline syncPiSession() in src/sync/index.ts to a
  * SessionSourceAdapter behind the interface introduced in #138.
  */
+import { processedLineCount } from "../../lines.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
@@ -197,7 +198,7 @@ export class PiFileSource implements SessionSourceAdapter {
 		return {
 			session,
 			messages,
-			processedCount: lines.length,
+			processedCount: processedLineCount(content, lines.length),
 			processedTimestamp: disc.mtime,
 			forksResolved,
 		};

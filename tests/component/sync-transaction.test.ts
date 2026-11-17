@@ -132,16 +132,10 @@ describe("per-session sync transaction (issue #59)", () => {
 		try {
 			const filePath = path.join(fx.dir("proj"), piSessionFileName(S));
 
-			// The syncer's resume cursor is `lines.length` (the count of
-			// `content.split("\n")`). A file ending in a newline yields a trailing
-			// empty element, so `last_line` is *one past* the last real line, and an
-			// append shifts every later line down by one index. That is a
-			// pre-existing cursor miscount (the first appended line is dropped on an
-			// incremental re-sync) and is out of scope for issue #59 — it fails the
-			// untouched `main` code identically. To keep this test about the
-			// transaction, the fixture is written without a trailing newline so that
+			// The fixture is written without a trailing newline at first, so
 			// `last_line` points exactly at the first appended line and an append
-			// aligns with the resume point.
+			// aligns with the resume point. The cursor of a file that ends in a
+			// newline is covered by `resume-cursor.test.ts`.
 			const write = (lines: string[], trailingNewline: boolean) =>
 				fs.writeFileSync(filePath, lines.join("\n") + (trailingNewline ? "\n" : ""));
 
@@ -190,9 +184,9 @@ describe("per-session sync transaction (issue #59)", () => {
 			assert.equal(r3.errors.length, 0, `third run should succeed, got: ${r3.errors}`);
 			const idsRecovered = ((await db.prepare("SELECT id FROM messages WHERE session_id = ? ORDER BY id").all(S)) as Array<{ id: string }>).map((r) => r.id);
 			assert.deepEqual(idsRecovered, ["m1", "m2", "m3-fail"], "re-sync imports the rows the failed run rolled back");
-			// The cursor tracks `lines.length` (split length), which includes the
-			// trailing empty element after the final newline.
-			const finalLineCount = fs.readFileSync(filePath, "utf-8").split("\n").length;
+			// The cursor counts lines that hold a record, so it leaves out the empty
+			// element after the final newline.
+			const finalLineCount = fs.readFileSync(filePath, "utf-8").split("\n").length - 1;
 			cursor = (await db.prepare("SELECT last_line FROM sessions WHERE id = ?").get(S)) as { last_line: number };
 			assert.equal(cursor.last_line, finalLineCount, "cursor advances past the full file after a successful re-run");
 		} finally {
