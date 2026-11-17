@@ -4,6 +4,7 @@
  * Migrated from the inline syncClaudeSession() in src/sync/index.ts to a
  * SessionSourceAdapter behind the interface introduced in #138.
  */
+import { processedLineCount } from "../../lines.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
@@ -159,7 +160,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 			// from ALL lines (not just the resume point) so a completion that
 			// straddles the cursor is still found on an incremental sync.
 			backgroundTasks: extractBackgroundTasks(lines, sessionId),
-			processedCount: lines.length,
+			processedCount: processedLineCount(content, lines.length),
 			processedTimestamp: disc.mtime,
 			forksResolved: 0,
 		};
