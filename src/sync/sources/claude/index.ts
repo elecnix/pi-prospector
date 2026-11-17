@@ -4,6 +4,7 @@
  * Migrated from the inline syncClaudeSession() in src/sync/index.ts to a
  * SessionSourceAdapter behind the interface introduced in #138.
  */
+import { processedLineCount } from "../../lines.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
@@ -131,20 +132,17 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 			tool_inventory: null, // Claude transcripts carry no tool manifest; UNKNOWN.
 		};
 
-		// The last element of the split is "" after a final newline, or a line the host is
-		// still writing. Counting it as read made the next sync resume one line late and
-		// skip the first line appended since. A last line that parses is complete.
-		const last = lines[lines.length - 1]?.trim() ?? "";
-		let lastIsComplete = false;
-		if (last) {
+		// Lines that hold a record, by the shared cursor rule. A last line the host is still
+		// writing has no final newline and does not parse yet: it waits for the next sync
+		// instead of becoming an event.
+		let complete = processedLineCount(content, lines.length);
+		if (!content.endsWith("\n") && content !== "") {
 			try {
-				JSON.parse(last);
-				lastIsComplete = true;
+				JSON.parse(lines[lines.length - 1]?.trim() ?? "");
 			} catch {
-				lastIsComplete = false;
+				complete -= 1;
 			}
 		}
-		const complete = Math.max(0, lines.length - 1 + (lastIsComplete ? 1 : 0));
 
 		// First pass: decode each line, so the fields that repeat from record to record
 		// can be told from the ones that do not before any extras are written.
