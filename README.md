@@ -478,10 +478,13 @@ Index session files into the database. No LLM is called. Fast and cheap.
 - Detects sessions that forked from another via the `parentSession` header — shared message trees are stored once, not duplicated
 - Tracks a cursor per session file (`{session_id, last_line, last_modified}`) and re-indexes a file only when its modification time changes
 
+- Beside each message it stores what no column holds (the line it came from, the order and boundaries of its content blocks, record fields the parser drops, usage beyond four counts), in `message_extras`. Every source record that is not a message, and a child agent's `agent-<id>.meta.json`, goes in `session_events`. A value over 256 characters of JSON is stored as its size and SHA-256 only. See [`/prospect-export-session`](#prospect-export-session)
+
 Run it as often as you like. It's idempotent and incremental.
 
 - `--project NAME` — scope the sync to one **project** (derived from the session directory name). On a fresh install with hundreds of sessions across many repos, this is the escape hatch that syncs only the project you care about instead of paying for every session on disk.
 - `--source pi|claude|codex|opencode|cline` — restrict the sync to one coding harness.
+- `--reread` — read every file again, including ones already indexed. A session synced before the extras tables existed gains its extras and events this way. Messages already stored keep their rows, so nothing else changes. An unchanged file is otherwise skipped, so a plain sync never backfills.
 
 The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.
 
@@ -684,6 +687,17 @@ lists the mute corpus — what is muted, by whom, when, and why. The same three
 operations are available as tool actions (`prospect mute|unmute|mutes`) and as
 `--prospect "mute|unmute|mutes"`, so the reviewing agent can perform the mute
 after operator feedback.
+
+<a id="prospect-export-session"></a>
+
+### `/prospect-export-session --session <id> | --all-missing [--out DIR]`
+
+Rebuild a Claude Code transcript from the database, best effort. Claude Code deletes transcripts after its retention period (30 days by default), and after that the index is the only copy.
+
+- Each message comes from its stored columns (text, thinking, tool calls and results, ids, model, token counts) plus its row in `message_extras`, which says where each content block starts and ends, what the record's other fields were, and the usage fields beyond four counts. Records that are not messages come back from `session_events`. A message synced before the extras existed is rebuilt from its columns alone, with the inferences listed in the report.
+- The file lands at its original path under the sessions root, with a child agent's `.meta.json` beside it. Every rebuilt record carries `"restoredFrom": "pi-prospector"`, and a `<session>.restore.json` says per session how many messages came from extras and how many from the columns alone, how many values were stored as size and hash only (an image, a large attachment, a signature: not restorable), and what no export gives back.
+- Copying the rebuilt file back into the sessions root changes no row: its modification time is set just below the stored one, so the sync skips it, and a forced re-read inserts nothing new because every table inserts with `INSERT OR IGNORE`.
+- `--all-missing` exports every Claude Code session whose file is gone. `--out DIR` defaults to a sibling of the sessions root, `~/.claude/projects-restored`, which nothing scans. The export never replaces an existing file, even one that appears while it runs.
 
 ### `/prospect-verify`
 

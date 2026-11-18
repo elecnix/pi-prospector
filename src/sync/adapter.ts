@@ -7,6 +7,7 @@
  */
 import type { DiscoveredSession } from "../types.js";
 import type { SessionInsert, MessageInsert, BackgroundTaskInsert } from "../db/queries.js";
+import type { MessageExtrasInsert, SessionEventInsert } from "../db/extras-queries.js";
 
 export interface ParsedSession {
 	/** Ready for upsertSessions(). */
@@ -22,6 +23,14 @@ export interface ParsedSession {
 	 * record. Without it a background call times as near-instant (issue #306).
 	 */
 	backgroundTasks?: BackgroundTaskInsert[];
+	/**
+	 * What the source carried that no message column holds (#400): one entry per
+	 * message in `messages` it has any record of, and one per source record that is
+	 * not a message. Both are optional, so a source fills them when it can rebuild its
+	 * own transcript and leaves them out when it cannot.
+	 */
+	extras?: MessageExtrasInsert[];
+	events?: SessionEventInsert[];
 	/** Number of source units processed (lines for files, rows for DB sources). */
 	processedCount: number;
 	/** Timestamp to record in the cursor after successful insert. */

@@ -116,6 +116,40 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
+		-- ───────────────────────── session extras ─────────────────────────
+		-- What the source carried that no column above holds, so a transcript can be
+		-- rebuilt from the index (issue #400). Neither table names a harness: the
+		-- vocabulary in a kind or a payload is the source's own. Additive: both are new
+		-- and nothing existing is read or rewritten. A value already in a column of
+		-- messages or sessions is not stored again here.
+		--
+		-- One row per message: its line in the source file, and a JSON object with the
+		-- ordered content blocks (kind and text length, so content_text and
+		-- content_thinking split back into blocks), the record fields the parser drops
+		-- (only those that changed since the previous record, carried forward), the
+		-- usage fields beyond the four token counts, and the original tool name where
+		-- its casing differs.
+		CREATE TABLE IF NOT EXISTS message_extras (
+			message_id TEXT PRIMARY KEY,
+			line INTEGER NOT NULL,
+			extras TEXT NOT NULL,
+			FOREIGN KEY (message_id) REFERENCES messages(id)
+		) WITHOUT ROWID;
+
+		-- One row per source record that is not a message (another record kind, a user
+		-- line flagged as meta, a line that is not JSON) and per small file the host
+		-- writes beside a session (line -1, one row per file, told apart by ref). The payload is the record itself, with
+		-- every string over 2048 characters replaced by its size and SHA-256.
+		CREATE TABLE IF NOT EXISTS session_events (
+			session_id TEXT NOT NULL,
+			line INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			ref TEXT NOT NULL DEFAULT '',
+			payload TEXT NOT NULL,
+			PRIMARY KEY (session_id, line, ref),
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		) WITHOUT ROWID;
+
 		-- ───────────────────────── subagent runs ─────────────────────────
 		-- The durable record of child-agent runs, ingested from the artifact
 		-- metadata files the host writes beside the parent session
@@ -539,17 +573,28 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
  * later `migrate()` leaves the cursors alone. A line lost before the upgrade is not
  * recovered by this: only a read from line 0 finds it.
  */
-async function lowerOldLineCursors(db: AsyncDatabase): Promise<void> {
-	// better-sqlite3 answers a pragma read with an array of rows: [{ user_version: n }].
-	// Any other shape stops the migration, because guessing "0" would lower every cursor
-	// again on each start.
+/** Read `PRAGMA user_version`. better-sqlite3 answers with an array of rows: [{ user_version: n }]. */
+async function readUserVersion(db: AsyncDatabase): Promise<number> {
 	const rows = (await db.pragma("user_version")) as unknown;
 	const first = Array.isArray(rows) ? (rows[0] as { user_version?: unknown } | undefined) : undefined;
+	// Any other shape stops the migration: guessing "0" would lower every cursor again on each start.
 	if (typeof first?.user_version !== "number") throw new Error(`unexpected PRAGMA user_version result: ${JSON.stringify(rows)}`);
-	const version = first.user_version;
-	if (version >= 1) return;
-	await db.exec("UPDATE sessions SET last_line = last_line - 1 WHERE source IN ('pi', 'pi-subagent', 'claude') AND last_line > 0");
-	await db.exec("PRAGMA user_version = 1");
+	return first.user_version;
+}
+
+export async function lowerOldLineCursors(db: AsyncDatabase, hooks: { afterUpdate?: () => Promise<void> } = {}): Promise<void> {
+	if ((await readUserVersion(db)) >= 1) return;
+	// The cursor change and the version that records it are one transaction: a crash
+	// between them rolls both back, and a second process that opened the database at the
+	// same moment reads the version again under the transaction, so the cursors are
+	// lowered once in total. SQLite keeps `user_version` in the database header, and it
+	// is written inside a transaction like any other change.
+	await db.transaction(async () => {
+		if ((await readUserVersion(db)) >= 1) return;
+		await db.exec("UPDATE sessions SET last_line = last_line - 1 WHERE source IN ('pi', 'pi-subagent', 'claude') AND last_line > 0");
+		if (hooks.afterUpdate) await hooks.afterUpdate();
+		await db.exec("PRAGMA user_version = 1");
+	})();
 }
 
 /**

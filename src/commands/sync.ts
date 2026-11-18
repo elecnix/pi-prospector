@@ -100,7 +100,7 @@ function sourceNames(config: ProspectorConfig): { names: string[]; error?: strin
 }
 
 /** Sync the built-in adapters plus any custom sources config `sources` names, surfacing load errors in the result. */
-export async function runProspectSync(db: AsyncDatabase, opts?: { project?: string; source?: HarnessSource }): Promise<SyncResult> {
+export async function runProspectSync(db: AsyncDatabase, opts?: { project?: string; source?: HarnessSource; reread?: boolean }): Promise<SyncResult> {
 	const config = loadConfig();
 	// A machine whose sessions arrive by git runs its refresh here, so a sync started from
 	// the UI sees what the other computer pushed without anyone remembering the script.
@@ -136,6 +136,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 		const result = await runProspectSync(db, {
 			project: args.project,
 			source: args.source,
+			reread: args.reread,
 		});
 		const lines = [
 			"⛏️ Prospect sync complete",
@@ -166,6 +167,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 interface SyncArgs {
 	project?: string;
 	source?: HarnessSource;
+	reread?: boolean;
 }
 
 function parseSyncArgs(raw: string): SyncArgs {
@@ -174,6 +176,7 @@ function parseSyncArgs(raw: string): SyncArgs {
 	for (let i = 0; i < parts.length; i++) {
 		const p = parts[i];
 		if (p === "--project" && parts[i + 1]) result.project = parts[++i]!;
+		else if (p === "--reread") result.reread = true;
 		else if (p === "--source" && parts[i + 1]) {
 			// Unknown values throw (parseHarnessSource), so a typo fails loudly.
 			result.source = parseHarnessSource(parts[++i]!);

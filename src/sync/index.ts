@@ -1,4 +1,5 @@
 import { type AsyncDatabase } from "../db/async-db.js";
+import { insertMessageExtras, upsertSessionEvent } from "../db/extras-queries.js";
 import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages, upsertBackgroundTask } from "../db/queries.js";
 import type { DiscoverOptions } from "./scanner.js";
 import { ingestSubagentArtifacts } from "./subagent-artifacts.js";
@@ -24,7 +25,7 @@ import type { SessionSourceAdapter } from "./adapter.js";
 export async function runSync(
 	db: AsyncDatabase,
 	adapters: SessionSourceAdapter[],
-	opts?: DiscoverOptions,
+	opts?: DiscoverOptions & { reread?: boolean },
 ): Promise<SyncResult> {
 	const result: SyncResult = {
 		sessionsProcessed: 0,
@@ -57,12 +58,15 @@ export async function runSync(
 				const cursor = await getCursor(db, disc.filePath);
 
 				// Skip unchanged files
-				if (cursor && cursor.last_modified >= disc.mtime) {
+				// `reread` ignores the cursor: it is how a session indexed before the extras
+				// existed gains them. Messages insert with INSERT OR IGNORE, so a message
+				// already stored keeps its row.
+				if (!opts?.reread && cursor && cursor.last_modified >= disc.mtime) {
 					result.sessionsSkipped++;
 					continue;
 				}
 
-				const parsed = await adapter.read(disc, cursor?.last_line ?? 0);
+				const parsed = await adapter.read(disc, opts?.reread ? 0 : (cursor?.last_line ?? 0));
 
 				// Every DB write for this session commits as one unit. The insert
 				// loop, the cursor advance and the message count are deliberately
@@ -71,14 +75,18 @@ export async function runSync(
 				// *and* no advanced `last_line` — so a resync reprocesses the file
 				// from the old cursor instead of skipping rows that were never
 				// committed (issue #59).
+				let inserted = 0;
 				const syncSession = db.transaction(async () => {
+					inserted = 0;
 					// The host travels with the adapter, not with the transcript: a mirrored tree keeps
 					// the host name of the machine that wrote it, and a local root gets this machine.
 					if (adapter.host) parsed.session.host = adapter.host;
 					await upsertSession(db, parsed.session);
 					for (const m of parsed.messages) {
-						await insertMessage(db, m);
+						if (await insertMessage(db, m)) inserted++;
 					}
+					for (const x of parsed.extras ?? []) await insertMessageExtras(db, x, parsed.session.id);
+					for (const ev of parsed.events ?? []) await upsertSessionEvent(db, ev);
 					// A backgrounded call's completion record, when the source has one.
 					// Same transaction as the messages: the completion is a fact
 					// about a call in this session, so it lands with it or not at all.
@@ -92,7 +100,7 @@ export async function runSync(
 				await syncSession();
 
 				result.sessionsProcessed++;
-				result.messagesInserted += parsed.messages.length;
+				result.messagesInserted += inserted;
 				result.forksResolved += parsed.forksResolved;
 			} catch (err) {
 				result.errors.push(`${disc.filePath}: ${err instanceof Error ? err.message : String(err)}`);
