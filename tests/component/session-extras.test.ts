@@ -841,7 +841,12 @@ describe("a message id that two session files share", () => {
 			const row = (await env.db.prepare("SELECT extras FROM message_extras WHERE message_id = 'shared-1'").get()) as { extras: string };
 			assert.match(row.extras, /branch-from-a/);
 			assert.equal(row.extras.includes("branch-from-b"), false);
-			assert.ok(before.length > 0);
+			// The first owner's row was there before B arrived, and B changed nothing about it.
+			const rowsBefore = (JSON.parse(before) as { extras: Array<{ message_id: string; line: number; extras: string }> }).extras;
+			const ownedBefore = rowsBefore.find((r) => r.message_id === "shared-1");
+			assert.ok(ownedBefore, "session A's message has its extras row");
+			assert.deepEqual(row, { extras: ownedBefore.extras });
+			assert.equal(ownedBefore.line, 0);
 		} finally {
 			await env.cleanup();
 		}
