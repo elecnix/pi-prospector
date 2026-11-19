@@ -484,7 +484,7 @@ Run it as often as you like. It's idempotent and incremental.
 
 - `--project NAME` — scope the sync to one **project** (derived from the session directory name). On a fresh install with hundreds of sessions across many repos, this is the escape hatch that syncs only the project you care about instead of paying for every session on disk.
 - `--source pi|claude|codex|opencode|cline` — restrict the sync to one coding harness.
-- `--reread` — read every file again (a file too large for one string is read as a stream of lines; the summary lists, per source, sessions visited, messages added, session rows changed, extras and events added, rebuilt files skipped and errors by class), including ones already indexed. A session synced before the extras tables existed gains its extras and events this way. Messages already stored keep their rows, so nothing else changes. An unchanged file is otherwise skipped, so a plain sync never backfills.
+- `--reread` — read every file again (a file too large for one string is read as a stream of lines; the summary lists, per source, files visited (examined, whether or not they failed), messages added, session rows changed, extras and events added, rebuilt files skipped and errors by class), including ones already indexed. A session synced before the extras tables existed gains its extras and events this way. Messages already stored keep their rows, so nothing else changes. An unchanged file is otherwise skipped, so a plain sync never backfills.
 
 The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.
 

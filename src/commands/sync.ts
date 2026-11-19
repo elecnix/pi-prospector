@@ -149,7 +149,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 		for (const [source, sum] of Object.entries(result.bySource).sort(([a], [b]) => a.localeCompare(b))) {
 			const errors = Object.entries(sum.errors).map(([cls, n]) => `${cls} ${n}`).join(", ");
 			lines.push(
-				`  ${source}: ${sum.visited} visited, ${sum.sessionsAdded} sessions added, ${sum.messagesAdded} messages added, ${sum.sessionFieldsChanged} session rows changed, ${sum.extrasAdded} extras and ${sum.eventsAdded} events added, ${sum.rebuiltSkipped} rebuilt files skipped${errors ? `, errors: ${errors}` : ""}`,
+				`  ${source}: ${sum.visited} files visited, ${sum.sessionsAdded} sessions added, ${sum.messagesAdded} messages added, ${sum.sessionFieldsChanged} session rows changed, ${sum.extrasAdded} extras and ${sum.eventsAdded} events added, ${sum.rebuiltSkipped} rebuilt files skipped${errors ? `, errors: ${errors}` : ""}`,
 			);
 		}
 		if (result.hook) {

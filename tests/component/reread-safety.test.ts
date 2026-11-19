@@ -180,6 +180,14 @@ describe("a file too large for one string", () => {
 	});
 });
 
+/** Every table's rows, for a comparison of the whole database. */
+async function everyTable(db: AsyncDatabase): Promise<Record<string, unknown[]>> {
+	const names = ((await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()) as Array<{ name: string }>).map((t) => t.name);
+	const out: Record<string, unknown[]> = {};
+	for (const n of names) out[n] = await db.prepare(`SELECT * FROM "${n}"`).all();
+	return out;
+}
+
 describe("a rebuilt transcript in the sessions root", () => {
 	const claudeLine = (id: string, extra: Record<string, unknown> = {}) => JSON.stringify({ type: "user", uuid: id, parentUuid: null, timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/p", message: { role: "user", content: id }, ...extra });
 
@@ -205,6 +213,7 @@ describe("a rebuilt transcript in the sessions root", () => {
 				await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], {});
 				await db.exec("UPDATE sessions SET name = 'A title', tool_inventory = '[]'");
 				const before = await counts(db);
+				const tablesBefore = await everyTable(db);
 				// The original is deleted and a rebuild takes its place: other bytes, other lines, newer time.
 				fs.rmSync(file);
 				const rebuilt = [claudeLine("a", mark === "field" ? { restoredFrom: "pi-prospector" } : {}), JSON.stringify({ type: "ai-title", aiTitle: "Other", ...(mark === "field" ? { restoredFrom: "pi-prospector" } : {}) }), claudeLine("b", mark === "field" ? { restoredFrom: "pi-prospector" } : {}), claudeLine("c", mark === "field" ? { restoredFrom: "pi-prospector" } : {})];
@@ -218,7 +227,19 @@ describe("a rebuilt transcript in the sessions root", () => {
 				const was = JSON.parse(before) as typeof after;
 				assert.deepEqual(after.extras, was.extras);
 				assert.deepEqual(after.events, was.events);
-				assert.deepEqual(after.sessions, was.sessions, "no session field and no cursor moved");
+				// No session field and no cursor moved; the message count follows the stored rows.
+				const rows = (await db.prepare("SELECT COUNT(*) AS n FROM messages").get()) as { n: number };
+				assert.equal(rows.n, 3);
+				const strip = (list: unknown): unknown => (list as Array<Record<string, unknown>>).map(({ message_count: _m, ...rest }) => rest);
+				assert.deepEqual(strip(after.sessions), strip(was.sessions));
+				assert.equal((after.sessions as Array<{ message_count: number }>)[0]!.message_count, 3, "the count matches the stored rows");
+				// Every other table is as it was: the new message is the only new row, and the count the only changed field.
+				const tablesAfter = await everyTable(db);
+				for (const t of Object.keys(tablesBefore)) {
+					if (t === "messages" || t === "sessions" || t.startsWith("messages_")) continue;
+					assert.deepEqual(tablesAfter[t], tablesBefore[t], `table ${t} changed`);
+				}
+				assert.equal((tablesAfter["messages"] as unknown[]).length, (tablesBefore["messages"] as unknown[]).length + 1);
 				assert.deepEqual(after.messages.map((m) => m.id), ["a", "b", "c"]);
 			} finally {
 				await db.close();
@@ -278,7 +299,8 @@ describe("the sync summary", () => {
 			fs.writeFileSync(bad, "not a header\n");
 			const result = await runSync(db, [new PiFileSource(sessions)], {});
 			const pi = result.bySource["pi"]!;
-			assert.equal(pi.visited, 1);
+			// visited counts files examined: the good file and the one that failed its header check.
+			assert.equal(pi.visited, 2);
 			assert.equal(pi.sessionsAdded, 1);
 			assert.equal(pi.messagesAdded, 1);
 			assert.deepEqual(pi.errors, { "no-session-header": 1 });

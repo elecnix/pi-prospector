@@ -73,6 +73,9 @@ export async function runSync(
 					continue;
 				}
 
+				// `visited` counts files examined: read or attempted, not skipped as unchanged. A file
+				// that fails its read counts here and in `errors`.
+				summary(disc.source).visited++;
 				const parsed = await adapter.read(disc, opts?.reread ? 0 : (cursor?.last_line ?? 0));
 
 				// Every DB write for this session commits as one unit. The insert
@@ -83,7 +86,6 @@ export async function runSync(
 				// from the old cursor instead of skipping rows that were never
 				// committed (issue #59).
 				const sum = summary(disc.source);
-				sum.visited++;
 				let inserted = 0;
 				let extrasAdded = 0;
 				let eventsAdded = 0;
@@ -105,6 +107,8 @@ export async function runSync(
 						for (const m of parsed.messages) {
 							if (await insertMessage(db, m)) inserted++;
 						}
+						// The count is derived from the stored rows, not a field taken from the rebuild.
+						await updateMessageCount(db, parsed.session.id, await countMessages(db, parsed.session.id));
 						rebuiltSkipped = true;
 						return;
 					}

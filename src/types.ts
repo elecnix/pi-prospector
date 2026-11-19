@@ -292,7 +292,7 @@ export interface ForkInfo {
 
 /** What one source did in a sync run. */
 export interface SourceSyncSummary {
-	/** Files read (not skipped as unchanged). */
+	/** Files examined: read or attempted, not skipped as unchanged. A file that fails its read counts here and in `errors`. */
 	visited: number;
 	sessionsAdded: number;
 	messagesAdded: number;
