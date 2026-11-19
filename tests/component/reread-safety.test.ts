@@ -15,6 +15,9 @@ import { migrate } from "../../src/db/schema.js";
 import { upsertSession, type SessionInsert } from "../../src/db/queries.js";
 import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi/index.js";
+import { CodexFileSource } from "../../src/sync/sources/codex/index.js";
+import { codexMessageLine, codexMetaLine, codexRolloutFileName } from "../fixtures/codex-rollout.js";
+import type { SessionSourceAdapter } from "../../src/sync/adapter.js";
 import { PiSubagentSource } from "../../src/sync/sources/pi-subagent/index.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { exportClaudeSession, getExportableSession } from "../../src/sync/claude-export.js";
@@ -371,4 +374,65 @@ describe("the sync summary", () => {
 			cleanup();
 		}
 	});
+});
+
+describe("the in-memory and the streamed read agree", () => {
+	interface Shape {
+		name: string;
+		adapter: (root: string) => SessionSourceAdapter;
+		file: (root: string) => string;
+		lines: string[];
+	}
+	const claudeUser = (id: string) => JSON.stringify({ type: "user", uuid: id, parentUuid: null, timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/p", message: { role: "user", content: `${id} café ✓` } });
+	const shapes: Shape[] = [
+		{ name: "Claude Code", adapter: (r) => new ClaudeFileSource(r), file: (r) => path.join(r, "-tmp-p", claudeSessionFileName("agree")), lines: [claudeUser("a"), JSON.stringify({ type: "attachment", attachment: { type: "date", date: "2026-02-01" } }), claudeUser("b")] },
+		{ name: "Pi", adapter: (r) => new PiFileSource(r), file: (r) => path.join(r, "--tmp-p--", piSessionFileName(SID)), lines: [sessionHeaderLine(SID), messageLine(SID, 1, "user", "one café", "2026-08-19T01:03:00Z"), messageLine(SID, 2, "assistant", "two", "2026-08-19T01:04:00Z")] },
+		{ name: "Pi subagent", adapter: (r) => new PiSubagentSource(r), file: (r) => path.join(r, "--tmp-p--", `2026-03-01T09-59-00Z_${PARENT}`, "2b83bd26", "run-0", "session.jsonl"), lines: [sessionHeaderLine(SID), messageLine(SID, 1, "user", "one", "2026-08-19T01:03:00Z"), messageLine(SID, 2, "assistant", "two", "2026-08-19T01:04:00Z")] },
+		{ name: "Codex", adapter: (r) => new CodexFileSource(r), file: (r) => path.join(r, "2026", "03", "04", codexRolloutFileName("agree")), lines: [codexMetaLine("agree"), codexMessageLine("user", "hello café"), codexMessageLine("assistant", "hi")] },
+	];
+	const contents = (lines: string[]): Array<[string, string]> => [
+		["a final newline", lines.join("\n") + "\n"],
+		["no final newline", lines.join("\n")],
+		["a half-written last line", lines.slice(0, -1).join("\n") + "\n" + lines[lines.length - 1]!.slice(0, 12)],
+		["an empty file", ""],
+	];
+
+	async function run(shape: Shape, content: string, streamed: boolean): Promise<string> {
+		const { root, cleanup } = makeTempRoot("prospect-agree-");
+		const db = await openDb(root);
+		try {
+			const sessions = path.join(root, "sessions");
+			const target = shape.file(sessions);
+			fs.mkdirSync(path.dirname(target), { recursive: true });
+			fs.writeFileSync(target, content);
+			fs.utimesSync(target, 1_800_000_000, 1_800_000_000);
+			if (streamed) setReadLimitsForTests({ wholeReadBytes: 0, chunkBytes: 5 });
+			const first = await runSync(db, [shape.adapter(sessions)], {});
+			// Append a whole line afterwards: the cursor decides whether it is read.
+			const extra = shape.lines[shape.lines.length - 1]!;
+			const grown = content === "" ? "" : (content.endsWith("\n") ? content : content + "\n") + extra + "\n";
+			fs.writeFileSync(target, grown);
+			fs.utimesSync(target, 1_800_000_100, 1_800_000_100);
+			const second = await runSync(db, [shape.adapter(sessions)], {});
+			const names = ((await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('sessions', 'messages', 'message_extras', 'session_events')").all()) as Array<{ name: string }>).map((t) => t.name).sort();
+			const dump: Record<string, unknown> = { errors: [first.errors, second.errors] };
+			for (const n of names) dump[n] = await db.prepare(`SELECT * FROM "${n}"`).all();
+			// The temporary root differs between the two runs; nothing else may.
+			return JSON.stringify(dump).split(root).join("<root>");
+		} finally {
+			setReadLimitsForTests(null);
+			await db.close();
+			cleanup();
+		}
+	}
+
+	for (const shape of shapes) {
+		for (const [label, content] of contents(shape.lines)) {
+			it(`${shape.name}, ${label}: same line count, cursor and parsed records`, async () => {
+				const whole = await run(shape, content, false);
+				const streamed = await run(shape, content, true);
+				assert.equal(streamed, whole);
+			});
+		}
+	}
 });
