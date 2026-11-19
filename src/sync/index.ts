@@ -143,7 +143,9 @@ export async function runSync(
 					// The host travels with the adapter, not with the transcript: a mirrored tree keeps
 					// the host name of the machine that wrote it, and a local root gets this machine.
 					if (adapter.host) parsed.session.host = adapter.host;
-					parsed.session.last_modified = isLast ? disc.mtime : Number(existingBefore?.["last_modified"] ?? 0);
+					// Only the final batch stamps the file as read. Before that the stamp is 0, even for a file
+					// already indexed: an interrupted re-read must not leave it looking current.
+					parsed.session.last_modified = isLast ? disc.mtime : 0;
 					const keepOnly = rebuiltFile && existingBefore !== undefined;
 					const write = db.transaction(async () => {
 						// A rebuild an export wrote is never a source of session fields, extras, events or a
@@ -158,7 +160,8 @@ export async function runSync(
 							await updateMessageCount(db, sessionId, await countMessages(db, sessionId));
 							return;
 						}
-						if (!parsed.rebuilt) {
+						// `rebuilt` belongs to the whole file, so the first batch decides it for every batch.
+						if (!rebuiltFile) {
 							for (const x of parsed.extras ?? []) if (await insertMessageExtras(db, x, sessionId)) extrasAdded++;
 							for (const ev of parsed.events ?? []) if (await upsertSessionEvent(db, ev)) eventsAdded++;
 						}

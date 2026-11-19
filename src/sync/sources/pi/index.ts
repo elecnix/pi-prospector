@@ -114,22 +114,25 @@ export class PiFileSource implements SessionSourceAdapter {
 		let forksResolved = 0;
 		let name: string | null = null;
 		let initialised = false;
+		let forksReported = 0;
 
 		for await (const batch of lineBatches(disc.filePath)) {
 			if (!initialised) {
-				// Parse session header (must be first non-empty line)
+				// The header is the file's first non-empty line, wherever it falls: a batch of only
+				// blank lines is passed over and the next one is looked at.
+				const firstReal = batch.lines.findIndex((l) => l.trim() !== "");
+				if (firstReal === -1) {
+					if (batch.last) throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
+					continue;
+				}
 				let parentSession: string | null = null;
-				for (const line of batch.lines) {
-					if (!line.trim()) continue;
-					const parsed = parseLine(line);
-					if (parsed && parsed.kind === "session") {
-						parsedHeader = parsed.header;
-						sessionId = parsed.header.id;
-						parentSession = parsed.header.parentSession ?? null;
-						cwd = parsed.header.cwd ?? "";
-						startedAt = parsed.header.timestamp ?? "";
-					}
-					break; // First non-empty line wasn't a header — malformed
+				const parsed = parseLine(batch.lines[firstReal]!);
+				if (parsed && parsed.kind === "session") {
+					parsedHeader = parsed.header;
+					sessionId = parsed.header.id;
+					parentSession = parsed.header.parentSession ?? null;
+					cwd = parsed.header.cwd ?? "";
+					startedAt = parsed.header.timestamp ?? "";
 				}
 				if (!sessionId) {
 					throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
@@ -203,7 +206,7 @@ export class PiFileSource implements SessionSourceAdapter {
 				name,
 				tool_inventory: buildToolInventory(parsedHeader),
 			};
-			yield { session, messages, lastBatch: batch.last, processedCount: Math.max(end, resumeLine), processedTimestamp: disc.mtime, forksResolved: batch.start === 0 ? forksResolved : 0 };
+			yield { session, messages, lastBatch: batch.last, processedCount: Math.max(end, resumeLine), processedTimestamp: disc.mtime, forksResolved: forksReported++ === 0 ? forksResolved : 0 };
 		}
 	}
 }

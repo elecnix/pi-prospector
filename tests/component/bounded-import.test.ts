@@ -333,3 +333,132 @@ describe("the run names the file it reads", () => {
 		}
 	});
 });
+
+describe("what belongs to the whole file survives the batch split", () => {
+	const claudeRec = (id: string, extra: Record<string, unknown> = {}) => JSON.stringify({ type: "user", uuid: id, parentUuid: null, timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/p", message: { role: "user", content: id }, ...extra });
+
+	async function everyTable(db: AsyncDatabase, root: string): Promise<string> {
+		const names = ((await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()) as Array<{ name: string }>).map((t) => t.name);
+		const out: Record<string, unknown[]> = {};
+		for (const n of names) if (!n.startsWith("analy") && n !== "prompt_registry" && !n.startsWith("messages_")) out[n] = await db.prepare(`SELECT * FROM "${n}"`).all();
+		return JSON.stringify(out).split(root).join("<root>");
+	}
+
+	it("a rebuilt transcript of three batches writes no extras, events, session field or cursor from any batch", async () => {
+		const { root, cleanup } = makeTempRoot("prospect-rebuilt3-");
+		const db = await openDb(root);
+		try {
+			const file = path.join(root, "projects", "-tmp-p", claudeSessionFileName("rebuilt3"));
+			fs.mkdirSync(path.dirname(file), { recursive: true });
+			fs.writeFileSync(file, [claudeRec("a"), JSON.stringify({ type: "attachment", attachment: { type: "date", date: "2026-02-01" } })].join("\n") + "\n");
+			await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], {});
+			await db.exec("UPDATE sessions SET name = 'Kept'");
+			const before = await everyTable(db, root);
+			// A rebuild of nine records: three batches of four lines, marked on every record.
+			const rebuilt = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => claudeRec(n === 1 ? "a" : `r${n}`, { restoredFrom: "pi-prospector" }));
+			fs.writeFileSync(file, rebuilt.join("\n") + "\n");
+			setBatchLimitsForTests({ maxLines: 4, maxBytes: 1e9, chunkBytes: 64 });
+			const result = await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], { reread: true });
+			assert.deepEqual(result.errors, []);
+			assert.equal(result.bySource["claude"]!.rebuiltSkipped, 1);
+			const after = JSON.parse(await everyTable(db, root)) as Record<string, Array<Record<string, unknown>>>;
+			const was = JSON.parse(before) as typeof after;
+			for (const t of ["message_extras", "session_events", "background_tasks"]) assert.deepEqual(after[t], was[t], `${t} changed`);
+			const strip = (rows: Array<Record<string, unknown>>) => rows.map(({ message_count: _m, ...r }) => r);
+			assert.deepEqual(strip(after["sessions"]!), strip(was["sessions"]!), "no session field and no cursor moved");
+			assert.equal(after["messages"]!.length, 9, "the messages the index lacked still insert");
+		} finally {
+			setBatchLimitsForTests(null);
+			await db.close();
+			cleanup();
+		}
+	});
+
+	it("a rebuilt transcript of a session the index has not seen creates it, with no extras or events from any of its three batches", async () => {
+		const { root, cleanup } = makeTempRoot("prospect-rebuilt-new-");
+		const db = await openDb(root);
+		try {
+			const file = path.join(root, "projects", "-tmp-p", claudeSessionFileName("rebuilt-new"));
+			fs.mkdirSync(path.dirname(file), { recursive: true });
+			const rebuilt = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => claudeRec(`r${n}`, { restoredFrom: "pi-prospector" }));
+			rebuilt.splice(4, 0, JSON.stringify({ type: "attachment", restoredFrom: "pi-prospector", attachment: { type: "date", date: "2026-02-01" } }));
+			fs.writeFileSync(file, rebuilt.join("\n") + "\n");
+			setBatchLimitsForTests({ maxLines: 4, maxBytes: 1e9, chunkBytes: 64 });
+			const result = await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], {});
+			assert.deepEqual(result.errors, []);
+			assert.equal(((await db.prepare("SELECT COUNT(*) AS n FROM messages").get()) as { n: number }).n, 9);
+			assert.equal(((await db.prepare("SELECT COUNT(*) AS n FROM message_extras").get()) as { n: number }).n, 0);
+			assert.equal(((await db.prepare("SELECT COUNT(*) AS n FROM session_events").get()) as { n: number }).n, 0);
+			assert.equal(((await db.prepare("SELECT COUNT(*) AS n FROM sessions").get()) as { n: number }).n, 1);
+		} finally {
+			setBatchLimitsForTests(null);
+			await db.close();
+			cleanup();
+		}
+	});
+
+	it("an interrupted re-read leaves the file to be read again, and a plain sync completes it to the rows of an uninterrupted one", async () => {
+		const lines = claudeTranscript(30_000).slice(0, 12);
+		const build = async (interrupt: boolean): Promise<{ tables: string; cleanup: () => void }> => {
+			const { root, cleanup } = makeTempRoot("prospect-reread-int-");
+			const db = await openDb(root);
+			try {
+				const projects = path.join(root, "projects");
+				const file = path.join(projects, "-tmp-p", claudeSessionFileName("int"));
+				fs.mkdirSync(path.dirname(file), { recursive: true });
+				fs.writeFileSync(file, lines.join("\n") + "\n");
+				fs.utimesSync(file, 1_800_000_000, 1_800_000_000);
+				// Indexed before the extras existed, so a re-read has something to add.
+				await runSync(db, [new ClaudeFileSource(projects)], {});
+				await db.exec("DELETE FROM message_extras; DELETE FROM session_events");
+				setBatchLimitsForTests({ maxLines: 4, maxBytes: 1e9, chunkBytes: 64 });
+				if (interrupt) {
+					const failed = await runSync(db, [new FailingAfter(projects, 1)], { reread: true });
+					assert.equal(failed.errors.length, 1);
+					const row = (await db.prepare("SELECT last_line, last_modified FROM sessions").get()) as { last_line: number; last_modified: number };
+					assert.ok(row.last_modified < 1_800_000_000_000, "the file is not marked current after an interrupted re-read");
+					const plain = await runSync(db, [new ClaudeFileSource(projects)], {});
+					assert.equal(plain.sessionsSkipped, 0, "a plain sync must not skip it");
+				} else {
+					await runSync(db, [new ClaudeFileSource(projects)], { reread: true });
+				}
+				return { tables: await everyTable(db, root), cleanup };
+			} finally {
+				setBatchLimitsForTests(null);
+				await db.close();
+			}
+		};
+		const clean = await build(false);
+		const interrupted = await build(true);
+		try {
+			assert.equal(interrupted.tables, clean.tables);
+		} finally {
+			clean.cleanup();
+			interrupted.cleanup();
+		}
+	});
+
+	it("a Pi file whose first batch is all blank lines still finds its header, and a file of only blanks fails by class", async () => {
+		const { root, cleanup } = makeTempRoot("prospect-pi-blank-");
+		const db = await openDb(root);
+		try {
+			const sessions = path.join(root, "sessions");
+			const good = path.join(sessions, "--tmp-p--", piSessionFileName(SID));
+			const empty = path.join(sessions, "--tmp-p--", piSessionFileName("22222222-2222-4333-a444-555555555555"));
+			fs.mkdirSync(path.dirname(good), { recursive: true });
+			fs.writeFileSync(good, ["", "", "", "", "", sessionHeaderLine(SID), messageLine(SID, 1, "user", "hi", "2026-08-19T01:03:00Z"), messageLine(SID, 2, "assistant", "there", "2026-08-19T01:04:00Z")].join("\n") + "\n");
+			fs.writeFileSync(empty, "\n\n\n\n\n\n");
+			setBatchLimitsForTests({ maxLines: 2, maxBytes: 1e9, chunkBytes: 64 });
+			const result = await runSync(db, [new PiFileSource(sessions)], {});
+			const pi = result.bySource["pi"]!;
+			assert.deepEqual(pi.errors, { "no-session-header": 1 });
+			assert.equal(pi.messagesAdded, 2);
+			assert.equal(pi.sessionsAdded, 1);
+			assert.equal(result.forksResolved, 0);
+		} finally {
+			setBatchLimitsForTests(null);
+			await db.close();
+			cleanup();
+		}
+	});
+});

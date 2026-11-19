@@ -57,16 +57,18 @@ export class PiSubagentSource implements SessionSourceAdapter {
 
 		for await (const batch of lineBatches(disc.filePath)) {
 			if (!initialised) {
-				for (const line of batch.lines) {
-					if (!line.trim()) continue;
-					const p = parseLine(line);
-					if (p && p.kind === "session") {
-						parsedHeader = p.header;
-						sessionId = p.header.id;
-						cwd = p.header.cwd ?? "";
-						startedAt = p.header.timestamp ?? "";
-					}
-					break;
+				// The header is the file's first non-empty line, wherever it falls.
+				const firstReal = batch.lines.findIndex((l) => l.trim() !== "");
+				if (firstReal === -1) {
+					if (batch.last) throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
+					continue;
+				}
+				const p = parseLine(batch.lines[firstReal]!);
+				if (p && p.kind === "session") {
+					parsedHeader = p.header;
+					sessionId = p.header.id;
+					cwd = p.header.cwd ?? "";
+					startedAt = p.header.timestamp ?? "";
 				}
 				if (!sessionId) throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
 				initialised = true;
