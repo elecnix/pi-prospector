@@ -135,7 +135,9 @@ export async function collectBatches(batches: AsyncGenerator<ParsedSession>): Pr
 		out.processedCount = b.processedCount;
 		out.processedTimestamp = b.processedTimestamp;
 		out.forksResolved += b.forksResolved;
-		out.rebuilt = b.rebuilt;
+		// `rebuilt` belongs to the whole file, so any batch that says so makes the collected read say so.
+		out.rebuilt = out.rebuilt || b.rebuilt;
+		out.lastBatch = b.lastBatch;
 	}
 	if (!out) throw new Error("a batched read yielded no batch");
 	return out;
