@@ -3,6 +3,8 @@
  * <sessionsDir>/<project>/<parent-dir>/[<short-id>/]<run-N>/session.jsonl
  * that the flat top-level scanner misses (#140).
  */
+import { SyncFault } from "../../faults.js";
+import { readSessionLines } from "../../read-lines.js";
 import { processedLineCount } from "../../lines.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -41,8 +43,7 @@ export class PiSubagentSource implements SessionSourceAdapter {
 	}
 
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {
-		const content = await fs.readFile(disc.filePath, "utf-8");
-		const lines = content.split("\n");
+		const lines = await readSessionLines(disc.filePath);
 
 		let sessionId = "";
 		let cwd = "";
@@ -60,7 +61,7 @@ export class PiSubagentSource implements SessionSourceAdapter {
 			}
 			break;
 		}
-		if (!sessionId) throw new Error(`No session header: ${disc.filePath}`);
+		if (!sessionId) throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
 
 		// The session whose directory holds this run's tree, read from the path.
 		const parentSession = parentSessionFromRunPath(disc.filePath);
@@ -110,7 +111,7 @@ export class PiSubagentSource implements SessionSourceAdapter {
 		return {
 			session,
 			messages,
-			processedCount: processedLineCount(content, lines.length),
+			processedCount: processedLineCount(lines),
 			processedTimestamp: disc.mtime,
 			forksResolved: 0,
 		};

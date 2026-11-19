@@ -18,7 +18,8 @@
 import { denormalizeClaudeToolName } from "./parser.js";
 import { LEFT_OUT_EVENT_KINDS, SKIPPED_FIELDS, STORED_EVENT_KINDS, isOmitted, OMITTED_KEY, type BlockShape, type MessageExtras } from "./claude-extras.js";
 
-export const RESTORED_FROM = "pi-prospector";
+export { RESTORED_FROM } from "./rebuilt.js";
+import { RESTORED_FROM } from "./rebuilt.js";
 
 /** One stored message, as read from the `messages` table in insertion order. */
 export interface StoredMessage {

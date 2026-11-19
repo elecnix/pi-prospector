@@ -4,6 +4,8 @@
  * Migrated from the inline syncPiSession() in src/sync/index.ts to a
  * SessionSourceAdapter behind the interface introduced in #138.
  */
+import { SyncFault } from "../../faults.js";
+import { readSessionLines } from "../../read-lines.js";
 import { processedLineCount } from "../../lines.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -99,8 +101,7 @@ export class PiFileSource implements SessionSourceAdapter {
 	}
 
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {
-		const content = await fs.readFile(disc.filePath, "utf-8");
-		const lines = content.split("\n");
+		const lines = await readSessionLines(disc.filePath);
 
 		// Parse session header (must be first non-empty line)
 		let sessionId = "";
@@ -124,7 +125,7 @@ export class PiFileSource implements SessionSourceAdapter {
 		}
 
 		if (!sessionId) {
-			throw new Error(`No session header: ${disc.filePath}`);
+			throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
 		}
 
 		// Resolve fork. The header names the parent as a *path*, and this column holds a
@@ -198,7 +199,7 @@ export class PiFileSource implements SessionSourceAdapter {
 		return {
 			session,
 			messages,
-			processedCount: processedLineCount(content, lines.length),
+			processedCount: processedLineCount(lines),
 			processedTimestamp: disc.mtime,
 			forksResolved,
 		};

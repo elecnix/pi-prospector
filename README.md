@@ -484,7 +484,7 @@ Run it as often as you like. It's idempotent and incremental.
 
 - `--project NAME` — scope the sync to one **project** (derived from the session directory name). On a fresh install with hundreds of sessions across many repos, this is the escape hatch that syncs only the project you care about instead of paying for every session on disk.
 - `--source pi|claude|codex|opencode|cline` — restrict the sync to one coding harness.
-- `--reread` — read every file again, including ones already indexed. A session synced before the extras tables existed gains its extras and events this way. Messages already stored keep their rows, so nothing else changes. An unchanged file is otherwise skipped, so a plain sync never backfills.
+- `--reread` — read every file again (a file too large for one string is read as a stream of lines; the summary lists, per source, sessions visited, messages added, session rows changed, extras and events added, rebuilt files skipped and errors by class), including ones already indexed. A session synced before the extras tables existed gains its extras and events this way. Messages already stored keep their rows, so nothing else changes. An unchanged file is otherwise skipped, so a plain sync never backfills.
 
 The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.
 
@@ -696,6 +696,7 @@ Rebuild a Claude Code transcript from the database, best effort. Claude Code del
 
 - Each message comes from its stored columns (text, thinking, tool calls and results, ids, model, token counts) plus its row in `message_extras`, which says where each content block starts and ends, what the record's other fields were, and the usage fields beyond four counts. Records that are not messages come back from `session_events`. A message synced before the extras existed is rebuilt from its columns alone, with the inferences listed in the report.
 - The file lands in the output directory (`--out`) at its original path relative to the sessions root, with a child agent's `.meta.json` beside it. Every rebuilt record carries `"restoredFrom": "pi-prospector"`, and a `<session>.restore.json` says per session how many messages came from extras and how many from the columns alone, how many values were stored as size and hash only (an image, a large attachment, a signature: not restorable), and what no export gives back.
+- A rebuilt file is marked in two ways: every record carries a top-level `restoredFrom` field, and a `<session>.restore.json` report sits beside it. The sync recognises either. It still inserts a message the index lacks, but reads no extras, no events, no session field and no cursor from a rebuild, and the summary counts it as a rebuilt file skipped.
 - Copying the rebuilt file back into the sessions root changes no row: its modification time is set just below the stored one, so the sync skips it, and a forced re-read inserts nothing new because every table inserts with `INSERT OR IGNORE`.
 - `--all-missing` exports every Claude Code session whose file is gone. `--out DIR` defaults to a sibling of the sessions root, `~/.claude/projects-restored`, which nothing scans. The export never replaces an existing file, even one that appears while it runs.
 

@@ -4,6 +4,8 @@
  * Migrated from the inline syncClaudeSession() in src/sync/index.ts to a
  * SessionSourceAdapter behind the interface introduced in #138.
  */
+import { isRebuiltTranscript } from "../../rebuilt.js";
+import { readSessionLines } from "../../read-lines.js";
 import { processedLineCount } from "../../lines.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -89,8 +91,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 	}
 
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {
-		const content = await fs.readFile(disc.filePath, "utf-8");
-		const lines = content.split("\n");
+		const lines = await readSessionLines(disc.filePath);
 
 		// Derive session ID from file name (UUID, or `agent-<id>` for a child agent)
 		const sessionId = path.basename(disc.filePath, ".jsonl");
@@ -135,8 +136,8 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 		// Lines that hold a record, by the shared cursor rule. A last line the host is still
 		// writing has no final newline and does not parse yet: it waits for the next sync
 		// instead of becoming an event.
-		let complete = processedLineCount(content, lines.length);
-		if (!content.endsWith("\n") && content !== "") {
+		let complete = processedLineCount(lines);
+		if (lines[lines.length - 1] !== "") {
 			try {
 				JSON.parse(lines[lines.length - 1]?.trim() ?? "");
 			} catch {
@@ -232,6 +233,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 			backgroundTasks: extractBackgroundTasks(lines, sessionId),
 			extras,
 			events,
+			rebuilt: await isRebuiltTranscript(disc.filePath, lines),
 			processedCount: complete,
 			processedTimestamp: disc.mtime,
 			forksResolved: 0,

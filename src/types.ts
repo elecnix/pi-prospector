@@ -290,7 +290,25 @@ export interface ForkInfo {
 	branchLine: number; // line number where the fork diverges
 }
 
+/** What one source did in a sync run. */
+export interface SourceSyncSummary {
+	/** Files read (not skipped as unchanged). */
+	visited: number;
+	sessionsAdded: number;
+	messagesAdded: number;
+	/** Existing session rows whose fields changed, not counting the cursor and counts. */
+	sessionFieldsChanged: number;
+	extrasAdded: number;
+	eventsAdded: number;
+	/** Rebuilt transcripts that were not read as originals. */
+	rebuiltSkipped: number;
+	/** Errors by class. */
+	errors: Record<string, number>;
+}
+
 export interface SyncResult {
+	/** Per source tag. */
+	bySource: Record<string, SourceSyncSummary>;
 	sessionsProcessed: number;
 	sessionsSkipped: number;
 	messagesInserted: number;

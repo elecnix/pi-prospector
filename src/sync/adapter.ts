@@ -29,6 +29,11 @@ export interface ParsedSession {
 	 * not a message. Both are optional, so a source fills them when it can rebuild its
 	 * own transcript and leaves them out when it cannot.
 	 */
+	/**
+	 * True when the file is a rebuild an export wrote, not an original transcript. The
+	 * sync then inserts messages it does not have and writes nothing else from the file.
+	 */
+	rebuilt?: boolean;
 	extras?: MessageExtrasInsert[];
 	events?: SessionEventInsert[];
 	/** Number of source units processed (lines for files, rows for DB sources). */

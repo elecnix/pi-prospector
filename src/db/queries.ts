@@ -48,17 +48,39 @@ export interface SessionInsert {
 	host?: string;
 }
 
+/**
+ * Insert a session, or update the one with that id.
+ *
+ * A value the adapter does not provide (null, or the empty string for a text column)
+ * never replaces a stored value: a second read of the same file by an adapter that
+ * knows less (the pi adapter reading a child run, a re-read that finds no title yet)
+ * must not erase what an earlier read learned. Cursor columns, the file path and the
+ * counts are the exception: they describe this read and always take the new value.
+ * `source` follows the adapter that claimed the file.
+ */
 export async function upsertSession(db: AsyncDatabase, s: SessionInsert): Promise<void> {
 	await prep(db, `
 		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count, name, tool_inventory, host)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			file_path=excluded.file_path, project=excluded.project, source=excluded.source, cwd=excluded.cwd,
-			parent_session=excluded.parent_session, last_line=excluded.last_line,
+			file_path=excluded.file_path,
+			project=CASE WHEN excluded.project <> '' THEN excluded.project ELSE sessions.project END,
+			source=excluded.source,
+			cwd=CASE WHEN excluded.cwd <> '' THEN excluded.cwd ELSE sessions.cwd END,
+			parent_session=COALESCE(excluded.parent_session, sessions.parent_session),
+			started_at=CASE WHEN excluded.started_at IS NOT NULL AND excluded.started_at <> '' THEN excluded.started_at ELSE sessions.started_at END,
+			last_line=excluded.last_line,
 			last_modified=excluded.last_modified, message_count=excluded.message_count,
-			branch_count=excluded.branch_count, name=excluded.name, tool_inventory=excluded.tool_inventory,
+			branch_count=excluded.branch_count,
+			name=COALESCE(excluded.name, sessions.name),
+			tool_inventory=COALESCE(excluded.tool_inventory, sessions.tool_inventory),
 			host=CASE WHEN excluded.host <> '' THEN excluded.host ELSE sessions.host END
 	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count, s.name, s.tool_inventory, s.host ?? '');
+}
+
+/** The stored sessions row, or undefined. */
+export async function getSessionRow(db: AsyncDatabase, id: string): Promise<Record<string, unknown> | undefined> {
+	return (await prep(db, "SELECT * FROM sessions WHERE id = ?").get(id)) as Record<string, unknown> | undefined;
 }
 
 export async function getCursor(db: AsyncDatabase, filePath: string): Promise<{ last_line: number; last_modified: number } | undefined> {
