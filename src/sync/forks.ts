@@ -1,4 +1,4 @@
-import { readSessionLines } from "./read-lines.js";
+import { lineBatches } from "./line-batches.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { parseLine } from "./parser.js";
@@ -22,7 +22,11 @@ export async function resolveFork(parentSession: string, sessionsDir: string): P
 	// Read the parent's header to get the parent session ID
 	let parentId = "";
 	try {
-		const firstLine = (await readSessionLines(parentPath))[0]?.trim();
+		let firstLine: string | undefined;
+		for await (const batch of lineBatches(parentPath)) {
+			firstLine = batch.lines[0]?.trim();
+			break;
+		}
 		if (!firstLine) return null;
 		const parsed = parseLine(firstLine);
 		if (!parsed || parsed.kind !== "session") return null;
@@ -32,7 +36,9 @@ export async function resolveFork(parentSession: string, sessionsDir: string): P
 	}
 
 	// Count lines in parent (branch point is the end of parent)
-	const branchLine = (await readSessionLines(parentPath)).filter((l) => l.trim()).length;
+	// Counted as the parent streams past, so a huge parent is never held in memory.
+	let branchLine = 0;
+	for await (const batch of lineBatches(parentPath)) for (const l of batch.lines) if (l.trim()) branchLine++;
 
 	return {
 		parentSessionId: parentId,

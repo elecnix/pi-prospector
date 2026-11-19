@@ -480,10 +480,13 @@ Index session files into the database. No LLM is called. Fast and cheap.
 
 - Beside each message it stores what no column holds (the line it came from, the order and boundaries of its content blocks, record fields the parser drops, usage beyond four counts), in `message_extras`. Every source record that is not a message, and a child agent's `agent-<id>.meta.json`, goes in `session_events`. A value over 256 characters of JSON is stored as its size and SHA-256 only. See [`/prospect-export-session`](#prospect-export-session)
 
+A Claude Code, Pi or Pi subagent file is imported in batches (5,000 lines or 16 MB), each in its own transaction that also advances the file's cursor. Memory does not grow with the file. A file that fails partway keeps the batches it wrote and resumes from its cursor on the next sync. If the heap passes 70% of its limit, the file stops with the class `heap-budget` and resumes the same way. A source that reads a whole file at once (Codex, Cline, OpenCode) skips one past 1 GiB with the class `file-too-large-for-adapter`.
+
 Run it as often as you like. It's idempotent and incremental.
 
 - `--project NAME` — scope the sync to one **project** (derived from the session directory name). On a fresh install with hundreds of sessions across many repos, this is the escape hatch that syncs only the project you care about instead of paying for every session on disk.
 - `--source pi|claude|codex|opencode|cline` — restrict the sync to one coding harness.
+- `--verbose` — log every file as it starts and finishes. Files over 64 MB are always logged, so a long run names the file it is reading.
 - `--reread` — read every file again (a file too large for one string is read as a stream of lines; the summary lists, per source, files visited (examined, whether or not they failed), messages added, session rows changed, extras and events added, rebuilt files skipped and errors by class), including ones already indexed. A session synced before the extras tables existed gains its extras and events this way. Messages already stored keep their rows, so nothing else changes. An unchanged file is otherwise skipped, so a plain sync never backfills.
 
 The `prospect` tool's `sync` action exposes the same two scope options as `project` and `source` params.

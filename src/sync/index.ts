@@ -1,11 +1,12 @@
 import { type AsyncDatabase } from "../db/async-db.js";
 import { insertMessageExtras, upsertSessionEvent } from "../db/extras-queries.js";
-import { faultClassOf } from "./faults.js";
+import * as v8 from "node:v8";
+import { SyncFault, faultClassOf } from "./faults.js";
 import { getSessionRow, upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages, upsertBackgroundTask } from "../db/queries.js";
 import type { DiscoverOptions } from "./scanner.js";
 import { ingestSubagentArtifacts } from "./subagent-artifacts.js";
 import type { SourceSyncSummary, SyncResult } from "../types.js";
-import type { SessionSourceAdapter } from "./adapter.js";
+import type { ParsedSession, SessionSourceAdapter } from "./adapter.js";
 
 /**
  * Ingest every session discovered by the given adapters.
@@ -23,13 +24,45 @@ import type { SessionSourceAdapter } from "./adapter.js";
  * every session on disk. The harness filter selects whole adapters; the
  * project filter applies to whatever each selected adapter discovered.
  */
+/** A file the run starts or finishes, for a log that names the file being read. */
+export interface FileEvent {
+	phase: "start" | "finish";
+	file: string;
+	source: string;
+	size: number;
+}
+
+export interface SyncOptions {
+	reread?: boolean;
+	/** Called as each file starts and finishes. */
+	onFile?: (event: FileEvent) => void;
+	/** Heap use, in bytes, past which a batched file stops with the class `heap-budget`. Default: 70% of the heap limit. */
+	heapBudgetBytes?: number;
+	/** Largest file a source that reads whole files may take. Default 1 GiB. */
+	maxWholeFileBytes?: number;
+}
+
+const MAX_WHOLE_FILE_BYTES = 1024 * 1024 * 1024;
+
+function heapUsed(): number {
+	return v8.getHeapStatistics().used_heap_size;
+}
+
+function heapBudget(): number {
+	return Math.floor(v8.getHeapStatistics().heap_size_limit * 0.7);
+}
+
+async function* singleBatch(read: Promise<ParsedSession>): AsyncGenerator<ParsedSession> {
+	yield await read;
+}
+
 /** The session columns a read may change, not counting the cursor and the counts that every read moves. */
 const SESSION_FIELDS = ["file_path", "project", "source", "cwd", "parent_session", "started_at", "name", "tool_inventory", "host"] as const;
 
 export async function runSync(
 	db: AsyncDatabase,
 	adapters: SessionSourceAdapter[],
-	opts?: DiscoverOptions & { reread?: boolean },
+	opts?: DiscoverOptions & SyncOptions,
 ): Promise<SyncResult> {
 	const result: SyncResult = {
 		bySource: {},
@@ -76,79 +109,89 @@ export async function runSync(
 				// `visited` counts files examined: read or attempted, not skipped as unchanged. A file
 				// that fails its read counts here and in `errors`.
 				summary(disc.source).visited++;
-				const parsed = await adapter.read(disc, opts?.reread ? 0 : (cursor?.last_line ?? 0));
-
-				// Every DB write for this session commits as one unit. The insert
-				// loop, the cursor advance and the message count are deliberately
-				// inside the same transaction: if anything here fails partway,
-				// SQLite rolls the whole session back atomically — no partial rows
-				// *and* no advanced `last_line` — so a resync reprocesses the file
-				// from the old cursor instead of skipping rows that were never
-				// committed (issue #59).
 				const sum = summary(disc.source);
+				const startLine = opts?.reread ? 0 : (cursor?.last_line ?? 0);
+				opts?.onFile?.({ phase: "start", file: disc.filePath, source: disc.source, size: disc.size });
+
+				// A source that cannot read in batches holds the whole file in memory; one too large for
+				// that ends as a classified error for this file, never a crash of the run.
+				if (!adapter.readBatches && disc.size > (opts?.maxWholeFileBytes ?? MAX_WHOLE_FILE_BYTES)) {
+					throw new SyncFault("file-too-large-for-adapter", `${disc.filePath} is ${disc.size} bytes and its source reads a whole file at once`);
+				}
+				const batches: AsyncGenerator<ParsedSession> = adapter.readBatches ? adapter.readBatches(disc, startLine) : singleBatch(adapter.read(disc, startLine));
+
+				// The file is imported batch by batch, each batch in its own transaction that also
+				// advances the cursor. A failure partway therefore keeps the batches already written and
+				// the cursor at the end of the last one, and the next sync resumes from there. The file's
+				// `last_modified` moves only with the final batch, so an unfinished file is read again.
+				let existingBefore: Record<string, unknown> | undefined;
+				let sessionId = "";
+				let first = true;
+				let rebuiltFile = false;
 				let inserted = 0;
 				let extrasAdded = 0;
 				let eventsAdded = 0;
-				let fieldsChanged = false;
-				let added = false;
-				let rebuiltSkipped = false;
-				const syncSession = db.transaction(async () => {
-					inserted = 0;
-					extrasAdded = 0;
-					eventsAdded = 0;
+				let forks = 0;
+				const budget = opts?.heapBudgetBytes ?? heapBudget();
+				for await (const parsed of batches) {
+					if (first) {
+						sessionId = parsed.session.id;
+						existingBefore = await getSessionRow(db, sessionId);
+						rebuiltFile = Boolean(parsed.rebuilt);
+					}
+					const isLast = parsed.lastBatch !== false;
 					// The host travels with the adapter, not with the transcript: a mirrored tree keeps
 					// the host name of the machine that wrote it, and a local root gets this machine.
 					if (adapter.host) parsed.session.host = adapter.host;
-					const existing = await getSessionRow(db, parsed.session.id);
-					// A rebuild an export wrote is never a source of session fields, extras, events or a
-					// cursor. Messages it holds that the index lacks still insert, and a session the index
-					// has never seen is created from it so it is not lost.
-					if (parsed.rebuilt && existing) {
+					parsed.session.last_modified = isLast ? disc.mtime : Number(existingBefore?.["last_modified"] ?? 0);
+					const keepOnly = rebuiltFile && existingBefore !== undefined;
+					const write = db.transaction(async () => {
+						// A rebuild an export wrote is never a source of session fields, extras, events or a
+						// cursor. Messages it holds that the index lacks still insert, and a session the index
+						// has never seen is created from it so it is not lost.
+						if (!keepOnly) await upsertSession(db, parsed.session);
 						for (const m of parsed.messages) {
 							if (await insertMessage(db, m)) inserted++;
 						}
-						// The count is derived from the stored rows, not a field taken from the rebuild.
-						await updateMessageCount(db, parsed.session.id, await countMessages(db, parsed.session.id));
-						rebuiltSkipped = true;
-						return;
+						if (keepOnly) {
+							// The count is derived from the stored rows, not a field taken from the rebuild.
+							await updateMessageCount(db, sessionId, await countMessages(db, sessionId));
+							return;
+						}
+						if (!parsed.rebuilt) {
+							for (const x of parsed.extras ?? []) if (await insertMessageExtras(db, x, sessionId)) extrasAdded++;
+							for (const ev of parsed.events ?? []) if (await upsertSessionEvent(db, ev)) eventsAdded++;
+						}
+						// A backgrounded call's completion record, when the source has one. Same transaction
+						// as the messages: the completion is a fact about a call in this session.
+						for (const t of parsed.backgroundTasks ?? []) await upsertBackgroundTask(db, t);
+						await updateCursor(db, sessionId, parsed.processedCount, parsed.session.last_modified);
+						await updateMessageCount(db, sessionId, await countMessages(db, sessionId));
+					});
+					await write();
+					forks += parsed.forksResolved;
+					first = false;
+					// Nothing of a batch is kept: its arrays go out of scope here. A file that would still
+					// outgrow the heap stops with a classified error; what it wrote is committed.
+					if (!isLast && heapUsed() > budget) {
+						throw new SyncFault("heap-budget", `${disc.filePath}: the heap passed its budget after ${parsed.processedCount} lines; the next sync resumes there`);
 					}
-					await upsertSession(db, parsed.session);
-					for (const m of parsed.messages) {
-						if (await insertMessage(db, m)) inserted++;
-					}
-					if (!parsed.rebuilt) {
-						for (const x of parsed.extras ?? []) if (await insertMessageExtras(db, x, parsed.session.id)) extrasAdded++;
-						for (const ev of parsed.events ?? []) if (await upsertSessionEvent(db, ev)) eventsAdded++;
-					}
-					// A backgrounded call's completion record, when the source has one.
-					// Same transaction as the messages: the completion is a fact
-					// about a call in this session, so it lands with it or not at all.
-					for (const t of parsed.backgroundTasks ?? []) {
-						await upsertBackgroundTask(db, t);
-					}
-					await updateCursor(db, parsed.session.id, parsed.processedCount, parsed.processedTimestamp);
-					const total = await countMessages(db, parsed.session.id);
-					await updateMessageCount(db, parsed.session.id, total);
-					const now = await getSessionRow(db, parsed.session.id);
-					if (!existing) added = true;
-					else if (now) fieldsChanged = SESSION_FIELDS.some((k) => existing[k] !== now[k]);
-				});
-				await syncSession();
+				}
+				const now = sessionId ? await getSessionRow(db, sessionId) : undefined;
+				opts?.onFile?.({ phase: "finish", file: disc.filePath, source: disc.source, size: disc.size });
 
-				if (rebuiltSkipped) {
+				sum.messagesAdded += inserted;
+				result.messagesInserted += inserted;
+				if (rebuiltFile && existingBefore) {
 					sum.rebuiltSkipped++;
-					sum.messagesAdded += inserted;
-					result.messagesInserted += inserted;
 					continue;
 				}
-				sum.messagesAdded += inserted;
 				sum.extrasAdded += extrasAdded;
 				sum.eventsAdded += eventsAdded;
-				if (added) sum.sessionsAdded++;
-				if (fieldsChanged) sum.sessionFieldsChanged++;
+				if (!existingBefore) sum.sessionsAdded++;
+				else if (now && SESSION_FIELDS.some((k) => existingBefore![k] !== now[k])) sum.sessionFieldsChanged++;
 				result.sessionsProcessed++;
-				result.messagesInserted += inserted;
-				result.forksResolved += parsed.forksResolved;
+				result.forksResolved += forks;
 			} catch (err) {
 				result.errors.push(`${disc.filePath}: ${err instanceof Error ? err.message : String(err)}`);
 				const errors = summary(disc.source).errors;
