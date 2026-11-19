@@ -72,7 +72,10 @@ describe("memory does not grow with the file", () => {
 			assert.ok(report.peakHeapMB < 56, `peak heap ${report.peakHeapMB} MB`);
 
 			const unbatched = run("1000000000", "1000000000000", "unbatched.db");
-			assert.notEqual(unbatched.status, 0, "an import that holds the whole file must not fit in this heap");
+			// Out of memory, by its own signature: not a timeout, and not any other failure.
+			assert.equal(unbatched.error, undefined, "the child must not time out or fail to start");
+			assert.ok(unbatched.status === 134 || unbatched.signal === "SIGABRT", `exit ${unbatched.status}, signal ${unbatched.signal}`);
+			assert.match(unbatched.stderr, /JavaScript heap out of memory/);
 		} finally {
 			cleanup();
 		}
@@ -235,21 +238,73 @@ describe("a failed file", () => {
 	});
 });
 
+describe("state that crosses a batch boundary or a sync run", () => {
+	const rec = (o: Record<string, unknown>) => JSON.stringify({ timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/p", ...o });
+	const lines = [
+		rec({ type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "start a background job" } }),
+		rec({ type: "ai-title", aiTitle: "A background job" }),
+		rec({ type: "assistant", uuid: "a2", parentUuid: "u1", message: { id: "m2", role: "assistant", model: "m", content: [{ type: "tool_use", id: "bg1", name: "Bash", input: { command: "sleep 1", run_in_background: true } }] } }),
+		rec({ type: "user", uuid: "u3", parentUuid: "a2", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "bg1", content: "started" }] } }),
+		rec({ type: "assistant", uuid: "a4", parentUuid: "u3", message: { id: "m4", role: "assistant", model: "m", content: [{ type: "text", text: "waiting" }] } }),
+		// Everything above is before the cursor of the second run; the completion and a result come after it.
+		rec({ type: "queue-operation", operation: "enqueue", content: "<task-notification>\n<task-id>x1</task-id>\n<tool-use-id>bg1</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>" }),
+		rec({ type: "assistant", uuid: "a6", parentUuid: "a4", message: { id: "m6", role: "assistant", model: "m", content: [{ type: "tool_use", id: "t6", name: "Read", input: {} }] } }),
+		rec({ type: "user", uuid: "u7", parentUuid: "a6", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "bg1", content: "late result for the early call" }] } }),
+	];
+
+	for (const batchLines of [2, 3, 100]) {
+		it(`a completion after the cursor is recorded, and a result names its early call, with ${batchLines} lines per batch and two runs`, async () => {
+			const { root, cleanup } = makeTempRoot("prospect-cross-");
+			const db = await openDb(root);
+			try {
+				const file = path.join(root, "projects", "-tmp-p", claudeSessionFileName("cross"));
+				fs.mkdirSync(path.dirname(file), { recursive: true });
+				fs.writeFileSync(file, lines.slice(0, 5).join("\n") + "\n");
+				setBatchLimitsForTests({ maxLines: batchLines, maxBytes: 1e9, chunkBytes: 64 });
+				await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], {});
+				fs.appendFileSync(file, lines.slice(5).join("\n") + "\n");
+				const later = fs.statSync(file).mtimeMs / 1000 + 5;
+				fs.utimesSync(file, later, later);
+				const result = await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], {});
+				assert.deepEqual(result.errors, []);
+				const tasks = (await db.prepare("SELECT tool_use_id, task_id, status FROM background_tasks").all()) as Array<{ tool_use_id: string; status: string }>;
+				assert.deepEqual(tasks.map((t) => [t.tool_use_id, t.status]), [["bg1", "completed"]]);
+				// The result after the cursor still resolves the tool of a call made before it.
+				const late = (await db.prepare("SELECT tool_results FROM messages WHERE id = 'u7'").get()) as { tool_results: string };
+				assert.equal((JSON.parse(late.tool_results) as Array<{ toolName: string }>)[0]!.toolName, "bash");
+				// The title written before the cursor is kept.
+				assert.equal(((await db.prepare("SELECT name FROM sessions").get()) as { name: string }).name, "A background job");
+			} finally {
+				setBatchLimitsForTests(null);
+				await db.close();
+				cleanup();
+			}
+		});
+	}
+});
+
 describe("one line limit", () => {
-	it("the batched import ends a file with a line past the limit as line-too-large, and imports none of it", async () => {
+	it("the batched import ends a file with a line past the limit as line-too-large, keeping the batches before it", async () => {
 		const { root, cleanup } = makeTempRoot("prospect-limit-");
 		const db = await openDb(root);
 		try {
 			const dir = path.join(root, "projects", "-tmp-p");
 			fs.mkdirSync(dir, { recursive: true });
+			// Normal lines are about 900 characters; the limit is 2,000, so only the long line fails.
 			const lines = claudeTranscript(30_000).slice(0, 6);
-			lines.push(JSON.stringify({ type: "user", uuid: "huge", parentUuid: null, message: { role: "user", content: "y".repeat(500) } }));
+			assert.ok(lines.every((l) => l.length < 1_500));
+			lines.push(JSON.stringify({ type: "user", uuid: "huge", parentUuid: null, message: { role: "user", content: "y".repeat(3_000) } }));
 			fs.writeFileSync(path.join(dir, claudeSessionFileName("limit")), lines.join("\n") + "\n");
 			// The line limit is the whole-read reader's own; the batch reader honours it.
-			setReadLimitsForTests({ wholeReadBytes: 0, chunkBytes: 64, maxLineChars: 450 });
+			setReadLimitsForTests({ wholeReadBytes: 0, chunkBytes: 64, maxLineChars: 2_000 });
 			setBatchLimitsForTests({ maxLines: 2, maxBytes: 1e9, chunkBytes: 64 });
 			const result = await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], {});
 			assert.deepEqual(result.bySource["claude"]!.errors, { "line-too-large": 1 });
+			// The batches before the long line were written; the cursor is at the end of the last one, and the file is not marked read.
+			const ids = ((await db.prepare("SELECT id FROM messages ORDER BY rowid").all()) as Array<{ id: string }>).map((m) => m.id);
+			assert.deepEqual(ids, ["u1", "a2", "u3", "a4"]);
+			const row = (await db.prepare("SELECT last_line, last_modified FROM sessions").get()) as { last_line: number; last_modified: number };
+			assert.deepEqual(row, { last_line: 4, last_modified: 0 });
 		} finally {
 			setReadLimitsForTests(null);
 			setBatchLimitsForTests(null);

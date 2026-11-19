@@ -89,12 +89,33 @@ export async function* lineBatches(filePath: string, requested: BatchLimits = li
 	}
 }
 
-/** The first `n` non-empty lines of a file, without reading the rest. */
+/**
+ * The first `n` non-empty lines of a file, read without going past them: the stream stops
+ * as soon as `n` are in hand, so a long line later in the file is not this call's concern.
+ */
 export async function firstLines(filePath: string, n: number): Promise<string[]> {
+	const decoder = new StringDecoder("utf8");
+	const stream = fs.createReadStream(filePath, { highWaterMark: Math.min(limits.chunkBytes, 64 * 1024) });
+	const max = Math.min(limits.maxLineChars, currentMaxLineChars());
 	const out: string[] = [];
-	for await (const batch of lineBatches(filePath, { ...limits, maxLines: n * 4, maxBytes: 1024 * 1024 })) {
-		for (const l of batch.lines) if (l.trim() && out.length < n) out.push(l);
-		if (out.length >= n || batch.last) break;
+	let partial = "";
+	const accept = (line: string): void => {
+		if (line.length > max) throw new SyncFault("line-too-large", `A line in ${filePath} is longer than ${max} characters`);
+		if (line.trim() && out.length < n) out.push(line);
+	};
+	try {
+		for await (const chunk of stream) {
+			const parts = (partial + decoder.write(chunk as Buffer)).split("\n");
+			partial = parts.pop() ?? "";
+			for (const line of parts) {
+				accept(line);
+				if (out.length >= n) return out;
+			}
+			if (partial.length > max) accept(partial);
+		}
+		accept(partial + decoder.end());
+		return out;
+	} finally {
+		stream.destroy();
 	}
-	return out;
 }

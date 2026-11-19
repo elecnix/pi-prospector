@@ -13,8 +13,8 @@ import * as fs from "node:fs/promises";
 /** The value the export writes in `restoredFrom`. */
 export const RESTORED_FROM = "pi-prospector";
 
-/** How many leading records are checked for the field. */
-const LEADING_RECORDS = 5;
+/** How many leading records are checked for the field; the adapter reads exactly this many lines. */
+export const LEADING_RECORDS = 5;
 
 export async function isRebuiltTranscript(filePath: string, lines: readonly string[]): Promise<boolean> {
 	let seen = 0;

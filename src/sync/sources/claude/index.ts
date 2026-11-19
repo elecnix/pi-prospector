@@ -4,7 +4,7 @@
  * Migrated from the inline syncClaudeSession() in src/sync/index.ts to a
  * SessionSourceAdapter behind the interface introduced in #138.
  */
-import { isRebuiltTranscript } from "../../rebuilt.js";
+import { LEADING_RECORDS, isRebuiltTranscript } from "../../rebuilt.js";
 import { firstLines, lineBatches } from "../../line-batches.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -111,7 +111,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 			? parentSessionFromPath(disc.filePath)
 			: null;
 
-		const rebuilt = await isRebuiltTranscript(disc.filePath, await firstLines(disc.filePath, 5));
+		const rebuilt = await isRebuiltTranscript(disc.filePath, await firstLines(disc.filePath, LEADING_RECORDS));
 		const sidecarEvent = await this.sidecarEvent(disc, sessionId);
 
 		// Claude tool_result blocks carry only a tool_use_id; resolve the tool name from the
