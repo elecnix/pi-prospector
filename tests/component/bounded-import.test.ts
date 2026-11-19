@@ -19,6 +19,7 @@ import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi/index.js";
 import { PiSubagentSource } from "../../src/sync/sources/pi-subagent/index.js";
 import { CodexFileSource } from "../../src/sync/sources/codex/index.js";
+import { setReadLimitsForTests } from "../../src/sync/read-lines.js";
 import { setBatchLimitsForTests } from "../../src/sync/line-batches.js";
 import { exportClaudeSession, getExportableSession } from "../../src/sync/claude-export.js";
 import { codexMessageLine, codexMetaLine, codexRolloutFileName } from "../fixtures/codex-rollout.js";
@@ -228,6 +229,30 @@ describe("a failed file", () => {
 			assert.deepEqual(result.bySource["codex"]!.errors, { "file-too-large-for-adapter": 1 });
 			assert.equal(((await db.prepare("SELECT COUNT(*) AS n FROM sessions").get()) as { n: number }).n, 0);
 		} finally {
+			await db.close();
+			cleanup();
+		}
+	});
+});
+
+describe("one line limit", () => {
+	it("the batched import ends a file with a line past the limit as line-too-large, and imports none of it", async () => {
+		const { root, cleanup } = makeTempRoot("prospect-limit-");
+		const db = await openDb(root);
+		try {
+			const dir = path.join(root, "projects", "-tmp-p");
+			fs.mkdirSync(dir, { recursive: true });
+			const lines = claudeTranscript(30_000).slice(0, 6);
+			lines.push(JSON.stringify({ type: "user", uuid: "huge", parentUuid: null, message: { role: "user", content: "y".repeat(500) } }));
+			fs.writeFileSync(path.join(dir, claudeSessionFileName("limit")), lines.join("\n") + "\n");
+			// The line limit is the whole-read reader's own; the batch reader honours it.
+			setReadLimitsForTests({ wholeReadBytes: 0, chunkBytes: 64, maxLineChars: 450 });
+			setBatchLimitsForTests({ maxLines: 2, maxBytes: 1e9, chunkBytes: 64 });
+			const result = await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], {});
+			assert.deepEqual(result.bySource["claude"]!.errors, { "line-too-large": 1 });
+		} finally {
+			setReadLimitsForTests(null);
+			setBatchLimitsForTests(null);
 			await db.close();
 			cleanup();
 		}

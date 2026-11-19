@@ -14,6 +14,7 @@
 import * as fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { SyncFault } from "./faults.js";
+import { MAX_LINE_CHARS, currentMaxLineChars } from "./read-lines.js";
 
 export interface LineBatch {
 	/** Index in the file of this batch's first line. */
@@ -30,7 +31,7 @@ export interface BatchLimits {
 	chunkBytes: number;
 }
 
-export const DEFAULT_BATCH_LIMITS: BatchLimits = { maxLines: 5_000, maxBytes: 16 * 1024 * 1024, maxLineChars: 256 * 1024 * 1024, chunkBytes: 1024 * 1024 };
+export const DEFAULT_BATCH_LIMITS: BatchLimits = { maxLines: 5_000, maxBytes: 16 * 1024 * 1024, maxLineChars: MAX_LINE_CHARS, chunkBytes: 1024 * 1024 };
 
 let limits: BatchLimits = DEFAULT_BATCH_LIMITS;
 
@@ -43,7 +44,9 @@ export function currentBatchLimits(): BatchLimits {
 	return limits;
 }
 
-export async function* lineBatches(filePath: string, use: BatchLimits = limits): AsyncGenerator<LineBatch> {
+export async function* lineBatches(filePath: string, requested: BatchLimits = limits): AsyncGenerator<LineBatch> {
+	// One line limit for both readers: the lower of the batch limit and the whole-read limit.
+	const use: BatchLimits = { ...requested, maxLineChars: Math.min(requested.maxLineChars, currentMaxLineChars()) };
 	const decoder = new StringDecoder("utf8");
 	const stream = fs.createReadStream(filePath, { highWaterMark: use.chunkBytes });
 	let partial = "";
@@ -63,6 +66,7 @@ export async function* lineBatches(filePath: string, use: BatchLimits = limits):
 			partial = parts.pop() ?? "";
 			if (partial.length > use.maxLineChars) tooLarge();
 			for (const line of parts) {
+				if (line.length > use.maxLineChars) tooLarge();
 				current.push(line);
 				currentBytes += line.length + 1;
 				index++;
