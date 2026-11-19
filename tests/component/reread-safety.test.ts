@@ -84,6 +84,47 @@ describe("an upsert of an existing session keeps what the adapter does not provi
 	});
 });
 
+describe("a text column the adapter leaves empty or blank keeps the stored value", () => {
+	const columns = ["project", "cwd", "parent_session", "started_at", "name", "tool_inventory", "host"] as const;
+	for (const column of columns) {
+		for (const blank of ["", "   "]) {
+			it(`${column} read as ${JSON.stringify(blank)}`, async () => {
+				const { root, cleanup } = makeTempRoot("prospect-blank-");
+				const db = await openDb(root);
+				try {
+					const known: SessionInsert = { ...base, project: "proj", cwd: "/work", parent_session: "p1", started_at: "2026-01-01T00:00:00Z", name: "A name", tool_inventory: "[]", host: "host-a" };
+					await upsertSession(db, known);
+					await upsertSession(db, { ...known, [column]: blank, last_line: 9 });
+					const row = await sessionRow(db);
+					assert.equal(row[column], known[column], `${column} was replaced by ${JSON.stringify(blank)}`);
+				} finally {
+					await db.close();
+					cleanup();
+				}
+			});
+		}
+	}
+
+	it("a real adapter path: a Claude Code title of only spaces does not replace the stored title", async () => {
+		const { root, cleanup } = makeTempRoot("prospect-blank-title-");
+		const db = await openDb(root);
+		try {
+			const dir = path.join(root, "projects", "-tmp-p");
+			fs.mkdirSync(dir, { recursive: true });
+			const file = path.join(dir, claudeSessionFileName("blank-title"));
+			const user = JSON.stringify({ type: "user", uuid: "a", parentUuid: null, timestamp: "2026-02-01T09:00:00.000Z", cwd: "/tmp/p", message: { role: "user", content: "a" } });
+			fs.writeFileSync(file, [user, JSON.stringify({ type: "ai-title", aiTitle: "Real title" })].join("\n") + "\n");
+			await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], {});
+			fs.writeFileSync(file, [user, JSON.stringify({ type: "ai-title", aiTitle: "   " })].join("\n") + "\n");
+			await runSync(db, [new ClaudeFileSource(path.join(root, "projects"))], { reread: true });
+			assert.equal((await sessionRow(db))["name"], "Real title");
+		} finally {
+			await db.close();
+			cleanup();
+		}
+	});
+});
+
 describe("a re-read of a child run keeps its parent", () => {
 	it("pi-subagent sets the parent, and a later read by the pi adapter keeps it", async () => {
 		const { root, cleanup } = makeTempRoot("prospect-child-");
