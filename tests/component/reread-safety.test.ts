@@ -21,6 +21,7 @@ import type { SessionSourceAdapter } from "../../src/sync/adapter.js";
 import { PiSubagentSource } from "../../src/sync/sources/pi-subagent/index.js";
 import { ClaudeFileSource } from "../../src/sync/sources/claude/index.js";
 import { exportClaudeSession, getExportableSession } from "../../src/sync/claude-export.js";
+import { setBatchLimitsForTests } from "../../src/sync/line-batches.js";
 import { readSessionLines, setReadLimitsForTests } from "../../src/sync/read-lines.js";
 import { claudeSessionFileName, claudeSessionId, makeTempRoot, messageLine, piSessionFileName, sessionHeaderLine } from "./helpers.js";
 
@@ -435,4 +436,43 @@ describe("the in-memory and the streamed read agree", () => {
 			});
 		}
 	}
+});
+
+describe("a fork whose parent has a line past the limit", () => {
+	it("ends the child file as its classified error, names the parent, and leaves the run and the other files alone", async () => {
+		const { root, cleanup } = makeTempRoot("prospect-fork-long-");
+		const db = await openDb(root);
+		try {
+			const sessions = path.join(root, "sessions");
+			const dir = path.join(sessions, "--tmp-p--");
+			fs.mkdirSync(dir, { recursive: true });
+			const parentId = "33333333-3333-4333-a444-555555555555";
+			const parent = path.join(root, "elsewhere", piSessionFileName(parentId));
+			fs.mkdirSync(path.dirname(parent), { recursive: true });
+			// Short lines first, so the header read finishes before the long line is reached; the long line fails the count.
+			fs.writeFileSync(parent, [sessionHeaderLine(parentId), messageLine(parentId, 1, "user", "a", "2026-08-19T01:03:00Z"), messageLine(parentId, 2, "user", "b", "2026-08-19T01:03:10Z"), messageLine(parentId, 3, "user", "c", "2026-08-19T01:03:20Z"), messageLine(parentId, 4, "user", "x".repeat(600), "2026-08-19T01:03:30Z")].join("\n") + "\n");
+			const child = path.join(dir, piSessionFileName(SID));
+			fs.writeFileSync(child, [JSON.stringify({ type: "session", version: 3, id: SID, timestamp: "2026-08-19T01:05:00Z", cwd: "/tmp", parentSession: parent }), messageLine(SID, 1, "user", "hi", "2026-08-19T01:06:00Z")].join("\n") + "\n");
+			const other = "44444444-4444-4333-a444-555555555555";
+			fs.writeFileSync(path.join(dir, piSessionFileName(other)), [sessionHeaderLine(other), messageLine(other, 1, "user", "fine", "2026-08-19T01:07:00Z")].join("\n") + "\n");
+			setReadLimitsForTests({ wholeReadBytes: 1e12, chunkBytes: 64, maxLineChars: 300 });
+			setBatchLimitsForTests({ maxLines: 2, maxBytes: 1e9, chunkBytes: 64 });
+			let result;
+			try {
+				result = await runSync(db, [new PiFileSource(sessions)], {});
+			} finally {
+				setReadLimitsForTests(null);
+				setBatchLimitsForTests(null);
+			}
+			assert.deepEqual(result.bySource["pi"]!.errors, { "line-too-large": 1 });
+			assert.match(result.errors.join("\n"), /parent session/, "the message says the fault is in the parent");
+			assert.ok(result.errors[0]!.includes(piSessionFileName(SID)), "and names the child file");
+			const ids = ((await db.prepare("SELECT id FROM sessions").all()) as Array<{ id: string }>).map((s) => s.id);
+			assert.ok(ids.includes(other));
+			assert.equal(ids.includes(SID), false);
+		} finally {
+			await db.close();
+			cleanup();
+		}
+	});
 });

@@ -1,3 +1,4 @@
+import { SyncFault } from "./faults.js";
 import { lineBatches } from "./line-batches.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -37,8 +38,15 @@ export async function resolveFork(parentSession: string, sessionsDir: string): P
 
 	// Count lines in parent (branch point is the end of parent)
 	// Counted as the parent streams past, so a huge parent is never held in memory.
+	// A fault here (a line past the limit) is the parent's, but it ends the child's read, so the
+	// message says whose it is. The class stays, so the summary counts it under its own name.
 	let branchLine = 0;
-	for await (const batch of lineBatches(parentPath)) for (const l of batch.lines) if (l.trim()) branchLine++;
+	try {
+		for await (const batch of lineBatches(parentPath)) for (const l of batch.lines) if (l.trim()) branchLine++;
+	} catch (err) {
+		if (err instanceof SyncFault) throw new SyncFault(err.faultClass, `Cannot count the lines of the parent session ${path.basename(parentPath)}: ${err.message}`);
+		throw err;
+	}
 
 	return {
 		parentSessionId: parentId,
