@@ -5,11 +5,10 @@
  * SessionSourceAdapter behind the interface introduced in #138.
  */
 import { SyncFault } from "../../faults.js";
-import { readSessionLines } from "../../read-lines.js";
-import { processedLineCount } from "../../lines.js";
+import { lineBatches } from "../../line-batches.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
+import { collectBatches, type SessionSourceAdapter, type ParsedSession } from "../../adapter.js";
 import type { DiscoveredSession } from "../../../types.js";
 import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
 import { parseLine, extractSessionName } from "../../parser.js";
@@ -101,108 +100,114 @@ export class PiFileSource implements SessionSourceAdapter {
 	}
 
 	async read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession> {
-		const lines = await readSessionLines(disc.filePath);
+		return collectBatches(this.readBatches(disc, resumeLine));
+	}
 
-		// Parse session header (must be first non-empty line)
+	/** The file is streamed from its first line; only the lines from `resumeLine` on become rows, one batch at a time. */
+	async *readBatches(disc: DiscoveredSession, resumeLine: number): AsyncGenerator<ParsedSession> {
 		let sessionId = "";
-		let parentSession: string | null = null;
 		let cwd = "";
 		let startedAt = "";
 		let parsedHeader: import("../../../types.js").SessionHeader | null = null;
-
-		for (const line of lines) {
-			if (!line.trim()) continue;
-			const parsed = parseLine(line);
-			if (parsed && parsed.kind === "session") {
-				parsedHeader = parsed.header;
-				sessionId = parsed.header.id;
-				parentSession = parsed.header.parentSession ?? null;
-				cwd = parsed.header.cwd ?? "";
-				startedAt = parsed.header.timestamp ?? "";
-				break;
-			}
-			break; // First non-empty line wasn't a header — malformed
-		}
-
-		if (!sessionId) {
-			throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
-		}
-
-		// Resolve fork. The header names the parent as a *path*, and this column holds a
-		// session id everywhere else, so the resolved id is what gets stored. Reading
-		// the parent's own header is authoritative; when that file is gone, pi's naming
-		// still records the id in the file name (#327).
+		let parentSessionId: string | null = null;
 		let branchCount = 0;
 		let forksResolved = 0;
-		let parentSessionId: string | null = null;
-		if (parentSession) {
-			const forkInfo = await resolveFork(parentSession, this.artifactsRoot);
-			if (forkInfo) {
-				branchCount = 1;
-				forksResolved = 1;
-				parentSessionId = forkInfo.parentSessionId;
-			} else {
-				parentSessionId = piSessionIdFromFileName(path.basename(parentSession));
+		let name: string | null = null;
+		let initialised = false;
+		let forksReported = 0;
+
+		for await (const batch of lineBatches(disc.filePath)) {
+			if (!initialised) {
+				// The header is the file's first non-empty line, wherever it falls: a batch of only
+				// blank lines is passed over and the next one is looked at.
+				const firstReal = batch.lines.findIndex((l) => l.trim() !== "");
+				if (firstReal === -1) {
+					if (batch.last) throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
+					continue;
+				}
+				let parentSession: string | null = null;
+				const parsed = parseLine(batch.lines[firstReal]!);
+				if (parsed && parsed.kind === "session") {
+					parsedHeader = parsed.header;
+					sessionId = parsed.header.id;
+					parentSession = parsed.header.parentSession ?? null;
+					cwd = parsed.header.cwd ?? "";
+					startedAt = parsed.header.timestamp ?? "";
+				}
+				if (!sessionId) {
+					throw new SyncFault("no-session-header", `No session header: ${disc.filePath}`);
+				}
+				// Resolve fork. The header names the parent as a *path*, and this column holds a
+				// session id everywhere else, so the resolved id is what gets stored. Reading
+				// the parent's own header is authoritative; when that file is gone, pi's naming
+				// still records the id in the file name (#327).
+				if (parentSession) {
+					const forkInfo = await resolveFork(parentSession, this.artifactsRoot);
+					if (forkInfo) {
+						branchCount = 1;
+						forksResolved = 1;
+						parentSessionId = forkInfo.parentSessionId;
+					} else {
+						parentSessionId = piSessionIdFromFileName(path.basename(parentSession));
+					}
+				}
+				initialised = true;
 			}
-		}
 
-		// The human-readable session name, written in `session_info` records that can
-		// sit anywhere in the file (and after the resume point), so scan everything.
-		const name = extractSessionName(lines);
+			let end = batch.start + batch.lines.length;
+			if (batch.last && batch.lines[batch.lines.length - 1] === "") end -= 1;
 
-		const session: SessionInsert = {
-			id: sessionId,
-			file_path: disc.filePath,
-			project: disc.project,
-			source: disc.source,
-			cwd,
-			parent_session: parentSessionId,
-			started_at: startedAt,
-			last_line: resumeLine,
-			last_modified: disc.mtime,
-			analyzed_at: null,
-			message_count: 0,
-			branch_count: branchCount,
-			name,
-			tool_inventory: buildToolInventory(parsedHeader),
-		};
+			const messages: MessageInsert[] = [];
+			for (let k = 0; k < batch.lines.length; k++) {
+				const i = batch.start + k;
+				const line = batch.lines[k]?.trim();
+				if (!line) continue;
+				// The session name sits in `session_info` records that can be anywhere in the file, after the resume point too.
+				const inRange = i >= resumeLine;
+				if (!inRange && !line.includes("session_info")) continue;
+				const parsed = parseLine(line);
+				if (parsed?.kind === "session-info" && parsed.name) name = parsed.name;
+				if (!inRange || !parsed || parsed.kind === "session" || parsed.kind === "session-info") continue;
 
-		const messages: MessageInsert[] = [];
-		for (let i = resumeLine; i < lines.length; i++) {
-			const line = lines[i]?.trim();
-			if (!line) continue;
+				const entry = parsed.entry;
+				messages.push({
+					id: entry.id,
+					session_id: sessionId,
+					source: disc.source,
+					parent_id: entry.parentId,
+					timestamp: entry.timestamp,
+					role: entry.role,
+					content_text: entry.text,
+					content_thinking: entry.thinking,
+					tool_calls: entry.tool_calls ? JSON.stringify(entry.tool_calls) : null,
+					tool_results: entry.tool_results ? JSON.stringify(entry.tool_results) : null,
+					usage: entry.usage ? JSON.stringify(entry.usage) : null,
+					model: entry.model,
+					cost_usd: entry.costUsd,
+					provider_message_id: entry.providerMessageId,
+					stop_reason: entry.stopReason,
+					error_message: entry.errorMessage,
+				});
+			}
 
-			const parsed = parseLine(line);
-			if (!parsed || parsed.kind === "session" || parsed.kind === "session-info") continue;
-
-			const entry = parsed.entry;
-			messages.push({
-				id: entry.id,
-				session_id: sessionId,
+			const session: SessionInsert = {
+				id: sessionId,
+				file_path: disc.filePath,
+				project: disc.project,
 				source: disc.source,
-				parent_id: entry.parentId,
-				timestamp: entry.timestamp,
-				role: entry.role,
-				content_text: entry.text,
-				content_thinking: entry.thinking,
-				tool_calls: entry.tool_calls ? JSON.stringify(entry.tool_calls) : null,
-				tool_results: entry.tool_results ? JSON.stringify(entry.tool_results) : null,
-				usage: entry.usage ? JSON.stringify(entry.usage) : null,
-				model: entry.model,
-				cost_usd: entry.costUsd,
-				provider_message_id: entry.providerMessageId,
-				stop_reason: entry.stopReason,
-				error_message: entry.errorMessage,
-			});
+				cwd,
+				parent_session: parentSessionId,
+				started_at: startedAt,
+				last_line: end,
+				last_modified: disc.mtime,
+				analyzed_at: null,
+				message_count: 0,
+				branch_count: branchCount,
+				name,
+				tool_inventory: buildToolInventory(parsedHeader),
+			};
+			yield { session, messages, lastBatch: batch.last, processedCount: Math.max(end, resumeLine), processedTimestamp: disc.mtime, forksResolved: forksReported++ === 0 ? forksResolved : 0 };
 		}
-
-		return {
-			session,
-			messages,
-			processedCount: processedLineCount(lines),
-			processedTimestamp: disc.mtime,
-			forksResolved,
-		};
 	}
 }
 

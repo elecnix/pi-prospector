@@ -60,7 +60,7 @@ export const COMMANDS: ProspectCommand[] = [
 		name: "prospect-sync",
 		flag: "sync",
 		description:
-			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude|codex|opencode|cline (restrict to one coding harness), --reread (read every file again, including ones already indexed, so sessions synced before an extras table existed gain their extras; messages already stored keep their rows)",
+			"Index session files into the prospector database (no LLM). Flags: --project NAME (scope to one project, skipping every other project on disk — the fresh-install escape hatch), --source pi|claude|codex|opencode|cline (restrict to one coding harness), --verbose (log every file as it starts and finishes; files over 64 MB are always logged), --reread (read every file again, including ones already indexed, so sessions synced before an extras table existed gain their extras; messages already stored keep their rows)",
 		load: () => import("./sync.js"),
 		handler: (module) => module.prospectSync,
 	}),

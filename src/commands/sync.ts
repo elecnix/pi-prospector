@@ -3,7 +3,7 @@ import { getRoots } from "../config.js";
 import { openAsyncDatabase } from "../db/async-db.js";
 import type { AsyncDatabase } from "../db/async-db.js";
 import { migrate } from "../db/schema.js";
-import { runSync } from "../sync/index.js";
+import { runSync, type FileEvent } from "../sync/index.js";
 import type { SyncResult } from "../types.js";
 import { sortSourceAdapters } from "../sync/adapter.js";
 import type { SessionSourceAdapter } from "../sync/adapter.js";
@@ -100,7 +100,7 @@ function sourceNames(config: ProspectorConfig): { names: string[]; error?: strin
 }
 
 /** Sync the built-in adapters plus any custom sources config `sources` names, surfacing load errors in the result. */
-export async function runProspectSync(db: AsyncDatabase, opts?: { project?: string; source?: HarnessSource; reread?: boolean }): Promise<SyncResult> {
+export async function runProspectSync(db: AsyncDatabase, opts?: { project?: string; source?: HarnessSource; reread?: boolean; onFile?: (event: FileEvent) => void }): Promise<SyncResult> {
 	const config = loadConfig();
 	// A machine whose sessions arrive by git runs its refresh here, so a sync started from
 	// the UI sees what the other computer pushed without anyone remembering the script.
@@ -125,6 +125,18 @@ export async function runProspectSync(db: AsyncDatabase, opts?: { project?: stri
 	return result;
 }
 
+/** Files at least this large are logged as they start and finish, so a long or failing run names its file. */
+const LOG_FILE_BYTES = 64 * 1024 * 1024;
+
+function fileLogger(verbose: boolean | undefined): (event: FileEvent) => void {
+	return (e) => {
+		if (!verbose && e.size < LOG_FILE_BYTES) return;
+		// The last three path segments name the file without printing the whole local path.
+		const name = e.file.split(path.sep).slice(-3).join("/");
+		console.error(`  ${e.phase === "start" ? "reading" : "finished"} ${e.source} ${name} (${Math.round(e.size / 1e6)} MB)`);
+	};
+}
+
 export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext): Promise<void> {
 	const dbPath = getDbPath();
 	const db = openAsyncDatabase(dbPath);
@@ -137,6 +149,7 @@ export async function prospectSync(rawArgs: string, ctx: ExtensionCommandContext
 			project: args.project,
 			source: args.source,
 			reread: args.reread,
+			onFile: fileLogger(args.verbose),
 		});
 		const lines = [
 			"⛏️ Prospect sync complete",
@@ -174,6 +187,7 @@ interface SyncArgs {
 	project?: string;
 	source?: HarnessSource;
 	reread?: boolean;
+	verbose?: boolean;
 }
 
 function parseSyncArgs(raw: string): SyncArgs {
@@ -183,6 +197,7 @@ function parseSyncArgs(raw: string): SyncArgs {
 		const p = parts[i];
 		if (p === "--project" && parts[i + 1]) result.project = parts[++i]!;
 		else if (p === "--reread") result.reread = true;
+		else if (p === "--verbose") result.verbose = true;
 		else if (p === "--source" && parts[i + 1]) {
 			// Unknown values throw (parseHarnessSource), so a typo fails loudly.
 			result.source = parseHarnessSource(parts[++i]!);

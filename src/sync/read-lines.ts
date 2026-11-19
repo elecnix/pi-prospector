@@ -34,6 +34,11 @@ export function setReadLimitsForTests(limits: { wholeReadBytes: number; chunkByt
 	maxLineChars = limits?.maxLineChars ?? MAX_LINE_CHARS;
 }
 
+/** The line limit in force: the default, or the one a test lowered. */
+export function currentMaxLineChars(): number {
+	return maxLineChars;
+}
+
 export async function readSessionLines(filePath: string): Promise<string[]> {
 	const { size } = await fsp.stat(filePath);
 	if (size <= wholeReadLimit) return (await fsp.readFile(filePath, "utf-8")).split("\n");

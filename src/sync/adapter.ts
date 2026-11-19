@@ -34,6 +34,8 @@ export interface ParsedSession {
 	 * sync then inserts messages it does not have and writes nothing else from the file.
 	 */
 	rebuilt?: boolean;
+	/** For a batched read: true on the final batch of the file. */
+	lastBatch?: boolean;
 	extras?: MessageExtrasInsert[];
 	events?: SessionEventInsert[];
 	/** Number of source units processed (lines for files, rows for DB sources). */
@@ -93,6 +95,15 @@ export interface SessionSourceAdapter {
 	 * @param resumeLine - line/event offset to resume from (0 = full parse)
 	 */
 	read(disc: DiscoveredSession, resumeLine: number): Promise<ParsedSession>;
+
+	/**
+	 * Parse one session as a stream of batches, so no more than one batch of the file is
+	 * in memory. Each batch is a `ParsedSession` for the lines it covers: `processedCount`
+	 * is the cursor after it, and `lastBatch` is true on the final one. A source that
+	 * implements it is read this way by the sync loop; one that does not is read whole
+	 * by `read()`, and a file too large for that is skipped with a classified error.
+	 */
+	readBatches?(disc: DiscoveredSession, resumeLine: number): AsyncGenerator<ParsedSession>;
 }
 
 /** Priority of an adapter that declares none: after every built-in. */
@@ -105,4 +116,27 @@ export const DEFAULT_SOURCE_PRIORITY = 100;
  */
 export function sortSourceAdapters(adapters: SessionSourceAdapter[]): SessionSourceAdapter[] {
 	return [...adapters].sort((a, b) => (a.priority ?? DEFAULT_SOURCE_PRIORITY) - (b.priority ?? DEFAULT_SOURCE_PRIORITY));
+}
+
+
+/** Put the batches of one file together as one `ParsedSession`, for a caller that wants the whole read. */
+export async function collectBatches(batches: AsyncGenerator<ParsedSession>): Promise<ParsedSession> {
+	let out: ParsedSession | null = null;
+	for await (const b of batches) {
+		if (!out) {
+			out = { ...b, messages: [...b.messages], extras: [...(b.extras ?? [])], events: [...(b.events ?? [])], backgroundTasks: [...(b.backgroundTasks ?? [])] };
+			continue;
+		}
+		out.messages.push(...b.messages);
+		out.extras!.push(...(b.extras ?? []));
+		out.events!.push(...(b.events ?? []));
+		out.backgroundTasks!.push(...(b.backgroundTasks ?? []));
+		out.session = b.session;
+		out.processedCount = b.processedCount;
+		out.processedTimestamp = b.processedTimestamp;
+		out.forksResolved += b.forksResolved;
+		out.rebuilt = b.rebuilt;
+	}
+	if (!out) throw new Error("a batched read yielded no batch");
+	return out;
 }
