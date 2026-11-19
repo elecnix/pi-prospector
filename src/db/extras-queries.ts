@@ -27,12 +27,13 @@ export interface SessionEventInsert {
  * file that repeats the id (a resumed or forked session) must not put its own line
  * number and fields on the first session's message.
  */
-export async function insertMessageExtras(db: AsyncDatabase, e: MessageExtrasInsert, sessionId: string): Promise<void> {
-	await db
+export async function insertMessageExtras(db: AsyncDatabase, e: MessageExtrasInsert, sessionId: string): Promise<boolean> {
+	const result = await db
 		.prepare(
 			"INSERT OR IGNORE INTO message_extras (message_id, line, extras) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM messages WHERE id = ? AND session_id = ?)",
 		)
 		.run(e.message_id, e.line, e.extras, e.message_id, sessionId);
+	return result.changes > 0;
 }
 
 /**
@@ -40,12 +41,13 @@ export async function insertMessageExtras(db: AsyncDatabase, e: MessageExtrasIns
  * (line -1) is a whole file that can change, so its row is replaced. A session can
  * have several sidecars: each is a row of its own, keyed by its path.
  */
-export async function upsertSessionEvent(db: AsyncDatabase, e: SessionEventInsert): Promise<void> {
-	await db
+export async function upsertSessionEvent(db: AsyncDatabase, e: SessionEventInsert): Promise<boolean> {
+	const result = await db
 		.prepare(
-			"INSERT INTO session_events (session_id, line, kind, ref, payload) VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, line, ref) DO UPDATE SET kind = excluded.kind, ref = excluded.ref, payload = excluded.payload WHERE excluded.line < 0",
+			"INSERT INTO session_events (session_id, line, kind, ref, payload) VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, line, ref) DO UPDATE SET kind = excluded.kind, ref = excluded.ref, payload = excluded.payload WHERE excluded.line < 0 AND session_events.payload <> excluded.payload",
 		)
 		.run(e.session_id, e.line, e.kind, e.ref, e.payload);
+	return result.changes > 0;
 }
 
 export interface StoredExtrasRow {

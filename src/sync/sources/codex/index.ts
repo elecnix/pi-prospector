@@ -12,6 +12,8 @@
  * file no source names is never read.
  */
 
+import { readSessionLines } from "../../read-lines.js";
+import { processedLineCount } from "../../lines.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { SessionSourceAdapter, ParsedSession } from "../../adapter.js";
@@ -225,8 +227,7 @@ export class CodexFileSource implements SessionSourceAdapter {
     disc: DiscoveredSession,
     resumeLine: number,
   ): Promise<ParsedSession> {
-    const content = await fs.readFile(disc.filePath, "utf-8");
-    const lines = content.split("\n");
+    const lines = await readSessionLines(disc.filePath);
 
     // The session's own header: the first line of a rollout file is always
     // the `session_meta` record.
@@ -291,7 +292,7 @@ export class CodexFileSource implements SessionSourceAdapter {
     return {
       session,
       messages,
-      processedCount: codexProcessedCount(content, lines.length),
+      processedCount: processedLineCount(lines),
       processedTimestamp: disc.mtime,
       forksResolved: 0,
     };

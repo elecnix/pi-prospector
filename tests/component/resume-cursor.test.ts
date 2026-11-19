@@ -75,12 +75,12 @@ describe("the line a sync resumes from", () => {
 
 describe("processedLineCount", () => {
 	it("counts lines that hold a record", () => {
-		assert.equal(processedLineCount("a\nb\n", 3), 2);
-		assert.equal(processedLineCount("a\nb", 2), 2);
+		assert.equal(processedLineCount(["a", "b", ""]), 2);
+		assert.equal(processedLineCount(["a", "b"]), 2);
 	});
 
 	it("counts an empty file as zero lines, not one", () => {
-		assert.equal(processedLineCount("", 1), 0);
+		assert.equal(processedLineCount([""]), 0);
 	});
 
 	it("reads the first line written to a file that was empty at the last sync", async () => {

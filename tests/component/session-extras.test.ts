@@ -483,7 +483,9 @@ describe("rebuild from the reduced projection", () => {
 			// 2. Forced newer, the file is parsed again; every message row is kept as it was.
 			bump(file);
 			const reread = await sync(env);
-			assert.equal(reread.sessionsProcessed, 1);
+			// The rebuilt file is recognised and read for no more than a message the index lacks.
+			assert.equal(reread.sessionsProcessed, 0);
+			assert.equal(reread.bySource["claude"]?.rebuiltSkipped, 1);
 			const after = JSON.parse(await snapshot(env.db)) as { sessions: unknown; messages: unknown; nodes: unknown };
 			const was = JSON.parse(before) as typeof after;
 			assert.deepEqual(after.messages, was.messages);

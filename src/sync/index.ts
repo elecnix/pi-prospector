@@ -1,9 +1,10 @@
 import { type AsyncDatabase } from "../db/async-db.js";
 import { insertMessageExtras, upsertSessionEvent } from "../db/extras-queries.js";
-import { upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages, upsertBackgroundTask } from "../db/queries.js";
+import { faultClassOf } from "./faults.js";
+import { getSessionRow, upsertSession, getCursor, updateCursor, updateMessageCount, insertMessage, countMessages, upsertBackgroundTask } from "../db/queries.js";
 import type { DiscoverOptions } from "./scanner.js";
 import { ingestSubagentArtifacts } from "./subagent-artifacts.js";
-import type { SyncResult } from "../types.js";
+import type { SourceSyncSummary, SyncResult } from "../types.js";
 import type { SessionSourceAdapter } from "./adapter.js";
 
 /**
@@ -22,12 +23,16 @@ import type { SessionSourceAdapter } from "./adapter.js";
  * every session on disk. The harness filter selects whole adapters; the
  * project filter applies to whatever each selected adapter discovered.
  */
+/** The session columns a read may change, not counting the cursor and the counts that every read moves. */
+const SESSION_FIELDS = ["file_path", "project", "source", "cwd", "parent_session", "started_at", "name", "tool_inventory", "host"] as const;
+
 export async function runSync(
 	db: AsyncDatabase,
 	adapters: SessionSourceAdapter[],
 	opts?: DiscoverOptions & { reread?: boolean },
 ): Promise<SyncResult> {
 	const result: SyncResult = {
+		bySource: {},
 		sessionsProcessed: 0,
 		sessionsSkipped: 0,
 		messagesInserted: 0,
@@ -47,6 +52,8 @@ export async function runSync(
 	// source tags. Cheap identity guard; cross-run duplication stays impossible
 	// because cursors are keyed by file path.
 	const claimed = new Set<string>();
+	const summary = (source: string): SourceSyncSummary =>
+		(result.bySource[source] ??= { visited: 0, sessionsAdded: 0, messagesAdded: 0, sessionFieldsChanged: 0, extrasAdded: 0, eventsAdded: 0, rebuiltSkipped: 0, errors: {} });
 
 	for (const adapter of active) {
 		for (const disc of await adapter.discover()) {
@@ -66,6 +73,9 @@ export async function runSync(
 					continue;
 				}
 
+				// `visited` counts files examined: read or attempted, not skipped as unchanged. A file
+				// that fails its read counts here and in `errors`.
+				summary(disc.source).visited++;
 				const parsed = await adapter.read(disc, opts?.reread ? 0 : (cursor?.last_line ?? 0));
 
 				// Every DB write for this session commits as one unit. The insert
@@ -75,18 +85,41 @@ export async function runSync(
 				// *and* no advanced `last_line` — so a resync reprocesses the file
 				// from the old cursor instead of skipping rows that were never
 				// committed (issue #59).
+				const sum = summary(disc.source);
 				let inserted = 0;
+				let extrasAdded = 0;
+				let eventsAdded = 0;
+				let fieldsChanged = false;
+				let added = false;
+				let rebuiltSkipped = false;
 				const syncSession = db.transaction(async () => {
 					inserted = 0;
+					extrasAdded = 0;
+					eventsAdded = 0;
 					// The host travels with the adapter, not with the transcript: a mirrored tree keeps
 					// the host name of the machine that wrote it, and a local root gets this machine.
 					if (adapter.host) parsed.session.host = adapter.host;
+					const existing = await getSessionRow(db, parsed.session.id);
+					// A rebuild an export wrote is never a source of session fields, extras, events or a
+					// cursor. Messages it holds that the index lacks still insert, and a session the index
+					// has never seen is created from it so it is not lost.
+					if (parsed.rebuilt && existing) {
+						for (const m of parsed.messages) {
+							if (await insertMessage(db, m)) inserted++;
+						}
+						// The count is derived from the stored rows, not a field taken from the rebuild.
+						await updateMessageCount(db, parsed.session.id, await countMessages(db, parsed.session.id));
+						rebuiltSkipped = true;
+						return;
+					}
 					await upsertSession(db, parsed.session);
 					for (const m of parsed.messages) {
 						if (await insertMessage(db, m)) inserted++;
 					}
-					for (const x of parsed.extras ?? []) await insertMessageExtras(db, x, parsed.session.id);
-					for (const ev of parsed.events ?? []) await upsertSessionEvent(db, ev);
+					if (!parsed.rebuilt) {
+						for (const x of parsed.extras ?? []) if (await insertMessageExtras(db, x, parsed.session.id)) extrasAdded++;
+						for (const ev of parsed.events ?? []) if (await upsertSessionEvent(db, ev)) eventsAdded++;
+					}
 					// A backgrounded call's completion record, when the source has one.
 					// Same transaction as the messages: the completion is a fact
 					// about a call in this session, so it lands with it or not at all.
@@ -96,14 +129,31 @@ export async function runSync(
 					await updateCursor(db, parsed.session.id, parsed.processedCount, parsed.processedTimestamp);
 					const total = await countMessages(db, parsed.session.id);
 					await updateMessageCount(db, parsed.session.id, total);
+					const now = await getSessionRow(db, parsed.session.id);
+					if (!existing) added = true;
+					else if (now) fieldsChanged = SESSION_FIELDS.some((k) => existing[k] !== now[k]);
 				});
 				await syncSession();
 
+				if (rebuiltSkipped) {
+					sum.rebuiltSkipped++;
+					sum.messagesAdded += inserted;
+					result.messagesInserted += inserted;
+					continue;
+				}
+				sum.messagesAdded += inserted;
+				sum.extrasAdded += extrasAdded;
+				sum.eventsAdded += eventsAdded;
+				if (added) sum.sessionsAdded++;
+				if (fieldsChanged) sum.sessionFieldsChanged++;
 				result.sessionsProcessed++;
 				result.messagesInserted += inserted;
 				result.forksResolved += parsed.forksResolved;
 			} catch (err) {
 				result.errors.push(`${disc.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+				const errors = summary(disc.source).errors;
+				const faultClass = faultClassOf(err);
+				errors[faultClass] = (errors[faultClass] ?? 0) + 1;
 			}
 		}
 	}
