@@ -49,6 +49,11 @@ export const metrics: MetricDefinition[] = [
 				effect: "The units become missing after a revise of failure-modes (1.3) or tool-trajectory (7.1), because their output keys fold into this analyzer's identity. The next run that reaches them recomputes the overview and costs model calls.",
 				repair: "prospect analyze --all --analyzer session-overview fills the missing units; nothing recomputes until a person runs it",
 			},
+			{
+				version: "1.14",
+				effect: "Nothing changes while recallPriorOccurrences is off, its default. With it on, the reduce step also reads raw text from earlier sessions that resembles this session's friction turns, so a recurring problem can be named as one. The recalled messages join the source set, so turning it on makes the overviews that have matches missing.",
+				repair: "prospect analyze --all --analyzer session-overview after turning recallPriorOccurrences on; it costs model calls",
+			},
 		],
 	},
 	{
