@@ -47,12 +47,15 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 
 const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
-const REGRESSION = "regression: attribution covers under 1% of verdicts";
+/** regression-attribution resolves a blame only to a pull request a local session opened, which few blames are. */
+const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of sessions";
+/** regression-prevention groups the verdicts into one corpus-wide node; the regressions section counts the same classes per session. */
+const REGRESSION_PREVENTION = "corpus aggregate of regression-verdict: measured through it";
 /** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
 const VERIFICATION_VERDICTS = "input to stale-verification: measured through it";
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, VERIFICATION_VERDICTS];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION_ATTRIBUTION, REGRESSION_PREVENTION, VERIFICATION_VERDICTS];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -108,6 +111,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"presidio": SECRET_SCANNER,
 	"piicatcher": SECRET_SCANNER,
 	"dataprofiler": SECRET_SCANNER,
-	"regression-attribution": REGRESSION,
-	"regression-prevention": REGRESSION,
+	"regression-attribution": REGRESSION_ATTRIBUTION,
+	"regression-prevention": REGRESSION_PREVENTION,
 };
