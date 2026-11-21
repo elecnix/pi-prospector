@@ -58,6 +58,7 @@ const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
 const INPUT_TO_FRUSTRATION_LEXICON = inputTo("frustration-lexicon");
 const INPUT_TO_TURN_FRUSTRATION = inputTo("turn-frustration");
 const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
+const POOLED_CLUSTERS = "pools a repository's sessions: a node's clusters are not its own session's, so no per-session figure";
 /** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
 const INPUT_TO_STALE_VERIFICATION = inputTo("stale-verification");
 
@@ -73,6 +74,7 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	INPUT_TO_FRUSTRATION_LEXICON,
 	INPUT_TO_TURN_FRUSTRATION,
 	PROPOSAL_QUEUE,
+	POOLED_CLUSTERS,
 ];
 
 /**
@@ -101,8 +103,10 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"repetition-collapse": NOT_YET_DECIDED,
 	"session-ending": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
+	// A session's node clusters the items of its repository's sibling sessions too, so the same cluster repeats
+	// in every sibling's node and a session can carry a cluster none of its own messages belong to.
+	"similarity-cluster": POOLED_CLUSTERS,
 	"verification-commands": INPUT_TO_STALE_VERIFICATION,
-	"similarity-cluster": NOT_YET_DECIDED,
 	"friction-accumulation": NOT_YET_DECIDED,
 	// It reads only rule-shaped proposals still open, so accepting or rejecting proposals changes its counts.
 	// Its other fields are instruction-file paths and quotes.
