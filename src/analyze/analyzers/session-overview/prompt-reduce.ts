@@ -291,9 +291,14 @@ export function parseReduceObject(obj: Record<string, unknown>): SessionOverview
 	};
 }
 
-const VALID_FRICTION_POINT_SEVERITY = new Set(["low", "medium", "high"]);
+/** The severities a friction point may carry. */
+export const FRICTION_POINT_SEVERITIES = ["low", "medium", "high"] as const;
+/** The closed list a positive signal is tagged from. */
+export const POSITIVE_SIGNALS = ["task-completed-without-correction", "correction-then-clean-recovery", "low-tool-failure-density"] as const;
+
+const VALID_FRICTION_POINT_SEVERITY = new Set<string>(FRICTION_POINT_SEVERITIES);
 const VALID_PROPOSAL_SEVERITY = new Set(["friction", "correction", "waste", "suggestion", "reinforcement"]);
-const VALID_POSITIVE_SIGNAL = new Set(["task-completed-without-correction", "correction-then-clean-recovery", "low-tool-failure-density"]);
+const VALID_POSITIVE_SIGNAL = new Set<string>(POSITIVE_SIGNALS);
 
 function normalizeFrictionPoint(value: unknown): FrictionPoint | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;

@@ -65,6 +65,7 @@ import {
 } from "./decision.js";
 import { decisionIdentity } from "../../decision-model.js";
 import { DEFAULT_ASSISTANT_COGNITION_CONFIG, type AssistantCognitionConfig } from "./config.js";
+import { assistantCognitionFingerprint } from "./fingerprint.js";
 
 export const ASSISTANT_COGNITION_DEF: AnalyzerDef = {
 	id: "assistant-cognition",
@@ -108,6 +109,7 @@ interface CognitionMeta {
 export const assistantCognitionAnalyzer: Analyzer = {
 	def: ASSISTANT_COGNITION_DEF,
 	version: ASSISTANT_COGNITION_VERSION,
+	fingerprint: [assistantCognitionFingerprint],
 	prompts: PROMPTS,
 	defaultConfig: {
 		id: "",

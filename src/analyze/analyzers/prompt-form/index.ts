@@ -42,6 +42,7 @@ import "./question.js";
 import { DEFAULT_PROMPT_FORM_CONFIG, type PromptFormConfig } from "./config.js";
 import { PromptKindOrUnknown, scanPromptForm, type TypedPrompt } from "./detect.js";
 import { PROMPT_KINDS, PROMPT_KIND_KEY } from "./question.js";
+import { promptFormFingerprint, promptKindFingerprint } from "./fingerprint.js";
 
 /** The properties a prompt-form node carries in its `contentJson`. */
 export const PROMPT_FORM_PROPERTIES = Type.Object({
@@ -155,6 +156,7 @@ function readInputs(
 export const promptFormAnalyzer: Analyzer = {
 	def: PROMPT_FORM_DEF,
 	version: PROMPT_FORM_VERSION,
+	fingerprint: [promptFormFingerprint, promptKindFingerprint],
 	prompts: {} as Record<string, PromptVersion>,
 	defaultConfig: {
 		id: "",
