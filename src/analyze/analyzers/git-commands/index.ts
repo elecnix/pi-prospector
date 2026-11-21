@@ -29,6 +29,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
 import { DEFAULT_GIT_COMMANDS_CONFIG, type GitCommandsConfig } from "./config.js";
 import { findGitCommandEvents } from "./detect.js";
+import { gitCommandsFingerprintContributor } from "./fingerprint.js";
 
 const KIND = Type.Union([Type.Literal("commit"), Type.Literal("push"), Type.Literal("pr_merge")]);
 
@@ -99,6 +100,7 @@ export const gitCommandsAnalyzer: Analyzer = {
 	def: GIT_COMMANDS_DEF,
 	version: GIT_COMMANDS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [gitCommandsFingerprintContributor],
 	defaultConfig: {
 		id: "",
 		analyzerId: GIT_COMMANDS_DEF.id,
