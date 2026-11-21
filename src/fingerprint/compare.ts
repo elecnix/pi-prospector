@@ -197,7 +197,15 @@ function bucketLabel(from: number, to: number | null): string {
 	return to === null ? `${from}+` : `${from}–${to}`;
 }
 
-const UNIT_NAMES: Record<DistributionUnit, string> = { minutes: "minutes", prompts: "prompts", "tool-calls": "tool calls" };
+const UNIT_NAMES: Record<DistributionUnit, string> = {
+	minutes: "minutes",
+	prompts: "prompts",
+	"tool-calls": "tool calls",
+	mite: "MITE",
+	percent: "%",
+	ratio: "ratio",
+	files: "files",
+};
 
 /**
  * A measure's name for its rows. A name like `per session` gets its section's
