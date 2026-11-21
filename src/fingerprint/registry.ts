@@ -54,6 +54,7 @@ const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of ses
 const REGRESSION_PREVENTION = "corpus aggregate of regression-verdict: measured through it";
 /** An analyzer whose output only feeds another one, whose section measures it. */
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
+const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
 /** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
 const INPUT_TO_STALE_VERIFICATION = inputTo("stale-verification");
 
@@ -65,6 +66,7 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	REGRESSION_PREVENTION,
 	INPUT_TO_STALE_VERIFICATION,
 	MODEL_NAMED_CLASSES,
+	INPUT_TO_PROMPT_FORM,
 ];
 
 /**
@@ -79,7 +81,8 @@ export const EXCLUSION_REASONS: readonly string[] = [
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"lexicon-candidates": NOT_YET_DECIDED,
 	"frustration-lexicon": NOT_YET_DECIDED,
-	"message-answers": NOT_YET_DECIDED,
+	// Its answers reach the fingerprint as prompt-form's `promptKind` section.
+	"message-answers": INPUT_TO_PROMPT_FORM,
 	"phase-trajectory": NOT_YET_DECIDED,
 	"plan-compliance": NOT_YET_DECIDED,
 	"grounded-claims": NOT_YET_DECIDED,
