@@ -54,6 +54,7 @@ import {
 	DEFAULT_COMPRESSION_CHECKLIST_CONFIG,
 	type CompressionChecklistConfig,
 } from "./config.js";
+import { compressionChecklistFingerprint } from "./fingerprint.js";
 import { scanSessionChecklist, SummaryGradeSchema } from "./detect.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
@@ -158,6 +159,7 @@ export const compressionChecklistAnalyzer: Analyzer = {
 	def: COMPRESSION_CHECKLIST_DEF,
 	version: COMPRESSION_CHECKLIST_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [compressionChecklistFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: COMPRESSION_CHECKLIST_DEF.id,
