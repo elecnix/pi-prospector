@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor } from "../../../fingerprint/contributor.js";
 
 /** The kinds of waste flag context-economy raises: its closed set. */
 const FLAG_KINDS = ["high-carry-result", "oversized-tool-result", "redundant-read"];
@@ -33,7 +33,7 @@ export const contextEconomyFingerprint: FingerprintContributor = {
 	async read(ctx) {
 		const measured = new Set(await ctx.runs("context-economy", SLICE_AWARE_SINCE));
 		const read = await ctx.nodes("context-economy", { amplification: "$.readAmplification", output: "$.billed.output", carry: "$.carry.totalTokenTurns" });
-		const nodes = newestPerSession(read, "carry")
+		const nodes = read
 			.filter((r) => measured.has(String(r["session"])))
 			// The analyzer writes 0 when the session billed no output; that is no ratio, so it is left out, not read as 0.
 			.map((r) => ({ session: r["session"]!, carry: r["carry"]!, amplification: Number(r["output"]) > 0 ? (r["amplification"] ?? null) : null }));
@@ -41,7 +41,7 @@ export const contextEconomyFingerprint: FingerprintContributor = {
 		const flagsPerSession = new Map<string, number>();
 		for (const f of flags) flagsPerSession.set(String(f["session"]), (flagsPerSession.get(String(f["session"])) ?? 0) + 1);
 		return {
-			measured: nodes.map((r) => String(r["session"])),
+			measured: [...new Set(nodes.map((r) => String(r["session"])))],
 			rows: [...nodes.map((r) => ({ ...r, flags: flagsPerSession.get(String(r["session"])) ?? 0 })), ...flags.map((f) => ({ session: f["session"]!, kind: f["kind"]! }))],
 		};
 	},

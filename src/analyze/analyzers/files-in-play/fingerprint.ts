@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor } from "../../../fingerprint/contributor.js";
 
 /**
  * How many files a session works on, and how often the agent goes back to a
@@ -20,10 +20,7 @@ export const filesInPlayFingerprint: FingerprintContributor = {
 		],
 	},
 	async read(ctx) {
-		const rows = newestPerSession(
-			await ctx.nodes("files-in-play", { files: "$.distinct_files", rereads: "$.reread_events", cycles: "$.edit_reread_cycles", churning: "$.churning_windows" }),
-			"files",
-		);
-		return { measured: rows.map((r) => String(r["session"])), rows };
+		const rows = await ctx.nodes("files-in-play", { files: "$.distinct_files", rereads: "$.reread_events", cycles: "$.edit_reread_cycles", churning: "$.churning_windows" });
+		return { measured: [...new Set(rows.map((r) => String(r["session"])))], rows };
 	},
 };

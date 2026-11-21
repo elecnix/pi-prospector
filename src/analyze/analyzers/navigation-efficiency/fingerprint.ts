@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor, type FingerprintRow } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor, type FingerprintRow } from "../../../fingerprint/contributor.js";
 
 /** The navigation patterns navigation-efficiency detects: its closed set. */
 const PATTERNS = ["scroll", "zoom_out", "overly_deep_zoom", "repeated_view"];
@@ -23,7 +23,7 @@ export const navigationEfficiencyFingerprint: FingerprintContributor = {
 	},
 	async read(ctx) {
 		const counts = Object.fromEntries(PATTERNS.map((p) => [p, `$.pattern_counts.${p}`]));
-		const nodes = newestPerSession(await ctx.nodes("navigation-efficiency", { views: "$.view_count", ...counts }), "views");
+		const nodes = await ctx.nodes("navigation-efficiency", { views: "$.view_count", ...counts });
 		const rows: FingerprintRow[] = [];
 		for (const node of nodes) {
 			const session = node["session"]!;
@@ -36,6 +36,6 @@ export const navigationEfficiencyFingerprint: FingerprintContributor = {
 			}
 			rows.push({ session, episodes });
 		}
-		return { measured: nodes.map((r) => String(r["session"])), rows };
+		return { measured: [...new Set(nodes.map((r) => String(r["session"])))], rows };
 	},
 };

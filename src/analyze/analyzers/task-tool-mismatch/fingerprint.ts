@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor } from "../../../fingerprint/contributor.js";
 
 /**
  * Sessions whose agent avoided the tool its task told it to use and rebuilt the
@@ -21,9 +21,9 @@ export const taskToolMismatchFingerprint: FingerprintContributor = {
 		],
 	},
 	async read(ctx) {
-		const rows = newestPerSession(await ctx.nodes("task-tool-mismatch", { mismatch: "$.mismatch_found", substitutes: "$.substitute_calls" }), "mismatch");
+		const rows = await ctx.nodes("task-tool-mismatch", { mismatch: "$.mismatch_found", substitutes: "$.substitute_calls" });
 		return {
-			measured: rows.map((r) => String(r["session"])),
+			measured: [...new Set(rows.map((r) => String(r["session"])))],
 			// Substitute calls count only where they stood in for an avoided tool.
 			rows: rows.map((r) => ({ session: r["session"]!, mismatch: r["mismatch"]!, substituteCalls: r["mismatch"] === 1 ? (r["substitutes"] ?? null) : null })),
 		};

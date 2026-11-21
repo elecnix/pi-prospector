@@ -74,8 +74,7 @@ describe("economy and tool-use fingerprint sections", () => {
 	});
 	after(() => t.close());
 
-	it("token-units: spend per session in MITE and the token mix, from the newest node of each session", async () => {
-		await seedNode(t.db, "s1", "token-units", { totals: { mite: 100, calls: 50, input: 9e7, output: 0, cache_read: 0, cache_write: 0 } }, "1.0", "2026-04-01T00:00:00.000Z");
+	it("token-units: spend per session in MITE and the token mix", async () => {
 		for (const [i, id] of IDS.slice(0, 6).entries()) {
 			await seedNode(t.db, id, "token-units", { totals: { mite: i + 2, calls: 10, input: 1_000_000, output: 20_000, cache_read: 3_000_000, cache_write: 400_000 }, by_model: { "secret-model": {} } });
 		}
@@ -212,7 +211,7 @@ describe("economy and tool-use fingerprint sections", () => {
 		]);
 	});
 
-	it("navigation-efficiency: wasteful navigation episodes by pattern, from the newest node of each session", async () => {
+	it("navigation-efficiency: wasteful navigation episodes by pattern", async () => {
 		for (const [i, id] of IDS.slice(0, 6).entries()) {
 			const episodes = i < 5 ? { scroll: 0, zoom_out: 1, overly_deep_zoom: 0, repeated_view: 2 } : { scroll: 0, zoom_out: 0, overly_deep_zoom: 0, repeated_view: 0 };
 			await seedNode(t.db, id, "navigation-efficiency", { view_count: 30, edit_count: 3, pattern_counts: episodes, episodes: [{ path: "/home/secret/path/a.ts" }] }, "1.1");
@@ -241,8 +240,9 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.equal(section["sessionsChurning"], 5);
 	});
 
-	it("skill-use: skill calls and the sessions that load a skill, without their names, from the newest node of each session", async () => {
-		await seedNode(t.db, "s1", "skill-use", { skills: [], skill_call_count: 0, distinct_skill_count: 0, tool_call_count: 10 }, "1.0", "2026-04-01T00:00:00.000Z");
+	it("skill-use: skill calls and the sessions that load a skill, without their names, reading every current node", async () => {
+		// A second current node of s1: the contributor reads current nodes as they are, and the framework keeps one per session.
+		await seedNode(t.db, "s1", "skill-use", { skills: [], skill_call_count: 1, distinct_skill_count: 1, tool_call_count: 10 }, "1.0", "2026-04-01T00:00:00.000Z");
 		for (const [i, id] of IDS.slice(0, 6).entries()) {
 			const used = i < 5;
 			await seedNode(t.db, id, "skill-use", {
@@ -255,9 +255,9 @@ describe("economy and tool-use fingerprint sections", () => {
 		const section = objective(await fingerprint(), "skills");
 		assert.equal(section.status, "ok");
 		assert.equal(section.sessionsMeasured, 6);
-		assert.equal(section["skillCalls"], 10);
-		assert.equal(section["toolCalls"], 300);
-		assert.equal(section["distinctSkills"], 5);
+		assert.equal(section["skillCalls"], 11);
+		assert.equal(section["toolCalls"], 310);
+		assert.equal(section["distinctSkills"], 6);
 		assert.equal(section["sessionsWithSkill"], 5);
 	});
 });

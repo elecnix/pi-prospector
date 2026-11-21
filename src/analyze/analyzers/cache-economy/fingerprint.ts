@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor, type FingerprintRow } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor, type FingerprintRow } from "../../../fingerprint/contributor.js";
 
 /** The classes of an assistant turn by how its prompt cache behaved: cache-economy's closed set. */
 const CACHE_CLASSES = ["hit", "cold-ttl", "cold-prefix", "cold-start", "partial", "unbilled"];
@@ -25,16 +25,13 @@ export const cacheEconomyFingerprint: FingerprintContributor = {
 	},
 	async read(ctx) {
 		const counts = Object.fromEntries(CACHE_CLASSES.map((c) => [c, `$.classification_counts."${c}"`]));
-		const nodes = newestPerSession(
-			await ctx.nodes("cache-economy", {
-				recorded: "$.usage_recorded_turn_count",
-				ratio: "$.aggregate_hit_ratio",
-				churn: "$.write_churn_tokens",
-				coldUsd: "$.cold_miss_cost_usd",
-				...counts,
-			}),
-			"recorded",
-		);
+		const nodes = await ctx.nodes("cache-economy", {
+			recorded: "$.usage_recorded_turn_count",
+			ratio: "$.aggregate_hit_ratio",
+			churn: "$.write_churn_tokens",
+			coldUsd: "$.cold_miss_cost_usd",
+			...counts,
+		});
 		const rows: FingerprintRow[] = [];
 		for (const node of nodes) {
 			const session = node["session"]!;
@@ -42,6 +39,6 @@ export const cacheEconomyFingerprint: FingerprintContributor = {
 			rows.push({ session, hitPercent: recorded ? Math.round(Number(node["ratio"]) * 10_000) / 100 : null, churn: node["churn"] ?? null, coldUsd: node["coldUsd"] ?? null });
 			for (const c of CACHE_CLASSES) if (typeof node[c] === "number") rows.push({ session, class: c, turns: node[c] });
 		}
-		return { measured: nodes.map((r) => String(r["session"])), rows };
+		return { measured: [...new Set(nodes.map((r) => String(r["session"])))], rows };
 	},
 };

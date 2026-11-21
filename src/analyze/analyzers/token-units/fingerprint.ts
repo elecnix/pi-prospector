@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor } from "../../../fingerprint/contributor.js";
 
 const MILLION = 1_000_000;
 
@@ -25,18 +25,14 @@ export const tokenUnitsFingerprint: FingerprintContributor = {
 		],
 	},
 	async read(ctx) {
-		// A session that grew between runs is a new unit with its own node; the newest covers the whole session.
-		const rows = newestPerSession(
-			await ctx.nodes("token-units", {
-				mite: "$.totals.mite",
-				calls: "$.totals.calls",
-				input: "$.totals.input",
-				output: "$.totals.output",
-				cacheRead: "$.totals.cache_read",
-				cacheWrite: "$.totals.cache_write",
-			}),
-			"mite",
-		);
-		return { measured: rows.map((r) => String(r["session"])), rows };
+		const rows = await ctx.nodes("token-units", {
+			mite: "$.totals.mite",
+			calls: "$.totals.calls",
+			input: "$.totals.input",
+			output: "$.totals.output",
+			cacheRead: "$.totals.cache_read",
+			cacheWrite: "$.totals.cache_write",
+		});
+		return { measured: [...new Set(rows.map((r) => String(r["session"])))], rows };
 	},
 };
