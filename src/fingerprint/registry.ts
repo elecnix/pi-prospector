@@ -94,7 +94,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"routing-opportunity": NOT_YET_DECIDED,
 	"token-units": NOT_YET_DECIDED,
 	"request-classes": NOT_YET_DECIDED,
-	"session-overview": NOT_YET_DECIDED,
 	"rule-restatement": NOT_YET_DECIDED,
 	"secret-leak": SECRET_SCANNER,
 	"gitleaks": SECRET_SCANNER,

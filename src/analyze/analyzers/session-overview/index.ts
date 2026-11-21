@@ -53,6 +53,7 @@ import {
 	type SiblingContrast,
 	type CwdSmoothnessCache,
 } from "./cross-session.js";
+import { sessionOverviewFingerprint } from "./fingerprint.js";
 
 export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	id: "session-overview",
@@ -160,6 +161,7 @@ const PROMPTS: Record<string, PromptVersion> = {
 export const sessionOverviewAnalyzer: Analyzer = {
 	def: SESSION_OVERVIEW_DEF,
 	version: SESSION_OVERVIEW_VERSION,
+	fingerprint: [sessionOverviewFingerprint],
 	prompts: PROMPTS,
 	defaultConfig: {
 		id: "",
