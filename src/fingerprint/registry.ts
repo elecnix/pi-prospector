@@ -93,7 +93,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"decode-collapse": NOT_YET_DECIDED,
 	"repetition-collapse": NOT_YET_DECIDED,
 	"session-ending": NOT_YET_DECIDED,
-	"skill-use": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
 	"verification-commands": INPUT_TO_STALE_VERIFICATION,
 	"similarity-cluster": NOT_YET_DECIDED,
