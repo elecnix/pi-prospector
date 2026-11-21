@@ -75,7 +75,7 @@ export function parseFingerprintArgs(raw: string, now: Date): FingerprintRequest
 	const to = parseDay("to", flags["to"]);
 	if (from !== null && to !== null && to < from) throw new Error(`--to ${to} is before --from ${from}`);
 	const asOfFlag = flags["as-of"];
-	const asOf = asOfFlag === undefined ? now.toISOString() : DAY.test(asOfFlag) ? `${parseDay("as-of", asOfFlag)}T23:59:59.999Z` : parseTimestamp(asOfFlag);
+	const asOf = asOfFlag === undefined ? now.toISOString() : DAY.test(asOfFlag) ? `${parseDay("as-of", asOfFlag)}T23:59:59.999Z` : parseTimestamp(asOfFlag, now);
 	return { sources: chosen.length > 0 ? [...new Set(chosen)] : null, from, to, asOf, out: flags["out"], format: flags["format"] };
 }
 

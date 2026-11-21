@@ -322,6 +322,10 @@ describe("parseFingerprintArgs", () => {
 		assert.deepEqual(parseFingerprintArgs("--source pi,claude --source codex", now).sources, ["pi", "claude", "codex"]);
 	});
 
+	it("resolves a relative --as-of against the clock it is given", () => {
+		assert.equal(parseFingerprintArgs("--as-of 7d", new Date("2020-01-08T00:00:00.000Z")).asOf, "2020-01-01T00:00:00.000Z");
+	});
+
 	it("rejects an as-of day that is not on the calendar", () => {
 		assert.throws(() => parseFingerprintArgs("--as-of 2025-13-01", now), /--as-of/);
 		assert.equal(parseFingerprintArgs("--as-of 2025-12-01", now).asOf, "2025-12-01T23:59:59.999Z");

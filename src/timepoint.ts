@@ -74,14 +74,15 @@ function isIso(t: string): boolean {
 
 /**
  * Resolve an `--as-of` value (ISO timestamp or relative duration like `7d`) to an
- * absolute ISO timestamp. Throws with a clear message on an unusable spec.
+ * absolute ISO timestamp. A duration counts back from `now`. Throws with a
+ * clear message on an unusable spec.
  */
-export function parseTimestamp(spec: string): string {
+export function parseTimestamp(spec: string, now: Date = new Date()): string {
 	const s = spec.trim();
 	if (s.length === 0) throw new Error("empty --as-of value");
 	if (isIso(s)) return new Date(Date.parse(s)).toISOString();
 	const rel = parseRelative(s);
-	if (rel !== null) return new Date(Date.now() - rel).toISOString();
+	if (rel !== null) return new Date(now.getTime() - rel).toISOString();
 	throw new Error(`cannot parse '${s}' as a timestamp (use ISO, e.g. 2025-01-01T00:00:00Z, or a relative duration like 7d/24h/30m)`);
 }
 
