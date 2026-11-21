@@ -205,6 +205,25 @@ describe("fingerprint compare", () => {
 		assert.deepEqual(same?.notes, []);
 	});
 
+	it("notes a side measured on under half its sessions, and a distribution holding more values than the sessions measured", () => {
+		const thin: Fingerprint = {
+			...a,
+			objective: {
+				...a.objective,
+				shape: {
+					status: "ok",
+					sessionsMeasured: 40,
+					promptsPerSession: { status: "ok", sessions: 52, unit: "prompts", p50: 2, p90: 9, buckets: [{ from: 0, to: null, sessions: 52 }] },
+				},
+			},
+		};
+		const shape = compareFingerprints({ label: "thin", fingerprint: thin }, sides[1], contributors).sections.find((s) => s.id === "shape");
+		assert.deepEqual(shape?.notes, [
+			"thin is measured on 40% of its sessions; its figures describe that subset.",
+			"thin: prompts per session holds 52 values for 40 sessions measured, so some sessions count more than once and its shares and quantiles are skewed.",
+		]);
+	});
+
 	it("says a withheld section is withheld rather than dropping it", () => {
 		const s = section("mood");
 		assert.equal(s.kind, "inferred");
