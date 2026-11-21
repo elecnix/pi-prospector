@@ -52,9 +52,10 @@ const REGRESSION = "regression: attribution covers under 1% of verdicts";
 /** An analyzer whose output only feeds another one, whose section measures it. */
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
 const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
+const INPUT_TO_FRUSTRATION_LEXICON = inputTo("frustration-lexicon");
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM, INPUT_TO_FRUSTRATION_LEXICON];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -66,7 +67,8 @@ export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCA
  * contributor in the same pull request.
  */
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
-	"lexicon-candidates": NOT_YET_DECIDED,
+	// It nominates the person's own words for the lexicon to judge; the words never leave the machine.
+	"lexicon-candidates": INPUT_TO_FRUSTRATION_LEXICON,
 	"frustration-lexicon": NOT_YET_DECIDED,
 	// Its answers reach the fingerprint as prompt-form's `promptKind` section.
 	"message-answers": INPUT_TO_PROMPT_FORM,
