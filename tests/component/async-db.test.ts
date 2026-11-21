@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { AsyncDatabase } from "../../src/db/async-db.js";
+import { AsyncDatabase, BUSY_TIMEOUT_MS } from "../../src/db/async-db.js";
 
 function tempDbPath(): string {
 	return `${os.tmpdir()}/prospect-async-db-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
@@ -134,5 +134,38 @@ describe("AsyncDatabase worker bridge", () => {
 		await assert.rejects(absent.prepare("SELECT 1").get(), /unable to open|does not exist/);
 		await absent.close();
 		assert.equal(fs.existsSync(missing), false);
+	});
+
+	it("waits out another connection's write lock instead of failing with 'database is locked'", async () => {
+		const dbPath = tempDbPath();
+		const writer = new AsyncDatabase(dbPath);
+		const second = new AsyncDatabase(dbPath);
+		try {
+			await writer.pragma("journal_mode = WAL");
+			await writer.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+			const reader = new AsyncDatabase(dbPath, { readonly: true });
+			try {
+				for (const db of [writer, second, reader]) assert.deepEqual(await db.pragma("busy_timeout"), [{ timeout: BUSY_TIMEOUT_MS }]);
+				// The writer holds the write lock across an await, as a sync batch does.
+				let release!: () => void;
+				const held = new Promise<void>((r) => (release = r));
+				const tx = writer.transaction(async () => {
+					await writer.prepare("INSERT INTO t (id) VALUES (1)").run();
+					await held;
+				})();
+				await new Promise<void>((r) => setTimeout(r, 20));
+				// A reader is never blocked in WAL mode, and a second writer waits for the lock.
+				assert.deepEqual(await reader.prepare("SELECT COUNT(*) AS n FROM t").get(), { n: 0 });
+				const waiting = second.prepare("INSERT INTO t (id) VALUES (2)").run();
+				setTimeout(release, 200);
+				await tx;
+				assert.equal((await waiting).changes, 1);
+			} finally {
+				await reader.close();
+			}
+		} finally {
+			await second.close();
+			await writer.close();
+		}
 	});
 });

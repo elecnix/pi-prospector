@@ -53,7 +53,7 @@ function makeMutex() {
 	};
 }
 
-const { dbPath, readonly } = workerData as { dbPath: string; readonly: boolean };
+const { dbPath, readonly, timeout } = workerData as { dbPath: string; readonly: boolean; timeout: number };
 
 /**
  * The connection, or why it could not be opened. A read-only open requires the
@@ -64,7 +64,8 @@ const { dbPath, readonly } = workerData as { dbPath: string; readonly: boolean }
 let db: Database.Database;
 let openError: Error | undefined;
 try {
-	db = new Database(dbPath, { readonly, fileMustExist: readonly });
+	// `timeout` is SQLite's busy timeout, in milliseconds (BUSY_TIMEOUT_MS).
+	db = new Database(dbPath, { readonly, fileMustExist: readonly, timeout });
 } catch (err) {
 	openError = err instanceof Error ? err : new Error(String(err));
 }

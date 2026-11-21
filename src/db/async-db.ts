@@ -31,6 +31,16 @@ import { Type, type Static } from "typebox";
  */
 
 /**
+ * How long a statement waits for another connection's lock before it fails
+ * with "database is locked". Every connection sets it, so a sync, an analyze,
+ * a fingerprint and a usage report can run at once. In WAL mode a reader waits
+ * only on a checkpoint or a recovery; a writer waits for the other writer's
+ * transaction, and a sync batch can hold one for seconds. The driver's own
+ * default is 5 s, which a long batch can outlast.
+ */
+export const BUSY_TIMEOUT_MS = 30_000;
+
+/**
  * How to open the database. `readonly` opens an existing file for reading: no
  * statement can write it, and a missing file is an error rather than a new,
  * empty database.
@@ -111,7 +121,7 @@ export class AsyncDatabase {
 		const workerFile = join(here, `async-db-worker${ext}`);
 		const features = process.features as { typescript?: string | false };
 		this.#worker = new Worker(workerFile, {
-			workerData: { dbPath: path, readonly: options.readonly === true },
+			workerData: { dbPath: path, readonly: options.readonly === true, timeout: BUSY_TIMEOUT_MS },
 			execArgv: workerExecArgv(ext, features.typescript),
 		});
 		this.#worker.on("message", (msg: { id: number; ok: boolean; value?: unknown; error?: { message: string; stack?: string; code?: string } }) => {
