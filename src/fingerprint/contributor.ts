@@ -82,6 +82,13 @@ export const FingerprintContributorDef = Type.Object({
 	/** `objective`: counted, timed, or found by a deterministic analyzer. `inferred`: a model judged it. */
 	kind: oneOf(SECTION_KINDS),
 	measures: Type.Array(MeasureSpec, { minItems: 1 }),
+	/**
+	 * The built-in analyzers whose nodes the section reads. The section then
+	 * publishes their version mix (`versions`), so a reader comparing two
+	 * fingerprints can tell a difference in the corpus from a difference in
+	 * the analyzer that measured it.
+	 */
+	analyzers: Type.Optional(Type.Array(Type.String({ pattern: "^[a-z][a-z0-9-]*$" }), { minItems: 1 })),
 });
 export type FingerprintContributorDef = Static<typeof FingerprintContributorDef>;
 
@@ -124,7 +131,11 @@ export interface FingerprintReadContext {
 	sessions: readonly SessionFacts[];
 	/** Sessions in scope with a successful run of the analyzer by the as-of instant. */
 	runs(analyzerId: string): Promise<string[]>;
-	/** One row per current node of the analyzer: `session` plus each field read from the node content by JSON path (`$.a.b`). */
+	/**
+	 * One row per current node of the analyzer: `session` plus each field read
+	 * from the node content by JSON path (`$.a.b`). Rows come oldest node first,
+	 * so a contributor that needs one node per session can keep the newest.
+	 */
 	nodes(analyzerId: string, fields: Readonly<Record<string, string>>): Promise<FingerprintRow[]>;
 	/** One row per element of an array in the current nodes; `itemFields` read the element (`$.name`), `nodeFields` the node. */
 	items(analyzerId: string, arrayPath: string, itemFields: Readonly<Record<string, string>>, nodeFields?: Readonly<Record<string, string>>): Promise<FingerprintRow[]>;

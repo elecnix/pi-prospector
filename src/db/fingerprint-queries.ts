@@ -112,6 +112,15 @@ export async function sessionsWithRun(db: AsyncDatabase, scope: FingerprintScope
 	return new Set(rows.map((r) => r.id));
 }
 
+/** One row per (session, version) among the analyzer's current nodes in scope. */
+export async function currentNodeVersions(db: AsyncDatabase, scope: FingerprintScope, analyzerId: string): Promise<Array<{ session: string; version: string }>> {
+	const { from, params } = currentNodes(scope);
+	return (await prep(db, `SELECT DISTINCT n.session_id AS session, n.analyzer_version_id AS version FROM ${from}`).all(analyzerId, ...params)) as Array<{
+		session: string;
+		version: string;
+	}>;
+}
+
 /** A JSON path into node content: `$` followed by `.name` steps. */
 const JSON_PATH = /^\$(\.[A-Za-z_][A-Za-z0-9_]*)+$/;
 /** A path relative to an array item, which may be the item itself. */
@@ -124,7 +133,10 @@ function checkPaths(paths: readonly string[], pattern: RegExp): void {
 /** A scalar read out of node content. */
 export type NodeScalar = string | number | null;
 
-/** One row per current node of the analyzer, with each named field read from its content. `session` is the node's session. */
+/**
+ * One row per current node of the analyzer, with each named field read from
+ * its content, oldest node first. `session` is the node's session.
+ */
 export async function currentNodeRows(
 	db: AsyncDatabase,
 	scope: FingerprintScope,
@@ -136,7 +148,7 @@ export async function currentNodeRows(
 	checkPaths(paths, JSON_PATH);
 	const { from, params } = currentNodes(scope);
 	const select = names.map((_, i) => extracted("n.content_json", `f${i}`));
-	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from}`).all(
+	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from} ORDER BY n.created_at, n.id`).all(
 		...twice(paths),
 		analyzerId,
 		...params,

@@ -50,14 +50,15 @@ export type DistributionUnit = (typeof DISTRIBUTION_UNITS)[number];
 export const SECTION_KINDS = ["objective", "inferred"] as const;
 export type SectionKind = (typeof SECTION_KINDS)[number];
 
-/** The fields every published section has. A measure id may not take one, or its value would replace the field. */
-export const SECTION_FIELDS = ["status", "sessionsMeasured"] as const;
+/** The fields of a published section that are not measures. A measure id may not take one, or its value would replace the field. */
+export const SECTION_FIELDS = ["status", "sessionsMeasured", "versions"] as const;
 
 /** What a section id or a measure id looks like: a short camelCase name. */
 export const ID_PATTERN = /^[a-z][A-Za-z0-9]{0,39}$/;
 
 const Count = Type.Integer({ minimum: 0 });
 const Day = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" });
+const Month = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}$" });
 
 /** The union of a fixed list of strings, typed as that list. */
 export function oneOf<T extends string>(values: readonly T[]) {
@@ -116,6 +117,22 @@ export function measureSchema(measure: MeasureSpec): TSchema {
 	}
 }
 
+/**
+ * What an analyzer version id may look like in a fingerprint: a dotted number,
+ * optionally led by `v`. A version of any other shape is published as `other`.
+ */
+export const VERSION_PATTERN = /^v?[0-9]{1,6}(\.[0-9]{1,6}){0,3}$/;
+
+/** The versions of the analyzers behind a section: sessions whose current nodes carry each version. */
+export function versionsSchema(analyzers: readonly string[]): TSchema {
+	return Type.Array(
+		Type.Object(
+			{ analyzer: oneOf(analyzers), version: Type.String({ pattern: `^(${VERSION_PATTERN.source.slice(1, -1)}|other)$` }), sessions: Count },
+			{ additionalProperties: false },
+		),
+	);
+}
+
 /** The schema of one section: the generic shape plus the contributor's measures, or withheld. */
 export function sectionSchema(contributor: FingerprintContributor): TSchema {
 	// A repeated id would leave one measure without a property, so its value would go unchecked.
@@ -128,8 +145,10 @@ export function sectionSchema(contributor: FingerprintContributor): TSchema {
 		ids.add(m.id);
 	}
 	const measures = Object.fromEntries(contributor.def.measures.map((m) => [m.id, measureSchema(m)]));
+	const analyzers = contributor.def.analyzers;
+	const versions: Record<string, TSchema> = analyzers === undefined ? {} : { versions: versionsSchema(analyzers) };
 	return Type.Union([
-		Type.Object({ status: Type.Literal("ok"), sessionsMeasured: Count, ...measures }, { additionalProperties: false }),
+		Type.Object({ status: Type.Literal("ok"), sessionsMeasured: Count, ...versions, ...measures }, { additionalProperties: false }),
 		Withheld,
 	]);
 }
@@ -152,6 +171,13 @@ function header() {
 		minGroupSize: Type.Literal(MIN_GROUP_SIZE),
 		/** Top-level sessions in the filter. A sub-agent's own session is counted by the sections that read it. */
 		sessions: Type.Object({ count: Count }, { additionalProperties: false }),
+		/**
+		 * The first and last month (UTC, by session start) holding at least
+		 * {@link MIN_GROUP_SIZE} sessions in the filter; withheld when no month
+		 * does. The builder always sets it; it is optional so that a fingerprint
+		 * from before it still reads.
+		 */
+		period: Type.Optional(Type.Union([Type.Object({ from: Month, to: Month }, { additionalProperties: false }), Withheld])),
 	};
 }
 

@@ -11,6 +11,7 @@ export const turnPairLlmFingerprint: FingerprintContributor = {
 		label: "Turn classification",
 		description: "Friction type and sentiment of the turns the classifier judged.",
 		kind: "inferred",
+		analyzers: ["turn-pair-llm"],
 		measures: [
 			{ kind: "total", id: "turnsClassified", metric: "turn-pair-llm.turns-classified", field: "turns" },
 			{

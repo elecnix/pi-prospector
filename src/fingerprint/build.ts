@@ -1,11 +1,11 @@
 import { Check, Errors } from "typebox/value";
 import type { AsyncDatabase } from "../db/async-db.js";
-import { currentNodeItems, currentNodeRows, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
+import { currentNodeItems, currentNodeRows, currentNodeVersions, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
 import { HARNESS_SOURCES, isHarnessSource, type HarnessSource } from "../harness.js";
 import { parseTimestamp } from "../timepoint.js";
 import { checkContributorDef, type FingerprintContributor, type FingerprintReadContext, type FingerprintRow, type MeasureSpec } from "./contributor.js";
 import { distribution, guardGroups, WITHHELD, type RawGroup } from "./guard.js";
-import { FINGERPRINT_SCHEMA_VERSION, fingerprintSchema, MIN_GROUP_SIZE, type Fingerprint } from "./schema.js";
+import { FINGERPRINT_SCHEMA_VERSION, fingerprintSchema, MIN_GROUP_SIZE, VERSION_PATTERN, type Fingerprint } from "./schema.js";
 
 /**
  * Derive a corpus fingerprint from the session index and the analysis graph.
@@ -178,21 +178,58 @@ function applyMeasure(measure: MeasureSpec, rows: readonly FingerprintRow[], min
 	}
 }
 
+type VersionReader = (analyzerId: string) => Promise<Array<{ session: string; version: string }>>;
+
+/**
+ * The version mix of the analyzers a section reads: per analyzer and version,
+ * the sessions in scope whose current nodes carry it. A version that is not a
+ * dotted number is `other`, and a version under the minimum is folded into
+ * `other` by the same guard as any group.
+ */
+async function versionMix(analyzers: readonly string[], read: VersionReader, inScope: ReadonlySet<string>, min: number) {
+	const mix: Array<{ analyzer: string; version: string; sessions: number }> = [];
+	for (const analyzer of analyzers) {
+		const byVersion = new Map<string, Set<string>>();
+		for (const { session, version } of await read(analyzer)) {
+			if (!inScope.has(session)) continue;
+			const key = VERSION_PATTERN.test(version) ? version : "other";
+			const ids = byVersion.get(key) ?? new Set<string>();
+			ids.add(session);
+			byVersion.set(key, ids);
+		}
+		const raw: Array<RawGroup<string>> = [...byVersion].map(([key, ids]) => ({ key, count: ids.size, sessionIds: ids }));
+		for (const g of byCountThenKey(guardGroups(raw, min, "other"))) mix.push({ analyzer, version: g.key, sessions: g.sessions });
+	}
+	return mix;
+}
+
 /** The section of one contributor: withheld when it covers fewer sessions than the minimum. */
-async function buildSection(contributor: FingerprintContributor, ctx: FingerprintReadContext, inScope: ReadonlySet<string>, min: number): Promise<unknown> {
+async function buildSection(contributor: FingerprintContributor, ctx: FingerprintReadContext, versions: VersionReader, inScope: ReadonlySet<string>, min: number): Promise<unknown> {
 	const read = await contributor.read(ctx);
 	const measured = new Set(read.measured.filter((id) => inScope.has(id)));
 	if (measured.size < min) return WITHHELD;
 	const rows = read.rows.filter((r) => typeof r["session"] === "string" && inScope.has(r["session"]));
+	const analyzers = contributor.def.analyzers;
 	return {
 		status: "ok",
 		sessionsMeasured: measured.size,
+		...(analyzers === undefined ? {} : { versions: await versionMix(analyzers, versions, inScope, min) }),
 		...Object.fromEntries(contributor.def.measures.map((m) => [m.id, applyMeasure(m, rows, min)])),
 	};
 }
 
 function utcDay(iso: string): string {
 	return iso.slice(0, 10);
+}
+
+/** The first and last month holding at least `min` sessions, by start; withheld when no month does. */
+export function period(startedAt: ReadonlyArray<string | null>, min: number): { from: string; to: string } | typeof WITHHELD {
+	const perMonth = new Map<string, number>();
+	for (const at of startedAt) if (at !== null && /^\d{4}-\d{2}/.test(at)) perMonth.set(at.slice(0, 7), (perMonth.get(at.slice(0, 7)) ?? 0) + 1);
+	const months = [...perMonth].filter(([, n]) => n >= min).map(([m]) => m).sort();
+	const from = months[0];
+	const to = months.at(-1);
+	return from === undefined || to === undefined ? WITHHELD : { from, to };
 }
 
 /**
@@ -216,7 +253,7 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 	const section = async (kind: "objective" | "inferred") =>
 		Object.fromEntries(
 			await Promise.all(
-				contributors.filter((c) => c.def.kind === kind).map(async (c) => [c.def.id, await buildSection(c, ctx, inScope, min)] as const),
+				contributors.filter((c) => c.def.kind === kind).map(async (c) => [c.def.id, await buildSection(c, ctx, (id) => currentNodeVersions(db, scope, id), inScope, min)] as const),
 			),
 		);
 	const fingerprint = {
@@ -226,6 +263,7 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 		filter: { sources: request.sources, from: request.from, to: request.to },
 		minGroupSize: MIN_GROUP_SIZE,
 		sessions: { count: sessions.length },
+		period: period(sessions.map((s) => s.startedAt), min),
 		objective: await section("objective"),
 		inferred: await section("inferred"),
 	};

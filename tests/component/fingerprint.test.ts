@@ -52,13 +52,13 @@ async function seedSession(db: AsyncDatabase, id: string, source: string, starte
 	await insertMessages(db, id, messages);
 }
 
-async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string, content: unknown, at = "2026-05-01T00:00:00.000Z"): Promise<void> {
+async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string, content: unknown, at = "2026-05-01T00:00:00.000Z", version = "1"): Promise<void> {
 	n++;
 	await insertNode(db, {
 		id: `node-${n}`,
 		sessionId,
 		analyzerId,
-		analyzerVersionId: "1",
+		analyzerVersionId: version,
 		configId: "c",
 		runId: null,
 		nodeKind: "metric",
@@ -85,7 +85,8 @@ describe("buildFingerprint", () => {
 		const { db } = t;
 		for (const [i, id] of piIds.entries()) {
 			await seedSession(db, id, "pi", `2026-03-0${i + 1}T10:00:00.000Z`, { prompts: 3 + i, toolCalls: 2, minutes: 10 + i * 20 });
-			await seedNode(db, id, "time-economy", { active_seconds: 600 + i * 60 });
+			// The first five pi sessions were timed by a later version of the analyzer.
+			await seedNode(db, id, "time-economy", { active_seconds: 600 + i * 60 }, undefined, i < 5 ? "2.0" : "1");
 			await seedNode(db, id, "failure-modes", {
 				turn_failure_count: 1,
 				tool_failure_count: 2,
@@ -109,6 +110,10 @@ describe("buildFingerprint", () => {
 		await seedSession(db, "child-1", "pi", "2026-03-01T10:05:00.000Z", { parent: "pi-session-1", prompts: 1, toolCalls: 1, minutes: 1 });
 		// A sub-agent is only counted under `subAgents`, and a custom analyzer is not a figure at all.
 		await seedNode(db, "pi-session-1", "my-private-analyzer", { score: 9 });
+		// A session that grew between runs: time-economy wrote a node per run under different output keys,
+		// so all three are current. Inserted out of creation order; the newest (2026-05-02) is the whole session.
+		await seedNode(db, "pi-session-8", "time-economy", { active_seconds: 4620 }, "2026-05-02T00:00:00.000Z");
+		await seedNode(db, "pi-session-8", "time-economy", { active_seconds: 300 }, "2026-04-30T00:00:00.000Z");
 		// Written after the as-of date, so the as-of fingerprint must not see it.
 		await seedNode(db, "pi-session-2", "failure-modes", { turn_failure_count: 99, tool_failure_count: 99, groups: [{ axis: "tool", class_id: "path-not-found", tool: "bash", count: 99 }] }, "2026-09-01T00:00:00.000Z");
 	});
@@ -122,6 +127,13 @@ describe("buildFingerprint", () => {
 		const text = JSON.stringify(fp);
 		for (const sentinel of SENTINELS) assert.ok(!text.includes(sentinel), `output contains ${sentinel}`);
 		assert.ok(!text.includes("codex"), "a source under the minimum is named");
+	});
+
+	it("states the period as the first and last month holding at least the minimum of sessions", async () => {
+		assert.deepEqual((await build(t.db, at())).period, { from: "2026-03", to: "2026-04" });
+		assert.deepEqual((await build(t.db, at("--source claude"))).period, { from: "2026-04", to: "2026-04" });
+		// Two Codex sessions in April: no month holds five.
+		assert.deepEqual((await build(t.db, at("--source codex"))).period, { status: "withheld", reason: "below-min-group-size" });
 	});
 
 	it("records the version, the as-of date, the filter and the session count", async () => {
@@ -184,8 +196,9 @@ describe("buildFingerprint", () => {
 		const fp = await build(t.db, at("--source pi"));
 		const active = objective(fp, "activeTime");
 		assert.equal(active["sessionsMeasured"], 8);
-		// 8 sessions at 600..1020 s, 60 s apart: 6480 s.
-		assert.equal(active["totalHours"], 1.8);
+		// 7 sessions at 600..960 s, 60 s apart (5460 s), and pi-session-8 at its newest node, 4620 s: 10080 s.
+		assert.equal(active["totalHours"], 2.8);
+		assert.equal((active["perSession"] as { sessions: number }).sessions, 8);
 		assert.equal(objective(await build(t.db, at("--source claude")), "activeTime").status, "ok");
 	});
 
@@ -205,6 +218,18 @@ describe("buildFingerprint", () => {
 			{ axis: "tool", classId: "path-not-found", count: 16, sessions: 8 },
 			{ axis: "turn", classId: "rate-limit", count: 8, sessions: 8 },
 		]);
+	});
+
+	it("publishes the versions of the analyzer behind a section, folding a version under the minimum", async () => {
+		const all = await build(t.db, at());
+		assert.deepEqual(objective(all, "activeTime")["versions"], [
+			{ analyzer: "time-economy", version: "1", sessions: 9 },
+			{ analyzer: "time-economy", version: "2.0", sessions: 5 },
+		]);
+		assert.deepEqual(objective(all, "failures")["versions"], [{ analyzer: "failure-modes", version: "1", sessions: 8 }]);
+		assert.ok(!("versions" in objective(all, "shape")), "a section over the session index reads no analyzer");
+		const pi = await build(t.db, at("--source pi"));
+		assert.deepEqual(objective(pi, "activeTime")["versions"], [{ analyzer: "time-economy", version: "2.0", sessions: 5 }]);
 	});
 
 	it("counts only the frustration the person typed, and files it as inferred", async () => {
@@ -390,6 +415,10 @@ describe("registering a contributor", () => {
 		assert.throws(
 			() => collectContributors([], [{ ...extra, def: { ...extra.def, measures: [extra.def.measures[0]!, extra.def.measures[0]!] } }]),
 			/declares measure 'scoreTotal' twice/,
+		);
+		assert.throws(
+			() => collectContributors([], [{ ...extra, def: { ...extra.def, measures: [{ kind: "total", id: "versions", field: "score" }] } }]),
+			/measure id 'versions' is reserved/,
 		);
 	});
 
