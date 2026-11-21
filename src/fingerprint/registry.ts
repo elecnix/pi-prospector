@@ -110,6 +110,5 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"dataprofiler": SECRET_SCANNER,
 	"regression-signal": REGRESSION,
 	"regression-attribution": REGRESSION,
-	"regression-verdict": REGRESSION,
 	"regression-prevention": REGRESSION,
 };
