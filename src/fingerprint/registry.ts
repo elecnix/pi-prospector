@@ -49,8 +49,12 @@ const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
 const REGRESSION = "regression: attribution covers under 1% of verdicts";
 
+/** An analyzer whose output only feeds another one, whose section measures it. */
+const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
+const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
+
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -64,7 +68,8 @@ export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCA
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"lexicon-candidates": NOT_YET_DECIDED,
 	"frustration-lexicon": NOT_YET_DECIDED,
-	"message-answers": NOT_YET_DECIDED,
+	// Its answers reach the fingerprint as prompt-form's `promptKind` section.
+	"message-answers": INPUT_TO_PROMPT_FORM,
 	"tool-trajectory": NOT_YET_DECIDED,
 	"phase-trajectory": NOT_YET_DECIDED,
 	"plan-compliance": NOT_YET_DECIDED,
