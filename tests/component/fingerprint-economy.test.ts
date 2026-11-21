@@ -113,4 +113,26 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.deepEqual((section["flagsByKind"] as Array<Record<string, unknown>>).find((g) => g["kind"] === "high-carry-result"), { kind: "high-carry-result", count: 5, sessions: 5 });
 	});
 
+	it("cache-economy: hit rate per session, turns by cache class, write churn and cold-miss cost", async () => {
+		for (const [i, id] of IDS.slice(0, 6).entries()) {
+			const recorded = i < 5 ? 4 : 0;
+			await seedNode(t.db, id, "cache-economy", {
+				usage_recorded_turn_count: recorded,
+				aggregate_hit_ratio: recorded > 0 ? 0.5 + i * 0.1 : 0,
+				classification_counts: { hit: 3, "cold-ttl": 1, "cold-prefix": 0, "cold-start": 0, partial: 0, unbilled: recorded > 0 ? 0 : 4 },
+				write_churn_tokens: 200_000,
+				cold_miss_cost_usd: i < 5 ? 0.25 : null,
+			});
+		}
+		const section = objective(await fingerprint(), "promptCache");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 6);
+		// The session that recorded no usage has no hit rate, not a rate of 0.
+		assert.equal((section["hitRate"] as { sessions: number }).sessions, 5);
+		const byClass = section["turnsByClass"] as Array<Record<string, unknown>>;
+		assert.deepEqual(byClass.find((g) => g["class"] === "hit"), { class: "hit", count: 18, sessions: 6 });
+		assert.deepEqual(byClass.find((g) => g["class"] === "cold-ttl"), { class: "cold-ttl", count: 6, sessions: 6 });
+		assert.equal(section["writeChurnMillions"], 1.2);
+		assert.equal(section["coldMissUsd"], 1.25);
+	});
 });
