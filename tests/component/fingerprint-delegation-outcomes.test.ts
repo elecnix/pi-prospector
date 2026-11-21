@@ -29,8 +29,6 @@ describe("fingerprint section: delegation", () => {
 			// s6 delegated nothing.
 			await seedNode(t.db, id, "delegation-outcomes", "1.0", i <= 5 ? node({ completed: 2, failed: i === 1 ? 1 : 0 }, 1, 30) : node({}, 0, 0));
 		}
-		// s5 grew between runs: the newer node covers the whole session.
-		await seedNode(t.db, "s5", "delegation-outcomes", "1.0", node({ completed: 3 }, 2, 50), "2026-05-02T00:00:00.000Z");
 	});
 	after(() => t.close());
 
@@ -39,12 +37,12 @@ describe("fingerprint section: delegation", () => {
 		const s = sectionOf(fp, "delegation");
 		assert.equal(s.status, "ok");
 		assert.equal(s["sessionsMeasured"], 6);
-		assert.equal(s["calls"], 12);
+		assert.equal(s["calls"], 11);
 		assert.equal(s["sessionsDelegating"], 5);
 		// One session had a failure: the guard withholds that group.
-		assert.deepEqual(s["byOutcome"], [{ outcome: "completed", count: 11, sessions: 5 }]);
-		assert.equal(s["childSessions"], 6);
-		assert.equal(s["childMessages"], 170);
+		assert.deepEqual(s["byOutcome"], [{ outcome: "completed", count: 10, sessions: 5 }]);
+		assert.equal(s["childSessions"], 5);
+		assert.equal(s["childMessages"], 150);
 		assert.equal(s["ownMessages"], 240);
 		assert.deepEqual(leakedSentinels(fp, ["-agent", "-tool"]), []);
 	});

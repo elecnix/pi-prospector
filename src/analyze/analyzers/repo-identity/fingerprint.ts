@@ -1,5 +1,4 @@
 import type { FingerprintContributor } from "../../../fingerprint/contributor.js";
-import { newestPerSession } from "../../../fingerprint/latest-node.js";
 
 /** The hint kinds that can decide a key, and `none`. */
 const BASES = ["remote_output", "pr_url", "gh_repo_flag", "command_url", "none"];
@@ -22,30 +21,32 @@ export const repoIdentityFingerprintContributor: FingerprintContributor = {
 		analyzers: ["repo-identity"],
 		measures: [
 			{ kind: "distinct", id: "repositories", metric: "repo-identity.repo-key", field: "repository" },
-			{ kind: "total", id: "sessionsInBusiest", metric: "repo-identity.repo-key", field: "busiest" },
+			{ kind: "sessions", id: "sessionsInBusiest", metric: "repo-identity.repo-key", field: "busiest" },
 			{ kind: "groups", id: "byBasis", metric: "repo-identity.hint-basis", dimensions: { basis: BASES } },
 		],
 	},
 	async read(ctx) {
 		const measured = new Set(await ctx.runs("repo-identity"));
 		const nodes = await ctx.nodes("repo-identity", { key: "$.repo_key", basis: "$.basis" });
-		const newest = newestPerSession(nodes.filter((r) => measured.has(String(r["session"]))));
+		const placed = nodes.filter((r) => measured.has(String(r["session"])));
 
 		const ordinals = new Map<string, string>();
-		const sessionsPer = new Map<string, number>();
-		for (const r of newest) {
+		const sessionsPer = new Map<string, Set<string>>();
+		for (const r of placed) {
 			const key = r["key"];
 			if (typeof key !== "string") continue;
 			if (!ordinals.has(key)) ordinals.set(key, `r${ordinals.size + 1}`);
 			const ordinal = ordinals.get(key)!;
-			sessionsPer.set(ordinal, (sessionsPer.get(ordinal) ?? 0) + 1);
+			const sessions = sessionsPer.get(ordinal) ?? new Set<string>();
+			sessions.add(String(r["session"]));
+			sessionsPer.set(ordinal, sessions);
 		}
 		let busiest: string | null = null;
-		for (const [ordinal, count] of sessionsPer) if (busiest === null || count > sessionsPer.get(busiest)!) busiest = ordinal;
+		for (const [ordinal, sessions] of sessionsPer) if (busiest === null || sessions.size > sessionsPer.get(busiest)!.size) busiest = ordinal;
 
 		return {
 			measured: [...measured],
-			rows: newest.map((r) => {
+			rows: placed.map((r) => {
 				const repository = typeof r["key"] === "string" ? ordinals.get(r["key"])! : null;
 				return { session: r["session"]!, basis: r["basis"]!, repository, busiest: repository !== null && repository === busiest ? 1 : 0 };
 			}),

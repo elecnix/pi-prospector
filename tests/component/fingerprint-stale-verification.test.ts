@@ -30,12 +30,10 @@ describe("fingerprint section: stale verification", () => {
 			await seedSession(t.db, id);
 			await seedRun(t.db, id, "stale-verification", "1.0");
 			// s6 verified and changed nothing after.
-			await seedNode(t.db, id, "stale-verification", "1.0", i <= 5 ? node(3600, { agent: 720, user: i === 1 ? 60 : 0, subagent: 0 }, 1) : node(3600, { agent: 0, user: 0, subagent: 0 }, 0));
+			// A run's seconds come from timestamps and need not be whole, as s3's are.
+			const agent = i === 3 ? 720.4 : 720;
+			await seedNode(t.db, id, "stale-verification", "1.0", i <= 5 ? node(3600, { agent, user: i === 1 ? 60 : 0, subagent: 0 }, 1) : node(3600, { agent: 0, user: 0, subagent: 0 }, 0));
 		}
-		// A run's seconds come from timestamps and need not be whole; s3's stale time is.
-		await seedNode(t.db, "s3", "stale-verification", "1.0", node(3600, { agent: 720.4, user: 0, subagent: 0 }, 1), "2026-05-02T00:00:00.000Z");
-		// s2 grew between runs: the newer node covers the whole session.
-		await seedNode(t.db, "s2", "stale-verification", "1.0", node(7200, { agent: 1440, user: 0, subagent: 0 }, 2), "2026-05-02T00:00:00.000Z");
 	});
 	after(() => t.close());
 
@@ -44,12 +42,12 @@ describe("fingerprint section: stale verification", () => {
 		const s = sectionOf(fp, "staleVerification");
 		assert.equal(s.status, "ok");
 		assert.equal(s["sessionsMeasured"], 6);
-		assert.equal(s["passingHours"], 7);
-		assert.equal(s["staleHours"], 1.2);
+		assert.equal(s["passingHours"], 6);
+		assert.equal(s["staleHours"], 1);
 		assert.equal(s["sessionsWithStaleRuns"], 5);
 		// The user-caused stale time rests on one session: the guard withholds it.
-		assert.deepEqual(s["staleSecondsByCause"], [{ cause: "agent", count: 4320, sessions: 5 }]);
-		assert.equal(s["unverifiedCommits"], 6);
+		assert.deepEqual(s["staleSecondsByCause"], [{ cause: "agent", count: 3600, sessions: 5 }]);
+		assert.equal(s["unverifiedCommits"], 5);
 		assert.deepEqual(leakedSentinels(fp, ["gate.sh"]), []);
 	});
 });

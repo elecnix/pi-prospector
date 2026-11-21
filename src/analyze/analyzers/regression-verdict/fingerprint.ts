@@ -1,5 +1,4 @@
 import type { FingerprintContributor } from "../../../fingerprint/contributor.js";
-import { newestPerSession } from "../../../fingerprint/latest-node.js";
 import { CAUSE_CLASSES, PREVENTION_CLASSES } from "./questions.js";
 
 /**
@@ -41,7 +40,7 @@ export const regressionVerdictFingerprintContributor: FingerprintContributor = {
 			preventionClass: "$.prevention_class",
 			provenance: "$.cause_provenance",
 		});
-		const verdicts = newestPerSession(nodes.filter((r) => measured.has(String(r["session"])) && typeof r["regression"] === "number"));
+		const verdicts = nodes.filter((r) => measured.has(String(r["session"])) && typeof r["regression"] === "number");
 		return {
 			measured: [...measured],
 			rows: verdicts.map((r) => {

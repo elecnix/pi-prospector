@@ -1,5 +1,4 @@
 import type { FingerprintContributor } from "../../../fingerprint/contributor.js";
-import { newestPerSession } from "../../../fingerprint/latest-node.js";
 
 /**
  * The first pr-opened version that reads the `gh stack` verbs. A session last
@@ -10,8 +9,8 @@ export const STACKED_SINCE = "1.1";
 
 /**
  * Pull requests the sessions opened, by the kind of call that opened them.
- * Deterministic, so objective. The URL keeps a pull request from counting twice
- * when a session grew between runs; it is read to compare and never leaves `read`.
+ * Deterministic, so objective. One current node is one pull request; the URL
+ * and the title are never read.
  */
 export const prOpenedFingerprintContributor: FingerprintContributor = {
 	def: {
@@ -29,11 +28,8 @@ export const prOpenedFingerprintContributor: FingerprintContributor = {
 	async read(ctx) {
 		const measured = await ctx.runs("pr-opened", STACKED_SINCE);
 		const opened = new Set(measured);
-		const nodes = await ctx.nodes("pr-opened", { url: "$.pull_request.url", via: "$.pull_request.via" });
-		const rows = newestPerSession(
-			nodes.filter((r) => opened.has(String(r["session"])) && typeof r["url"] === "string"),
-			(r) => String(r["url"]),
-		);
+		const nodes = await ctx.nodes("pr-opened", { via: "$.pull_request.via" });
+		const rows = nodes.filter((r) => opened.has(String(r["session"])));
 		return { measured, rows: rows.map((r) => ({ session: r["session"]!, via: r["via"]!, opened: 1 })) };
 	},
 };

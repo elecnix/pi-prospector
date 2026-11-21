@@ -34,8 +34,6 @@ describe("fingerprint section: regression verdicts", () => {
 		for (let i = 1; i <= 5; i++) await seedNode(t.db, `s${i}`, "regression-verdict", "1.1", verdict(true));
 		// s6 repaired a defect that never worked; s7 and s8 were not admitted by the gate and have no verdict.
 		await seedNode(t.db, "s6", "regression-verdict", "1.1", verdict(false));
-		// s5 grew between runs and the newer verdict names another class.
-		await seedNode(t.db, "s5", "regression-verdict", "1.1", verdict(true, "missing_test"), "2026-05-02T00:00:00.000Z");
 		// s9 was last judged under the 1.0 taxonomy, whose classes do not compare: it is not measured.
 		await seedSession(t.db, "s9");
 		await seedRun(t.db, "s9", "regression-verdict", "1.0");
@@ -52,8 +50,7 @@ describe("fingerprint section: regression verdicts", () => {
 		assert.equal(s["judged"], 6);
 		assert.equal(s["defectFixes"], 6);
 		assert.equal(s["regressions"], 5);
-		// One session moved to missing_test, which leaves config_drift on 4 sessions and both under the minimum.
-		assert.deepEqual(s["byCauseClass"], [{ causeClass: "other", count: 5, sessions: 5 }]);
+		assert.deepEqual(s["byCauseClass"], [{ causeClass: "config_drift", count: 5, sessions: 5 }]);
 		assert.deepEqual(s["byPreventionClass"], [{ preventionClass: "enforce_in_ci", count: 5, sessions: 5 }]);
 		assert.deepEqual(s["byProvenance"], [{ provenance: "stated", count: 5, sessions: 5 }]);
 		assert.deepEqual(leakedSentinels(fp), []);
