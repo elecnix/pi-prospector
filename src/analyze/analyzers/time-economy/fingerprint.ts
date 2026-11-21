@@ -15,9 +15,13 @@ export const timeEconomyFingerprint: FingerprintContributor = {
 	},
 	async read(ctx) {
 		const rows = await ctx.nodes("time-economy", { seconds: "$.active_seconds" });
-		// A distribution takes one value per session; keep the first node a session has.
-		const seen = new Set<string>();
-		const timed = rows.filter((r) => typeof r["seconds"] === "number" && !seen.has(String(r["session"])) && seen.add(String(r["session"])));
+		// A distribution takes one value per session. A session that grew between
+		// runs keeps a current node per run (each under its own output key), and
+		// the newest covers the whole session. Rows come oldest first, so the last
+		// row a session has wins.
+		const newest = new Map<string, (typeof rows)[number]>();
+		for (const r of rows) if (typeof r["seconds"] === "number") newest.set(String(r["session"]), r);
+		const timed = [...newest.values()];
 		return {
 			measured: timed.map((r) => String(r["session"])),
 			rows: timed.map((r) => ({ session: r["session"]!, seconds: r["seconds"]!, minutes: Math.round((Number(r["seconds"]) / 60) * 100) / 100 })),

@@ -110,6 +110,10 @@ describe("buildFingerprint", () => {
 		await seedSession(db, "child-1", "pi", "2026-03-01T10:05:00.000Z", { parent: "pi-session-1", prompts: 1, toolCalls: 1, minutes: 1 });
 		// A sub-agent is only counted under `subAgents`, and a custom analyzer is not a figure at all.
 		await seedNode(db, "pi-session-1", "my-private-analyzer", { score: 9 });
+		// A session that grew between runs: time-economy wrote a node per run under different output keys,
+		// so all three are current. Inserted out of creation order; the newest (2026-05-02) is the whole session.
+		await seedNode(db, "pi-session-8", "time-economy", { active_seconds: 4620 }, "2026-05-02T00:00:00.000Z");
+		await seedNode(db, "pi-session-8", "time-economy", { active_seconds: 300 }, "2026-04-30T00:00:00.000Z");
 		// Written after the as-of date, so the as-of fingerprint must not see it.
 		await seedNode(db, "pi-session-2", "failure-modes", { turn_failure_count: 99, tool_failure_count: 99, groups: [{ axis: "tool", class_id: "path-not-found", tool: "bash", count: 99 }] }, "2026-09-01T00:00:00.000Z");
 	});
@@ -192,8 +196,9 @@ describe("buildFingerprint", () => {
 		const fp = await build(t.db, at("--source pi"));
 		const active = objective(fp, "activeTime");
 		assert.equal(active["sessionsMeasured"], 8);
-		// 8 sessions at 600..1020 s, 60 s apart: 6480 s.
-		assert.equal(active["totalHours"], 1.8);
+		// 7 sessions at 600..960 s, 60 s apart (5460 s), and pi-session-8 at its newest node, 4620 s: 10080 s.
+		assert.equal(active["totalHours"], 2.8);
+		assert.equal((active["perSession"] as { sessions: number }).sessions, 8);
 		assert.equal(objective(await build(t.db, at("--source claude")), "activeTime").status, "ok");
 	});
 

@@ -131,7 +131,11 @@ export interface FingerprintReadContext {
 	sessions: readonly SessionFacts[];
 	/** Sessions in scope with a successful run of the analyzer by the as-of instant. */
 	runs(analyzerId: string): Promise<string[]>;
-	/** One row per current node of the analyzer: `session` plus each field read from the node content by JSON path (`$.a.b`). */
+	/**
+	 * One row per current node of the analyzer: `session` plus each field read
+	 * from the node content by JSON path (`$.a.b`). Rows come oldest node first,
+	 * so a contributor that needs one node per session can keep the newest.
+	 */
 	nodes(analyzerId: string, fields: Readonly<Record<string, string>>): Promise<FingerprintRow[]>;
 	/** One row per element of an array in the current nodes; `itemFields` read the element (`$.name`), `nodeFields` the node. */
 	items(analyzerId: string, arrayPath: string, itemFields: Readonly<Record<string, string>>, nodeFields?: Readonly<Record<string, string>>): Promise<FingerprintRow[]>;

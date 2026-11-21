@@ -133,7 +133,10 @@ function checkPaths(paths: readonly string[], pattern: RegExp): void {
 /** A scalar read out of node content. */
 export type NodeScalar = string | number | null;
 
-/** One row per current node of the analyzer, with each named field read from its content. `session` is the node's session. */
+/**
+ * One row per current node of the analyzer, with each named field read from
+ * its content, oldest node first. `session` is the node's session.
+ */
 export async function currentNodeRows(
 	db: AsyncDatabase,
 	scope: FingerprintScope,
@@ -145,7 +148,7 @@ export async function currentNodeRows(
 	checkPaths(paths, JSON_PATH);
 	const { from, params } = currentNodes(scope);
 	const select = names.map((_, i) => extracted("n.content_json", `f${i}`));
-	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from}`).all(
+	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from} ORDER BY n.created_at, n.id`).all(
 		...twice(paths),
 		analyzerId,
 		...params,
