@@ -73,7 +73,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"tool-trajectory": NOT_YET_DECIDED,
 	"phase-trajectory": NOT_YET_DECIDED,
 	"plan-compliance": NOT_YET_DECIDED,
-	"task-tool-mismatch": NOT_YET_DECIDED,
 	"grounded-claims": NOT_YET_DECIDED,
 	"revive-chains": NOT_YET_DECIDED,
 	"uncompleted-leads": NOT_YET_DECIDED,
