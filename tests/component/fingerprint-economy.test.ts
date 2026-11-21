@@ -240,4 +240,24 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.equal(section["editRereadCycles"], 12);
 		assert.equal(section["sessionsChurning"], 5);
 	});
+
+	it("skill-use: skill calls and the sessions that load a skill, without their names, from the newest node of each session", async () => {
+		await seedNode(t.db, "s1", "skill-use", { skills: [], skill_call_count: 0, distinct_skill_count: 0, tool_call_count: 10 }, "1.0", "2026-04-01T00:00:00.000Z");
+		for (const [i, id] of IDS.slice(0, 6).entries()) {
+			const used = i < 5;
+			await seedNode(t.db, id, "skill-use", {
+				skills: used ? [{ name: "secret-skill", via: "skill_tool", calls: 2, failed: 0 }] : [],
+				skill_call_count: used ? 2 : 0,
+				distinct_skill_count: used ? 1 : 0,
+				tool_call_count: 50,
+			});
+		}
+		const section = objective(await fingerprint(), "skills");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 6);
+		assert.equal(section["skillCalls"], 10);
+		assert.equal(section["toolCalls"], 300);
+		assert.equal(section["distinctSkills"], 5);
+		assert.equal(section["sessionsWithSkill"], 5);
+	});
 });
