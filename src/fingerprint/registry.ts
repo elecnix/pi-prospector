@@ -47,6 +47,7 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 
 const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
+const MODEL_NAMED_CLASSES = "free text: the model names its own request classes, so no fixed list can hold them";
 /** regression-attribution resolves a blame only to a pull request a local session opened, which few blames are. */
 const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of sessions";
 /** regression-prevention groups the verdicts into one corpus-wide node; the regressions section counts the same classes per session. */
@@ -63,6 +64,7 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	REGRESSION_ATTRIBUTION,
 	REGRESSION_PREVENTION,
 	INPUT_TO_STALE_VERIFICATION,
+	MODEL_NAMED_CLASSES,
 ];
 
 /**
@@ -97,7 +99,7 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"verification-commands": INPUT_TO_STALE_VERIFICATION,
 	"similarity-cluster": NOT_YET_DECIDED,
 	"friction-accumulation": NOT_YET_DECIDED,
-	"request-classes": NOT_YET_DECIDED,
+	"request-classes": MODEL_NAMED_CLASSES,
 	"session-overview": NOT_YET_DECIDED,
 	"rule-restatement": NOT_YET_DECIDED,
 	"secret-leak": SECRET_SCANNER,
