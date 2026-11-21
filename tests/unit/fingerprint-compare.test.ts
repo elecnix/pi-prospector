@@ -17,6 +17,7 @@ const contributors: FingerprintContributor[] = [
 			label: "Failures",
 			description: "Failed tool calls.",
 			kind: "objective",
+			analyzers: ["failure-modes"],
 			measures: [
 				{ kind: "total", id: "toolFailures", field: "toolFailures" },
 				{ kind: "sessions", id: "sessionsWithFailures", field: "toolFailures" },
@@ -153,6 +154,22 @@ describe("fingerprint compare", () => {
 		assert.equal(merged.text, "75% (0–8)");
 		assert.ok(merged.flags.includes("merged"));
 		assert.equal(row(s, "prompts per session: 8+").b.text, "25%");
+	});
+
+	it("notes a section whose two sides were measured by different analyzer versions, and a side that mixes versions", () => {
+		const versioned = (fp: Fingerprint, versions: unknown[]): Fingerprint => ({
+			...fp,
+			objective: { ...fp.objective, failures: { ...(fp.objective["failures"] as object), versions } },
+		});
+		const left = versioned(a, [{ analyzer: "failure-modes", version: "1.2", sessions: 100 }]);
+		const right = versioned(b, [
+			{ analyzer: "failure-modes", version: "1.3", sessions: 150 },
+			{ analyzer: "failure-modes", version: "1.2", sessions: 50 },
+		]);
+		const failures = compareFingerprints({ label: "small", fingerprint: left }, { label: "large", fingerprint: right }, contributors).sections.find((s) => s.id === "failures");
+		assert.deepEqual(failures?.notes, ["Analyzer versions differ: small failure-modes 1.2 (100%); large failure-modes 1.3 (75%), 1.2 (25%)."]);
+		const same = compareFingerprints({ label: "small", fingerprint: left }, { label: "again", fingerprint: left }, contributors).sections.find((s) => s.id === "failures");
+		assert.deepEqual(same?.notes, []);
 	});
 
 	it("says a withheld section is withheld rather than dropping it", () => {

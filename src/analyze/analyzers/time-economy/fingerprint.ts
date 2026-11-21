@@ -7,6 +7,7 @@ export const timeEconomyFingerprint: FingerprintContributor = {
 		label: "Active time",
 		description: "Active time per session: tool-call spans plus message gaps up to the idle cap.",
 		kind: "objective",
+		analyzers: ["time-economy"],
 		measures: [
 			{ kind: "total", id: "totalHours", metric: "time-economy.active-time", field: "seconds", divisor: 3600, decimals: 1 },
 			{ kind: "distribution", id: "perSession", metric: "time-economy.active-time", field: "minutes", unit: "minutes", edges: [0, 5, 15, 30, 60, 120, 240] },

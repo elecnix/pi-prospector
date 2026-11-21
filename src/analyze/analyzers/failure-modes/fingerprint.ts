@@ -14,6 +14,7 @@ export const failureModesFingerprint: FingerprintContributor = {
 		label: "Failures",
 		description: "Failed generations and failed tool calls, by axis and by class from the failure catalogue.",
 		kind: "objective",
+		analyzers: ["failure-modes"],
 		measures: [
 			{ kind: "total", id: "turnFailures", metric: "failure-modes.turn-failure", field: "turnFailures" },
 			{ kind: "total", id: "toolFailures", metric: "failure-modes.tool-failure", field: "toolFailures" },

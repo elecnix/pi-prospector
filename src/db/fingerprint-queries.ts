@@ -112,6 +112,15 @@ export async function sessionsWithRun(db: AsyncDatabase, scope: FingerprintScope
 	return new Set(rows.map((r) => r.id));
 }
 
+/** One row per (session, version) among the analyzer's current nodes in scope. */
+export async function currentNodeVersions(db: AsyncDatabase, scope: FingerprintScope, analyzerId: string): Promise<Array<{ session: string; version: string }>> {
+	const { from, params } = currentNodes(scope);
+	return (await prep(db, `SELECT DISTINCT n.session_id AS session, n.analyzer_version_id AS version FROM ${from}`).all(analyzerId, ...params)) as Array<{
+		session: string;
+		version: string;
+	}>;
+}
+
 /** A JSON path into node content: `$` followed by `.name` steps. */
 const JSON_PATH = /^\$(\.[A-Za-z_][A-Za-z0-9_]*)+$/;
 /** A path relative to an array item, which may be the item itself. */

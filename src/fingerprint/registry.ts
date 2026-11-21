@@ -2,7 +2,7 @@ import type { Analyzer } from "../analyze/types.js";
 import type { FingerprintContributor } from "./contributor.js";
 import { shapeContributor, sourcesContributor, usageContributor } from "./contributors/sessions.js";
 import { checkContributorDef, METRIC_ID_PATTERN } from "./contributor.js";
-import { ID_PATTERN } from "./schema.js";
+import { ID_PATTERN, SECTION_FIELDS } from "./schema.js";
 
 /**
  * The fingerprint's contributors, in the order their sections print: the ones
@@ -32,6 +32,7 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 		seen.add(key);
 		const measureIds = new Set<string>();
 		for (const m of def.measures) {
+			if ((SECTION_FIELDS as readonly string[]).includes(m.id)) throw new Error(`fingerprint contributor '${def.id}': measure id '${m.id}' is reserved (${SECTION_FIELDS.join(", ")})`);
 			if (measureIds.has(m.id)) throw new Error(`fingerprint contributor '${def.id}' declares measure '${m.id}' twice`);
 			measureIds.add(m.id);
 			if (m.metric !== undefined && !new RegExp(METRIC_ID_PATTERN).test(m.metric)) {

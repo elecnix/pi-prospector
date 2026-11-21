@@ -82,6 +82,13 @@ export const FingerprintContributorDef = Type.Object({
 	/** `objective`: counted, timed, or found by a deterministic analyzer. `inferred`: a model judged it. */
 	kind: oneOf(SECTION_KINDS),
 	measures: Type.Array(MeasureSpec, { minItems: 1 }),
+	/**
+	 * The built-in analyzers whose nodes the section reads. The section then
+	 * publishes their version mix (`versions`), so a reader comparing two
+	 * fingerprints can tell a difference in the corpus from a difference in
+	 * the analyzer that measured it.
+	 */
+	analyzers: Type.Optional(Type.Array(Type.String({ pattern: "^[a-z][a-z0-9-]*$" }), { minItems: 1 })),
 });
 export type FingerprintContributorDef = Static<typeof FingerprintContributorDef>;
 

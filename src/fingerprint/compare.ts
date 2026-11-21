@@ -270,9 +270,44 @@ function weight(row: ComparedRow): number {
 	return Math.max(row.a.value ?? 0, row.b.value ?? 0);
 }
 
-function compareSection(contributor: FingerprintContributor, a: unknown, b: unknown, totals: [number, number]): ComparedSection {
+const VersionEntry = Type.Object({ analyzer: Type.String(), version: Type.String(), sessions: Type.Integer() });
+type VersionEntry = Static<typeof VersionEntry>;
+
+function versionsOf(section: unknown): VersionEntry[] | null {
+	if (!isOk(section)) return null;
+	const v = section["versions"];
+	return Array.isArray(v) && v.every((e) => Check(VersionEntry, e)) ? (v as VersionEntry[]) : null;
+}
+
+/** `failure-modes 1.3 (75%), 1.2 (25%)`: each analyzer's versions with their share of its sessions. */
+function mixText(entries: readonly VersionEntry[]): string {
+	const analyzers = [...new Set(entries.map((e) => e.analyzer))];
+	return analyzers
+		.map((analyzer) => {
+			const mine = entries.filter((e) => e.analyzer === analyzer);
+			const total = mine.reduce((n, e) => n + e.sessions, 0);
+			return `${analyzer} ${mine.map((e) => `${e.version} (${pctText(pct(e.sessions, total))})`).join(", ")}`;
+		})
+		.join("; ");
+}
+
+/** What a reader should know about the analyzer versions behind a section's two sides. */
+function versionNotes(def: FingerprintContributor["def"], a: FingerprintSide["label"], sa: unknown, b: FingerprintSide["label"], sb: unknown): string[] {
+	if (def.analyzers === undefined || !isOk(sa) || !isOk(sb)) return [];
+	const va = versionsOf(sa);
+	const vb = versionsOf(sb);
+	const missing = [va === null ? a : null, vb === null ? b : null].filter((l) => l !== null);
+	if (missing.length > 0) return [`${missing.join(" and ")} does not say which analyzer versions measured this section.`];
+	const keys = (v: VersionEntry[]) => [...new Set(v.map((e) => `${e.analyzer}@${e.version}`))].sort().join(",");
+	const mixed = (v: VersionEntry[]) => v.length > new Set(v.map((e) => e.analyzer)).size;
+	if (keys(va!) !== keys(vb!)) return [`Analyzer versions differ: ${a} ${mixText(va!)}; ${b} ${mixText(vb!)}.`];
+	if (mixed(va!) || mixed(vb!)) return [`Both sides mix analyzer versions: ${a} ${mixText(va!)}; ${b} ${mixText(vb!)}.`];
+	return [];
+}
+
+function compareSection(contributor: FingerprintContributor, a: unknown, b: unknown, totals: [number, number], labels: [string, string]): ComparedSection {
 	const { def } = contributor;
-	const notes: string[] = [];
+	const notes: string[] = versionNotes(def, labels[0], a, labels[1], b);
 	const coverage = (s: unknown, total: number): Cell => {
 		if (isOk(s)) {
 			const p = pct(s.sessionsMeasured, total);
@@ -317,7 +352,7 @@ export function compareFingerprints(a: FingerprintSide, b: FingerprintSide, cont
 	const notes: string[] = [];
 	if (a.fingerprint.minGroupSize !== b.fingerprint.minGroupSize) notes.push("The two sides were built with different minimum group sizes.");
 	const totals: [number, number] = [a.fingerprint.sessions.count, b.fingerprint.sessions.count];
-	const sections = contributors.map((c) => compareSection(c, a.fingerprint[c.def.kind][c.def.id], b.fingerprint[c.def.kind][c.def.id], totals));
+	const sections = contributors.map((c) => compareSection(c, a.fingerprint[c.def.kind][c.def.id], b.fingerprint[c.def.kind][c.def.id], totals, [a.label, b.label]));
 	const known = new Set(contributors.map((c) => `${c.def.kind}.${c.def.id}`));
 	for (const side of [a, b]) {
 		for (const kind of SECTION_KINDS) {

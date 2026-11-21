@@ -14,6 +14,7 @@ export const turnFrustrationFingerprint: FingerprintContributor = {
 		label: "Frustration",
 		description: "Frustration signals the person typed, by category.",
 		kind: "inferred",
+		analyzers: ["turn-frustration"],
 		measures: [
 			{ kind: "total", id: "signals", metric: "turn-frustration.frustration-signal", field: "typed" },
 			{ kind: "groups", id: "byCategory", metric: "turn-frustration.frustration-signal", dimensions: { category: CATEGORIES }, countField: "typed" },
