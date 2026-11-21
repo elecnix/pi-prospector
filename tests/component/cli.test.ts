@@ -138,6 +138,18 @@ describe("prospect CLI", () => {
 		assert.equal((await capture(["fingerprint", "--format", "xml"])).code, 1);
 	});
 
+	it("prints a command's error and warning notices to stderr, once each", async () => {
+		const bad = await capture(["fingerprint", "--source", "bogus"]);
+		assert.equal(bad.code, 1);
+		assert.equal(bad.out, "");
+		assert.match(bad.err, /^prospect fingerprint: unknown source 'bogus'/);
+
+		// A command that also printed the notice to stdout does not print it twice.
+		const warned = await capture(["analyzers", "bogus"]);
+		const both = `${warned.out}\n${warned.err}`;
+		assert.equal(both.split("Unknown analyzers subcommand").length - 1, 1, both);
+	});
+
 	it("passes the remaining arguments to the command", async () => {
 		const { code, out } = await capture(["analyzers", "list"]);
 		assert.equal(code, 0);
