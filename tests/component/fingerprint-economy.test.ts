@@ -191,4 +191,24 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.equal(section["sessionsWithMismatch"], 5);
 		assert.equal(section["substituteCalls"], 60);
 	});
+
+	it("tool-trajectory: trajectory signals by pattern and the tool calls they come from, only from runs at 7.0 or later", async () => {
+		for (const id of IDS.slice(0, 5)) {
+			await seedRun(t.db, id, "tool-trajectory", "7.1");
+			await seedNode(t.db, id, "tool-trajectory", { tool_call_count: 40, pattern_counts: { "stuck-loop": 2, "pre-flight-gap": 1 }, signals: [{ pattern: "stuck-loop", tool: "secret-tool" }] }, "7.1");
+		}
+		// Before the no-effect-edit detector existed: not measured.
+		await seedRun(t.db, "s6", "tool-trajectory", "3.0");
+		await seedNode(t.db, "s6", "tool-trajectory", { tool_call_count: 999, pattern_counts: { "stuck-loop": 99 }, signals: [] }, "3.0");
+		const section = objective(await fingerprint(), "toolTrajectory");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 5);
+		assert.equal(section["toolCalls"], 200);
+		assert.equal(section["signals"], 15);
+		assert.equal(section["sessionsWithSignal"], 5);
+		assert.deepEqual(section["signalsByPattern"], [
+			{ pattern: "stuck-loop", count: 10, sessions: 5 },
+			{ pattern: "pre-flight-gap", count: 5, sessions: 5 },
+		]);
+	});
 });
