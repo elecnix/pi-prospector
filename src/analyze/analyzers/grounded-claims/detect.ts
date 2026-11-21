@@ -265,6 +265,9 @@ const REQUEST_RULES: RequestRule[] = [
 	},
 ];
 
+/** The request types the rules check, in rule order: the closed list a request type is drawn from. */
+export const REQUEST_TYPES: readonly string[] = REQUEST_RULES.map((r) => r.type);
+
 function stringArg(inv: ToolInvocation, key: string): string {
 	const v = inv.args[key];
 	return typeof v === "string" ? v : "";
