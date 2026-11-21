@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { runSync } from "../../src/sync/index.js";
 import { PiFileSource } from "../../src/sync/sources/pi/index.js";
 import { migrate } from "../../src/db/schema.js";
+import { getUnanalyzedSessions, markAnalyzed } from "../../src/db/queries.js";
 import { insertSession, makeTempRoot, messageLine, piSessionFileName, sessionHeaderLine, tempDb, writeJsonl } from "./helpers.js";
 
 const PARENT_ID = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -112,6 +113,35 @@ describe("child run parent (#416)", () => {
 			await insertSession(db, MISSING_ID, `${root}/${MISSING_STEM}.jsonl`);
 			await migrate(db);
 			assert.equal(await parentOf(db, "child-of-missing"), MISSING_ID);
+		} finally {
+			await close();
+		}
+	});
+
+	it("the first migration queues the child runs it re-reads, and leaves links whose reading did not move", async () => {
+		const { db, close } = await tempDb();
+		try {
+			// A database from before #416: no parent-link triggers, linked rows with no kind.
+			await db.exec("DROP TRIGGER sessions_parent_link_ai; DROP TRIGGER sessions_parent_link_au;");
+			const root = "/sessions/" + PROJECT;
+			await insertSession(db, PARENT_ID, `${root}/${PARENT_STEM}.jsonl`);
+			await insertSession(db, "pi-child", `${root}/${PARENT_STEM}/2b83bd26/run-0/session.jsonl`);
+			await insertSession(db, "claude-parent", "/claude/parent.jsonl", "", "claude");
+			await insertSession(db, "claude-child", "/claude/agent-a1.jsonl", "", "claude");
+			await db.prepare("UPDATE sessions SET parent_session = ?, parent_kind = NULL WHERE id = 'pi-child'").run(PARENT_ID);
+			await db.prepare("UPDATE sessions SET parent_session = 'claude-parent', parent_kind = NULL WHERE id = 'claude-child'").run();
+			for (const id of [PARENT_ID, "pi-child", "claude-parent", "claude-child"]) await markAnalyzed(db, id);
+
+			await migrate(db);
+			const pending = new Set((await getUnanalyzedSessions(db)).map((s) => s.id));
+			assert.deepEqual([...pending].sort(), [PARENT_ID, "pi-child"].sort(), "a pi child run was read as a fork; a Claude Code child was already read as a child");
+
+			// From here the triggers queue every link change.
+			for (const id of pending) await markAnalyzed(db, id);
+			await db.prepare("UPDATE sessions SET parent_session = 'claude-parent', parent_kind = 'child' WHERE id = 'claude-child'").run();
+			assert.deepEqual((await getUnanalyzedSessions(db)).length, 0, "an update that changes nothing queues nothing");
+			await db.prepare("UPDATE sessions SET parent_session = ? WHERE id = 'claude-child'").run(PARENT_ID);
+			assert.deepEqual(new Set((await getUnanalyzedSessions(db)).map((s) => s.id)), new Set(["claude-child", "claude-parent", PARENT_ID]));
 		} finally {
 			await close();
 		}

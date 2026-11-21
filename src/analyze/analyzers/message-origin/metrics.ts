@@ -21,12 +21,5 @@ export const metrics: MetricDefinition[] = [
 			"The label covers whole messages. The origin of a frustration hit labels the spans inside a message and can differ.",
 			LIMIT_HARNESS,
 		],
-		seriesBreaks: [
-			{
-				version: "1.5",
-				effect: "A pi child run's prompts are agent messages. Before, a child run linked to its parent read as a fork, so its prompts counted as typed.",
-				repair: "prospect analyze --analyzer message-origin --revise minor --source pi",
-			},
-		],
 	},
 ];

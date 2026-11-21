@@ -580,6 +580,12 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
  * Every linked row also gets its `parent_kind`, by the rule sync uses
  * ({@link parentKindOf}). A row that has one keeps it.
  *
+ * A link is an input of the analyzers that read it, so a session whose link this
+ * writes, and the parent it names, go back on the plain-fill queue. So does a pi
+ * child run that was linked before the kind existed: it was read as a fork.
+ * Afterwards the triggers {@link PARENT_LINK_TRIGGERS} queue the sessions of every
+ * link that sync or a later migration writes.
+ *
  * Runs on every migration. A database with nothing to record reads the candidate
  * rows and writes nothing.
  */
@@ -593,22 +599,50 @@ export async function recordParentLinks(db: AsyncDatabase): Promise<void> {
 		.all()) as Array<{ id: string; source: string; file_path: string; parent_session: string | null }>;
 	const writes = candidates.flatMap((row) => {
 		const kind = parentKindOf(row.source, row.file_path);
-		if (row.parent_session?.trim()) return [{ id: row.id, parent: row.parent_session, kind, linkOnlyIfIndexed: false }];
+		if (row.parent_session?.trim()) return [{ id: row.id, source: row.source, parent: row.parent_session, kind, linkOnlyIfIndexed: false }];
 		const parent = isChildRunSessionPath(row.file_path) ? parentSessionFromRunPath(row.file_path) : null;
-		return parent && parent !== row.id ? [{ id: row.id, parent, kind, linkOnlyIfIndexed: true }] : [];
+		return parent && parent !== row.id ? [{ id: row.id, source: row.source, parent, kind, linkOnlyIfIndexed: true }] : [];
 	});
-	if (writes.length === 0) return;
+	if (writes.length === 0) {
+		await db.exec(PARENT_LINK_TRIGGERS);
+		return;
+	}
 	const setKind = db.prepare("UPDATE sessions SET parent_kind = ? WHERE id = ? AND parent_kind IS NULL");
+	const requeue = db.prepare("UPDATE sessions SET analyzed_message_count = NULL WHERE id IN (?, ?)");
 	const link = db.prepare(
 		"UPDATE sessions SET parent_session = ?, parent_kind = ? WHERE id = ? AND TRIM(COALESCE(parent_session, '')) = '' AND EXISTS (SELECT 1 FROM sessions WHERE id = ?)",
 	);
 	await db.transaction(async () => {
 		for (const w of writes) {
-			if (w.linkOnlyIfIndexed) await link.run(w.parent, w.kind, w.id, w.parent);
-			else await setKind.run(w.kind, w.id);
+			const changed = w.linkOnlyIfIndexed ? await link.run(w.parent, w.kind, w.id, w.parent) : await setKind.run(w.kind, w.id);
+			const readAsFork = !w.linkOnlyIfIndexed && w.kind === "child" && w.source === "pi";
+			if (changed.changes > 0 && (w.linkOnlyIfIndexed || readAsFork)) await requeue.run(w.id, w.parent);
 		}
 	})();
+	await db.exec(PARENT_LINK_TRIGGERS);
 }
+
+/**
+ * Put a session back on the plain-fill queue when its parent link changes, and the
+ * parents on both ends of the change with it: the link is an input of the units of
+ * the session (message-origin, turn-frustration) and of its parent's work moved to
+ * children (delegation-outcomes). A plain fill only scans sessions on the queue, so
+ * without this a link recorded after the analysis would leave the old units in
+ * place until the session grew.
+ *
+ * Created after {@link recordParentLinks} fills the kinds of rows indexed before
+ * the column existed, so that fill queues only the sessions whose reading moved.
+ */
+const PARENT_LINK_TRIGGERS = `
+	CREATE TRIGGER IF NOT EXISTS sessions_parent_link_ai AFTER INSERT ON sessions
+	WHEN TRIM(COALESCE(NEW.parent_session, '')) <> '' BEGIN
+		UPDATE sessions SET analyzed_message_count = NULL WHERE id = NEW.parent_session;
+	END;
+	CREATE TRIGGER IF NOT EXISTS sessions_parent_link_au AFTER UPDATE OF parent_session, parent_kind ON sessions
+	WHEN OLD.parent_session IS NOT NEW.parent_session OR OLD.parent_kind IS NOT NEW.parent_kind BEGIN
+		UPDATE sessions SET analyzed_message_count = NULL WHERE id IN (NEW.id, OLD.parent_session, NEW.parent_session);
+	END;
+`;
 
 /**
  * Lower, once, the line cursor of every session whose adapter counted the empty

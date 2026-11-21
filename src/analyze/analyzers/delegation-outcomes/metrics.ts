@@ -36,9 +36,8 @@ export const metrics: MetricDefinition[] = [
 		denominator: "the parent's own message count, for a share",
 		limitations: [
 			"A fork is not a child: a pi session forked from the parent copies its history and is never counted. A pi child run counts, from its parent link (#416).",
-			"A pi child run indexed before its parent link was recorded counted as no child. Its parent's node is redrawn by a plain run over every session: prospect analyze --analyzer delegation-outcomes --all.",
+			"A child linked after its parent was analysed puts the parent back on the plain-fill queue, so the next plain run redraws the parent's node.",
 			"It measures volume and not value. A child that read a file counts as much as a child that wrote a feature.",
-			"The totals are read when the node is computed. A child session synced later changes the unit and the next plain run adds a node.",
 			LIMIT_HARNESS,
 		],
 	},
