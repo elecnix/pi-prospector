@@ -211,4 +211,20 @@ describe("economy and tool-use fingerprint sections", () => {
 			{ pattern: "pre-flight-gap", count: 5, sessions: 5 },
 		]);
 	});
+
+	it("navigation-efficiency: wasteful navigation episodes by pattern, from the newest node of each session", async () => {
+		for (const [i, id] of IDS.slice(0, 6).entries()) {
+			const episodes = i < 5 ? { scroll: 0, zoom_out: 1, overly_deep_zoom: 0, repeated_view: 2 } : { scroll: 0, zoom_out: 0, overly_deep_zoom: 0, repeated_view: 0 };
+			await seedNode(t.db, id, "navigation-efficiency", { view_count: 30, edit_count: 3, pattern_counts: episodes, episodes: [{ path: "/home/secret/path/a.ts" }] }, "1.1");
+		}
+		const section = objective(await fingerprint(), "navigation");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 6);
+		assert.equal(section["episodes"], 15);
+		assert.equal(section["sessionsWithEpisode"], 5);
+		assert.deepEqual(section["episodesByPattern"], [
+			{ pattern: "repeated_view", count: 10, sessions: 5 },
+			{ pattern: "zoom_out", count: 5, sessions: 5 },
+		]);
+	});
 });

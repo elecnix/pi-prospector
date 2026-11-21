@@ -49,6 +49,7 @@ import {
 	type NavPattern,
 	type NavigationScan,
 } from "./detect.js";
+import { navigationEfficiencyFingerprint } from "./fingerprint.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const NavigationEfficiencyRawProposal = Type.Object({
@@ -204,6 +205,7 @@ export const navigationEfficiencyAnalyzer: Analyzer = {
 	def: NAVIGATION_EFFICIENCY_DEF,
 	version: NAVIGATION_EFFICIENCY_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [navigationEfficiencyFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: NAVIGATION_EFFICIENCY_DEF.id,
