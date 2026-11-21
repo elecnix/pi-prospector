@@ -27,6 +27,8 @@ import { DEFAULT_TOKEN_UNITS_CONFIG, DEFAULT_WEIGHTS, type TokenUnitsConfig } fr
 import { foldSessionUnits, TokenUnitsProperties, type UsageRow } from "./fold.js";
 import { classCostsOutput, reportOutput } from "./report.js";
 
+import { tokenUnitsFingerprint } from "./fingerprint.js";
+
 export * from "./config.js";
 export * from "./fold.js";
 export * from "./leaves.js";
@@ -61,6 +63,7 @@ export const tokenUnitsAnalyzer: Analyzer = {
 	},
 
 	outputs: [reportOutput, classCostsOutput],
+	fingerprint: [tokenUnitsFingerprint],
 
 	async plan(ctx: AnalyzerPlanContext): Promise<AnalysisUnit[]> {
 		if (ctx.messages.length === 0) return [];
