@@ -24,9 +24,7 @@ describe("fingerprint section: repositories", () => {
 		}
 		for (let i = 1; i <= 5; i++) await seedNode(t.db, `s${i}`, "repo-identity", "1.0", node("github.com/secret-owner/hunter2", "remote_output"));
 		await seedNode(t.db, "s6", "repo-identity", "1.0", node("github.com/secret-owner/other-repo", "pr_url"));
-		// s7 had no hint, then grew and gained one: the newer node decides.
-		await seedNode(t.db, "s7", "repo-identity", "1.0", node(null, "none"));
-		await seedNode(t.db, "s7", "repo-identity", "1.0", node("github.com/secret-owner/third-repo", "gh_repo_flag"), "2026-05-02T00:00:00.000Z");
+		await seedNode(t.db, "s7", "repo-identity", "1.0", node("github.com/secret-owner/third-repo", "gh_repo_flag"));
 	});
 	after(() => t.close());
 

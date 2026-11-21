@@ -23,19 +23,17 @@ describe("fingerprint section: git commands", () => {
 			// s6 ran no git command; it is measured with zero.
 			await seedNode(t.db, id, "git-commands", "1.0", i <= 5 ? node([2, 2], [1, 1], [i === 1 ? 1 : 0, i === 1 ? 1 : 0]) : node([0, 0], [0, 0], [0, 0]));
 		}
-		// s2 grew between runs: the newer node covers the whole session.
-		await seedNode(t.db, "s2", "git-commands", "1.0", node([4, 3], [2, 1], [0, 0]), "2026-05-02T00:00:00.000Z");
 		// s7 never ran the analyzer, so its node-less state is not a zero.
 		await seedSession(t.db, "s7");
 	});
 	after(() => t.close());
 
-	it("counts the commands that worked from the newest node of each measured session", async () => {
+	it("counts the commands that worked in the measured sessions", async () => {
 		const fp = await fingerprintOf(t.db);
 		const s = sectionOf(fp, "gitCommands");
 		assert.equal(s.status, "ok");
 		assert.equal(s["sessionsMeasured"], 6);
-		assert.equal(s["commits"], 11);
+		assert.equal(s["commits"], 10);
 		assert.equal(s["pushes"], 5);
 		assert.equal(s["sessionsCommitting"], 5);
 		assert.equal(s["sessionsPushing"], 5);

@@ -1,5 +1,4 @@
 import type { FingerprintContributor } from "../../../fingerprint/contributor.js";
-import { newestPerSession } from "../../../fingerprint/latest-node.js";
 
 /**
  * The first regression-signal version whose claim does not require a named
@@ -32,7 +31,7 @@ export const regressionSignalFingerprintContributor: FingerprintContributor = {
 		const nodes = await ctx.nodes("regression-signal", { claim: "$.claims_regression", named: "$.signals.names_the_cause", reverts: "$.signals.reverts" });
 		return {
 			measured: [...measured],
-			rows: newestPerSession(nodes.filter((r) => measured.has(String(r["session"])))).map((r) => {
+			rows: nodes.filter((r) => measured.has(String(r["session"]))).map((r) => {
 				// A node whose claim fell away is kept by the graph and counts as no claim here.
 				const claim = r["claim"] === 1 ? 1 : 0;
 				return { session: r["session"]!, claim, named: claim * (r["named"] === 1 ? 1 : 0), reverts: claim * (r["reverts"] === 1 ? 1 : 0) };

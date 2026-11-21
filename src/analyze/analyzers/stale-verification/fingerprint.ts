@@ -1,5 +1,4 @@
 import type { FingerprintContributor, FingerprintRow } from "../../../fingerprint/contributor.js";
-import { newestPerSession } from "../../../fingerprint/latest-node.js";
 
 /** Who made the edit that threw a passing run away: the analyzer's closed set. */
 const CAUSES = ["agent", "user", "subagent"] as const;
@@ -7,7 +6,7 @@ const CAUSES = ["agent", "user", "subagent"] as const;
 /**
  * Passing verification time, the part a later edit threw away, who made that
  * edit, and the commits that took an unverified edit. Read from the totals of
- * each session's newest node; the stale runs themselves, which carry command
+ * each current node; the stale runs themselves, which carry command
  * lines, are never read. Deterministic, so objective.
  */
 export const staleVerificationFingerprintContributor: FingerprintContributor = {
@@ -35,7 +34,7 @@ export const staleVerificationFingerprintContributor: FingerprintContributor = {
 			...Object.fromEntries(CAUSES.map((c) => [c, `$.stale_seconds_by_cause.${c}`])),
 		});
 		const rows: FingerprintRow[] = [];
-		for (const r of newestPerSession(nodes.filter((n) => measured.has(String(n["session"])) && typeof n["staleSeconds"] === "number"))) {
+		for (const r of nodes.filter((n) => measured.has(String(n["session"])) && typeof n["staleSeconds"] === "number")) {
 			const session = r["session"]!;
 			rows.push({ session, passingSeconds: r["passingSeconds"]!, staleSeconds: r["staleSeconds"]!, unverifiedCommits: r["unverifiedCommits"]! });
 			// A group counts whole units, and a run's seconds come from timestamps that need not be whole.
