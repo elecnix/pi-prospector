@@ -736,7 +736,7 @@ Print a fingerprint of your sessions as JSON. It covers how long and how often y
 - Frustration counts only sessions whose latest `turn-frustration` run is 1.10 or later, because earlier versions did not record which words the person typed. A session still carrying a hit from an earlier version is left out too. When fewer than 5 sessions remain, the section reads `withheld`, so an old corpus never reports 0 signals. Run `/prospect-analyze --analyzer turn-frustration --revise minor` to bring it up to date.
 - No figure rests on fewer than 5 sessions. A histogram bucket under 5 merges into its smaller neighbour. A group under 5 folds into `other` (dropped if `other` is also under 5). When an analyzer ran on fewer than 5 sessions, its section reads `withheld`.
 - `--format` picks the renderer: `json` (the default) or `csv`, one `metric,value` row per figure.
-- It reads only. It never runs analysis, so run `/prospect-analyze` first to fill the sections that depend on the graph.
+- It reads only. It opens the database read-only and never upgrades its schema. When the index is missing or older than the installed pi-prospector, it stops and tells you to run `prospect sync`. It never runs analysis, so run `/prospect-analyze` first to fill the sections that depend on the graph. The standalone `prospect fingerprint` doesn't ask the usage-report question or send a report, because both write to disk.
 - Each section comes from a contributor that an analyzer registers in `Analyzer.fingerprint`, so a new analyzer adds a section without a change to the builder. `DESIGN.md` defines the contributor and renderer extension points.
 
 ## Pi tool: `prospect`
