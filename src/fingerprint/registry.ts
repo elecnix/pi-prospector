@@ -84,7 +84,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"session-ending": NOT_YET_DECIDED,
 	"skill-use": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
-	"delegation-outcomes": NOT_YET_DECIDED,
 	"verification-commands": NOT_YET_DECIDED,
 	"stale-verification": NOT_YET_DECIDED,
 	"files-in-play": NOT_YET_DECIDED,
