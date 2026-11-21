@@ -274,6 +274,18 @@ describe("parseFingerprintArgs", () => {
 		assert.equal(parseFingerprintArgs("--as-of 2025-12-01", now).asOf, "2025-12-01T23:59:59.999Z");
 	});
 
+	it("rejects a day the month does not have, which Date.parse would roll into the next month", () => {
+		for (const flag of ["--as-of", "--from", "--to"]) {
+			for (const day of ["2026-02-30", "2026-02-29", "2026-04-31", "2026-06-00"]) {
+				assert.throws(() => parseFingerprintArgs(`${flag} ${day}`, now), new RegExp(`${flag} takes a date as YYYY-MM-DD, got '${day}'`));
+			}
+		}
+		// 2028 is a leap year.
+		assert.equal(parseFingerprintArgs("--from 2028-02-29", now).from, "2028-02-29");
+		assert.equal(parseFingerprintArgs("--to 2026-01-31", now).to, "2026-01-31");
+		assert.equal(parseFingerprintArgs("--as-of 2028-02-29", now).asOf, "2028-02-29T23:59:59.999Z");
+	});
+
 	it("rejects an unknown source, a bad date, and a reversed range", () => {
 		assert.throws(() => parseFingerprintArgs("--source vim", now), /unknown source/);
 		assert.throws(() => parseFingerprintArgs("--from yesterday", now), /--from/);

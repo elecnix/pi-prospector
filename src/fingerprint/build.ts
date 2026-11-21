@@ -34,9 +34,15 @@ export interface FingerprintRequest {
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * A `YYYY-MM-DD` day that is on the calendar. `Date.parse` rolls a day past the
+ * end of its month into the next one (`2026-02-30` reads as March 2), so the day
+ * must print back as itself.
+ */
 function parseDay(flag: string, value: string | undefined): string | null {
 	if (value === undefined) return null;
-	if (!DAY.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) throw new Error(`--${flag} takes a date as YYYY-MM-DD, got '${value}'`);
+	const at = DAY.test(value) ? Date.parse(`${value}T00:00:00Z`) : Number.NaN;
+	if (Number.isNaN(at) || new Date(at).toISOString().slice(0, 10) !== value) throw new Error(`--${flag} takes a date as YYYY-MM-DD, got '${value}'`);
 	return value;
 }
 
