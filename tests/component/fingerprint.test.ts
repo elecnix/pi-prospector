@@ -34,9 +34,9 @@ const inferred = (fp: Fingerprint, id: string) => fp.inferred[id] as Section;
 async function seedSession(db: AsyncDatabase, id: string, source: string, startedAt: string, opts: { parent?: string; prompts: number; toolCalls: number; minutes: number }): Promise<void> {
 	await db
 		.prepare(
-			"INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, name, started_at, last_line, last_modified, message_count, branch_count) VALUES (?, ?, 'SECRET-PROJECT', ?, '/home/secret/path', ?, 'Secret title', ?, 0, 0, 0, 0)",
+			"INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, parent_kind, name, started_at, last_line, last_modified, message_count, branch_count) VALUES (?, ?, 'SECRET-PROJECT', ?, '/home/secret/path', ?, ?, 'Secret title', ?, 0, 0, 0, 0)",
 		)
-		.run(id, `/home/secret/path/${id}.jsonl`, source, opts.parent ?? null, startedAt);
+		.run(id, `/home/secret/path/${id}.jsonl`, source, opts.parent ?? null, opts.parent ? "child" : null, startedAt);
 	const start = Date.parse(startedAt);
 	const messages = [];
 	for (let i = 0; i < opts.prompts; i++) {

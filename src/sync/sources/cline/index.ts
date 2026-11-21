@@ -235,6 +235,7 @@ export class ClineFileSource implements SessionSourceAdapter {
 			source: this.source,
 			cwd,
 			parent_session: isRoot ? null : rootSessionId,
+			parent_kind: isRoot ? null : "child",
 			started_at: (isRoot ? manifest?.started_at : undefined) ?? firstTimestamp(messages) ?? "",
 			last_line: resumeLine,
 			last_modified: disc.mtime,

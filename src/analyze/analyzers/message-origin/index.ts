@@ -93,7 +93,11 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// 1.4: two of the 1.3 patterns were too wide. `Do what @file says` needs the `@`, so
 	// `Do what Alice says` stays a person's sentence. A tool probe needs `once` as a count
 	// (`once,` `once.` `once and`) or `with name`, not `once the tests pass`.
-	minor: 4,
+	// 1.5: a pi child run is a child agent's session (#416). Its parent link was read
+	// as a fork's, because the rule inferred "fork" from the pi source, so its
+	// prompts, which the parent agent wrote, read as typed. The rule now reads the
+	// link's recorded kind, and those messages become `agent/child-session`.
+	minor: 5,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/message-origin/index.ts",
 };
@@ -134,10 +138,9 @@ export const messageOriginAnalyzer: Analyzer = {
 			const gap = (Date.parse(m.timestamp ?? "") - Date.parse(prev.timestamp ?? "")) / 1000;
 			if (Number.isFinite(gap)) secondsAfterToolCall.set(m.id, gap);
 		});
-		// A session with a parent link is a child agent's unless it is a pi fork,
-		// where the parent link records a fork and the person kept typing.
+		// A child agent's session, not a fork, where the person kept typing.
 		const lineage = await getSessionLineage(ctx.db, ctx.sessionId);
-		const childAgent = lineage?.parent_session != null && lineage.source !== "pi";
+		const childAgent = lineage?.parent_kind === "child";
 
 		const units: AnalysisUnit[] = [];
 		for (const pair of await ctx.getTurnPairs(ctx.sessionId)) {

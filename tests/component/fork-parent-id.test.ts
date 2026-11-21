@@ -51,9 +51,10 @@ describe("fork parent identity", () => {
 			assert.equal(result.forksResolved, 1, "the parent file is there, so the fork resolves");
 
 			const fork = (await db
-				.prepare("SELECT parent_session, branch_count FROM sessions WHERE id = ?")
-				.get(FORK_ID)) as { parent_session: string | null; branch_count: number };
+				.prepare("SELECT parent_session, parent_kind, branch_count FROM sessions WHERE id = ?")
+				.get(FORK_ID)) as { parent_session: string | null; parent_kind: string | null; branch_count: number };
 			assert.equal(fork.parent_session, PARENT_ID, "the link is an id a join can follow");
+			assert.equal(fork.parent_kind, "fork");
 			assert.equal(fork.branch_count, 1);
 		} finally {
 			fx.cleanup();

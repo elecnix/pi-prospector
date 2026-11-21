@@ -68,3 +68,13 @@ export function parentSessionFromRunPath(filePath: string): string | null {
 	}
 	return null;
 }
+
+/**
+ * What a pi session's parent link records: a child run's session, under a `run-N`
+ * directory, was started by the parent's agent (`child`); any other pi session
+ * with a parent was forked from it (`fork`). Every other harness records a parent
+ * only for a child agent.
+ */
+export function parentKindOf(source: string, filePath: string): "fork" | "child" {
+	return source === "pi" && !isChildRunSessionPath(filePath) ? "fork" : "child";
+}

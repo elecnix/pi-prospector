@@ -221,6 +221,7 @@ export class ClaudeFileSource implements SessionSourceAdapter {
 				source: disc.source,
 				cwd: (metaCwd ?? disc.project) || "",
 				parent_session: parentSession,
+				parent_kind: parentSession ? "child" : null,
 				started_at: startedAt ?? "",
 				last_line: end,
 				last_modified: disc.mtime,
