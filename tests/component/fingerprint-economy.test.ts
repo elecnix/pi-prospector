@@ -179,4 +179,16 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.equal(section["unusedPrefixMillionTokenTurns"], 3);
 		assert.equal(section["estimatedTaxUsd"], 2);
 	});
+
+	it("task-tool-mismatch: sessions whose agent avoided the tool its task named, from sessions with a recorded inventory", async () => {
+		for (const [i, id] of IDS.slice(0, 6).entries()) {
+			const found = i < 5;
+			await seedNode(t.db, id, "task-tool-mismatch", { mismatch_found: found, substitute_calls: found ? 12 : 0, substitute_tool_names: ["secret-tool"], available_tools: 20 });
+		}
+		const section = objective(await fingerprint(), "toolAvoidance");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 6);
+		assert.equal(section["sessionsWithMismatch"], 5);
+		assert.equal(section["substituteCalls"], 60);
+	});
 });
