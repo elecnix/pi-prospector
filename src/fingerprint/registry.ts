@@ -93,7 +93,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"frustration-lexicon": INPUT_TO_TURN_FRUSTRATION,
 	// Its answers reach the fingerprint as prompt-form's `promptKind` section.
 	"message-answers": INPUT_TO_PROMPT_FORM,
-	"plan-compliance": NOT_YET_DECIDED,
 	"grounded-claims": NOT_YET_DECIDED,
 	"revive-chains": NOT_YET_DECIDED,
 	"uncompleted-leads": NOT_YET_DECIDED,
