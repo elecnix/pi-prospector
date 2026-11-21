@@ -1,4 +1,5 @@
 import { Type, type Static } from "typebox";
+import { Check, Errors } from "typebox/value";
 import type { FingerprintScope, NodeScalar, SessionFacts } from "../db/fingerprint-queries.js";
 import { DISTRIBUTION_UNITS, ID_PATTERN, SECTION_KINDS, oneOf } from "./schema.js";
 
@@ -83,6 +84,19 @@ export const FingerprintContributorDef = Type.Object({
 	measures: Type.Array(MeasureSpec, { minItems: 1 }),
 });
 export type FingerprintContributorDef = Static<typeof FingerprintContributorDef>;
+
+/**
+ * Throw when a definition does not match its schema. TypeScript checks the
+ * types of a built-in definition, not the limits its schema states (a
+ * distribution needs at least one edge, an id has a fixed shape), so the
+ * registry and the builder both call this.
+ */
+export function checkContributorDef(def: FingerprintContributorDef): void {
+	const id = def.id;
+	if (Check(FingerprintContributorDef, def)) return;
+	const first = [...Errors(FingerprintContributorDef, def)][0];
+	throw new Error(`fingerprint contributor '${id}' is not a valid definition${first ? `: ${first.instancePath || "/"} ${first.message}` : ""}`);
+}
 
 /**
  * One row of a contributor's input: `session` identifies the session the row

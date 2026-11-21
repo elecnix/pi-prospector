@@ -3,7 +3,7 @@ import type { AsyncDatabase } from "../db/async-db.js";
 import { currentNodeItems, currentNodeRows, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
 import { HARNESS_SOURCES, isHarnessSource, type HarnessSource } from "../harness.js";
 import { parseTimestamp } from "../timepoint.js";
-import type { FingerprintContributor, FingerprintReadContext, FingerprintRow, MeasureSpec } from "./contributor.js";
+import { checkContributorDef, type FingerprintContributor, type FingerprintReadContext, type FingerprintRow, type MeasureSpec } from "./contributor.js";
 import { distribution, guardGroups, WITHHELD, type RawGroup } from "./guard.js";
 import { FINGERPRINT_SCHEMA_VERSION, fingerprintSchema, MIN_GROUP_SIZE, type Fingerprint } from "./schema.js";
 
@@ -201,6 +201,7 @@ function utcDay(iso: string): string {
  * mean a contributor produced a value it did not declare.
  */
 export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRequest, contributors: readonly FingerprintContributor[]): Promise<Fingerprint> {
+	for (const contributor of contributors) checkContributorDef(contributor.def);
 	const scope = toScope(request);
 	const min = MIN_GROUP_SIZE;
 	const sessions = await sessionFacts(db, scope);

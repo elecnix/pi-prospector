@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { Check } from "typebox/value";
 import { tempDb, insertMessages, type TempDb } from "./helpers.js";
 import { createRun, insertNode } from "../../src/db/analysis-queries.js";
+import { currentNodeItems, currentNodeRows } from "../../src/db/fingerprint-queries.js";
 import { buildFingerprint, parseFingerprintArgs } from "../../src/fingerprint/build.js";
 import { fingerprintSchema, MIN_GROUP_SIZE, type Fingerprint } from "../../src/fingerprint/schema.js";
 import { hasMetric } from "../../src/analyze/metrics/registry.js";
@@ -307,6 +308,31 @@ describe("registering a contributor", () => {
 	it("refuses to compose a schema for a section that declares a measure id twice", () => {
 		const twice = { ...extra, def: { ...extra.def, measures: [extra.def.measures[0]!, extra.def.measures[0]!] } };
 		assert.throws(() => fingerprintSchema([twice]), /declares measure 'scoreTotal' twice/);
+	});
+
+	it("refuses a measure id that would replace a field every section has", () => {
+		for (const id of ["status", "sessionsMeasured"]) {
+			const clash = { ...extra, def: { ...extra.def, measures: [{ kind: "total" as const, id, field: "score" }] } };
+			assert.throws(() => fingerprintSchema([clash]), new RegExp(`measure id '${id}' is reserved`));
+		}
+	});
+
+	it("refuses a definition its schema rejects, such as a distribution with no edges, before reading anything", async () => {
+		const noEdges: FingerprintContributor = {
+			...extra,
+			def: { ...extra.def, id: "noEdges", measures: [{ kind: "distribution", id: "scores", field: "score", unit: "prompts", edges: [] }] },
+		};
+		await assert.rejects(build(t2.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), [noEdges]), /contributor 'noEdges' is not a valid definition: \/measures\/0\/edges/);
+		assert.throws(() => collectContributors([], [noEdges]), /contributor 'noEdges' is not a valid definition/);
+	});
+
+	it("reads an object or an array in node content as no value, never as its JSON text", async () => {
+		await seedNode(t2.db, "plug-0", "nested-analyzer", { n: 3, list: [1, 2], obj: { a: 1 }, items: [[1], { a: 1 }, 2, "x"] });
+		const scope = { sources: null, from: null, toExclusive: null, asOf: ASOF };
+		const rows = await currentNodeRows(t2.db, scope, "nested-analyzer", { n: "$.n", list: "$.list", obj: "$.obj" });
+		assert.deepEqual(rows, [{ session: "plug-0", n: 3, list: null, obj: null }]);
+		const items = await currentNodeItems(t2.db, scope, "nested-analyzer", "$.items", { v: "$" }, { list: "$.list" });
+		assert.deepEqual(items.map((r) => [r["v"], r["list"]]), [[null, null], [null, null], [2, null], ["x", null]]);
 	});
 
 	it("is checked against the schema the declarations compose", async () => {

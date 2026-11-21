@@ -58,7 +58,10 @@ function fingerprintFlags(params: Record<string, unknown>): string {
 	const flags: string[] = [];
 	for (const [param, flag] of [["source", "--source"], ["from", "--from"], ["to", "--to"], ["as_of", "--as-of"], ["format", "--format"]] as const) {
 		const value = params[param];
-		if (typeof value === "string" && value !== "") flags.push(flag, value);
+		if (typeof value !== "string" || value === "") continue;
+		// The command splits its flags on whitespace, so a value with a space would add a flag of its own.
+		if (/\s/.test(value)) throw new Error(`${param} must not contain whitespace, got '${value}'`);
+		flags.push(flag, value);
 	}
 	return flags.join(" ");
 }

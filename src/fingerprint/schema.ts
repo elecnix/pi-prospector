@@ -50,6 +50,9 @@ export type DistributionUnit = (typeof DISTRIBUTION_UNITS)[number];
 export const SECTION_KINDS = ["objective", "inferred"] as const;
 export type SectionKind = (typeof SECTION_KINDS)[number];
 
+/** The fields every published section has. A measure id may not take one, or its value would replace the field. */
+export const SECTION_FIELDS = ["status", "sessionsMeasured"] as const;
+
 /** What a section id or a measure id looks like: a short camelCase name. */
 export const ID_PATTERN = /^[a-z][A-Za-z0-9]{0,39}$/;
 
@@ -118,6 +121,9 @@ export function sectionSchema(contributor: FingerprintContributor): TSchema {
 	// A repeated id would leave one measure without a property, so its value would go unchecked.
 	const ids = new Set<string>();
 	for (const m of contributor.def.measures) {
+		if ((SECTION_FIELDS as readonly string[]).includes(m.id)) {
+			throw new Error(`fingerprint contributor '${contributor.def.id}': measure id '${m.id}' is reserved (${SECTION_FIELDS.join(", ")})`);
+		}
 		if (ids.has(m.id)) throw new Error(`fingerprint contributor '${contributor.def.id}' declares measure '${m.id}' twice`);
 		ids.add(m.id);
 	}

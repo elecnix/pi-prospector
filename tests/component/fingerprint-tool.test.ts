@@ -47,6 +47,11 @@ describe("prospect tool: fingerprint action", () => {
 		assert.match((await call({ action: "fingerprint", format: "xml" })).content[0]!.text, /unknown format 'xml'/);
 	});
 
+	it("refuses a param value with whitespace, so one param cannot add another flag", async () => {
+		const result = await call({ action: "fingerprint", source: "pi --format csv" });
+		assert.match(result.content[0]!.text, /prospect fingerprint: source must not contain whitespace/);
+	});
+
 	it("reports a bad argument as text instead of throwing", async () => {
 		const result = await call({ action: "fingerprint", source: "vim" });
 		assert.match(result.content[0]!.text, /prospect fingerprint: unknown source/);

@@ -1,7 +1,7 @@
 import type { Analyzer } from "../analyze/types.js";
 import type { FingerprintContributor } from "./contributor.js";
 import { shapeContributor, sourcesContributor, usageContributor } from "./contributors/sessions.js";
-import { METRIC_ID_PATTERN } from "./contributor.js";
+import { checkContributorDef, METRIC_ID_PATTERN } from "./contributor.js";
 import { ID_PATTERN } from "./schema.js";
 
 /**
@@ -38,6 +38,8 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 				throw new Error(`fingerprint contributor '${def.id}' measure '${m.id}' has metric '${m.metric}', which is not <analyzer-id>.<metric-name>`);
 			}
 		}
+		// The checks above name the problem; this one catches the rest of what the schema states.
+		checkContributorDef(def);
 	}
 	return all;
 }

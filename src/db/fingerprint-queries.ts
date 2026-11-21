@@ -135,13 +135,13 @@ export async function currentNodeRows(
 	const paths = names.map((name) => fields[name]!);
 	checkPaths(paths, JSON_PATH);
 	const { from, params } = currentNodes(scope);
-	const select = names.map((_, i) => `json_extract(n.content_json, ?) AS f${i}`);
+	const select = names.map((_, i) => extracted("n.content_json", `f${i}`));
 	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from}`).all(
-		...paths,
+		...twice(paths),
 		analyzerId,
 		...params,
-	)) as Array<Record<string, NodeScalar>>;
-	return rows.map((row) => Object.fromEntries([["session", row["session"]!], ...names.map((name, i) => [name, scalar(row[`f${i}`])])]));
+	)) as Array<Record<string, unknown>>;
+	return rows.map((row) => Object.fromEntries([["session", row["session"] as string], ...names.map((name, i) => [name, scalar(row, `f${i}`)])]));
 }
 
 /**
@@ -164,24 +164,46 @@ export async function currentNodeItems(
 	checkPaths([arrayPath, ...nodePaths], JSON_PATH);
 	checkPaths(itemPaths, ITEM_PATH);
 	const { from, params } = currentNodes(scope, ", json_each(n.content_json, ?) g");
-	const select = [...itemNames.map((_, i) => `json_extract(g.value, ?) AS i${i}`), ...nodeNames.map((_, i) => `json_extract(n.content_json, ?) AS n${i}`)];
+	// An element is read through its full path in the node, `g.fullkey` plus the item path after `$`,
+	// because a scalar element in `g.value` is not JSON and `json_type` rejects it.
+	const select = [
+		...itemNames.map((_, i) => extracted("n.content_json", `i${i}`, "g.fullkey || substr(?, 2)")),
+		...nodeNames.map((_, i) => extracted("n.content_json", `n${i}`)),
+	];
 	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from}`).all(
-		...itemPaths,
-		...nodePaths,
+		...twice(itemPaths),
+		...twice(nodePaths),
 		arrayPath,
 		analyzerId,
 		...params,
 	)) as Array<Record<string, NodeScalar>>;
 	return rows.map((row) =>
 		Object.fromEntries([
-			["session", row["session"]!],
-			...itemNames.map((name, i) => [name, scalar(row[`i${i}`])]),
-			...nodeNames.map((name, i) => [name, scalar(row[`n${i}`])]),
+			["session", row["session"] as string],
+			...itemNames.map((name, i) => [name, scalar(row, `i${i}`)]),
+			...nodeNames.map((name, i) => [name, scalar(row, `n${i}`)]),
 		]),
 	);
 }
 
-/** Numbers and strings pass; anything else (an object or array read as JSON text) is not a shareable scalar. */
-function scalar(value: unknown): NodeScalar {
+/**
+ * Select the value at a JSON path as `alias`, and its JSON type as `alias_t`.
+ * `json_extract` returns an object or an array as JSON text, which reads as a
+ * string, so only the type tells it from a string value. Takes the path twice.
+ */
+function extracted(source: string, alias: string, path = "?"): string {
+	return `json_extract(${source}, ${path}) AS ${alias}, json_type(${source}, ${path}) AS ${alias}_t`;
+}
+
+/** Each path twice, in the order `extracted` reads them. */
+function twice(paths: readonly string[]): string[] {
+	return paths.flatMap((p) => [p, p]);
+}
+
+/** Numbers and strings pass; an object or an array is not a shareable scalar, so it reads as no value. */
+function scalar(row: Record<string, unknown>, alias: string): NodeScalar {
+	const type = row[`${alias}_t`];
+	if (type === "object" || type === "array") return null;
+	const value = row[alias];
 	return typeof value === "number" || typeof value === "string" ? value : null;
 }
