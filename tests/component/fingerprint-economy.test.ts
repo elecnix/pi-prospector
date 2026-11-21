@@ -135,4 +135,26 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.equal(section["writeChurnMillions"], 1.2);
 		assert.equal(section["coldMissUsd"], 1.25);
 	});
+
+	it("routing-opportunity: turns by verdict and the cost a cheaper model could have saved, only from runs at 1.4 or later", async () => {
+		for (const id of IDS.slice(0, 5)) {
+			await seedRun(t.db, id, "routing-opportunity", "1.4");
+			for (const [verdict, cost] of [["neutral", 0.1], ["neutral", 0.1], ["downshift", 0.5], ["escalate", null]] as const) {
+				await seedNode(t.db, id, "routing-opportunity", { model: "secret-model", verdict, turn_cost_usd: cost }, "1.4");
+			}
+		}
+		// Its frustration features counted words the person pasted, not typed: not measured.
+		await seedRun(t.db, "s6", "routing-opportunity", "1.2");
+		await seedNode(t.db, "s6", "routing-opportunity", { model: "secret-model", verdict: "escalate", turn_cost_usd: 9 }, "1.2");
+		const section = objective(await fingerprint(), "routing");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 5);
+		assert.deepEqual(section["turnsByVerdict"], [
+			{ verdict: "neutral", count: 10, sessions: 5 },
+			{ verdict: "downshift", count: 5, sessions: 5 },
+			{ verdict: "escalate", count: 5, sessions: 5 },
+		]);
+		assert.equal(section["turnCostUsd"], 3.5);
+		assert.equal(section["downshiftCostUsd"], 2.5);
+	});
 });
