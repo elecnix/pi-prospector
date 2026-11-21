@@ -63,6 +63,7 @@ import { REPETITION_COLLAPSE_DEF, type RepetitionCollapseProperties } from "../r
 import { DEFAULT_ROUTING_CONFIG, type RoutingConfig } from "./config.js";
 import { currentHits } from "../../../db/muted-terms.js";
 import { pricedHits } from "../../hit-reading.js";
+import { routingOpportunityFingerprint } from "./fingerprint.js";
 import { Type, type Static } from "typebox";
 
 export const RoutingVerdict = Type.Union([
@@ -247,6 +248,7 @@ export const routingOpportunityAnalyzer: Analyzer = {
 	def: ROUTING_OPPORTUNITY_DEF,
 	version: ROUTING_OPPORTUNITY_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [routingOpportunityFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: ROUTING_OPPORTUNITY_DEF.id,
