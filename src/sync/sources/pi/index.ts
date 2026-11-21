@@ -15,74 +15,15 @@ import { parseLine, extractSessionName } from "../../parser.js";
 import { resolveFork } from "../../forks.js";
 import { walkSessionDir } from "../../scanner.js";
 import { getSessionsDir } from "../../../config.js";
-
-/**
- * Pi's own session-file naming, as the harness's session store writes it:
- * `<timestamp>_<uuid>.jsonl`, wherever below a project directory pi put it.
- *
- * The timestamp is written with dashes, not with the colons and dot of the ISO
- * 8601 string it comes from: the session that started at `19:00:24.951Z` is stored
- * as `2026-09-11T19-00-24-951Z_01a091d7-…jsonl`. Hence `[\d-]+` between the `T`
- * and the `Z` rather than a looser class: discovery claims the shape the harness
- * writes, and every one of the 4262 session files on a live machine matches it.
- *
- * The stem is also the name pi gives the directory holding a session's child runs,
- * which is how those attach to their parent: see
- * {@link parentSessionFromRunPath}.
- *
- * Discovery claims nothing by extension, so this is the whole of "a pi session
- * file" for this source.
- */
-const PI_SESSION_STEM_RE = /^\d{4}-\d{2}-\d{2}T[\d-]+Z_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-
-/**
- * The session id pi's own file name carries, or null when the name is not one pi
- * gives its session files. Pi names a session file after the session it holds, so
- * the name is a record of the id wherever the file itself has gone.
- */
-export function piSessionIdFromFileName(fileName: string): string | null {
-	if (!fileName.endsWith(".jsonl")) return null;
-	return PI_SESSION_STEM_RE.exec(fileName.slice(0, -".jsonl".length))?.[1] ?? null;
-}
-
-/** True when a file name is one pi gives its own session files. */
-export function isPiSessionFileName(fileName: string): boolean {
-	return piSessionIdFromFileName(fileName) !== null;
-}
-
-/**
- * The session that spawned a child run, from the run's path.
- *
- * Pi keeps a session's child runs inside a directory named after the session file
- * itself: `<project>/<timestamp>_<uuid>/<runhash>/run-N/session.jsonl`. So the
- * nearest ancestor directory carrying that naming holds the parent's session id,
- * while everything between it and the file (the `run-N` directory, the run's own
- * hash) belongs to the run and names no session.
- */
-export function parentSessionFromRunPath(filePath: string): string | null {
-	let dir = path.dirname(filePath);
-	while (dir !== path.dirname(dir)) {
-		const id = piSessionIdFromFileName(`${path.basename(dir)}.jsonl`);
-		if (id) return id;
-		dir = path.dirname(dir);
-	}
-	return null;
-}
-
-/**
- * A child run's session directory, named `run-N` by the pi-subagents extension.
- * The file inside it is a pi session — pi's format, pi's header — so this source
- * claims it; the extension's own artifacts (`*_transcript.jsonl`, `*_meta.json`)
- * are its data and are claimed by its own source instead.
- */
-const RUN_DIR_RE = /^run-\d+$/;
+import { RUN_DIR_RE, isChildRunSessionPath, isPiSessionFileName, parentSessionFromRunPath, piSessionIdFromFileName } from "../../pi-naming.js";
 
 export class PiFileSource implements SessionSourceAdapter {
 	readonly source = "pi";
 	/**
 	 * Claim order, just after pi-subagent: both sources discover a child run's
-	 * `session.jsonl`, and this one parses strictly less (it does not recover the
-	 * parent session id), so the subagent source must claim those files first.
+	 * `session.jsonl`, and when config enables the subagent source it claims those
+	 * files first and tags them as its own. Without it, this source claims them,
+	 * and reads the parent from the run's path the same way.
 	 */
 	readonly priority = 60;
 	/** Child-run artifacts live under the same root as the sessions themselves. */
@@ -150,6 +91,9 @@ export class PiFileSource implements SessionSourceAdapter {
 					} else {
 						parentSessionId = piSessionIdFromFileName(path.basename(parentSession));
 					}
+				} else if (isChildRunSessionPath(disc.filePath)) {
+					// A child run's header names no parent; pi's layout records it in the path (#416).
+					parentSessionId = parentSessionFromRunPath(disc.filePath);
 				}
 				initialised = true;
 			}

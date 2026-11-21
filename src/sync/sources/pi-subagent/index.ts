@@ -11,18 +11,17 @@ import { collectBatches, type SessionSourceAdapter, type ParsedSession } from ".
 import type { DiscoveredSession } from "../../../types.js";
 import type { SessionInsert, MessageInsert } from "../../../db/queries.js";
 import { parseLine, extractSessionName } from "../../parser.js";
-import { buildToolInventory, parentSessionFromRunPath } from "../pi/index.js";
+import { buildToolInventory } from "../pi/index.js";
+import { RUN_DIR_RE, parentSessionFromRunPath } from "../../pi-naming.js";
 import { walkSessionDir } from "../../scanner.js";
 import { getSessionsDir } from "../../../config.js";
-
-const RUN_DIR_RE = /^run-\d+$/;
 
 export class PiSubagentSource implements SessionSourceAdapter {
 	readonly source = "pi-subagent";
 	/**
 	 * Claim order, just before pi: both sources discover a child run's
-	 * `session.jsonl`, and this one parses strictly more (it additionally recovers
-	 * the parent session id), so it must claim those files first.
+	 * `session.jsonl`, and when config enables this one, its rows carry its own
+	 * source tag, so it must claim those files first.
 	 */
 	readonly priority = 50;
 	/** Opt-in: sync loads this source only when config `sources` names it. */
