@@ -96,7 +96,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"skill-use": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
 	"verification-commands": INPUT_TO_STALE_VERIFICATION,
-	"files-in-play": NOT_YET_DECIDED,
 	"similarity-cluster": NOT_YET_DECIDED,
 	"friction-accumulation": NOT_YET_DECIDED,
 	"request-classes": NOT_YET_DECIDED,
