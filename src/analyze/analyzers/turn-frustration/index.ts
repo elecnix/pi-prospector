@@ -74,6 +74,7 @@ import {
 	type TextSpan,
 } from "../../text-origin.js";
 import { Type, type Static } from "typebox";
+import { turnFrustrationFingerprint } from "./fingerprint.js";
 
 /** Where a hit came from. */
 export const SignalSource = Type.Union([Type.Literal("lexicon"), Type.Literal("paralinguistic")]);
@@ -270,6 +271,7 @@ function usableLexicon(
 }
 
 export const turnFrustrationAnalyzer: Analyzer = {
+	fingerprint: [turnFrustrationFingerprint],
 	def: TURN_FRUSTRATION_DEF,
 	version: TURN_FRUSTRATION_VERSION,
 	prompts: {} as Record<string, PromptVersion>,

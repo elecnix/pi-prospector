@@ -57,6 +57,7 @@ import {
 	RawProposal,
 } from "./detect.js";
 import { Type, type Static } from "typebox";
+import { failureModesFingerprint } from "./fingerprint.js";
 
 export const FailureModesProperties = Type.Object({
 	session_id: Type.String(),
@@ -132,6 +133,7 @@ function resolveConfig(raw: unknown): FailureModesConfig {
 }
 
 export const failureModesAnalyzer: Analyzer = {
+	fingerprint: [failureModesFingerprint],
 	def: FAILURE_MODES_DEF,
 	version: FAILURE_MODES_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
