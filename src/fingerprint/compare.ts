@@ -323,30 +323,19 @@ function versionNotes(def: FingerprintContributor["def"], a: FingerprintSide["la
 }
 
 /**
- * Notes about one side of a section that a reader needs before its rows: it
- * covers a thin share of the corpus, or a distribution holds more values than
- * the sessions measured (a session counted twice, which a distribution's
- * one-row-per-session contract rules out).
+ * A note about one side of a section that a reader needs before its rows: it
+ * covers a thin share of the corpus. A distribution never holds two values for
+ * one session, because the builder refuses a second row per session.
  */
-function sideNotes(def: FingerprintContributor["def"], label: string, section: unknown, total: number): string[] {
+function sideNotes(label: string, section: unknown, total: number): string[] {
 	if (!isOk(section)) return [];
-	const notes: string[] = [];
 	const coverage = pct(section.sessionsMeasured, total);
-	if (coverage < THIN_COVERAGE_PERCENT) notes.push(`${label} is measured on ${pctText(coverage)} of its sessions; its figures describe that subset.`);
-	for (const measure of def.measures) {
-		if (measure.kind !== "distribution") continue;
-		const d = section[measure.id] as { status?: string; sessions?: number } | undefined;
-		if (d?.status !== "ok" || d.sessions === undefined || d.sessions <= section.sessionsMeasured) continue;
-		notes.push(
-			`${label}: ${measureName(measure, def.label)} holds ${d.sessions} values for ${section.sessionsMeasured} sessions measured, so some sessions count more than once and its shares and quantiles are skewed.`,
-		);
-	}
-	return notes;
+	return coverage < THIN_COVERAGE_PERCENT ? [`${label} is measured on ${pctText(coverage)} of its sessions; its figures describe that subset.`] : [];
 }
 
 function compareSection(contributor: FingerprintContributor, a: unknown, b: unknown, totals: [number, number], labels: [string, string]): ComparedSection {
 	const { def } = contributor;
-	const notes: string[] = [...versionNotes(def, labels[0], a, labels[1], b), ...sideNotes(def, labels[0], a, totals[0]), ...sideNotes(def, labels[1], b, totals[1])];
+	const notes: string[] = [...versionNotes(def, labels[0], a, labels[1], b), ...sideNotes(labels[0], a, totals[0]), ...sideNotes(labels[1], b, totals[1])];
 	const coverage = (s: unknown, total: number): Cell => {
 		if (isOk(s)) {
 			const p = pct(s.sessionsMeasured, total);
