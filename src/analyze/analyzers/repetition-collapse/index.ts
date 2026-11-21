@@ -44,6 +44,7 @@ import {
 	DEFAULT_REPETITION_COLLAPSE_CONFIG,
 	type RepetitionCollapseConfig,
 } from "./config.js";
+import { repetitionCollapseFingerprint } from "./fingerprint.js";
 import { CollapsedStepSchema, scanSteps, type CollapsedStep } from "./detect.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
@@ -151,6 +152,7 @@ export const repetitionCollapseAnalyzer: Analyzer = {
 	def: REPETITION_COLLAPSE_DEF,
 	version: REPETITION_COLLAPSE_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [repetitionCollapseFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: REPETITION_COLLAPSE_DEF.id,

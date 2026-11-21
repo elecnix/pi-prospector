@@ -94,7 +94,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	// Its answers reach the fingerprint as prompt-form's `promptKind` section.
 	"message-answers": INPUT_TO_PROMPT_FORM,
 	"decode-collapse": NOT_YET_DECIDED,
-	"repetition-collapse": NOT_YET_DECIDED,
 	// A session's node clusters the items of its repository's sibling sessions too, so the same cluster repeats
 	// in every sibling's node and a session can carry a cluster none of its own messages belong to.
 	"similarity-cluster": POOLED_CLUSTERS,
