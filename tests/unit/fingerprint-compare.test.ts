@@ -250,6 +250,8 @@ describe("fingerprint compare", () => {
 		assert.deepEqual(failures?.notes, ["Analyzer versions differ: small failure-modes 1.2 (100%); large failure-modes 1.3 (75%), 1.2 (25%)."]);
 		const same = compareFingerprints({ label: "small", fingerprint: left }, { label: "again", fingerprint: left }, contributors).sections.find((s) => s.id === "failures");
 		assert.deepEqual(same?.notes, []);
+		const unversioned = compareFingerprints({ label: "small", fingerprint: left }, { label: "old", fingerprint: b }, contributors).sections.find((s) => s.id === "failures");
+		assert.deepEqual(unversioned?.notes, ["old does not say which analyzer versions measured this section."]);
 	});
 
 	it("notes a side measured on under half its sessions", () => {
