@@ -108,7 +108,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"presidio": SECRET_SCANNER,
 	"piicatcher": SECRET_SCANNER,
 	"dataprofiler": SECRET_SCANNER,
-	"regression-signal": REGRESSION,
 	"regression-attribution": REGRESSION,
 	"regression-prevention": REGRESSION,
 };
