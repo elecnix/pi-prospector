@@ -48,6 +48,20 @@ export const metrics: MetricDefinition[] = [
 		],
 	},
 	{
+		id: "context-economy.read-amplification",
+		name: "Read amplification",
+		definition: "The carry of the session's read and shell tool results, in token-turns, divided by the output tokens the session billed, rounded to a whole number.",
+		measurement: "counted",
+		unit: "token-turns per output token, per session",
+		denominator: "output tokens billed in the session",
+		limitations: [
+			"Token counts of the results are estimated from stored character lengths with a configurable characters-per-token ratio.",
+			"A session that billed no output tokens reads as 0. The fingerprint leaves such a session out of the distribution.",
+			"Only results of tools named read or bash count, so a harness that names its file and shell tools otherwise reads lower.",
+			LIMIT_HARNESS,
+		],
+	},
+	{
 		id: "context-economy.compaction-policy",
 		name: "Compaction policy",
 		definition: "Per compaction cycle, the carry the compaction avoided against the tokens needed to rebuild context, with flags for a compaction that fired too late or too often. The carry avoided is a lower bound.",
