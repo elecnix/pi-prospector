@@ -85,7 +85,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"files-in-play": NOT_YET_DECIDED,
 	"navigation-efficiency": NOT_YET_DECIDED,
 	"similarity-cluster": NOT_YET_DECIDED,
-	"friction-accumulation": NOT_YET_DECIDED,
 	"tool-inventory-tax": NOT_YET_DECIDED,
 	"context-economy": NOT_YET_DECIDED,
 	"cache-economy": NOT_YET_DECIDED,
