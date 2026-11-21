@@ -155,6 +155,30 @@ describe("fingerprint compare", () => {
 		assert.equal(row(section("shape"), "prompts per session p50").label, "prompts per session p50", "a name that holds its unit is not repeated");
 	});
 
+	it("notes a source mix that differs by more than ten points, and names the source to compare on", () => {
+		const mix = (fp: Fingerprint, pi: number, claude: number): Fingerprint => ({
+			...fp,
+			objective: {
+				...fp.objective,
+				sources: {
+					status: "ok",
+					sessionsMeasured: pi + claude,
+					bySource: [
+						{ source: "pi", count: pi, sessions: pi },
+						{ source: "claude", count: claude, sessions: claude },
+					],
+				},
+			},
+		});
+		const notes = compareFingerprints({ label: "small", fingerprint: mix(a, 80, 20) }, { label: "large", fingerprint: mix(b, 120, 280) }, contributors).notes;
+		assert.ok(
+			notes.includes("The source mix differs (small: pi 80%, claude 20%; large: claude 70%, pi 30%), and figures vary by harness. To compare like for like, rebuild both with --source pi."),
+			notes.join("\n"),
+		);
+		const close = compareFingerprints({ label: "small", fingerprint: mix(a, 80, 20) }, { label: "large", fingerprint: mix(b, 300, 100) }, contributors).notes;
+		assert.ok(!close.some((n) => n.startsWith("The source mix")), close.join("\n"));
+	});
+
 	it("turns a total into a rate per measured session, so corpora of different sizes compare", () => {
 		const r = row(section("failures"), "tool failures per session");
 		assert.equal(r.a.text, "0.50");

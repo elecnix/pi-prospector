@@ -419,9 +419,40 @@ function periodNotes(a: Fingerprint, b: Fingerprint): string[] {
 	return [`The periods differ; they share ${from} to ${to}. To compare like for like, rebuild both with --from ${from}-01 --to ${lastDay(to)}.`];
 }
 
+/** A source mix that differs by more than this many points between the sides gets a note. */
+export const SOURCE_MIX_POINTS = 10;
+
+/** Each source's share of the sessions, from the `sources` section, largest first; empty when it is not published. */
+function sourceMix(fp: Fingerprint): Array<[string, number]> {
+	const section = fp.objective["sources"];
+	if (!isOk(section) || !Array.isArray(section["bySource"])) return [];
+	return (section["bySource"] as Array<{ source: string; sessions: number }>)
+		.map((g): [string, number] => [g.source, pct(g.sessions, section.sessionsMeasured)])
+		.sort((x, y) => y[1] - x[1]);
+}
+
+/**
+ * A note when the harness mix differs by more than {@link SOURCE_MIX_POINTS}
+ * points: most figures vary by harness, so the mix alone can explain a
+ * difference. It names the source both sides have most of, to rebuild on.
+ */
+function sourceNotes(a: FingerprintSide, b: FingerprintSide): string[] {
+	const ma = sourceMix(a.fingerprint);
+	const mb = sourceMix(b.fingerprint);
+	if (ma.length === 0 || mb.length === 0) return [];
+	const share = (mix: Array<[string, number]>, source: string) => mix.find(([s]) => s === source)?.[1] ?? 0;
+	const sources = [...new Set([...ma, ...mb].map(([s]) => s))];
+	if (!sources.some((s) => Math.abs(share(ma, s) - share(mb, s)) > SOURCE_MIX_POINTS)) return [];
+	const best = [...sources].sort((x, y) => Math.min(share(ma, y), share(mb, y)) - Math.min(share(ma, x), share(mb, x)))[0]!;
+	const text = (mix: Array<[string, number]>) => mix.map(([s, p]) => `${s} ${pctText(p)}`).join(", ");
+	return [
+		`The source mix differs (${a.label}: ${text(ma)}; ${b.label}: ${text(mb)}), and figures vary by harness. To compare like for like, rebuild both with --source ${best}.`,
+	];
+}
+
 /** Compare two fingerprints section by section, in the contributors' order. */
 export function compareFingerprints(a: FingerprintSide, b: FingerprintSide, contributors: readonly FingerprintContributor[]): Comparison {
-	const notes: string[] = periodNotes(a.fingerprint, b.fingerprint);
+	const notes: string[] = [...periodNotes(a.fingerprint, b.fingerprint), ...sourceNotes(a, b)];
 	if (a.fingerprint.minGroupSize !== b.fingerprint.minGroupSize) notes.push("The two sides were built with different minimum group sizes.");
 	const totals: [number, number] = [a.fingerprint.sessions.count, b.fingerprint.sessions.count];
 	const sections = contributors.map((c) => compareSection(c, a.fingerprint[c.def.kind][c.def.id], b.fingerprint[c.def.kind][c.def.id], totals, [a.label, b.label]));
