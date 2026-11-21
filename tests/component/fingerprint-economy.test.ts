@@ -157,4 +157,26 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.equal(section["turnCostUsd"], 3.5);
 		assert.equal(section["downshiftCostUsd"], 2.5);
 	});
+
+	it("tool-inventory-tax: tools carried and left unused, from sessions with a recorded inventory", async () => {
+		for (const id of IDS.slice(0, 5)) {
+			await seedNode(t.db, id, "tool-inventory-tax", {
+				available_tools: 20,
+				invoked_tools: 4,
+				unused_tools: 16,
+				unused_tool_names: ["secret-tool"],
+				unused_prefix_tokens: 3000,
+				unused_prefix_token_turns: 600_000,
+				estimated_tax_usd: 0.4,
+			});
+		}
+		const section = objective(await fingerprint(), "toolInventory");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 5);
+		assert.equal(section["availableTools"], 100);
+		assert.equal(section["invokedTools"], 20);
+		assert.equal(section["unusedTools"], 80);
+		assert.equal(section["unusedPrefixMillionTokenTurns"], 3);
+		assert.equal(section["estimatedTaxUsd"], 2);
+	});
 });
