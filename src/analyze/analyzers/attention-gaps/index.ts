@@ -36,6 +36,7 @@ import { Type, type Static } from "typebox";
 import { MESSAGE_ORIGIN_DEF, type MessageOriginProperties } from "../message-origin/index.js";
 import { DEFAULT_ATTENTION_GAPS_CONFIG, type AttentionGapsConfig } from "./config.js";
 import { scanAttention, type OriginRead } from "./detect.js";
+import { attentionGapsFingerprint } from "./fingerprint.js";
 
 /** The properties an attention-gaps node carries in its `contentJson`. */
 export const ATTENTION_GAPS_PROPERTIES = Type.Object({
@@ -101,6 +102,7 @@ function timingFingerprint(messages: readonly MessageRow[]): string {
 export const attentionGapsAnalyzer: Analyzer = {
 	def: ATTENTION_GAPS_DEF,
 	version: ATTENTION_GAPS_VERSION,
+	fingerprint: [attentionGapsFingerprint],
 	prompts: {} as Record<string, PromptVersion>,
 	defaultConfig: {
 		id: "",
