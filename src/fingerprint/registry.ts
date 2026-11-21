@@ -67,7 +67,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"frustration-lexicon": NOT_YET_DECIDED,
 	"attention-gaps": NOT_YET_DECIDED,
 	"message-answers": NOT_YET_DECIDED,
-	"prompt-form": NOT_YET_DECIDED,
 	"assistant-cognition": NOT_YET_DECIDED,
 	"tool-trajectory": NOT_YET_DECIDED,
 	"phase-trajectory": NOT_YET_DECIDED,
