@@ -53,8 +53,21 @@ function makeMutex() {
 	};
 }
 
-const dbPath = (workerData as { dbPath: string }).dbPath;
-const db = new Database(dbPath);
+const { dbPath, readonly } = workerData as { dbPath: string; readonly: boolean };
+
+/**
+ * The connection, or why it could not be opened. A read-only open requires the
+ * file to exist, so it never creates an empty database. A failed open answers
+ * every request with its error instead of crashing the worker, which would leave
+ * the caller waiting on a reply that never comes.
+ */
+let db: Database.Database;
+let openError: Error | undefined;
+try {
+	db = new Database(dbPath, { readonly, fileMustExist: readonly });
+} catch (err) {
+	openError = err instanceof Error ? err : new Error(String(err));
+}
 // Keys are the SQL string; values are the prepared Statement.
 const stmtCache = new Map<string, Database.Statement>();
 const mutex = makeMutex();
@@ -90,6 +103,10 @@ function allStmt(sql: string, params: unknown) {
 }
 
 function run(msg: WorkerMsg): unknown {
+	if (openError !== undefined) {
+		if (msg.op === "close") return undefined;
+		throw openError;
+	}
 	switch (msg.op) {
 		case "run":
 			return mono(runStmt(msg.sql!, msg.params));

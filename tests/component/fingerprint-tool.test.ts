@@ -9,15 +9,22 @@ import { BUILTIN_ANALYZERS } from "../../src/analyze/defaults.js";
 import { fingerprintSchema, type Fingerprint } from "../../src/fingerprint/schema.js";
 import { executeProspectTool } from "../../src/commands/tool.js";
 import type { ExtensionCommandContext } from "../../src/pi-stubs.js";
+import { openAsyncDatabase } from "../../src/db/async-db.js";
+import { migrate } from "../../src/db/schema.js";
 
 /** The `fingerprint` action of the `prospect` tool: the same fingerprint the command prints. */
 
 let tmpDir: string;
 const ctx = { cwd: process.cwd(), hasUI: false, ui: { notify: () => undefined } } as unknown as ExtensionCommandContext;
 
-before(() => {
+before(async () => {
 	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-fingerprint-tool-"));
-	process.env["PROSPECTOR_DB_PATH"] = path.join(tmpDir, "tool.db");
+	const file = path.join(tmpDir, "tool.db");
+	process.env["PROSPECTOR_DB_PATH"] = file;
+	// The fingerprint reads an index and never creates one, so the suite builds an empty one.
+	const db = openAsyncDatabase(file);
+	await migrate(db);
+	await db.close();
 });
 
 after(() => {

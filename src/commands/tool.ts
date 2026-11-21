@@ -13,7 +13,7 @@ import { getLatestAnalyzeRuns } from "../db/analysis-queries.js";
 import { readNodes, readNodeDetail, type NodesQuery } from "./nodes.js";
 import { readSessionSummary } from "./show.js";
 import { readLeaks, type LeaksQuery } from "./leaks.js";
-import { renderFingerprint } from "./fingerprint.js";
+import { renderFingerprint, withReadOnlyIndex } from "./fingerprint.js";
 import { readSearch, searchSyntaxHelp, type SearchQuery } from "./search.js";
 import { listAssertions } from "../db/assertions.js";
 import type { Proposal } from "../types.js";
@@ -66,6 +66,15 @@ function fingerprintFlags(params: Record<string, unknown>): string {
 	return flags.join(" ");
 }
 
+async function fingerprintAction(params: Record<string, unknown>): Promise<ToolResult> {
+	try {
+		const { text: body, fingerprint } = await withReadOnlyIndex((db) => renderFingerprint(db, fingerprintFlags(params)));
+		return text(body, fingerprint);
+	} catch (err) {
+		return text(`prospect fingerprint: ${err instanceof Error ? err.message : String(err)}`, {});
+	}
+}
+
 export async function executeProspectTool(
 	_toolCallId: string,
 	params: Record<string, unknown>,
@@ -73,6 +82,9 @@ export async function executeProspectTool(
 	_onUpdate: unknown,
 	ctx: ExtensionCommandContext,
 ): Promise<ToolResult> {
+	// The fingerprint only reads, so it opens the index read-only and never
+	// migrates it; every other action shares one migrated connection.
+	if (params.action === "fingerprint") return fingerprintAction(params);
 	const db = openAsyncDatabase(getDbPath());
 	await migrate(db);
 	try {
@@ -297,14 +309,6 @@ export async function executeProspectTool(
 			return text(body, report);
 		} catch (err) {
 			return text(`prospect search: ${err instanceof Error ? err.message : String(err)}`, {});
-		}
-	}
-	case "fingerprint": {
-		try {
-			const { text: body, fingerprint } = await renderFingerprint(db, fingerprintFlags(params));
-			return text(body, fingerprint);
-		} catch (err) {
-			return text(`prospect fingerprint: ${err instanceof Error ? err.message : String(err)}`, {});
 		}
 	}
 	case "session_summary": {

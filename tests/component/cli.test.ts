@@ -165,6 +165,24 @@ describe("prospect CLI", () => {
 		assert.deepEqual(calls, ["ask", "send"]);
 	});
 
+	it("neither asks nor sends the usage report around a command that only reads the index", async () => {
+		await capture(["sync"]);
+		const calls: string[] = [];
+		const log = console.log;
+		console.log = () => undefined;
+		try {
+			const code = await main(["fingerprint"], {
+				modelRegistry: noModels,
+				askConsent: async () => void calls.push("ask"),
+				sendReport: async () => void calls.push("send"),
+			});
+			assert.equal(code, 0);
+		} finally {
+			console.log = log;
+		}
+		assert.deepEqual(calls, []);
+	});
+
 	it("runs as an executable and exits when the command finishes", async () => {
 		const { stdout } = await promisify(execFile)(process.execPath, [BIN, "stats"], { env: process.env, timeout: 60_000 });
 		assert.match(stdout, /Sessions/i);

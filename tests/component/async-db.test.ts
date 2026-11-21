@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import { AsyncDatabase } from "../../src/db/async-db.js";
 
@@ -112,5 +113,26 @@ describe("AsyncDatabase worker bridge", () => {
 		} finally {
 			await db.close();
 		}
+	});
+
+	it("opens a file read-only: writes fail, and a missing file is an error on every call, not a new database", async () => {
+		const dbPath = tempDbPath();
+		const writer = new AsyncDatabase(dbPath);
+		await writer.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+		await writer.close();
+		const reader = new AsyncDatabase(dbPath, { readonly: true });
+		try {
+			assert.deepEqual(await reader.prepare("SELECT COUNT(*) AS n FROM t").get(), { n: 0 });
+			await assert.rejects(reader.prepare("INSERT INTO t (id) VALUES (1)").run(), /readonly/);
+		} finally {
+			await reader.close();
+		}
+
+		const missing = tempDbPath();
+		const absent = new AsyncDatabase(missing, { readonly: true });
+		await assert.rejects(absent.prepare("SELECT 1").get(), /unable to open|does not exist/);
+		await assert.rejects(absent.prepare("SELECT 1").get(), /unable to open|does not exist/);
+		await absent.close();
+		assert.equal(fs.existsSync(missing), false);
 	});
 });

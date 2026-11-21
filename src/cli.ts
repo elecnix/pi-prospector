@@ -40,9 +40,11 @@ export async function main(argv: string[], options: CliOptions = {}): Promise<nu
 		return 2;
 	}
 	if (rest.includes("--help") || rest.includes("-h")) return printCommandHelp(first);
-	// The telemetry command is how the user answers, so it never asks first.
-	const isTelemetry = command.name === "prospect-telemetry";
-	if (!isTelemetry) await (options.askConsent ?? askOnTerminal)();
+	// The telemetry command is how the user answers, so it never asks first. A
+	// read-only command neither asks nor sends: both write (see `readOnly`), and
+	// the report that is due goes out after the next command that writes.
+	const reports = command.name !== "prospect-telemetry" && command.readOnly !== true;
+	if (reports) await (options.askConsent ?? askOnTerminal)();
 
 	let failed = false;
 	const ctx: ExtensionCommandContext = {
@@ -61,7 +63,7 @@ export async function main(argv: string[], options: CliOptions = {}): Promise<nu
 		console.error(`prospect ${first}: ${err instanceof Error ? err.message : String(err)}`);
 		return 1;
 	}
-	if (!isTelemetry) await (options.sendReport ?? sendReport)();
+	if (reports) await (options.sendReport ?? sendReport)();
 	return failed ? 1 : 0;
 }
 
