@@ -72,7 +72,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"assistant-cognition": NOT_YET_DECIDED,
 	"tool-trajectory": NOT_YET_DECIDED,
 	"task-tool-mismatch": NOT_YET_DECIDED,
-	"uncompleted-leads": NOT_YET_DECIDED,
 	"compression-checklist": NOT_YET_DECIDED,
 	"language-mismatch": NOT_YET_DECIDED,
 	"decode-collapse": NOT_YET_DECIDED,

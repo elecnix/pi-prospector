@@ -39,6 +39,7 @@ import {
 	LeadTypeSchema,
 	type UncompletedLeadsConfig,
 } from "./config.js";
+import { uncompletedLeadsFingerprint } from "./fingerprint.js";
 import { scanSessionLeads, resolvedResultText } from "./detect.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
@@ -193,6 +194,7 @@ export const uncompletedLeadsAnalyzer: Analyzer = {
 	def: UNCOMPLETED_LEADS_DEF,
 	version: UNCOMPLETED_LEADS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [uncompletedLeadsFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: UNCOMPLETED_LEADS_DEF.id,
