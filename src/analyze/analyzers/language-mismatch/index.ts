@@ -52,6 +52,7 @@ import {
 	scanSession,
 	TurnVerdictSchema,
 } from "./detect.js";
+import { languageMismatchFingerprint } from "./fingerprint.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const LanguageMismatchRawProposal = Type.Object({
@@ -159,6 +160,7 @@ export function buildProposal(
 export const languageMismatchAnalyzer: Analyzer = {
 	def: LANGUAGE_MISMATCH_DEF,
 	version: LANGUAGE_MISMATCH_VERSION,
+	fingerprint: [languageMismatchFingerprint],
 	prompts: {} as Record<string, PromptVersion>,
 	defaultConfig: {
 		id: "",

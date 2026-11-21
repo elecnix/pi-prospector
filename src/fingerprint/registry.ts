@@ -73,7 +73,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"revive-chains": NOT_YET_DECIDED,
 	"uncompleted-leads": NOT_YET_DECIDED,
 	"compression-checklist": NOT_YET_DECIDED,
-	"language-mismatch": NOT_YET_DECIDED,
 	"decode-collapse": NOT_YET_DECIDED,
 	"repetition-collapse": NOT_YET_DECIDED,
 	"session-ending": NOT_YET_DECIDED,
