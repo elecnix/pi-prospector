@@ -20,7 +20,9 @@ import { lexiconCandidatesAnalyzer } from "../../src/analyze/analyzers/lexicon-c
 import { frustrationLexiconAnalyzer } from "../../src/analyze/analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer, TURN_FRUSTRATION_DEF, type TurnFrustrationProperties } from "../../src/analyze/analyzers/turn-frustration/index.js";
 import { getNodesByAnalyzer } from "../../src/db/analysis-queries.js";
-import { getChildSessionStats } from "../../src/db/queries.js";
+import { getChildSessionStats, getUnanalyzedSessions, markAnalyzed } from "../../src/db/queries.js";
+import { migrate } from "../../src/db/schema.js";
+import { delegationOutcomesAnalyzer, DELEGATION_OUTCOMES_DEF, type DelegationOutcomesProperties } from "../../src/analyze/analyzers/delegation-outcomes/index.js";
 import { sessionFacts } from "../../src/db/fingerprint-queries.js";
 import type { AsyncDatabase } from "../../src/db/async-db.js";
 
@@ -56,19 +58,24 @@ async function withTree(check: (db: AsyncDatabase) => Promise<void>): Promise<vo
 
 async function analyse(db: AsyncDatabase, sessionId: string): Promise<void> {
 	const framework = new AnalyzerFramework({ db, llm: lexiconMock(new Set(["wrong"])).caller, modelTiers: DEFAULT_MODEL_TIERS });
-	for (const a of [turnPairCoreAnalyzer, messageOriginAnalyzer, lexiconCandidatesAnalyzer, frustrationLexiconAnalyzer, turnFrustrationAnalyzer]) await framework.register(a);
+	for (const a of [turnPairCoreAnalyzer, messageOriginAnalyzer, lexiconCandidatesAnalyzer, frustrationLexiconAnalyzer, turnFrustrationAnalyzer, delegationOutcomesAnalyzer]) await framework.register(a);
 	await framework.run(sessionId);
 }
 
+/** A session's nodes of one analyzer, newest first. */
+async function newest(db: AsyncDatabase, analyzerId: string, sessionId: string) {
+	return (await getNodesByAnalyzer(db, analyzerId, sessionId)).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+}
+
 async function originOf(db: AsyncDatabase, sessionId: string): Promise<string> {
-	const [node] = await getNodesByAnalyzer(db, MESSAGE_ORIGIN_DEF.id, sessionId);
+	const [node] = await newest(db, MESSAGE_ORIGIN_DEF.id, sessionId);
 	assert.ok(node, `expected a message-origin node on ${sessionId}`);
 	const props = JSON.parse(node.content_json) as MessageOriginProperties;
 	return `${props.origin}/${props.rule}`;
 }
 
 async function hitOriginOf(db: AsyncDatabase, sessionId: string): Promise<string | undefined> {
-	const hits = (await getNodesByAnalyzer(db, TURN_FRUSTRATION_DEF.id, sessionId)).map((n) => JSON.parse(n.content_json) as TurnFrustrationProperties);
+	const hits = (await newest(db, TURN_FRUSTRATION_DEF.id, sessionId)).map((n) => JSON.parse(n.content_json) as TurnFrustrationProperties);
 	const hit = hits.find((h) => h.signal === "wrong");
 	assert.ok(hit, `expected a 'wrong' hit on ${sessionId}`);
 	return hit.origin;
@@ -101,5 +108,30 @@ describe("child run lineage (#416)", () => {
 			assert.equal(stats.child_session_count, 1);
 			const facts = await sessionFacts(db, { sources: null, from: null, toExclusive: null, asOf: "2027-01-01T00:00:00.000Z" });
 			assert.equal(facts.find((f) => f.id === PARENT_ID)?.subAgentSessions, 1);
+		}));
+
+	it("a link recorded after analysis queues the run and its parent, and their units take the new lineage", () =>
+		withTree(async (db) => {
+			// The run as a database indexed before #416 holds it: no parent.
+			await db.prepare("UPDATE sessions SET parent_session = NULL, parent_kind = NULL WHERE id = ?").run(CHILD_ID);
+			for (const id of [CHILD_ID, PARENT_ID]) {
+				await analyse(db, id);
+				await markAnalyzed(db, id);
+			}
+			assert.equal(await originOf(db, CHILD_ID), "typed/no-marker");
+			const pending = async () => new Set((await getUnanalyzedSessions(db)).map((s) => s.id));
+			assert.ok(!(await pending()).has(CHILD_ID));
+			assert.ok(!(await pending()).has(PARENT_ID));
+
+			await migrate(db);
+			assert.ok((await pending()).has(CHILD_ID), "the run's lineage changed, so its units changed");
+			assert.ok((await pending()).has(PARENT_ID), "the parent gained a child, so its work moved to children changed");
+
+			await analyse(db, CHILD_ID);
+			await analyse(db, PARENT_ID);
+			assert.equal(await originOf(db, CHILD_ID), "agent/child-session");
+			assert.equal(await hitOriginOf(db, CHILD_ID), "agent");
+			const [delegation] = await newest(db, DELEGATION_OUTCOMES_DEF.id, PARENT_ID);
+			assert.equal((JSON.parse(delegation!.content_json) as DelegationOutcomesProperties).child_session_count, 1);
 		}));
 });

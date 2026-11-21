@@ -29,11 +29,6 @@ export const metrics: MetricDefinition[] = [
 				effect: "A hit records the origin of the text it matched. Earlier hits have no origin.",
 				repair: "prospect analyze --analyzer turn-frustration --revise minor",
 			},
-			{
-				version: "1.13",
-				effect: "A hit on a pi child run's prompt is agent, not typed, so typed counts fall where child runs are linked to their parent.",
-				repair: "prospect analyze --analyzer message-origin --revise minor --source pi, then the same for turn-frustration",
-			},
 		],
 	},
 	{

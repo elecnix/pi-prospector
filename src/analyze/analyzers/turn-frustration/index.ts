@@ -62,6 +62,7 @@ import { getMutedTerms } from "../../../db/assertions.js";
 import { currentHits } from "../../../db/muted-terms.js";
 import { LexiconSource } from "./dictionary.js";
 import { getSessionLineage } from "../../../db/queries.js";
+import { parentLinkSources } from "../../parent-link.js";
 import { MESSAGE_ORIGIN_DEF, type MessageOriginProperties } from "../message-origin/index.js";
 import { getSessionMessageRows } from "../../../db/analysis-queries.js";
 import { TURN_START_ROLES } from "../turn-pair-core/build.js";
@@ -182,10 +183,7 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// identity and `--revise minor` redraws it beside its predecessor. The
 	// whole-message rules that text-origin.ts had (child agent, signature, pi entry,
 	// compaction) moved to message-origin and are gone from the span labeller.
-	// 1.13: a pi child run is a child agent's session, not a fork (#416). A hit on a
-	// child run's prompt with no decided message-origin node is `agent`, as on any
-	// other child agent's session.
-	minor: 13,
+	minor: 12,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
@@ -366,7 +364,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 				const occurrences = positions.get(term)!;
 				const subsumed = occurrences.every(subsumedByPhrase);
 				units.push(
-					hitUnit(pair.index, pair.userMessageId, {
+					hitUnit(pair.index, pair.userMessageId, origins.parentLink, {
 						user_message_id: pair.userMessageId,
 						pair_index: pair.index,
 						signal_source: "lexicon",
@@ -395,7 +393,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 			for (const phrase of [...phraseCounts.keys()].sort()) {
 				const entry = lexicon.get(phrase)!;
 				units.push(
-					hitUnit(pair.index, pair.userMessageId, {
+					hitUnit(pair.index, pair.userMessageId, origins.parentLink, {
 						user_message_id: pair.userMessageId,
 						pair_index: pair.index,
 						signal_source: "lexicon",
@@ -420,7 +418,7 @@ export const turnFrustrationAnalyzer: Analyzer = {
 			// Lexicon-free markers: available even when the lexicon knows none of these words.
 			for (const marker of detectParalinguistic(pair.userText)) {
 				units.push(
-					hitUnit(pair.index, pair.userMessageId, {
+					hitUnit(pair.index, pair.userMessageId, origins.parentLink, {
 						user_message_id: pair.userMessageId,
 						pair_index: pair.index,
 						signal_source: "paralinguistic",
@@ -481,11 +479,13 @@ export const turnFrustrationAnalyzer: Analyzer = {
  * signal id is its space-joined normalised form, carried by the same `term`
  * source kind as any word.
  */
-function hitUnit(pairIndex: number, userMessageId: string, meta: HitMeta): AnalysisUnit {
+function hitUnit(pairIndex: number, userMessageId: string, parentLink: SourceRef[], meta: HitMeta): AnalysisUnit {
 	const signalId = meta.signal_source === "lexicon" ? meta.signal : paralinguisticSourceId(meta.signal);
 	const sources: SourceRef[] = [
 		{ kind: "message", id: userMessageId },
 		{ kind: "term", id: signalId },
+		// The parent link decides a child agent's label and which turns a fork copied.
+		...parentLink,
 	];
 	return {
 		sources,
@@ -568,6 +568,8 @@ interface OriginLabeller {
 	spansOf: (messageId: string, text: string, timestamp: string | null) => TextSpan[];
 	/** Output key of the turn's message-origin node, or null when it has none. */
 	keyOf: (messageId: string) => string | null;
+	/** The session's parent link as a source ref, empty with no parent: an input of every hit. */
+	parentLink: SourceRef[];
 }
 
 /**
@@ -579,9 +581,11 @@ interface OriginLabeller {
  * (`parent_kind`). A pi session has either; every other host records a parent
  * only for a child agent (Claude Code, Codex, OpenCode, Cline).
  *
- * The parent's turns are an input outside the hit's source set, as the lexicon
- * verdict a hit copies is. A fork analysed before its parent was indexed keeps
- * `typed` on the copied turn until a revise redraws it.
+ * The parent link is in each hit's source set, so a link recorded after the
+ * analysis redraws the hit. The parent's turns are not: they are an input
+ * outside the source set, as the lexicon verdict a hit copies is. A fork analysed
+ * before its parent was indexed keeps `typed` on the copied turn until a revise
+ * redraws it.
  */
 async function originContext(ctx: AnalyzerPlanContext): Promise<OriginLabeller> {
 	const lineage = await getSessionLineage(ctx.db, ctx.sessionId);
@@ -609,6 +613,7 @@ async function originContext(ctx: AnalyzerPlanContext): Promise<OriginLabeller> 
 		}
 	}
 	return {
+		parentLink: parentLinkSources(lineage),
 		keyOf: (messageId) => nodes.get(messageId)?.outputKey ?? null,
 		spansOf: (messageId, text, timestamp) => {
 			if (parentTurns.length > 0 && isForkCopy({ text, timestamp }, startedAt, parentTurns)) return labelUserText(text, { forkCopy: true });

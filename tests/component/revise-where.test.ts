@@ -171,9 +171,6 @@ describe("reviseWhere narrows a revise by the prior node's content", () => {
 	});
 });
 
-/** turn-frustration's current minor version; the generations below are counted back from it. */
-const CURRENT_MINOR = turnFrustrationAnalyzer.version.minor;
-
 /** The same analyzer at a chosen minor version, so a test can seed several generations. */
 function atMinor(analyzer: Analyzer, minor: number): Analyzer {
 	return { ...analyzer, version: { ...analyzer.version, minor } };
@@ -202,7 +199,7 @@ describe("reviseWhere reaches a category carried by an earlier generation", () =
 				turnPairCoreAnalyzer,
 				lexiconCandidatesAnalyzer,
 				atMinor(frustrationLexiconAnalyzer, 5),
-				atMinor(turnFrustrationAnalyzer, CURRENT_MINOR - 2),
+				atMinor(turnFrustrationAnalyzer, 10),
 			]);
 			await seed.run("s1");
 
@@ -213,7 +210,7 @@ describe("reviseWhere reaches a category carried by an earlier generation", () =
 				turnPairCoreAnalyzer,
 				lexiconCandidatesAnalyzer,
 				atMinor(frustrationLexiconAnalyzer, 6),
-				atMinor(turnFrustrationAnalyzer, CURRENT_MINOR - 1),
+				atMinor(turnFrustrationAnalyzer, 11),
 			]);
 			await middle.run("s1", { revise: ["minor"], reviseWhere: [{ key: "category", raw: "profanity" }] });
 
@@ -236,11 +233,11 @@ describe("reviseWhere reaches a category carried by an earlier generation", () =
 			);
 			assert.deepEqual(
 				hits.get("dumbass"),
-				{ version: `1.${CURRENT_MINOR}`, category: "insult" },
+				{ version: "1.12", category: "insult" },
 				"a hit whose earlier node carried profanity is redrawn",
 			);
-			assert.equal(hits.get("merde")?.version, `1.${CURRENT_MINOR}`, "a hit whose latest node carries profanity is redrawn");
-			assert.equal(hits.get("ugh")?.version, `1.${CURRENT_MINOR - 2}`, "a hit that never carried profanity is left stale");
+			assert.equal(hits.get("merde")?.version, "1.12", "a hit whose latest node carries profanity is redrawn");
+			assert.equal(hits.get("ugh")?.version, "1.10", "a hit that never carried profanity is left stale");
 			assert.equal(classifyCallsFor(llm, "dumbass"), 1, "its term is re-judged too");
 			assert.equal(classifyCallsFor(llm, "ugh"), 0, "a term that never carried profanity is left alone");
 		} finally {

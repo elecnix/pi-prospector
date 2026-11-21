@@ -36,6 +36,7 @@ import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { decisionIdentity } from "../../decision-model.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { getSessionLineage } from "../../../db/queries.js";
+import { parentLinkSources } from "../../parent-link.js";
 import { classifyMessageOrigin, MessageOrigin, OriginRule, OriginSuspicion, OriginVerdict } from "../../message-origin.js";
 import { DEFAULT_MESSAGE_ORIGIN_CONFIG, type MessageOriginConfig } from "./config.js";
 import {
@@ -93,11 +94,7 @@ export const MESSAGE_ORIGIN_VERSION: AnalyzerVersion = {
 	// 1.4: two of the 1.3 patterns were too wide. `Do what @file says` needs the `@`, so
 	// `Do what Alice says` stays a person's sentence. A tool probe needs `once` as a count
 	// (`once,` `once.` `once and`) or `with name`, not `once the tests pass`.
-	// 1.5: a pi child run is a child agent's session (#416). Its parent link was read
-	// as a fork's, because the rule inferred "fork" from the pi source, so its
-	// prompts, which the parent agent wrote, read as typed. The rule now reads the
-	// link's recorded kind, and those messages become `agent/child-session`.
-	minor: 5,
+	minor: 4,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/message-origin/index.ts",
 };
@@ -150,7 +147,8 @@ export const messageOriginAnalyzer: Analyzer = {
 				childAgent,
 				secondsAfterToolCall: secondsAfterToolCall.get(pair.userMessageId) ?? null,
 			});
-			const sources: SourceRef[] = [{ kind: "message", id: pair.userMessageId }];
+			// The parent link decides `childAgent`, so it is an input of the unit.
+			const sources: SourceRef[] = [{ kind: "message", id: pair.userMessageId }, ...parentLinkSources(lineage)];
 			units.push({
 				sources,
 				sourceSetHash: computeSourceSetHash(sources),
