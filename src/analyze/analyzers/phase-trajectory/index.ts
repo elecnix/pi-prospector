@@ -40,6 +40,7 @@ import {
 	PhaseSignalSchema,
 } from "./classify.js";
 import { Type, type Static } from "typebox";
+import { phaseTrajectoryFingerprint } from "./fingerprint.js";
 
 export const PhaseTrajectoryProperties = Type.Object({
 	/** Session id this analysis covers. */
@@ -98,6 +99,7 @@ export const phaseTrajectoryAnalyzer: Analyzer = {
 	def: PHASE_TRAJECTORY_DEF,
 	version: PHASE_TRAJECTORY_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [phaseTrajectoryFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: PHASE_TRAJECTORY_DEF.id,
