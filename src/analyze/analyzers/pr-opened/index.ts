@@ -34,6 +34,7 @@ import { computeConfigHash, shortHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
 import { DEFAULT_PR_OPENED_CONFIG, type PrOpenedConfig } from "./config.js";
+import { prOpenedFingerprintContributor } from "./fingerprint.js";
 import {
 	findOpenedPullRequests,
 	type OpenedPullRequestWithEvidence,
@@ -116,6 +117,7 @@ export const prOpenedAnalyzer: Analyzer = {
 	def: PR_OPENED_DEF,
 	version: PR_OPENED_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [prOpenedFingerprintContributor],
 	defaultConfig: {
 		id: "",
 		analyzerId: PR_OPENED_DEF.id,
