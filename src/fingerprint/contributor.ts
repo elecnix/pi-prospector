@@ -152,17 +152,4 @@ export interface FingerprintContributor {
 	read(ctx: FingerprintReadContext): Promise<ContributorRead>;
 }
 
-/**
- * The newest row per session among the rows that carry a number in `field`.
- * An analyzer whose session grew between runs keeps a current node per run,
- * and the newest covers the whole session. `nodes` returns rows oldest first,
- * so the last such row a session has wins. A distribution takes one value per
- * session, so a contributor feeding one reads its rows through this.
- */
-export function newestPerSession(rows: readonly FingerprintRow[], field: string): FingerprintRow[] {
-	const newest = new Map<string, FingerprintRow>();
-	for (const r of rows) if (typeof r[field] === "number") newest.set(String(r["session"]), r);
-	return [...newest.values()];
-}
-
 export type { NodeScalar };

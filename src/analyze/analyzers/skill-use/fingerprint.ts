@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor } from "../../../fingerprint/contributor.js";
 
 /**
  * How much a person's sessions lean on skills. Counted from the tool calls that
@@ -21,8 +21,7 @@ export const skillUseFingerprint: FingerprintContributor = {
 		],
 	},
 	async read(ctx) {
-		// A session that grew between runs keeps a node per run; the newest covers the whole session.
-		const rows = newestPerSession(await ctx.nodes("skill-use", { calls: "$.skill_call_count", distinct: "$.distinct_skill_count", toolCalls: "$.tool_call_count" }), "calls");
-		return { measured: rows.map((r) => String(r["session"])), rows };
+		const rows = await ctx.nodes("skill-use", { calls: "$.skill_call_count", distinct: "$.distinct_skill_count", toolCalls: "$.tool_call_count" });
+		return { measured: [...new Set(rows.map((r) => String(r["session"])))], rows };
 	},
 };

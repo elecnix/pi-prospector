@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor } from "../../../fingerprint/contributor.js";
 
 /**
  * The tools a session carried in its request prefix and never called. Counted
@@ -24,16 +24,13 @@ export const toolInventoryTaxFingerprint: FingerprintContributor = {
 		],
 	},
 	async read(ctx) {
-		const rows = newestPerSession(
-			await ctx.nodes("tool-inventory-tax", {
-				available: "$.available_tools",
-				invoked: "$.invoked_tools",
-				unused: "$.unused_tools",
-				tokenTurns: "$.unused_prefix_token_turns",
-				usd: "$.estimated_tax_usd",
-			}),
-			"available",
-		);
-		return { measured: rows.map((r) => String(r["session"])), rows };
+		const rows = await ctx.nodes("tool-inventory-tax", {
+			available: "$.available_tools",
+			invoked: "$.invoked_tools",
+			unused: "$.unused_tools",
+			tokenTurns: "$.unused_prefix_token_turns",
+			usd: "$.estimated_tax_usd",
+		});
+		return { measured: [...new Set(rows.map((r) => String(r["session"])))], rows };
 	},
 };

@@ -1,4 +1,4 @@
-import { newestPerSession, type FingerprintContributor, type FingerprintRow } from "../../../fingerprint/contributor.js";
+import { type FingerprintContributor, type FingerprintRow } from "../../../fingerprint/contributor.js";
 
 /** The trajectory patterns tool-trajectory detects: its closed set. */
 const PATTERNS = ["stuck-loop", "polling-loop", "oscillation", "pre-flight-gap", "thought-oscillation", "no-effect-edit"];
@@ -31,7 +31,7 @@ export const toolTrajectoryFingerprint: FingerprintContributor = {
 	async read(ctx) {
 		const measured = new Set(await ctx.runs("tool-trajectory", ALL_DETECTORS_SINCE));
 		const counts = Object.fromEntries(PATTERNS.map((p) => [p, `$.pattern_counts."${p}"`]));
-		const nodes = newestPerSession(await ctx.nodes("tool-trajectory", { calls: "$.tool_call_count", ...counts }), "calls").filter((r) => measured.has(String(r["session"])));
+		const nodes = (await ctx.nodes("tool-trajectory", { calls: "$.tool_call_count", ...counts })).filter((r) => measured.has(String(r["session"])));
 		const rows: FingerprintRow[] = [];
 		for (const node of nodes) {
 			const session = node["session"]!;
@@ -44,6 +44,6 @@ export const toolTrajectoryFingerprint: FingerprintContributor = {
 			}
 			rows.push({ session, calls: node["calls"]!, signals });
 		}
-		return { measured: nodes.map((r) => String(r["session"])), rows };
+		return { measured: [...new Set(nodes.map((r) => String(r["session"])))], rows };
 	},
 };
