@@ -99,7 +99,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	// in every sibling's node and a session can carry a cluster none of its own messages belong to.
 	"similarity-cluster": POOLED_CLUSTERS,
 	"verification-commands": INPUT_TO_STALE_VERIFICATION,
-	"friction-accumulation": NOT_YET_DECIDED,
 	// It reads only rule-shaped proposals still open, so accepting or rejecting proposals changes its counts.
 	// Its other fields are instruction-file paths and quotes.
 	"rule-restatement": PROPOSAL_QUEUE,

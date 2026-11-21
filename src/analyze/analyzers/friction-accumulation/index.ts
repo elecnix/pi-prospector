@@ -51,6 +51,7 @@ import {
 	DEFAULT_FRICTION_ACCUMULATION_CONFIG,
 	type FrictionAccumulationConfig,
 } from "./config.js";
+import { frictionAccumulationFingerprint } from "./fingerprint.js";
 import {
 	computeContributions,
 	computeWindowRates,
@@ -234,6 +235,7 @@ export const frictionAccumulationAnalyzer: Analyzer = {
 	def: FRICTION_ACCUMULATION_DEF,
 	version: FRICTION_ACCUMULATION_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [frictionAccumulationFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: FRICTION_ACCUMULATION_DEF.id,
