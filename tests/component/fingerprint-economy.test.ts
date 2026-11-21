@@ -90,4 +90,27 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.equal(section["cacheWriteMillions"], 2.4);
 		assert.deepEqual((section["perSession"] as { sessions: number }).sessions, 6);
 	});
+
+	it("context-economy: carried context, read amplification and waste flags, only from runs at 2.1 or later", async () => {
+		for (const [i, id] of IDS.slice(0, 5).entries()) {
+			await seedRun(t.db, id, "context-economy", "2.2");
+			const flags = [{ kind: "high-carry-result", tool: "secret-tool", tokens: 5000, turnsAfter: 10, carryTokenTurns: 50000, ordinal: 1 }];
+			if (i === 0) flags.push({ kind: "redundant-read", path: "/home/secret/path/a.ts", count: 3 } as never);
+			await seedNode(t.db, id, "context-economy", { billed: { output: 100 }, readAmplification: (i + 1) * 10, carry: { totalTokenTurns: 1_000_000, byTool: { "secret-tool": 1_000_000 } }, flags }, "2.2");
+		}
+		// No output billed, so no amplification: measured, but left out of the distribution rather than read as 0.
+		await seedRun(t.db, "s7", "context-economy", "2.2");
+		await seedNode(t.db, "s7", "context-economy", { billed: { output: 0 }, readAmplification: 0, carry: { totalTokenTurns: 0 }, flags: [] }, "2.2");
+		// Measured by a version that over-counted redundant reads: not measured.
+		await seedRun(t.db, "s6", "context-economy", "2.0");
+		await seedNode(t.db, "s6", "context-economy", { readAmplification: 999, carry: { totalTokenTurns: 9e9 }, flags: [] }, "2.0");
+		const section = objective(await fingerprint(), "contextCarry");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 6);
+		assert.equal(section["carriedMillionTokenTurns"], 5);
+		assert.equal((section["readAmplification"] as { sessions: number }).sessions, 5);
+		assert.equal(section["sessionsFlagged"], 5);
+		assert.deepEqual((section["flagsByKind"] as Array<Record<string, unknown>>).find((g) => g["kind"] === "high-carry-result"), { kind: "high-carry-result", count: 5, sessions: 5 });
+	});
+
 });
