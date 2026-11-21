@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { RunResult } from "better-sqlite3";
+import { Type, type Static } from "typebox";
 
 /**
  * Async SQLite driver backed by a worker thread.
@@ -28,6 +29,24 @@ import type { RunResult } from "better-sqlite3";
  *    already holds it — so a body that awaits fs or an LLM call cannot deadlock
  *    against itself while still excluding concurrent writers.
  */
+
+/**
+ * How long a statement waits for another connection's lock before it fails
+ * with "database is locked". Every connection sets it, so a sync, an analyze,
+ * a fingerprint and a usage report can run at once. In WAL mode a reader waits
+ * only on a checkpoint or a recovery; a writer waits for the other writer's
+ * transaction, and a sync batch can hold one for seconds. The driver's own
+ * default is 5 s, which a long batch can outlast.
+ */
+export const BUSY_TIMEOUT_MS = 30_000;
+
+/**
+ * How to open the database. `readonly` opens an existing file for reading: no
+ * statement can write it, and a missing file is an error rather than a new,
+ * empty database.
+ */
+export const OpenOptions = Type.Object({ readonly: Type.Optional(Type.Boolean()) });
+export type OpenOptions = Static<typeof OpenOptions>;
 
 interface WorkerMsg {
 	id: number;
@@ -93,7 +112,7 @@ export class AsyncDatabase {
 	#tail: Promise<unknown> = Promise.resolve();
 	#spSeq = 0;
 
-	constructor(path: string) {
+	constructor(path: string, options: OpenOptions = {}) {
 		// The worker script is this module's sibling in both source (tsx) and dist.
 		// Match the current module's extension so we find the compiled `.js` in
 		// dist and the `.ts` source under tsx.
@@ -102,7 +121,7 @@ export class AsyncDatabase {
 		const workerFile = join(here, `async-db-worker${ext}`);
 		const features = process.features as { typescript?: string | false };
 		this.#worker = new Worker(workerFile, {
-			workerData: { dbPath: path },
+			workerData: { dbPath: path, readonly: options.readonly === true, timeout: BUSY_TIMEOUT_MS },
 			execArgv: workerExecArgv(ext, features.typescript),
 		});
 		this.#worker.on("message", (msg: { id: number; ok: boolean; value?: unknown; error?: { message: string; stack?: string; code?: string } }) => {
@@ -232,6 +251,6 @@ export class AsyncDatabase {
 }
 
 /** Open an async (worker-backed) connection wrapping better-sqlite3. */
-export function openAsyncDatabase(path: string): AsyncDatabase {
-	return new AsyncDatabase(path);
+export function openAsyncDatabase(path: string, options: OpenOptions = {}): AsyncDatabase {
+	return new AsyncDatabase(path, options);
 }

@@ -8,8 +8,11 @@ import type { ExtensionCommandContext, ModelRegistry, PiModel, ResolvedRequestAu
  * without starting pi. `prospect analyze --limit 3` does what
  * `/prospect-analyze --limit 3` does inside pi.
  *
- * Commands print their own output, so the context's `notify` only records
- * whether one reported an error, which sets the exit code.
+ * Commands print their own output. When the command returns, each error or
+ * warning it passed to the context's `notify` goes to stderr, unless the
+ * command also printed the same text to stdout, and an error sets the exit
+ * code. An informational notice is a status line for pi's UI and is not
+ * printed.
  */
 
 const PREFIX = "prospect-";
@@ -40,18 +43,30 @@ export async function main(argv: string[], options: CliOptions = {}): Promise<nu
 		return 2;
 	}
 	if (rest.includes("--help") || rest.includes("-h")) return printCommandHelp(first);
-	// The telemetry command is how the user answers, so it never asks first.
-	const isTelemetry = command.name === "prospect-telemetry";
-	if (!isTelemetry) await (options.askConsent ?? askOnTerminal)();
+	// The telemetry command is how the user answers, so it never asks first. A
+	// read-only command neither asks nor sends: both write (see `readOnly`), and
+	// the report that is due goes out after the next command that writes.
+	const reports = command.name !== "prospect-telemetry" && command.readOnly !== true;
+	if (reports) await (options.askConsent ?? askOnTerminal)();
 
 	let failed = false;
+	// Errors and warnings, held until the command returns: many commands notify
+	// and then print the same text to stdout, and that text is not repeated on stderr.
+	const notices: string[] = [];
+	const printed = new Set<string>();
+	const log = console.log;
+	console.log = (...parts: unknown[]) => {
+		printed.add(parts.map(String).join(" "));
+		log(...parts);
+	};
 	const ctx: ExtensionCommandContext = {
 		modelRegistry: options.modelRegistry ?? piModelRegistry(),
 		cwd: process.cwd(),
 		hasUI: false,
 		ui: {
-			notify: (_message, level) => {
+			notify: (message, level) => {
 				if (level === "error") failed = true;
+				if (level === "error" || level === "warning") notices.push(message);
 			},
 		},
 	};
@@ -60,8 +75,11 @@ export async function main(argv: string[], options: CliOptions = {}): Promise<nu
 	} catch (err) {
 		console.error(`prospect ${first}: ${err instanceof Error ? err.message : String(err)}`);
 		return 1;
+	} finally {
+		console.log = log;
+		for (const notice of notices) if (!printed.has(notice)) console.error(notice);
 	}
-	if (!isTelemetry) await (options.sendReport ?? sendReport)();
+	if (reports) await (options.sendReport ?? sendReport)();
 	return failed ? 1 : 0;
 }
 

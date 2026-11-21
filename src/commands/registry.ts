@@ -26,6 +26,13 @@ export interface ProspectCommand {
 	description: string;
 	/** The `--prospect <flag>` alias, for the commands reachable from the CLI flag. */
 	flag?: string;
+	/**
+	 * The command only reads the index and promises to write nothing. The
+	 * standalone CLI then neither asks the usage-report question nor sends a
+	 * report around it, because either one writes: the answer and the send
+	 * record go to the telemetry state file, and the send migrates the index.
+	 */
+	readOnly?: boolean;
 	/** Run the command, loading its module on first use. */
 	run: ProspectHandler;
 }
@@ -39,6 +46,7 @@ function spec<M>(definition: {
 	name: string;
 	description: string;
 	flag?: string;
+	readOnly?: boolean;
 	load: () => Promise<M>;
 	handler: (module: M) => ProspectHandler;
 }): ProspectCommand {
@@ -47,6 +55,7 @@ function spec<M>(definition: {
 		name: definition.name,
 		description: definition.description,
 		flag: definition.flag,
+		readOnly: definition.readOnly,
 		run: async (args, ctx) => {
 			const handler = definition.handler(await load());
 			await handler(args, ctx);
@@ -272,6 +281,7 @@ export const COMMANDS: ProspectCommand[] = [
 		name: "prospect-fingerprint",
 		description:
 			"Print a shareable fingerprint of your sessions as JSON: counts, durations, and distributions, with no session text, paths, titles, project names, or ids. Objective figures (counted or timed) are kept apart from inferred ones (judged by a model). Any figure that rests on fewer than 5 sessions is merged into a neighbour or withheld. Flags: --source pi|claude|codex|opencode|cline (comma-separated or repeated; default all), --from YYYY-MM-DD and --to YYYY-MM-DD (session start days, both inclusive; default all), --as-of YYYY-MM-DD|ISO|7d (read the sessions and the graph as of then; default now), --format json|csv (default json), --out FILE (default stdout). Reads only; never runs analysis. `compare A.json B.json [--labels a,b] [--format text|markdown] [--out FILE]` prints two fingerprint files side by side, with totals as rates per session and counts as shares, so corpora of different sizes compare.",
+		readOnly: true,
 		load: () => import("./fingerprint.js"),
 		handler: (module) => module.prospectFingerprint,
 	}),

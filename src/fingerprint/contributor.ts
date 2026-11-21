@@ -129,8 +129,13 @@ export interface FingerprintReadContext {
 	scope: FingerprintScope;
 	/** Top-level sessions in scope, counted from the transcript. */
 	sessions: readonly SessionFacts[];
-	/** Sessions in scope with a successful run of the analyzer by the as-of instant. */
-	runs(analyzerId: string): Promise<string[]>;
+	/**
+	 * Sessions in scope with a successful run of the analyzer by the as-of
+	 * instant. With `since` (`major.minor`), only the sessions whose latest such
+	 * run is at that version or later: a contributor that reads a field an older
+	 * version did not write cannot count those sessions as measured.
+	 */
+	runs(analyzerId: string, since?: string): Promise<string[]>;
 	/**
 	 * One row per current node of the analyzer: `session` plus each field read
 	 * from the node content by JSON path (`$.a.b`). Rows come oldest node first,

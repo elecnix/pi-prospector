@@ -44,3 +44,75 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 	}
 	return all;
 }
+
+const NOT_YET_DECIDED = "not yet decided";
+const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
+const REGRESSION = "regression: attribution covers under 1% of verdicts";
+
+/** The reasons a built-in analyzer may be left out of the fingerprint. */
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION];
+
+/**
+ * The built-in analyzers that contribute no fingerprint section, each with the
+ * reason. An analyzer contributes only by declaring a non-empty `fingerprint`
+ * list, so without this list a new analyzer would be left out without anyone
+ * deciding it. `tests/unit/fingerprint-coverage.test.ts` fails when a built-in
+ * analyzer neither contributes nor is listed here, and when a listed one starts
+ * contributing. Removing an analyzer from this list means adding its
+ * contributor in the same pull request.
+ */
+export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
+	"message-origin": NOT_YET_DECIDED,
+	"turn-pair-core": NOT_YET_DECIDED,
+	"lexicon-candidates": NOT_YET_DECIDED,
+	"frustration-lexicon": NOT_YET_DECIDED,
+	"attention-gaps": NOT_YET_DECIDED,
+	"message-answers": NOT_YET_DECIDED,
+	"prompt-form": NOT_YET_DECIDED,
+	"assistant-cognition": NOT_YET_DECIDED,
+	"tool-trajectory": NOT_YET_DECIDED,
+	"phase-trajectory": NOT_YET_DECIDED,
+	"plan-compliance": NOT_YET_DECIDED,
+	"task-tool-mismatch": NOT_YET_DECIDED,
+	"grounded-claims": NOT_YET_DECIDED,
+	"revive-chains": NOT_YET_DECIDED,
+	"uncompleted-leads": NOT_YET_DECIDED,
+	"compression-checklist": NOT_YET_DECIDED,
+	"language-mismatch": NOT_YET_DECIDED,
+	"decode-collapse": NOT_YET_DECIDED,
+	"repetition-collapse": NOT_YET_DECIDED,
+	"session-ending": NOT_YET_DECIDED,
+	"pr-opened": NOT_YET_DECIDED,
+	"repo-identity": NOT_YET_DECIDED,
+	"skill-use": NOT_YET_DECIDED,
+	"git-commands": NOT_YET_DECIDED,
+	"activity-windows": NOT_YET_DECIDED,
+	"delegation-outcomes": NOT_YET_DECIDED,
+	"verification-commands": NOT_YET_DECIDED,
+	"stale-verification": NOT_YET_DECIDED,
+	"files-in-play": NOT_YET_DECIDED,
+	"navigation-efficiency": NOT_YET_DECIDED,
+	"similarity-cluster": NOT_YET_DECIDED,
+	"friction-accumulation": NOT_YET_DECIDED,
+	"tool-inventory-tax": NOT_YET_DECIDED,
+	"context-economy": NOT_YET_DECIDED,
+	"cache-economy": NOT_YET_DECIDED,
+	"routing-opportunity": NOT_YET_DECIDED,
+	"token-units": NOT_YET_DECIDED,
+	"request-classes": NOT_YET_DECIDED,
+	"session-overview": NOT_YET_DECIDED,
+	"rule-restatement": NOT_YET_DECIDED,
+	"secret-leak": SECRET_SCANNER,
+	"gitleaks": SECRET_SCANNER,
+	"nosey-parker": SECRET_SCANNER,
+	"detect-secrets": SECRET_SCANNER,
+	"trufflehog": SECRET_SCANNER,
+	"secret-scanner": SECRET_SCANNER,
+	"presidio": SECRET_SCANNER,
+	"piicatcher": SECRET_SCANNER,
+	"dataprofiler": SECRET_SCANNER,
+	"regression-signal": REGRESSION,
+	"regression-attribution": REGRESSION,
+	"regression-verdict": REGRESSION,
+	"regression-prevention": REGRESSION,
+};

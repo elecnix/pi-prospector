@@ -3,8 +3,8 @@ import * as path from "node:path";
 import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { getDbPath } from "../config.js";
 import { BUILTIN_ANALYZERS } from "../analyze/defaults.js";
-import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
-import { migrate } from "../db/schema.js";
+import type { AsyncDatabase } from "../db/async-db.js";
+import { openReadOnlyIndex } from "../db/read-only.js";
 import { buildFingerprint, parseFingerprintArgs } from "../fingerprint/build.js";
 import { collectContributors } from "../fingerprint/registry.js";
 import { resolveRenderer } from "../fingerprint/renderers.js";
@@ -15,7 +15,9 @@ import { compareFingerprints, parseCompareArgs, parseFingerprintText, resolveCom
  * print a shareable fingerprint of the indexed sessions.
  *
  * The fingerprint is a read of the session index and the analysis graph. It
- * writes no node, run, or edge, and it never runs analysis: a section whose
+ * opens the database read-only and never migrates it, so it writes no node,
+ * run, edge, or schema change; an index older than this build is refused, with
+ * the command that upgrades it. It never runs analysis: a section whose
  * analyzer has not run on enough sessions is withheld, not computed. Its
  * sections come from the built-in analyzers' contributors; its formats from the
  * renderer table.
@@ -71,13 +73,19 @@ export async function prospectFingerprint(args: string, ctx: ExtensionCommandCon
 		}
 		return;
 	}
-	const db = openAsyncDatabase(getDbPath());
 	try {
-		await migrate(db);
-		const { text, out } = await renderFingerprint(db, args);
+		const { text, out } = await withReadOnlyIndex((db) => renderFingerprint(db, args));
 		emit(text, out, ctx, "Fingerprint");
 	} catch (err) {
 		ctx.ui.notify(`prospect fingerprint: ${err instanceof Error ? err.message : String(err)}`, "error");
+	}
+}
+
+/** Run `read` on the index opened read-only, and close it after. */
+export async function withReadOnlyIndex<T>(read: (db: AsyncDatabase) => Promise<T>): Promise<T> {
+	const db = await openReadOnlyIndex(getDbPath());
+	try {
+		return await read(db);
 	} finally {
 		await db.close();
 	}

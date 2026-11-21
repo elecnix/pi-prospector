@@ -1,6 +1,7 @@
 import { Check, Errors } from "typebox/value";
 import type { AsyncDatabase } from "../db/async-db.js";
-import { currentNodeItems, currentNodeRows, currentNodeVersions, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
+import { currentNodeItems, currentNodeRows, currentNodeVersions, latestRunVersions, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
+import { gradeVersionMove, parseVersionId } from "../analyze/version.js";
 import { HARNESS_SOURCES, isHarnessSource, type HarnessSource } from "../harness.js";
 import { parseTimestamp } from "../timepoint.js";
 import { checkContributorDef, type FingerprintContributor, type FingerprintReadContext, type FingerprintRow, type MeasureSpec } from "./contributor.js";
@@ -34,9 +35,15 @@ export interface FingerprintRequest {
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * A `YYYY-MM-DD` day that is on the calendar. `Date.parse` rolls a day past the
+ * end of its month into the next one (`2026-02-30` reads as March 2), so the day
+ * must print back as itself.
+ */
 function parseDay(flag: string, value: string | undefined): string | null {
 	if (value === undefined) return null;
-	if (!DAY.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) throw new Error(`--${flag} takes a date as YYYY-MM-DD, got '${value}'`);
+	const at = DAY.test(value) ? Date.parse(`${value}T00:00:00Z`) : Number.NaN;
+	if (Number.isNaN(at) || new Date(at).toISOString().slice(0, 10) !== value) throw new Error(`--${flag} takes a date as YYYY-MM-DD, got '${value}'`);
 	return value;
 }
 
@@ -68,7 +75,7 @@ export function parseFingerprintArgs(raw: string, now: Date): FingerprintRequest
 	const to = parseDay("to", flags["to"]);
 	if (from !== null && to !== null && to < from) throw new Error(`--to ${to} is before --from ${from}`);
 	const asOfFlag = flags["as-of"];
-	const asOf = asOfFlag === undefined ? now.toISOString() : DAY.test(asOfFlag) ? `${parseDay("as-of", asOfFlag)}T23:59:59.999Z` : parseTimestamp(asOfFlag);
+	const asOf = asOfFlag === undefined ? now.toISOString() : DAY.test(asOfFlag) ? `${parseDay("as-of", asOfFlag)}T23:59:59.999Z` : parseTimestamp(asOfFlag, now);
 	return { sources: chosen.length > 0 ? [...new Set(chosen)] : null, from, to, asOf, out: flags["out"], format: flags["format"] };
 }
 
@@ -246,7 +253,12 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 	const ctx: FingerprintReadContext = {
 		scope,
 		sessions,
-		runs: async (analyzerId) => [...(await sessionsWithRun(db, scope, analyzerId))],
+		runs: async (analyzerId, since) => {
+			if (since === undefined) return [...(await sessionsWithRun(db, scope, analyzerId))];
+			const floor = parseVersionId(since);
+			// At `since` or later: the move from the run's version up to `since` is no upgrade.
+			return [...(await latestRunVersions(db, scope, analyzerId))].filter(([, version]) => gradeVersionMove(parseVersionId(version), floor) === null).map(([id]) => id);
+		},
 		nodes: (analyzerId, fields) => currentNodeRows(db, scope, analyzerId, fields),
 		items: (analyzerId, arrayPath, itemFields, nodeFields) => currentNodeItems(db, scope, analyzerId, arrayPath, itemFields, nodeFields),
 	};

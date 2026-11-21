@@ -138,6 +138,18 @@ describe("prospect CLI", () => {
 		assert.equal((await capture(["fingerprint", "--format", "xml"])).code, 1);
 	});
 
+	it("prints a command's error and warning notices to stderr, once each", async () => {
+		const bad = await capture(["fingerprint", "--source", "bogus"]);
+		assert.equal(bad.code, 1);
+		assert.equal(bad.out, "");
+		assert.match(bad.err, /^prospect fingerprint: unknown source 'bogus'/);
+
+		// A command that also printed the notice to stdout does not print it twice.
+		const warned = await capture(["analyzers", "bogus"]);
+		const both = `${warned.out}\n${warned.err}`;
+		assert.equal(both.split("Unknown analyzers subcommand").length - 1, 1, both);
+	});
+
 	it("passes the remaining arguments to the command", async () => {
 		const { code, out } = await capture(["analyzers", "list"]);
 		assert.equal(code, 0);
@@ -163,6 +175,24 @@ describe("prospect CLI", () => {
 			console.log = log;
 		}
 		assert.deepEqual(calls, ["ask", "send"]);
+	});
+
+	it("neither asks nor sends the usage report around a command that only reads the index", async () => {
+		await capture(["sync"]);
+		const calls: string[] = [];
+		const log = console.log;
+		console.log = () => undefined;
+		try {
+			const code = await main(["fingerprint"], {
+				modelRegistry: noModels,
+				askConsent: async () => void calls.push("ask"),
+				sendReport: async () => void calls.push("send"),
+			});
+			assert.equal(code, 0);
+		} finally {
+			console.log = log;
+		}
+		assert.deepEqual(calls, []);
 	});
 
 	it("runs as an executable and exits when the command finishes", async () => {
