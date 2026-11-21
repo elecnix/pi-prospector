@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { FingerprintContributor, MeasureSpec } from "./contributor.js";
-import { FINGERPRINT_SCHEMA_VERSION, Fingerprint, oneOf, SECTION_KINDS, type Bucket } from "./schema.js";
+import { FINGERPRINT_SCHEMA_VERSION, Fingerprint, oneOf, SECTION_KINDS, type Bucket, type DistributionUnit } from "./schema.js";
 
 /**
  * Two corpus fingerprints side by side. A fingerprint holds absolute counts,
@@ -58,6 +58,8 @@ export const ComparedSide = Type.Object({
 	label: Type.String(),
 	asOf: Type.String(),
 	sessions: Type.Integer(),
+	/** `2026-03 to 2026-06`, `withheld`, or `not stated` for a fingerprint from before the period. */
+	period: Type.String(),
 	filter: Type.String(),
 });
 export type ComparedSide = Static<typeof ComparedSide>;
@@ -192,14 +194,24 @@ function bucketLabel(from: number, to: number | null): string {
 	return to === null ? `${from}+` : `${from}–${to}`;
 }
 
+const UNIT_NAMES: Record<DistributionUnit, string> = { minutes: "minutes", prompts: "prompts", "tool-calls": "tool calls" };
+
+/**
+ * A measure's name for its rows. A name like `per session` gets its section's
+ * label in front, so it reads alone.
+ */
+function measureName(measure: MeasureSpec, sectionLabel: string): string {
+	const name = humanize(measure.id);
+	return name.startsWith("per ") ? `${sectionLabel.toLowerCase()} ${name}` : name;
+}
+
 /** The rows of one measure on one side of the comparison. */
-function measureCells(measure: MeasureSpec, section: unknown): MeasureCells | "withheld" | "missing" {
+function measureCells(measure: MeasureSpec, name: string, section: unknown): MeasureCells | "withheld" | "missing" {
 	if (!isOk(section)) return isWithheld(section) ? "withheld" : "missing";
 	const value = section[measure.id];
 	if (value === undefined) return "missing";
 	if (isWithheld(value)) return "withheld";
 	const measured = section.sessionsMeasured;
-	const name = humanize(measure.id);
 	switch (measure.kind) {
 		case "total": {
 			const n = value as number;
@@ -214,12 +226,14 @@ function measureCells(measure: MeasureSpec, section: unknown): MeasureCells | "w
 		case "distribution": {
 			const d = value as { sessions: number; p50: number; p90: number; buckets: Bucket[] };
 			const declared = measure.edges.map((from, i) => ({ from, to: measure.edges[i + 1] ?? null }));
+			const unit = UNIT_NAMES[measure.unit];
+			const named = name.includes(unit);
 			const cells = new Map<string, Cell>([
-				[`${name} p50`, cell(fixed(d.p50), d.p50)],
-				[`${name} p90`, cell(fixed(d.p90), d.p90)],
+				[named ? `${name} p50` : `${name} p50 (${unit})`, cell(fixed(d.p50), d.p50)],
+				[named ? `${name} p90` : `${name} p90 (${unit})`, cell(fixed(d.p90), d.p90)],
 			]);
 			for (const want of declared) {
-				const key = `${name}: ${bucketLabel(want.from, want.to)}`;
+				const key = `${name}: ${bucketLabel(want.from, want.to)}${named ? "" : ` ${unit}`}`;
 				const holder = d.buckets.find((bk) => bk.from <= want.from && (bk.to === null || (want.to !== null && want.to <= bk.to)));
 				if (holder === undefined) continue;
 				const p = pct(holder.sessions, d.sessions);
@@ -255,7 +269,7 @@ function diffKind(measure: MeasureSpec, key: string): (typeof DIFF_KINDS)[number
 		case "groups":
 			return "points";
 		case "distribution":
-			return / p\d+$/.test(key) ? "ratio" : "points";
+			return / p\d+( \(.*\))?$/.test(key) ? "ratio" : "points";
 	}
 }
 
@@ -319,11 +333,12 @@ function compareSection(contributor: FingerprintContributor, a: unknown, b: unkn
 	const cb = coverage(b, totals[1]);
 	const rows: ComparedRow[] = [{ label: "sessions measured", a: ca, b: cb, diff: points(ca, cb) }];
 	for (const measure of def.measures) {
-		const sa = measureCells(measure, a);
-		const sb = measureCells(measure, b);
+		const name = measureName(measure, def.label);
+		const sa = measureCells(measure, name, a);
+		const sb = measureCells(measure, name, b);
 		const keys = [...new Set([...(typeof sa === "object" ? sa.keys : []), ...(typeof sb === "object" ? sb.keys : [])])];
 		if (keys.length === 0) {
-			const label = measure.kind === "total" ? `${humanize(measure.id)} per session` : humanize(measure.id);
+			const label = measure.kind === "total" ? `${name} per session` : name;
 			const left = sideCell(sa, label);
 			const right = sideCell(sb, label);
 			rows.push({ label, a: left, b: right, diff: "" });
@@ -347,9 +362,41 @@ function filterText(fp: Fingerprint): string {
 	return parts.join(", ");
 }
 
+const Period = Type.Object({ from: Type.String(), to: Type.String() });
+type Period = Static<typeof Period>;
+
+function periodOf(fp: Fingerprint): Period | null {
+	const p = fp.period;
+	return p !== undefined && "from" in p ? p : null;
+}
+
+function periodText(fp: Fingerprint): string {
+	if (fp.period === undefined) return "not stated";
+	const p = periodOf(fp);
+	return p === null ? "withheld" : `${p.from} to ${p.to}`;
+}
+
+/** The last day of a `YYYY-MM` month. */
+function lastDay(month: string): string {
+	const [y, m] = month.split("-").map(Number) as [number, number];
+	return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
+/** A note when the two periods differ, naming the months they share and the flags that select them. */
+function periodNotes(a: Fingerprint, b: Fingerprint): string[] {
+	const pa = periodOf(a);
+	const pb = periodOf(b);
+	if (pa === null || pb === null) return a.period === undefined || b.period === undefined ? ["A side does not state its period, so the comparison cannot check that both cover the same months."] : [];
+	if (pa.from === pb.from && pa.to === pb.to) return [];
+	const from = pa.from > pb.from ? pa.from : pb.from;
+	const to = pa.to < pb.to ? pa.to : pb.to;
+	if (from > to) return ["The periods do not overlap."];
+	return [`The periods differ; they share ${from} to ${to}. To compare like for like, rebuild both with --from ${from}-01 --to ${lastDay(to)}.`];
+}
+
 /** Compare two fingerprints section by section, in the contributors' order. */
 export function compareFingerprints(a: FingerprintSide, b: FingerprintSide, contributors: readonly FingerprintContributor[]): Comparison {
-	const notes: string[] = [];
+	const notes: string[] = periodNotes(a.fingerprint, b.fingerprint);
 	if (a.fingerprint.minGroupSize !== b.fingerprint.minGroupSize) notes.push("The two sides were built with different minimum group sizes.");
 	const totals: [number, number] = [a.fingerprint.sessions.count, b.fingerprint.sessions.count];
 	const sections = contributors.map((c) => compareSection(c, a.fingerprint[c.def.kind][c.def.id], b.fingerprint[c.def.kind][c.def.id], totals, [a.label, b.label]));
@@ -361,7 +408,7 @@ export function compareFingerprints(a: FingerprintSide, b: FingerprintSide, cont
 			}
 		}
 	}
-	const side = (s: FingerprintSide): ComparedSide => ({ label: s.label, asOf: s.fingerprint.asOf, sessions: s.fingerprint.sessions.count, filter: filterText(s.fingerprint) });
+	const side = (s: FingerprintSide): ComparedSide => ({ label: s.label, asOf: s.fingerprint.asOf, sessions: s.fingerprint.sessions.count, period: periodText(s.fingerprint), filter: filterText(s.fingerprint) });
 	return { sides: [side(a), side(b)], notes, sections };
 }
 
@@ -387,7 +434,7 @@ function cellText(c: Cell): string {
 }
 
 function sideLines(comparison: Comparison): string[] {
-	return comparison.sides.map((s, i) => `${i === 0 ? "a" : "b"}: ${s.label} — ${s.sessions} sessions, as of ${s.asOf}, ${s.filter}`);
+	return comparison.sides.map((s, i) => `${i === 0 ? "a" : "b"}: ${s.label} — ${s.sessions} sessions started ${s.period}, as of ${s.asOf}, ${s.filter}`);
 }
 
 export const textCompareRenderer: CompareRenderer = {

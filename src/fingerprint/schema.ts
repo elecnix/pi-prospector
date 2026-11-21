@@ -58,6 +58,7 @@ export const ID_PATTERN = /^[a-z][A-Za-z0-9]{0,39}$/;
 
 const Count = Type.Integer({ minimum: 0 });
 const Day = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" });
+const Month = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}$" });
 
 /** The union of a fixed list of strings, typed as that list. */
 export function oneOf<T extends string>(values: readonly T[]) {
@@ -170,6 +171,13 @@ function header() {
 		minGroupSize: Type.Literal(MIN_GROUP_SIZE),
 		/** Top-level sessions in the filter. A sub-agent's own session is counted by the sections that read it. */
 		sessions: Type.Object({ count: Count }, { additionalProperties: false }),
+		/**
+		 * The first and last month (UTC, by session start) holding at least
+		 * {@link MIN_GROUP_SIZE} sessions in the filter; withheld when no month
+		 * does. The builder always sets it; it is optional so that a fingerprint
+		 * from before it still reads.
+		 */
+		period: Type.Optional(Type.Union([Type.Object({ from: Month, to: Month }, { additionalProperties: false }), Withheld])),
 	};
 }
 

@@ -125,6 +125,13 @@ describe("buildFingerprint", () => {
 		assert.ok(!text.includes("codex"), "a source under the minimum is named");
 	});
 
+	it("states the period as the first and last month holding at least the minimum of sessions", async () => {
+		assert.deepEqual((await build(t.db, at())).period, { from: "2026-03", to: "2026-04" });
+		assert.deepEqual((await build(t.db, at("--source claude"))).period, { from: "2026-04", to: "2026-04" });
+		// Two Codex sessions in April: no month holds five.
+		assert.deepEqual((await build(t.db, at("--source codex"))).period, { status: "withheld", reason: "below-min-group-size" });
+	});
+
 	it("records the version, the as-of date, the filter and the session count", async () => {
 		const fp = await build(t.db, at());
 		assert.equal(fp.schemaVersion, 2);

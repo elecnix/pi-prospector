@@ -49,6 +49,7 @@ const a: Fingerprint = {
 	filter: { sources: null, from: null, to: null },
 	minGroupSize: 5,
 	sessions: { count: 100 },
+	period: { from: "2026-03", to: "2026-06" },
 	objective: {
 		failures: {
 			status: "ok",
@@ -73,6 +74,7 @@ const b: Fingerprint = {
 	...a,
 	asOf: "2026-07-01",
 	sessions: { count: 400 },
+	period: { from: "2026-05", to: "2026-07" },
 	objective: {
 		failures: {
 			status: "ok",
@@ -120,6 +122,37 @@ describe("fingerprint compare", () => {
 		const measured = row(section("failures"), "sessions measured");
 		assert.equal(measured.a.text, "100 (100%)");
 		assert.equal(measured.b.text, "200 (50%)");
+	});
+
+	it("states each side's period and how to rebuild both over the months they share", () => {
+		const comparison = compareFingerprints(sides[0], sides[1], contributors);
+		assert.deepEqual(
+			comparison.sides.map((s) => s.period),
+			["2026-03 to 2026-06", "2026-05 to 2026-07"],
+		);
+		assert.ok(
+			comparison.notes.includes("The periods differ; they share 2026-05 to 2026-06. To compare like for like, rebuild both with --from 2026-05-01 --to 2026-06-30."),
+			comparison.notes.join("\n"),
+		);
+		const disjoint = compareFingerprints(sides[0], { label: "later", fingerprint: { ...b, period: { from: "2026-08", to: "2026-09" } } }, contributors);
+		assert.ok(disjoint.notes.includes("The periods do not overlap."));
+		const unstated = compareFingerprints(sides[0], { label: "old", fingerprint: { ...b, period: undefined } }, contributors);
+		assert.equal(unstated.sides[1].period, "not stated");
+	});
+
+	it("names the unit of a distribution once, in its quantile rows and bucket rows", () => {
+		const timed: FingerprintContributor = {
+			def: { id: "usage", label: "Usage", description: "Duration.", kind: "objective", measures: [{ kind: "distribution", id: "duration", field: "m", unit: "minutes", edges: [0, 5] }] },
+			read: noRead,
+		};
+		const usage = { status: "ok", sessionsMeasured: 10, duration: { status: "ok", sessions: 10, unit: "minutes", p50: 4, p90: 9, buckets: [{ from: 0, to: 5, sessions: 5 }, { from: 5, to: null, sessions: 5 }] } };
+		const fp: Fingerprint = { ...a, objective: { usage } };
+		const s = compareFingerprints({ label: "x", fingerprint: fp }, { label: "y", fingerprint: fp }, [timed]).sections[0]!;
+		assert.deepEqual(
+			s.rows.map((r) => r.label),
+			["sessions measured", "duration p50 (minutes)", "duration p90 (minutes)", "duration: 0–5 minutes", "duration: 5+ minutes"],
+		);
+		assert.equal(row(section("shape"), "prompts per session p50").label, "prompts per session p50", "a name that holds its unit is not repeated");
 	});
 
 	it("turns a total into a rate per measured session, so corpora of different sizes compare", () => {

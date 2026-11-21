@@ -222,6 +222,16 @@ function utcDay(iso: string): string {
 	return iso.slice(0, 10);
 }
 
+/** The first and last month holding at least `min` sessions, by start; withheld when no month does. */
+export function period(startedAt: ReadonlyArray<string | null>, min: number): { from: string; to: string } | typeof WITHHELD {
+	const perMonth = new Map<string, number>();
+	for (const at of startedAt) if (at !== null && /^\d{4}-\d{2}/.test(at)) perMonth.set(at.slice(0, 7), (perMonth.get(at.slice(0, 7)) ?? 0) + 1);
+	const months = [...perMonth].filter(([, n]) => n >= min).map(([m]) => m).sort();
+	const from = months[0];
+	const to = months.at(-1);
+	return from === undefined || to === undefined ? WITHHELD : { from, to };
+}
+
 /**
  * Build the fingerprint for a request from the given contributors. Throws if
  * the result does not match the schema those contributors compose, which would
@@ -253,6 +263,7 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 		filter: { sources: request.sources, from: request.from, to: request.to },
 		minGroupSize: MIN_GROUP_SIZE,
 		sessions: { count: sessions.length },
+		period: period(sessions.map((s) => s.startedAt), min),
 		objective: await section("objective"),
 		inferred: await section("inferred"),
 	};
