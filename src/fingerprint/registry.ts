@@ -74,7 +74,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"task-tool-mismatch": NOT_YET_DECIDED,
 	"language-mismatch": NOT_YET_DECIDED,
 	"decode-collapse": NOT_YET_DECIDED,
-	"repetition-collapse": NOT_YET_DECIDED,
 	"pr-opened": NOT_YET_DECIDED,
 	"repo-identity": NOT_YET_DECIDED,
 	"skill-use": NOT_YET_DECIDED,
