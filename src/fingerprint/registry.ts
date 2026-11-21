@@ -48,9 +48,11 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
 const REGRESSION = "regression: attribution covers under 1% of verdicts";
+/** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
+const VERIFICATION_VERDICTS = "input to stale-verification: measured through it";
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, VERIFICATION_VERDICTS];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -84,7 +86,7 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"session-ending": NOT_YET_DECIDED,
 	"skill-use": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
-	"verification-commands": NOT_YET_DECIDED,
+	"verification-commands": VERIFICATION_VERDICTS,
 	"files-in-play": NOT_YET_DECIDED,
 	"navigation-efficiency": NOT_YET_DECIDED,
 	"similarity-cluster": NOT_YET_DECIDED,
