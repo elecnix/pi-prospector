@@ -2,6 +2,7 @@ import * as os from "node:os";
 import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
 import { NOT_REVISED_LIVE, NOT_MUTED_LIVE } from "./current-generation.js";
+import { isChildRunSessionPath, parentSessionFromRunPath } from "../sync/pi-naming.js";
 
 /**
  * Schema for pi-prospector.
@@ -573,6 +574,37 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	await migrateDecisionsToAssertions(db);
 
 	await lowerOldLineCursors(db);
+	await linkChildRunsToParents(db);
+}
+
+/**
+ * Link each pi child run indexed with no parent to the session its path names (#416).
+ *
+ * A child run's header names no parent; pi records it in the run's path, which the
+ * pi sources read through {@link parentSessionFromRunPath}. Rows indexed before the
+ * always-on `pi` source read the path keep a NULL parent, and sync never re-reads a
+ * file whose mtime has not changed, so the link is written here.
+ *
+ * Only an empty parent is filled, and only with a session that is indexed: a run
+ * whose parent has no row keeps NULL, and is linked by a later migration once the
+ * parent is indexed. Runs on every migration; a database with no unlinked child run
+ * reads the candidate rows and writes nothing.
+ */
+export async function linkChildRunsToParents(db: AsyncDatabase): Promise<void> {
+	const candidates = (await db
+		.prepare("SELECT id, file_path FROM sessions WHERE (parent_session IS NULL OR TRIM(parent_session) = '') AND file_path LIKE '%run-%session.jsonl'")
+		.all()) as Array<{ id: string; file_path: string }>;
+	const links = candidates.flatMap((row) => {
+		const parent = isChildRunSessionPath(row.file_path) ? parentSessionFromRunPath(row.file_path) : null;
+		return parent && parent !== row.id ? [{ id: row.id, parent }] : [];
+	});
+	if (links.length === 0) return;
+	const link = db.prepare(
+		"UPDATE sessions SET parent_session = ? WHERE id = ? AND (parent_session IS NULL OR TRIM(parent_session) = '') AND EXISTS (SELECT 1 FROM sessions WHERE id = ?)",
+	);
+	await db.transaction(async () => {
+		for (const { id, parent } of links) await link.run(parent, id, parent);
+	})();
 }
 
 /**
