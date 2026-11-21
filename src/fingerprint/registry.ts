@@ -48,9 +48,10 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
 const REGRESSION = "regression: attribution covers under 1% of verdicts";
+const MODEL_NAMED_CLASSES = "free text: the model names its own request classes, so no fixed list can hold them";
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, MODEL_NAMED_CLASSES];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -89,7 +90,7 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"stale-verification": NOT_YET_DECIDED,
 	"similarity-cluster": NOT_YET_DECIDED,
 	"friction-accumulation": NOT_YET_DECIDED,
-	"request-classes": NOT_YET_DECIDED,
+	"request-classes": MODEL_NAMED_CLASSES,
 	"session-overview": NOT_YET_DECIDED,
 	"rule-restatement": NOT_YET_DECIDED,
 	"secret-leak": SECRET_SCANNER,
