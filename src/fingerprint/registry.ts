@@ -62,7 +62,6 @@ export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCA
  * contributor in the same pull request.
  */
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
-	"turn-pair-core": NOT_YET_DECIDED,
 	"lexicon-candidates": NOT_YET_DECIDED,
 	"frustration-lexicon": NOT_YET_DECIDED,
 	"message-answers": NOT_YET_DECIDED,
