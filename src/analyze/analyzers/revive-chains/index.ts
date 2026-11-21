@@ -64,6 +64,8 @@ import {
 } from "./detect.js";
 import { Type, type Static } from "typebox";
 
+import { reviveChainsFingerprint } from "./fingerprint.js";
+
 export * from "./config.js";
 export * from "./detect.js";
 
@@ -207,6 +209,7 @@ export const reviveChainsAnalyzer: Analyzer = {
 	def: REVIVE_CHAINS_DEF,
 	version: REVIVE_CHAINS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [reviveChainsFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: REVIVE_CHAINS_DEF.id,
