@@ -2,7 +2,7 @@ import * as os from "node:os";
 import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
 import { NOT_REVISED_LIVE, NOT_MUTED_LIVE } from "./current-generation.js";
-import { isChildRunSessionPath, parentSessionFromRunPath } from "../sync/pi-naming.js";
+import { isChildRunSessionPath, parentKindOf, parentSessionFromRunPath } from "../sync/pi-naming.js";
 
 /**
  * Schema for pi-prospector.
@@ -46,6 +46,9 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			host TEXT NOT NULL DEFAULT '',
 			cwd TEXT NOT NULL DEFAULT '',
 			parent_session TEXT,
+			-- What the parent link records: 'fork' (a pi fork, which copies the parent's
+			-- history) or 'child' (a child agent's session). NULL with no parent.
+			parent_kind TEXT CHECK (parent_kind IN ('fork', 'child')),
 			-- The human-readable session name from the host's session_info record
 			-- (Pi) or AI title (Claude), for display in reports. NULL when the
 			-- transcript recorded none — never an empty string.
@@ -561,36 +564,49 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	await migrateDecisionsToAssertions(db);
 
 	await lowerOldLineCursors(db);
-	await linkChildRunsToParents(db);
+	await recordParentLinks(db);
 }
 
 /**
- * Link each pi child run indexed with no parent to the session its path names (#416).
+ * Record the parent link of every session indexed before sync recorded it (#416).
  *
- * A child run's header names no parent; pi records it in the run's path, which the
- * pi sources read through {@link parentSessionFromRunPath}. Rows indexed before the
- * always-on `pi` source read the path keep a NULL parent, and sync never re-reads a
- * file whose mtime has not changed, so the link is written here.
+ * A pi child run's header names no parent; pi records it in the run's path, which
+ * the pi sources read through {@link parentSessionFromRunPath}. Rows indexed before
+ * the always-on `pi` source read the path have a NULL parent, and sync never
+ * re-reads a file whose mtime has not changed, so the link is written here. Only an
+ * empty parent is filled, and only with a session that is indexed: a run whose
+ * parent has no row keeps NULL, and a later migration links it once the parent is.
  *
- * Only an empty parent is filled, and only with a session that is indexed: a run
- * whose parent has no row keeps NULL, and is linked by a later migration once the
- * parent is indexed. Runs on every migration; a database with no unlinked child run
- * reads the candidate rows and writes nothing.
+ * Every linked row also gets its `parent_kind`, by the rule sync uses
+ * ({@link parentKindOf}). A row that has one keeps it.
+ *
+ * Runs on every migration. A database with nothing to record reads the candidate
+ * rows and writes nothing.
  */
-export async function linkChildRunsToParents(db: AsyncDatabase): Promise<void> {
+export async function recordParentLinks(db: AsyncDatabase): Promise<void> {
 	const candidates = (await db
-		.prepare("SELECT id, file_path FROM sessions WHERE (parent_session IS NULL OR TRIM(parent_session) = '') AND file_path LIKE '%run-%session.jsonl'")
-		.all()) as Array<{ id: string; file_path: string }>;
-	const links = candidates.flatMap((row) => {
+		.prepare(
+			`SELECT id, source, file_path, parent_session FROM sessions
+			  WHERE (TRIM(COALESCE(parent_session, '')) <> '' AND parent_kind IS NULL)
+			     OR (TRIM(COALESCE(parent_session, '')) = '' AND file_path LIKE '%run-%session.jsonl')`,
+		)
+		.all()) as Array<{ id: string; source: string; file_path: string; parent_session: string | null }>;
+	const writes = candidates.flatMap((row) => {
+		const kind = parentKindOf(row.source, row.file_path);
+		if (row.parent_session?.trim()) return [{ id: row.id, parent: row.parent_session, kind, linkOnlyIfIndexed: false }];
 		const parent = isChildRunSessionPath(row.file_path) ? parentSessionFromRunPath(row.file_path) : null;
-		return parent && parent !== row.id ? [{ id: row.id, parent }] : [];
+		return parent && parent !== row.id ? [{ id: row.id, parent, kind, linkOnlyIfIndexed: true }] : [];
 	});
-	if (links.length === 0) return;
+	if (writes.length === 0) return;
+	const setKind = db.prepare("UPDATE sessions SET parent_kind = ? WHERE id = ? AND parent_kind IS NULL");
 	const link = db.prepare(
-		"UPDATE sessions SET parent_session = ? WHERE id = ? AND (parent_session IS NULL OR TRIM(parent_session) = '') AND EXISTS (SELECT 1 FROM sessions WHERE id = ?)",
+		"UPDATE sessions SET parent_session = ?, parent_kind = ? WHERE id = ? AND TRIM(COALESCE(parent_session, '')) = '' AND EXISTS (SELECT 1 FROM sessions WHERE id = ?)",
 	);
 	await db.transaction(async () => {
-		for (const { id, parent } of links) await link.run(parent, id, parent);
+		for (const w of writes) {
+			if (w.linkOnlyIfIndexed) await link.run(w.parent, w.kind, w.id, w.parent);
+			else await setKind.run(w.kind, w.id);
+		}
 	})();
 }
 
@@ -690,6 +706,12 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 		// the only place sync read them. Naming the local host costs one UPDATE, where a re-import
 		// would cost a model run per session to attribute rows that are already here.
 		await db.prepare("UPDATE sessions SET host = ? WHERE host = ''").run(os.hostname());
+	}
+
+	// sessions: what a parent link records (#416). `recordParentLinks`, at the end of
+	// the migration, fills it on every linked row, so no re-read is needed.
+	if (!(await hasColumn("sessions", "parent_kind"))) {
+		await db.exec("ALTER TABLE sessions ADD COLUMN parent_kind TEXT CHECK (parent_kind IN ('fork', 'child'))");
 	}
 
 	// messages: add source column if missing

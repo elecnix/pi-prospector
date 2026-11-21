@@ -271,6 +271,7 @@ export class CodexFileSource implements SessionSourceAdapter {
       cwd,
       // A delegated agent's session names the session it was spawned from.
       parent_session: metaString(meta, "parent_thread_id"),
+      parent_kind: metaString(meta, "parent_thread_id") ? "child" : null,
       started_at: startedAt,
       last_line: resumeLine,
       last_modified: disc.mtime,

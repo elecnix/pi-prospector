@@ -15,7 +15,7 @@ import { parseLine, extractSessionName } from "../../parser.js";
 import { resolveFork } from "../../forks.js";
 import { walkSessionDir } from "../../scanner.js";
 import { getSessionsDir } from "../../../config.js";
-import { RUN_DIR_RE, isChildRunSessionPath, isPiSessionFileName, parentSessionFromRunPath, piSessionIdFromFileName } from "../../pi-naming.js";
+import { RUN_DIR_RE, isChildRunSessionPath, isPiSessionFileName, parentKindOf, parentSessionFromRunPath, piSessionIdFromFileName } from "../../pi-naming.js";
 
 export class PiFileSource implements SessionSourceAdapter {
 	readonly source = "pi";
@@ -141,6 +141,7 @@ export class PiFileSource implements SessionSourceAdapter {
 				source: disc.source,
 				cwd,
 				parent_session: parentSessionId,
+				parent_kind: parentSessionId ? parentKindOf(disc.source, disc.filePath) : null,
 				started_at: startedAt,
 				last_line: end,
 				last_modified: disc.mtime,

@@ -182,7 +182,10 @@ export const TURN_FRUSTRATION_VERSION: AnalyzerVersion = {
 	// identity and `--revise minor` redraws it beside its predecessor. The
 	// whole-message rules that text-origin.ts had (child agent, signature, pi entry,
 	// compaction) moved to message-origin and are gone from the span labeller.
-	minor: 12,
+	// 1.13: a pi child run is a child agent's session, not a fork (#416). A hit on a
+	// child run's prompt with no decided message-origin node is `agent`, as on any
+	// other child agent's session.
+	minor: 13,
 	implementationKind: "deterministic",
 	codeRef: "src/analyze/analyzers/turn-frustration/index.ts",
 };
@@ -567,8 +570,9 @@ interface OriginLabeller {
  * whether the session is a child agent's, and the parent's turns a fork may
  * have copied.
  *
- * A pi session with a parent is a fork. Every other host records a parent link
- * only for a child agent (Claude Code, pi-subagents, Codex, OpenCode, Cline).
+ * The parent link records either a fork or a child agent's session
+ * (`parent_kind`). A pi session has either; every other host records a parent
+ * only for a child agent (Claude Code, Codex, OpenCode, Cline).
  *
  * The parent's turns are an input outside the hit's source set, as the lexicon
  * verdict a hit copies is. A fork analysed before its parent was indexed keeps
@@ -584,8 +588,8 @@ async function originContext(ctx: AnalyzerPlanContext): Promise<OriginLabeller> 
 					.filter((m) => TURN_START_ROLES.has(m.role) && m.content_text)
 					.map((m) => ({ text: m.content_text ?? "", timestamp: m.timestamp }));
 	const startedAt = lineage?.started_at || null;
-	// A session with a parent link is a child agent's unless it is a pi fork, where the link records a fork.
-	const childAgent = parent !== null && lineage?.source !== "pi";
+	// A child agent's session, not a fork, where the person kept typing.
+	const childAgent = lineage?.parent_kind === "child";
 
 	// The message-origin node of each turn, newest per message. A message with no
 	// node (the analyzer did not run on it, or it failed) keeps the span labels, except

@@ -50,6 +50,8 @@ describe("child run parent (#416)", () => {
 			assert.equal(await parentOf(db, PARENT_ID), null);
 			assert.equal(await parentOf(db, "child-flat"), PARENT_ID);
 			assert.equal(await parentOf(db, "child-nested"), PARENT_ID);
+			const kinds = (await db.prepare("SELECT parent_kind FROM sessions WHERE id IN ('child-flat', 'child-nested')").all()) as Array<{ parent_kind: string | null }>;
+			assert.deepEqual(kinds.map((k) => k.parent_kind), ["child", "child"]);
 		} finally {
 			await close();
 			fx.cleanup();
@@ -70,20 +72,27 @@ describe("child run parent (#416)", () => {
 			await insertSession(db, "not-a-run", `${root}/${PARENT_STEM}/2b83bd26/run-0/other.jsonl`);
 			// A run whose parent is already recorded keeps it.
 			await insertSession(db, "child-linked", `${root}/${PARENT_STEM}/2b83bd26/run-2/session.jsonl`);
-			await db.prepare("UPDATE sessions SET parent_session = 'recorded-parent' WHERE id = 'child-linked'").run();
+			// Rows indexed before parent_kind existed: a pi fork, and another harness's child agent.
+			await insertSession(db, "pi-fork", `${root}/2026-08-19T03-00-00Z_${MISSING_ID}.jsonl`);
+			await insertSession(db, "claude-child", "/claude/agent-a1.jsonl", "", "claude");
+			for (const [id, parent] of [["child-linked", "recorded-parent"], ["pi-fork", PARENT_ID], ["claude-child", "claude-parent"]]) {
+				await db.prepare("UPDATE sessions SET parent_session = ?, parent_kind = NULL WHERE id = ?").run(parent, id);
+			}
 
-			const snapshot = async () => (await db.prepare("SELECT id, parent_session FROM sessions ORDER BY id").all()) as Array<{ id: string; parent_session: string | null }>;
+			const snapshot = async () => (await db.prepare("SELECT id, parent_session, parent_kind FROM sessions ORDER BY id").all()) as Array<Record<string, unknown>>;
 
 			await migrate(db);
 			const once = await snapshot();
 			assert.deepEqual(once, [
-				{ id: PARENT_ID, parent_session: null },
-				{ id: "child-flat", parent_session: PARENT_ID },
-				{ id: "child-linked", parent_session: "recorded-parent" },
-				{ id: "child-nested", parent_session: PARENT_ID },
-				{ id: "child-of-missing", parent_session: null },
-				{ id: "child-uuid-run", parent_session: PARENT_ID },
-				{ id: "not-a-run", parent_session: null },
+				{ id: PARENT_ID, parent_session: null, parent_kind: null },
+				{ id: "child-flat", parent_session: PARENT_ID, parent_kind: "child" },
+				{ id: "child-linked", parent_session: "recorded-parent", parent_kind: "child" },
+				{ id: "child-nested", parent_session: PARENT_ID, parent_kind: "child" },
+				{ id: "child-of-missing", parent_session: null, parent_kind: null },
+				{ id: "child-uuid-run", parent_session: PARENT_ID, parent_kind: "child" },
+				{ id: "claude-child", parent_session: "claude-parent", parent_kind: "child" },
+				{ id: "not-a-run", parent_session: null, parent_kind: null },
+				{ id: "pi-fork", parent_session: PARENT_ID, parent_kind: "fork" },
 			]);
 
 			await migrate(db);
