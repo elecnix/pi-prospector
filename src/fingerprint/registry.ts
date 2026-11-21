@@ -53,9 +53,10 @@ const REGRESSION = "regression: attribution covers under 1% of verdicts";
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
 const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
 const INPUT_TO_FRUSTRATION_LEXICON = inputTo("frustration-lexicon");
+const INPUT_TO_TURN_FRUSTRATION = inputTo("turn-frustration");
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM, INPUT_TO_FRUSTRATION_LEXICON];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM, INPUT_TO_FRUSTRATION_LEXICON, INPUT_TO_TURN_FRUSTRATION];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -69,7 +70,8 @@ export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCA
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	// It nominates the person's own words for the lexicon to judge; the words never leave the machine.
 	"lexicon-candidates": INPUT_TO_FRUSTRATION_LEXICON,
-	"frustration-lexicon": NOT_YET_DECIDED,
+	// It learns a per-person word list. turn-frustration publishes the categories of the hits, never the words.
+	"frustration-lexicon": INPUT_TO_TURN_FRUSTRATION,
 	// Its answers reach the fingerprint as prompt-form's `promptKind` section.
 	"message-answers": INPUT_TO_PROMPT_FORM,
 	"tool-trajectory": NOT_YET_DECIDED,
