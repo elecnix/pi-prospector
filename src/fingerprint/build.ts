@@ -1,6 +1,7 @@
 import { Check, Errors } from "typebox/value";
 import type { AsyncDatabase } from "../db/async-db.js";
-import { currentNodeItems, currentNodeRows, currentNodeVersions, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
+import { currentNodeItems, currentNodeRows, currentNodeVersions, latestRunVersions, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
+import { gradeVersionMove, parseVersionId } from "../analyze/version.js";
 import { HARNESS_SOURCES, isHarnessSource, type HarnessSource } from "../harness.js";
 import { parseTimestamp } from "../timepoint.js";
 import { checkContributorDef, type FingerprintContributor, type FingerprintReadContext, type FingerprintRow, type MeasureSpec } from "./contributor.js";
@@ -252,7 +253,12 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 	const ctx: FingerprintReadContext = {
 		scope,
 		sessions,
-		runs: async (analyzerId) => [...(await sessionsWithRun(db, scope, analyzerId))],
+		runs: async (analyzerId, since) => {
+			if (since === undefined) return [...(await sessionsWithRun(db, scope, analyzerId))];
+			const floor = parseVersionId(since);
+			// At `since` or later: the move from the run's version up to `since` is no upgrade.
+			return [...(await latestRunVersions(db, scope, analyzerId))].filter(([, version]) => gradeVersionMove(parseVersionId(version), floor) === null).map(([id]) => id);
+		},
 		nodes: (analyzerId, fields) => currentNodeRows(db, scope, analyzerId, fields),
 		items: (analyzerId, arrayPath, itemFields, nodeFields) => currentNodeItems(db, scope, analyzerId, arrayPath, itemFields, nodeFields),
 	};

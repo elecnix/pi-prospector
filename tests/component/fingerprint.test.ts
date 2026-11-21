@@ -70,10 +70,10 @@ async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string
 	});
 }
 
-async function seedRun(db: AsyncDatabase, sessionId: string, analyzerId: string): Promise<void> {
+async function seedRun(db: AsyncDatabase, sessionId: string, analyzerId: string, version = "1", at = "2026-05-01T00:00:00.000Z"): Promise<void> {
 	n++;
-	await createRun(db, { id: `run-${n}`, analyzerId, analyzerVersionId: "1", configId: "c", sessionId, mode: "fill", promptBundleHash: "" });
-	await db.prepare("UPDATE analysis_runs SET started_at = ? WHERE id = ?").run("2026-05-01T00:00:00.000Z", `run-${n}`);
+	await createRun(db, { id: `run-${n}`, analyzerId, analyzerVersionId: version, configId: "c", sessionId, mode: "fill", promptBundleHash: "" });
+	await db.prepare("UPDATE analysis_runs SET started_at = ? WHERE id = ?").run(at, `run-${n}`);
 }
 
 describe("buildFingerprint", () => {
@@ -95,9 +95,9 @@ describe("buildFingerprint", () => {
 					{ axis: "turn", class_id: "rate-limit", tool: "", count: 1 },
 				],
 			});
-			await seedRun(db, id, "turn-frustration");
-			await seedNode(db, id, "turn-frustration", { signal_source: "lexicon", category: "profanity", polarity: "frustration", signal: "hunter2", count: 2, origin: "typed", origins: { typed: 2 } });
-			await seedNode(db, id, "turn-frustration", { signal_source: "lexicon", category: "profanity", polarity: "frustration", signal: "pasted-word", count: 3, origin: "pasted", origins: { pasted: 3 } });
+			await seedRun(db, id, "turn-frustration", "1.11");
+			await seedNode(db, id, "turn-frustration", { signal_source: "lexicon", category: "profanity", polarity: "frustration", signal: "hunter2", count: 2, origin: "typed", origins: { typed: 2 }, typed_count: 2 }, undefined, "1.11");
+			await seedNode(db, id, "turn-frustration", { signal_source: "lexicon", category: "profanity", polarity: "frustration", signal: "pasted-word", count: 3, origin: "pasted", origins: { pasted: 3 }, typed_count: 0 }, undefined, "1.11");
 			await seedRun(db, id, "turn-pair-llm");
 			await seedNode(db, id, "turn-pair-llm", { sentiment: "frustrated", friction_type: "wrong_approach", rationale: "hunter2" });
 		}
@@ -253,6 +253,59 @@ describe("buildFingerprint", () => {
 		const before = await count();
 		await build(t.db, parseFingerprintArgs("", new Date(ASOF)));
 		assert.equal(await count(), before);
+	});
+});
+
+describe("frustration from a turn-frustration version that did not label origins", () => {
+	// turn-frustration before 1.10 wrote no `typed_count`: its hits cannot be told
+	// from pasted text, and a session it found nothing in may hide typed hits a
+	// later version would find. Neither counts as measured.
+	let u: TempDb;
+	const hit = (typed?: number) => ({
+		signal_source: "lexicon",
+		category: "profanity",
+		signal: "hunter2",
+		count: 2,
+		...(typed === undefined ? {} : { origin: "typed", origins: { typed }, typed_count: typed }),
+	});
+	const asOf = parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF));
+
+	before(async () => {
+		u = await tempDb();
+		for (let i = 1; i <= 6; i++) {
+			const id = `old-${i}`;
+			await seedSession(u.db, id, "pi", `2026-03-0${i}T10:00:00.000Z`, { prompts: 2, toolCalls: 0, minutes: 5 });
+			await seedRun(u.db, id, "turn-frustration", "1.7");
+			// Half the sessions had hits; the rest had none.
+			if (i <= 3) await seedNode(u.db, id, "turn-frustration", hit(), undefined, "1.7");
+		}
+	});
+	after(() => u.close());
+
+	it("withholds the section rather than report 0 signals when no session was measured by a labelling version", async () => {
+		const f = inferred(await buildFingerprint(u.db, asOf, contributors), "frustration");
+		assert.equal(f.status, "withheld");
+	});
+
+	it("measures only the sessions whose latest run labels origins, and drops a session with an unlabelled hit", async () => {
+		for (let i = 1; i <= 5; i++) {
+			const id = `new-${i}`;
+			await seedSession(u.db, id, "claude", `2026-04-0${i}T10:00:00.000Z`, { prompts: 2, toolCalls: 0, minutes: 5 });
+			await seedRun(u.db, id, "turn-frustration", "1.11");
+			await seedNode(u.db, id, "turn-frustration", hit(1), undefined, "1.11");
+		}
+		// A session re-run at 1.11 that still carries a hit the old version drew.
+		await seedSession(u.db, "mixed", "claude", "2026-04-09T10:00:00.000Z", { prompts: 2, toolCalls: 0, minutes: 5 });
+		await seedRun(u.db, "mixed", "turn-frustration", "1.7", "2026-04-30T00:00:00.000Z");
+		await seedRun(u.db, "mixed", "turn-frustration", "1.11");
+		await seedNode(u.db, "mixed", "turn-frustration", hit(), undefined, "1.7");
+		const f = inferred(await buildFingerprint(u.db, asOf, contributors), "frustration");
+		assert.equal(f.status, "ok");
+		assert.equal(f["sessionsMeasured"], 5);
+		assert.equal(f["signals"], 5);
+		// An old session re-run at 1.11 is measured from then on.
+		await seedRun(u.db, "old-6", "turn-frustration", "1.11", "2026-05-02T00:00:00.000Z");
+		assert.equal(inferred(await buildFingerprint(u.db, asOf, contributors), "frustration")["sessionsMeasured"], 6);
 	});
 });
 

@@ -112,6 +112,22 @@ export async function sessionsWithRun(db: AsyncDatabase, scope: FingerprintScope
 	return new Set(rows.map((r) => r.id));
 }
 
+/**
+ * For each session in scope, the version of the analyzer's latest successful
+ * run by the instant. Runs that started at the same instant are ordered by id,
+ * so the answer does not depend on the order SQLite returns them in.
+ */
+export async function latestRunVersions(db: AsyncDatabase, scope: FingerprintScope, analyzerId: string): Promise<Map<string, string>> {
+	const { terms, params } = scopeTerms(scope);
+	const rows = (await prep(
+		db,
+		`SELECT s.id AS id, r.analyzer_version_id AS version FROM analysis_runs r JOIN sessions s ON s.id = r.session_id
+		  WHERE r.analyzer_id = ? AND r.status = 'ok' AND r.started_at <= ? AND ${terms.join(" AND ")}
+		  ORDER BY r.started_at, r.id`,
+	).all(analyzerId, scope.asOf, ...params)) as Array<{ id: string; version: string }>;
+	return new Map(rows.map((r) => [r.id, r.version]));
+}
+
 /** One row per (session, version) among the analyzer's current nodes in scope. */
 export async function currentNodeVersions(db: AsyncDatabase, scope: FingerprintScope, analyzerId: string): Promise<Array<{ session: string; version: string }>> {
 	const { from, params } = currentNodes(scope);
