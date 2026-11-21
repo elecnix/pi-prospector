@@ -80,7 +80,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"turn-pair-core": NOT_YET_DECIDED,
 	"lexicon-candidates": NOT_YET_DECIDED,
 	"frustration-lexicon": NOT_YET_DECIDED,
-	"attention-gaps": NOT_YET_DECIDED,
 	"message-answers": NOT_YET_DECIDED,
 	"assistant-cognition": NOT_YET_DECIDED,
 	"phase-trajectory": NOT_YET_DECIDED,
