@@ -1,0 +1,78 @@
+import { Check, Errors } from "typebox/value";
+import { createRun, insertNode } from "../../src/db/analysis-queries.js";
+import { buildFingerprint, parseFingerprintArgs } from "../../src/fingerprint/build.js";
+import { collectContributors } from "../../src/fingerprint/registry.js";
+import { BUILTIN_ANALYZERS } from "../../src/analyze/defaults.js";
+import { fingerprintSchema, type Fingerprint } from "../../src/fingerprint/schema.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
+
+/**
+ * Seeding for the tests of one analyzer's fingerprint section: top-level
+ * sessions, runs and nodes, written straight to the graph so a test states
+ * exactly what an analyzer left behind. Every identifying string a test seeds
+ * is a sentinel the fingerprint must never carry.
+ */
+
+export const ASOF = "2026-06-30T12:00:00.000Z";
+export const SENTINELS = ["SECRET-PROJECT", "/home/secret/path", "Secret title", "hunter2", "github.com", "secret-owner"];
+
+let n = 0;
+
+export async function seedSession(db: AsyncDatabase, id: string, startedAt = "2026-03-01T10:00:00.000Z"): Promise<void> {
+	await db
+		.prepare(
+			"INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, name, started_at, last_line, last_modified, message_count, branch_count) VALUES (?, ?, 'SECRET-PROJECT', 'pi', '/home/secret/path', NULL, 'Secret title', ?, 0, 0, 0, 0)",
+		)
+		.run(id, `/home/secret/path/${id}.jsonl`, startedAt);
+}
+
+export async function seedRun(db: AsyncDatabase, sessionId: string, analyzerId: string, version: string, at = "2026-05-01T00:00:00.000Z"): Promise<void> {
+	n++;
+	await createRun(db, { id: `run-${n}`, analyzerId, analyzerVersionId: version, configId: "c", sessionId, mode: "fill", promptBundleHash: "" });
+	await db.prepare("UPDATE analysis_runs SET started_at = ? WHERE id = ?").run(at, `run-${n}`);
+}
+
+export async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string, version: string, content: unknown, at = "2026-05-01T00:00:00.000Z"): Promise<void> {
+	n++;
+	await insertNode(db, {
+		id: `node-${n}`,
+		sessionId,
+		analyzerId,
+		analyzerVersionId: version,
+		configId: "c",
+		runId: null,
+		nodeKind: "metric",
+		contentJson: JSON.stringify(content),
+		sourceSetHash: `ssh-${n}`,
+		inputKey: `ik-${n}`,
+		outputKey: `ok-${n}`,
+		createdAt: at,
+	});
+}
+
+/** The fingerprint of the built-in contributors as of `ASOF`, checked against the schema they compose, as the command checks it. */
+export async function fingerprintOf(db: AsyncDatabase): Promise<Fingerprint> {
+	const contributors = collectContributors(BUILTIN_ANALYZERS);
+	const fp = await buildFingerprint(db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), contributors);
+	const schema = fingerprintSchema(contributors);
+	if (!Check(schema, fp)) {
+		const first = [...Errors(schema, fp)][0];
+		throw new Error(`fingerprint does not match its schema${first ? ` at ${first.instancePath}: ${first.message}` : ""}`);
+	}
+	return fp;
+}
+
+export type Section = Record<string, unknown> & { status: string };
+
+/** A section by id, objective or inferred. */
+export function sectionOf(fp: Fingerprint, id: string): Section {
+	const section = (fp.objective[id] ?? fp.inferred[id]) as Section | undefined;
+	if (section === undefined) throw new Error(`no section '${id}'`);
+	return section;
+}
+
+/** The identifying sentinels the fingerprint text carries. */
+export function leakedSentinels(fp: Fingerprint, extra: readonly string[] = []): string[] {
+	const text = JSON.stringify(fp);
+	return [...SENTINELS, ...extra].filter((s) => text.includes(s));
+}

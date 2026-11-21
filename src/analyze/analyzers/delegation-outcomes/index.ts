@@ -33,6 +33,7 @@ import { Type, type Static } from "typebox";
 import { getBackgroundTasksForSession, getChildSessionStats } from "../../../db/queries.js";
 import { DEFAULT_DELEGATION_OUTCOMES_CONFIG, type DelegationOutcomesConfig } from "./config.js";
 import { scanDelegations } from "./detect.js";
+import { delegationOutcomesFingerprintContributor } from "./fingerprint.js";
 
 const OUTCOME = Type.Union([
 	Type.Literal("completed"),
@@ -116,6 +117,7 @@ export const delegationOutcomesAnalyzer: Analyzer = {
 	def: DELEGATION_OUTCOMES_DEF,
 	version: DELEGATION_OUTCOMES_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [delegationOutcomesFingerprintContributor],
 	defaultConfig: {
 		id: "",
 		analyzerId: DELEGATION_OUTCOMES_DEF.id,

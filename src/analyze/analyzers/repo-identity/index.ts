@@ -32,6 +32,7 @@ import { Type, type Static } from "typebox";
 import { getSessionCwd } from "../session-overview/cross-session.js";
 import { DEFAULT_REPO_IDENTITY_CONFIG, type RepoIdentityConfig } from "./config.js";
 import { chooseRepo, findRepoHints } from "./detect.js";
+import { repoIdentityFingerprintContributor } from "./fingerprint.js";
 
 /** The properties a repo-identity node carries in its `contentJson`. */
 export const REPO_IDENTITY_PROPERTIES = Type.Object({
@@ -95,6 +96,7 @@ export const repoIdentityAnalyzer: Analyzer = {
 	def: REPO_IDENTITY_DEF,
 	version: REPO_IDENTITY_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [repoIdentityFingerprintContributor],
 	defaultConfig: {
 		id: "",
 		analyzerId: REPO_IDENTITY_DEF.id,
