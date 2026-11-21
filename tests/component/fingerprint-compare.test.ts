@@ -42,7 +42,7 @@ describe("prospect fingerprint compare", () => {
 		await prospectFingerprint("compare one.json two.json --format markdown --out cmp.md", ctx());
 		const md = fs.readFileSync(path.join(tmpDir, "cmp.md"), "utf8");
 		assert.match(md, /^# Corpus fingerprint comparison/);
-		assert.match(md, /\| tool failures per session \| 0\.50 \| 2\.00 \| ×4\.0 \|/);
+		assert.match(md, /\| tool failures per session \| 0\.50\* \| 2\.00 \| ×4\.0 \|/);
 		assert.equal(fs.existsSync(path.join(tmpDir, "never-opened.db")), false);
 	});
 

@@ -218,22 +218,22 @@ function measureCells(measure: MeasureSpec, name: string, section: unknown): Mea
 	switch (measure.kind) {
 		case "total": {
 			const n = value as number;
-			return { keys: [`${name} per session`], cell: () => cell(fixed(n / Math.max(measured, 1)), n / Math.max(measured, 1)) };
+			return { keys: [`${name} per session`], cell: () => cell(fixed(n / Math.max(measured, 1)), n / Math.max(measured, 1), lowFlag(measured)) };
 		}
 		case "sessions": {
 			const p = pct(value as number, measured);
 			return { keys: [name], cell: () => cell(pctText(p), p, lowFlag(value as number)) };
 		}
 		case "distinct":
-			return { keys: [name], cell: () => cell(String(value), value as number) };
+			return { keys: [name], cell: () => cell(String(value), value as number, lowFlag(measured)) };
 		case "distribution": {
 			const d = value as { sessions: number; p50: number; p90: number; buckets: Bucket[] };
 			const declared = measure.edges.map((from, i) => ({ from, to: measure.edges[i + 1] ?? null }));
 			const unit = UNIT_NAMES[measure.unit];
 			const named = name.includes(unit);
 			const cells = new Map<string, Cell>([
-				[named ? `${name} p50` : `${name} p50 (${unit})`, cell(fixed(d.p50), d.p50)],
-				[named ? `${name} p90` : `${name} p90 (${unit})`, cell(fixed(d.p90), d.p90)],
+				[named ? `${name} p50` : `${name} p50 (${unit})`, cell(fixed(d.p50), d.p50, lowFlag(d.sessions))],
+				[named ? `${name} p90` : `${name} p90 (${unit})`, cell(fixed(d.p90), d.p90, lowFlag(d.sessions))],
 			]);
 			for (const want of declared) {
 				const key = `${name}: ${bucketLabel(want.from, want.to)}${named ? "" : ` ${unit}`}`;

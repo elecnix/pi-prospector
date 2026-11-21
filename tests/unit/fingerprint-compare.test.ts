@@ -203,6 +203,29 @@ describe("fingerprint compare", () => {
 		assert.ok(missing.a.flags.includes("low"), "6 sessions is a low count");
 	});
 
+	it("marks a rate and a quantile low when they rest on few sessions", () => {
+		const few = (fp: Fingerprint): Fingerprint => ({
+			...fp,
+			objective: {
+				failures: { status: "ok", sessionsMeasured: 6, toolFailures: 12, sessionsWithFailures: 6, byClass: [] },
+				shape: {
+					status: "ok",
+					sessionsMeasured: 6,
+					promptsPerSession: { status: "ok", sessions: 6, unit: "prompts", p50: 3, p90: 9, buckets: [{ from: 0, to: null, sessions: 6 }] },
+				},
+			},
+		});
+		const compared = compareFingerprints({ label: "few", fingerprint: few(a) }, sides[1], contributors).sections;
+		const of = (id: string) => compared.find((s) => s.id === id)!;
+		assert.ok(row(of("failures"), "tool failures per session").a.flags.includes("low"), "a rate over 6 sessions is low");
+		assert.ok(!row(of("failures"), "tool failures per session").b.flags.includes("low"), "a rate over 200 sessions is not low");
+		for (const q of ["p50", "p90"]) {
+			const r = row(of("shape"), `prompts per session ${q}`);
+			assert.ok(r.a.flags.includes("low"), `a ${q} over 6 sessions is low`);
+			assert.ok(!r.b.flags.includes("low"), `a ${q} over 400 sessions is not low`);
+		}
+	});
+
 	it("compares distributions by their quantiles and by the share of sessions in each declared bucket", () => {
 		const s = section("shape");
 		assert.equal(row(s, "prompts per session p50").diff, "×2.0");
