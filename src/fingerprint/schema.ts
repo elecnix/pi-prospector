@@ -43,7 +43,7 @@ export const SOURCE_GROUPS = [...HARNESS_SOURCES, "unknown"] as const;
 export type SourceGroup = (typeof SOURCE_GROUPS)[number];
 
 /** The units a distribution may state. A contributor needing another unit adds it here. */
-export const DISTRIBUTION_UNITS = ["minutes", "prompts", "tool-calls"] as const;
+export const DISTRIBUTION_UNITS = ["minutes", "prompts", "tool-calls", "percent"] as const;
 export type DistributionUnit = (typeof DISTRIBUTION_UNITS)[number];
 
 /** The two kinds of section. */
