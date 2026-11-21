@@ -28,6 +28,7 @@ import { DEFAULT_TURN_PAIR_CORE_CONFIG, type TurnPairCoreConfig } from "./config
 import { MESSAGE_ORIGIN_DEF, type MessageOriginProperties } from "../message-origin/index.js";
 import { MessageOrigin } from "../../message-origin.js";
 import { currentHits } from "../../../db/muted-terms.js";
+import { turnPairCoreFingerprint } from "./fingerprint.js";
 
 export const TurnPairCoreProperties = Type.Object({
 	pair_index: Type.Number(),
@@ -166,6 +167,7 @@ export function scorePair(pair: TurnPair, config: TurnPairCoreConfig, read?: Rea
 export const turnPairCoreAnalyzer: Analyzer = {
 	def: TURN_PAIR_CORE_DEF,
 	version: TURN_PAIR_CORE_VERSION,
+	fingerprint: [turnPairCoreFingerprint],
 	prompts: {} as Record<string, PromptVersion>,
 	defaultConfig: {
 		id: "",
