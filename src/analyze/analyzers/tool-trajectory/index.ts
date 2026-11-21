@@ -33,6 +33,7 @@ import { detectAllSignals, TrajectorySignal, SIGNAL_RISK_CLASSES, type Reasoning
 import { fingerprintReasoning } from "./reasoning-fingerprint.js";
 import { DEFAULT_TOOL_TRAJECTORY_CONFIG, type ToolTrajectoryConfig } from "./config.js";
 import { Type, type Static } from "typebox";
+import { toolTrajectoryFingerprint } from "./fingerprint.js";
 
 export const ToolTrajectoryProperties = Type.Object({
 	/** Session id this analysis covers. */
@@ -277,6 +278,7 @@ export const toolTrajectoryAnalyzer: Analyzer = {
 	def: TOOL_TRAJECTORY_DEF,
 	version: TOOL_TRAJECTORY_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [toolTrajectoryFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: TOOL_TRAJECTORY_DEF.id,
