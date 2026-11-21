@@ -55,6 +55,7 @@ const REGRESSION_PREVENTION = "corpus aggregate of regression-verdict: measured 
 /** An analyzer whose output only feeds another one, whose section measures it. */
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
 const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
+const INPUT_TO_FRUSTRATION_LEXICON = inputTo("frustration-lexicon");
 /** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
 const INPUT_TO_STALE_VERIFICATION = inputTo("stale-verification");
 
@@ -67,6 +68,7 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	INPUT_TO_STALE_VERIFICATION,
 	MODEL_NAMED_CLASSES,
 	INPUT_TO_PROMPT_FORM,
+	INPUT_TO_FRUSTRATION_LEXICON,
 ];
 
 /**
@@ -79,7 +81,8 @@ export const EXCLUSION_REASONS: readonly string[] = [
  * contributor in the same pull request.
  */
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
-	"lexicon-candidates": NOT_YET_DECIDED,
+	// It nominates the person's own words for the lexicon to judge; the words never leave the machine.
+	"lexicon-candidates": INPUT_TO_FRUSTRATION_LEXICON,
 	"frustration-lexicon": NOT_YET_DECIDED,
 	// Its answers reach the fingerprint as prompt-form's `promptKind` section.
 	"message-answers": INPUT_TO_PROMPT_FORM,
