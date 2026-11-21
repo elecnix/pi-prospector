@@ -227,4 +227,17 @@ describe("economy and tool-use fingerprint sections", () => {
 			{ pattern: "zoom_out", count: 5, sessions: 5 },
 		]);
 	});
+
+	it("files-in-play: files touched per session, re-reads, read-edit-read cycles and churning sessions", async () => {
+		for (const [i, id] of IDS.slice(0, 6).entries()) {
+			await seedNode(t.db, id, "files-in-play", { distinct_files: 8 + i, reread_events: 3, edit_reread_cycles: 2, churning_windows: i < 5 ? 1 : 0, churn_score: i < 5 ? 0.2 : 0, top_files: [{ path: "/home/secret/path/a.ts" }] });
+		}
+		const section = objective(await fingerprint(), "filesInPlay");
+		assert.equal(section.status, "ok");
+		assert.equal(section.sessionsMeasured, 6);
+		assert.equal((section["filesPerSession"] as { sessions: number }).sessions, 6);
+		assert.equal(section["rereads"], 18);
+		assert.equal(section["editRereadCycles"], 12);
+		assert.equal(section["sessionsChurning"], 5);
+	});
 });
