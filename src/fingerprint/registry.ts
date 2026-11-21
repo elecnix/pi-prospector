@@ -55,8 +55,10 @@ const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
 const INPUT_TO_FRUSTRATION_LEXICON = inputTo("frustration-lexicon");
 const INPUT_TO_TURN_FRUSTRATION = inputTo("turn-frustration");
 
+const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
+
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM, INPUT_TO_FRUSTRATION_LEXICON, INPUT_TO_TURN_FRUSTRATION];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM, INPUT_TO_FRUSTRATION_LEXICON, INPUT_TO_TURN_FRUSTRATION, PROPOSAL_QUEUE];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -103,7 +105,9 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"routing-opportunity": NOT_YET_DECIDED,
 	"token-units": NOT_YET_DECIDED,
 	"request-classes": NOT_YET_DECIDED,
-	"rule-restatement": NOT_YET_DECIDED,
+	// It reads only rule-shaped proposals still open, so accepting or rejecting proposals changes its counts.
+	// Its other fields are instruction-file paths and quotes.
+	"rule-restatement": PROPOSAL_QUEUE,
 	"secret-leak": SECRET_SCANNER,
 	"gitleaks": SECRET_SCANNER,
 	"nosey-parker": SECRET_SCANNER,
