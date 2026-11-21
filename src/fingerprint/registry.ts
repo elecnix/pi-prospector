@@ -94,7 +94,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"similarity-cluster": NOT_YET_DECIDED,
 	"friction-accumulation": NOT_YET_DECIDED,
 	"request-classes": MODEL_NAMED_CLASSES,
-	"session-overview": NOT_YET_DECIDED,
 	"rule-restatement": NOT_YET_DECIDED,
 	"secret-leak": SECRET_SCANNER,
 	"gitleaks": SECRET_SCANNER,
