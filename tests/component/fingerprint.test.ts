@@ -151,6 +151,12 @@ describe("buildFingerprint", () => {
 		assert.equal(fp.sessions.count, 5);
 	});
 
+	it("keeps every session when --to is the last day of year 9999", async () => {
+		const all = await build(t.db, at(""));
+		const fp = await build(t.db, at("--to 9999-12-31"));
+		assert.equal(fp.sessions.count, all.sessions.count);
+	});
+
 	it("withholds every section when the corpus is under the minimum, and still reports the count", async () => {
 		const fp = await build(t.db, at("--source codex"));
 		assert.equal(fp.sessions.count, 2);
@@ -296,6 +302,11 @@ describe("registering a contributor", () => {
 		assert.deepEqual(section["byKind"], [{ kind: "other", count: 8, sessions: 8 }]);
 		const text = JSON.stringify(fp);
 		for (const leaked of [SENTINEL_CLASS, "hunter2", "my-private-analyzer", "plug-1"]) assert.ok(!text.includes(leaked), `output contains ${leaked}`);
+	});
+
+	it("refuses to compose a schema for a section that declares a measure id twice", () => {
+		const twice = { ...extra, def: { ...extra.def, measures: [extra.def.measures[0]!, extra.def.measures[0]!] } };
+		assert.throws(() => fingerprintSchema([twice]), /declares measure 'scoreTotal' twice/);
 	});
 
 	it("is checked against the schema the declarations compose", async () => {

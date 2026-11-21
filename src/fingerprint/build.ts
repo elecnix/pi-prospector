@@ -73,7 +73,10 @@ export function parseFingerprintArgs(raw: string, now: Date): FingerprintRequest
 }
 
 function toScope(request: FingerprintRequest): FingerprintScope {
-	const nextDay = request.to === null ? null : new Date(Date.parse(`${request.to}T00:00:00Z`) + 86_400_000).toISOString();
+	// The scope compares ISO strings. The day after 9999-12-31 prints as `+010000-…`, which sorts before
+	// every four-digit year, and no four-digit year comes after that day, so the range needs no upper bound.
+	const next = request.to === null ? null : new Date(Date.parse(`${request.to}T00:00:00Z`) + 86_400_000);
+	const nextDay = next === null || next.getUTCFullYear() > 9999 ? null : next.toISOString();
 	return {
 		sources: request.sources,
 		from: request.from === null ? null : `${request.from}T00:00:00.000Z`,

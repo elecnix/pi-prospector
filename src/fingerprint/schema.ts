@@ -115,6 +115,12 @@ export function measureSchema(measure: MeasureSpec): TSchema {
 
 /** The schema of one section: the generic shape plus the contributor's measures, or withheld. */
 export function sectionSchema(contributor: FingerprintContributor): TSchema {
+	// A repeated id would leave one measure without a property, so its value would go unchecked.
+	const ids = new Set<string>();
+	for (const m of contributor.def.measures) {
+		if (ids.has(m.id)) throw new Error(`fingerprint contributor '${contributor.def.id}' declares measure '${m.id}' twice`);
+		ids.add(m.id);
+	}
 	const measures = Object.fromEntries(contributor.def.measures.map((m) => [m.id, measureSchema(m)]));
 	return Type.Union([
 		Type.Object({ status: Type.Literal("ok"), sessionsMeasured: Count, ...measures }, { additionalProperties: false }),
