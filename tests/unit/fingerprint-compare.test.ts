@@ -1,0 +1,200 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { compareFingerprints, parseCompareArgs, parseFingerprintText, resolveCompareRenderer, type ComparedSection } from "../../src/fingerprint/compare.js";
+import type { FingerprintContributor } from "../../src/fingerprint/contributor.js";
+import type { Fingerprint } from "../../src/fingerprint/schema.js";
+
+/**
+ * Two synthetic fingerprints of different sizes: a small corpus `a` (100
+ * sessions) and a large one `b` (400). Every figure is made up.
+ */
+
+const noRead = async () => ({ measured: [], rows: [] });
+const contributors: FingerprintContributor[] = [
+	{
+		def: {
+			id: "failures",
+			label: "Failures",
+			description: "Failed tool calls.",
+			kind: "objective",
+			measures: [
+				{ kind: "total", id: "toolFailures", field: "toolFailures" },
+				{ kind: "sessions", id: "sessionsWithFailures", field: "toolFailures" },
+				{ kind: "groups", id: "byClass", dimensions: { axis: ["tool"], classId: ["command-failed", "path-not-found"] }, countField: "count" },
+			],
+		},
+		read: noRead,
+	},
+	{
+		def: {
+			id: "shape",
+			label: "Session shape",
+			description: "Prompts per session.",
+			kind: "objective",
+			measures: [{ kind: "distribution", id: "promptsPerSession", field: "prompts", unit: "prompts", edges: [0, 2, 8] }],
+		},
+		read: noRead,
+	},
+	{
+		def: { id: "mood", label: "Mood", description: "Judged by a model.", kind: "inferred", measures: [{ kind: "total", id: "signals", field: "signals" }] },
+		read: noRead,
+	},
+];
+
+const a: Fingerprint = {
+	schemaVersion: 2,
+	kind: "corpus-fingerprint",
+	asOf: "2026-06-30",
+	filter: { sources: null, from: null, to: null },
+	minGroupSize: 5,
+	sessions: { count: 100 },
+	objective: {
+		failures: {
+			status: "ok",
+			sessionsMeasured: 100,
+			toolFailures: 50,
+			sessionsWithFailures: 25,
+			byClass: [
+				{ axis: "tool", classId: "command-failed", count: 30, sessions: 20 },
+				{ axis: "tool", classId: "path-not-found", count: 8, sessions: 6 },
+			],
+		},
+		shape: {
+			status: "ok",
+			sessionsMeasured: 100,
+			promptsPerSession: { status: "ok", sessions: 100, unit: "prompts", p50: 2, p90: 9, buckets: [{ from: 0, to: 2, sessions: 50 }, { from: 2, to: 8, sessions: 30 }, { from: 8, to: null, sessions: 20 }] },
+		},
+	},
+	inferred: { mood: { status: "ok", sessionsMeasured: 60, signals: 30 } },
+};
+
+const b: Fingerprint = {
+	...a,
+	asOf: "2026-07-01",
+	sessions: { count: 400 },
+	objective: {
+		failures: {
+			status: "ok",
+			sessionsMeasured: 200,
+			toolFailures: 400,
+			sessionsWithFailures: 100,
+			byClass: [{ axis: "tool", classId: "command-failed", count: 120, sessions: 40 }],
+		},
+		shape: {
+			status: "ok",
+			sessionsMeasured: 400,
+			promptsPerSession: { status: "ok", sessions: 400, unit: "prompts", p50: 4, p90: 9, buckets: [{ from: 0, to: 8, sessions: 300 }, { from: 8, to: null, sessions: 100 }] },
+		},
+	},
+	inferred: { mood: { status: "withheld", reason: "below-min-group-size" } },
+};
+
+const sides = [
+	{ label: "small", fingerprint: a },
+	{ label: "large", fingerprint: b },
+] as const;
+
+function section(id: string): ComparedSection {
+	const found = compareFingerprints(sides[0], sides[1], contributors).sections.find((s) => s.id === id);
+	assert.ok(found, `section ${id}`);
+	return found;
+}
+
+function row(s: ComparedSection, label: string) {
+	const found = s.rows.find((r) => r.label === label);
+	assert.ok(found, `row '${label}' in ${s.rows.map((r) => r.label).join(" | ")}`);
+	return found;
+}
+
+describe("fingerprint compare", () => {
+	it("states each side's coverage and the section's share of it", () => {
+		const comparison = compareFingerprints(sides[0], sides[1], contributors);
+		assert.deepEqual(
+			comparison.sides.map((s) => [s.label, s.sessions, s.asOf]),
+			[
+				["small", 100, "2026-06-30"],
+				["large", 400, "2026-07-01"],
+			],
+		);
+		const measured = row(section("failures"), "sessions measured");
+		assert.equal(measured.a.text, "100 (100%)");
+		assert.equal(measured.b.text, "200 (50%)");
+	});
+
+	it("turns a total into a rate per measured session, so corpora of different sizes compare", () => {
+		const r = row(section("failures"), "tool failures per session");
+		assert.equal(r.a.text, "0.50");
+		assert.equal(r.b.text, "2.00");
+		assert.equal(r.diff, "×4.0");
+	});
+
+	it("turns a session count into a share of the measured sessions", () => {
+		const r = row(section("failures"), "sessions with failures");
+		assert.equal(r.a.text, "25%");
+		assert.equal(r.b.text, "50%");
+		assert.equal(r.diff, "+25 pp");
+	});
+
+	it("matches groups by their values, not by their position, and marks a group one side does not publish", () => {
+		const s = section("failures");
+		const shared = row(s, "by class: tool / command-failed");
+		assert.equal(shared.a.text, "20%");
+		assert.equal(shared.b.text, "20%");
+		const missing = row(s, "by class: tool / path-not-found");
+		assert.equal(missing.b.text, "–");
+		assert.ok(missing.a.flags.includes("low"), "6 sessions is a low count");
+	});
+
+	it("compares distributions by their quantiles and by the share of sessions in each declared bucket", () => {
+		const s = section("shape");
+		assert.equal(row(s, "prompts per session p50").diff, "×2.0");
+		assert.equal(row(s, "prompts per session: 0–2").a.text, "50%");
+		const merged = row(s, "prompts per session: 0–2").b;
+		assert.equal(merged.text, "75% (0–8)");
+		assert.ok(merged.flags.includes("merged"));
+		assert.equal(row(s, "prompts per session: 8+").b.text, "25%");
+	});
+
+	it("says a withheld section is withheld rather than dropping it", () => {
+		const s = section("mood");
+		assert.equal(s.kind, "inferred");
+		assert.equal(row(s, "signals per session").b.text, "withheld");
+	});
+
+	it("reads a fingerprint file and refuses anything else, naming the problem", () => {
+		assert.deepEqual(parseFingerprintText(JSON.stringify(a), "a.json"), a);
+		assert.throws(() => parseFingerprintText("{", "x.json"), /x\.json is not JSON/);
+		assert.throws(() => parseFingerprintText(JSON.stringify({ kind: "other" }), "x.json"), /x\.json is not a corpus fingerprint/);
+		assert.throws(() => parseFingerprintText(JSON.stringify({ ...a, schemaVersion: 1 }), "x.json"), /x\.json has schema version 1; this build reads version 2/);
+	});
+
+	it("renders text and markdown tables with both labels and a legend", () => {
+		const comparison = compareFingerprints(sides[0], sides[1], contributors);
+		const text = resolveCompareRenderer("text").render(comparison);
+		assert.match(text, /small/);
+		assert.match(text, /large/);
+		assert.match(text, /tool failures per session\s+0\.50\s+2\.00\s+×4\.0/);
+		const md = resolveCompareRenderer("markdown").render(comparison);
+		assert.match(md, /\| tool failures per session \| 0\.50 \| 2\.00 \| ×4\.0 \|/);
+		assert.throws(() => resolveCompareRenderer("xml"), /unknown format 'xml' \(use text, markdown\)/);
+	});
+});
+
+describe("fingerprint compare arguments", () => {
+	it("takes two files, labels them by file name, and reads --labels, --format and --out", () => {
+		assert.deepEqual(parseCompareArgs("/x/laptop.json other/desk.json"), { files: ["/x/laptop.json", "other/desk.json"], labels: ["laptop", "desk"], format: undefined, out: undefined });
+		assert.deepEqual(parseCompareArgs("a.json b.json --labels one,two --format markdown --out c.md"), {
+			files: ["a.json", "b.json"],
+			labels: ["one", "two"],
+			format: "markdown",
+			out: "c.md",
+		});
+	});
+
+	it("names what is wrong with the arguments", () => {
+		assert.throws(() => parseCompareArgs("a.json"), /compare takes two fingerprint files/);
+		assert.throws(() => parseCompareArgs("a.json b.json c.json"), /compare takes two fingerprint files/);
+		assert.throws(() => parseCompareArgs("a.json b.json --labels one"), /--labels takes two labels/);
+		assert.throws(() => parseCompareArgs("a.json b.json --source pi"), /unknown flag --source \(use --labels, --format, --out\)/);
+	});
+});
