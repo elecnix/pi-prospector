@@ -33,6 +33,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
 import { DEFAULT_SKILL_USE_CONFIG, type SkillUseConfig } from "./config.js";
 import { summariseSkillUse } from "./detect.js";
+import { skillUseFingerprint } from "./fingerprint.js";
 
 export const SKILL_USE_ENTRY = Type.Object({
 	name: Type.String(),
@@ -95,6 +96,7 @@ export const skillUseAnalyzer: Analyzer = {
 	def: SKILL_USE_DEF,
 	version: SKILL_USE_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [skillUseFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: SKILL_USE_DEF.id,

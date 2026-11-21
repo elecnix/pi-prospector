@@ -48,9 +48,10 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
 const REGRESSION = "regression: attribution covers under 1% of verdicts";
+const MODEL_NAMED_CLASSES = "free text: the model names its own request classes, so no fixed list can hold them";
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, MODEL_NAMED_CLASSES];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -70,10 +71,8 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"message-answers": NOT_YET_DECIDED,
 	"prompt-form": NOT_YET_DECIDED,
 	"assistant-cognition": NOT_YET_DECIDED,
-	"tool-trajectory": NOT_YET_DECIDED,
 	"phase-trajectory": NOT_YET_DECIDED,
 	"plan-compliance": NOT_YET_DECIDED,
-	"task-tool-mismatch": NOT_YET_DECIDED,
 	"grounded-claims": NOT_YET_DECIDED,
 	"revive-chains": NOT_YET_DECIDED,
 	"uncompleted-leads": NOT_YET_DECIDED,
@@ -84,22 +83,14 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"session-ending": NOT_YET_DECIDED,
 	"pr-opened": NOT_YET_DECIDED,
 	"repo-identity": NOT_YET_DECIDED,
-	"skill-use": NOT_YET_DECIDED,
 	"git-commands": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
 	"delegation-outcomes": NOT_YET_DECIDED,
 	"verification-commands": NOT_YET_DECIDED,
 	"stale-verification": NOT_YET_DECIDED,
-	"files-in-play": NOT_YET_DECIDED,
-	"navigation-efficiency": NOT_YET_DECIDED,
 	"similarity-cluster": NOT_YET_DECIDED,
 	"friction-accumulation": NOT_YET_DECIDED,
-	"tool-inventory-tax": NOT_YET_DECIDED,
-	"context-economy": NOT_YET_DECIDED,
-	"cache-economy": NOT_YET_DECIDED,
-	"routing-opportunity": NOT_YET_DECIDED,
-	"token-units": NOT_YET_DECIDED,
-	"request-classes": NOT_YET_DECIDED,
+	"request-classes": MODEL_NAMED_CLASSES,
 	"session-overview": NOT_YET_DECIDED,
 	"rule-restatement": NOT_YET_DECIDED,
 	"secret-leak": SECRET_SCANNER,

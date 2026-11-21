@@ -52,6 +52,7 @@ import { computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
 import type { CostInfo } from "../../../types.js";
+import { contextEconomyFingerprint } from "./fingerprint.js";
 
 // ── emitted-node schema ──
 
@@ -544,6 +545,7 @@ export const contextEconomyAnalyzer: Analyzer = {
 	def: CONTEXT_ECONOMY_DEF,
 	version: CONTEXT_ECONOMY_VERSION,
 	prompts: {},
+	fingerprint: [contextEconomyFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: CONTEXT_ECONOMY_DEF.id,

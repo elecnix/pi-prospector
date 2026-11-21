@@ -41,6 +41,7 @@ import {
 import { extractFileInteractions, scanSessionChurn, churnRelevantMessageIds } from "./detect.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
+import { filesInPlayFingerprint } from "./fingerprint.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const FilesInPlayRawProposal = Type.Object({
@@ -169,6 +170,7 @@ export const filesInPlayAnalyzer: Analyzer = {
 	def: FILES_IN_PLAY_DEF,
 	version: FILES_IN_PLAY_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [filesInPlayFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: FILES_IN_PLAY_DEF.id,
