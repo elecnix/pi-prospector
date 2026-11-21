@@ -31,6 +31,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
 import { DEFAULT_STALE_VERIFICATION_CONFIG, type StaleVerificationConfig } from "./config.js";
 import { StaleScanSchema, findStaleVerifications, type StaleCause, type StaleScan } from "./detect.js";
+import { staleVerificationFingerprintContributor } from "./fingerprint.js";
 import {
 	VERIFICATION_COMMANDS_DEF,
 	judgedSetFingerprint,
@@ -213,6 +214,7 @@ export const staleVerificationAnalyzer: Analyzer = {
 	def: STALE_VERIFICATION_DEF,
 	version: STALE_VERIFICATION_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [staleVerificationFingerprintContributor],
 	defaultConfig: {
 		id: "",
 		analyzerId: STALE_VERIFICATION_DEF.id,
