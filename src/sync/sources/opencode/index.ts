@@ -273,6 +273,7 @@ export class OpenCodeDbSource implements SessionSourceAdapter {
 			source: this.source,
 			cwd: session.directory,
 			parent_session: session.parent_id,
+			parent_kind: session.parent_id ? "child" : null,
 			started_at: new Date(session.time_created).toISOString(),
 			last_line: resumeLine,
 			last_modified: disc.mtime,

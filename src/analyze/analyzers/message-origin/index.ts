@@ -36,6 +36,7 @@ import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { decisionIdentity } from "../../decision-model.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { getSessionLineage } from "../../../db/queries.js";
+import { lineageSources } from "../../lineage.js";
 import { classifyMessageOrigin, MessageOrigin, OriginRule, OriginSuspicion, OriginVerdict } from "../../message-origin.js";
 import { DEFAULT_MESSAGE_ORIGIN_CONFIG, type MessageOriginConfig } from "./config.js";
 import {
@@ -134,10 +135,9 @@ export const messageOriginAnalyzer: Analyzer = {
 			const gap = (Date.parse(m.timestamp ?? "") - Date.parse(prev.timestamp ?? "")) / 1000;
 			if (Number.isFinite(gap)) secondsAfterToolCall.set(m.id, gap);
 		});
-		// A session with a parent link is a child agent's unless it is a pi fork,
-		// where the parent link records a fork and the person kept typing.
+		// A child agent's session, not a fork, where the person kept typing.
 		const lineage = await getSessionLineage(ctx.db, ctx.sessionId);
-		const childAgent = lineage?.parent_session != null && lineage.source !== "pi";
+		const childAgent = lineage?.parent_kind === "child";
 
 		const units: AnalysisUnit[] = [];
 		for (const pair of await ctx.getTurnPairs(ctx.sessionId)) {
@@ -147,7 +147,8 @@ export const messageOriginAnalyzer: Analyzer = {
 				childAgent,
 				secondsAfterToolCall: secondsAfterToolCall.get(pair.userMessageId) ?? null,
 			});
-			const sources: SourceRef[] = [{ kind: "message", id: pair.userMessageId }];
+			// The parent link decides `childAgent`, so it is an input of the unit.
+			const sources: SourceRef[] = [{ kind: "message", id: pair.userMessageId }, ...lineageSources(lineage)];
 			units.push({
 				sources,
 				sourceSetHash: computeSourceSetHash(sources),

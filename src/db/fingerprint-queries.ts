@@ -60,7 +60,7 @@ export interface SessionFacts {
 	/** Messages with the `user` role. */
 	prompts: number;
 	toolCalls: number;
-	/** Sessions that name this one as their parent. */
+	/** Child agents' sessions that name this one as their parent; a fork is not one. */
 	subAgentSessions: number;
 }
 
@@ -75,7 +75,7 @@ export async function sessionFacts(db: AsyncDatabase, scope: FingerprintScope): 
 		        COALESCE(SUM(CASE WHEN m.tool_calls IS NOT NULL AND json_valid(m.tool_calls) AND json_type(m.tool_calls) = 'array'
 		                          THEN json_array_length(m.tool_calls) ELSE 0 END), 0) AS toolCalls,
 		        (SELECT COUNT(*) FROM sessions c
-		          WHERE c.parent_session = s.id AND (c.started_at IS NULL OR c.started_at <= ?)) AS subAgentSessions
+		          WHERE c.parent_session = s.id AND c.parent_kind = 'child' AND (c.started_at IS NULL OR c.started_at <= ?)) AS subAgentSessions
 		   FROM sessions s
 		   LEFT JOIN messages m ON m.session_id = s.id AND (m.timestamp IS NULL OR m.timestamp <= ?)
 		  WHERE ${terms.join(" AND ")}
