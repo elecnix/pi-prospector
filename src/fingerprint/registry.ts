@@ -48,9 +48,10 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
 const REGRESSION = "regression: attribution covers under 1% of verdicts";
+const SELF_CALIBRATED = "calibrated on the person's own corpus: its counts do not compare across corpora";
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, SELF_CALIBRATED];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -73,7 +74,7 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"tool-trajectory": NOT_YET_DECIDED,
 	"task-tool-mismatch": NOT_YET_DECIDED,
 	"language-mismatch": NOT_YET_DECIDED,
-	"decode-collapse": NOT_YET_DECIDED,
+	"decode-collapse": SELF_CALIBRATED,
 	"pr-opened": NOT_YET_DECIDED,
 	"repo-identity": NOT_YET_DECIDED,
 	"skill-use": NOT_YET_DECIDED,
