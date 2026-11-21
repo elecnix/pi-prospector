@@ -57,8 +57,10 @@ const INPUT_TO_TURN_FRUSTRATION = inputTo("turn-frustration");
 
 const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
 
+const POOLED_CLUSTERS = "pools a repository's sessions: a node's clusters are not its own session's, so no per-session figure";
+
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM, INPUT_TO_FRUSTRATION_LEXICON, INPUT_TO_TURN_FRUSTRATION, PROPOSAL_QUEUE];
+export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION, INPUT_TO_PROMPT_FORM, INPUT_TO_FRUSTRATION_LEXICON, INPUT_TO_TURN_FRUSTRATION, PROPOSAL_QUEUE, POOLED_CLUSTERS];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -97,7 +99,9 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"stale-verification": NOT_YET_DECIDED,
 	"files-in-play": NOT_YET_DECIDED,
 	"navigation-efficiency": NOT_YET_DECIDED,
-	"similarity-cluster": NOT_YET_DECIDED,
+	// A session's node clusters the items of its repository's sibling sessions too, so the same cluster repeats
+	// in every sibling's node and a session can carry a cluster none of its own messages belong to.
+	"similarity-cluster": POOLED_CLUSTERS,
 	"friction-accumulation": NOT_YET_DECIDED,
 	"tool-inventory-tax": NOT_YET_DECIDED,
 	"context-economy": NOT_YET_DECIDED,
