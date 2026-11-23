@@ -296,6 +296,51 @@ describe("dependency reads", () => {
 	});
 });
 
+describe("dependency reads on a graph not yet repaired", () => {
+	it("a consumer reads one current node even when an earlier analyzer already read the session", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const seen: number[] = [];
+			const reader = (id: string, dependency: string): Analyzer => ({
+				...syntheticAnalyzer(id, (ctx) => {
+					const upstream = ctx.dependencyNodes[dependency] ?? [];
+					if (id === "consumer") seen.push(upstream.length);
+					const sources: SourceRef[] = [{ kind: "session", id: ctx.sessionId }, ...upstream.map((n) => ({ kind: "analysis_node" as const, id: n.output_key }))];
+					return [{ sources, sourceSetHash: computeSourceSetHash(sources), anchorKind: "session", anchorRef: ctx.sessionId }];
+				}),
+				def: { id, label: id, description: "test reader", anchorSpan: "session", dependencies: [dependency] },
+			});
+			const other = syntheticAnalyzer("other", (ctx) => {
+				const sources: SourceRef[] = [{ kind: "session", id: ctx.sessionId }];
+				return [{ sources, sourceSetHash: computeSourceSetHash(sources), anchorKind: "session", anchorRef: ctx.sessionId }];
+			});
+			const legacy = frameworkFor(db);
+			await legacy.register(other);
+			await legacy.register(reader("early", "other"));
+			await legacy.register(wholeSession);
+			await legacy.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			await legacy.run("s1", {});
+			await db.prepare("DELETE FROM analysis_edges WHERE edge_kind = 'revises'").run();
+			await db.prepare("DELETE FROM lineage_repairs").run();
+
+			// "other" and "early" are up to date, so they write nothing: the session's
+			// current nodes they read stay cached when whole-session runs.
+			const fw = frameworkFor(db);
+			await fw.register(other);
+			await fw.register(reader("early", "other"));
+			await fw.register(wholeSession);
+			await fw.register(reader("consumer", "whole-session"));
+			await fw.run("s1", {});
+			assert.deepEqual(seen, [1], "the generation the repair superseded is not read as a second conclusion");
+		} finally {
+			await close();
+		}
+	});
+});
+
 describe("lineage repair", () => {
 	/** Remove every revises edge and repair record, as a graph written before lineage followed the subject has none. */
 	async function forgetLineage(db: AsyncDatabase): Promise<void> {

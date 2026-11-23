@@ -336,8 +336,10 @@ path could reach would vanish the moment a run chose the other.
     it has never been attempted, its inputs changed (the session grew, or an
     upstream conclusion moved), or prior attempts only produced error nodes
     (which carry a decoupled identity and never satisfy a recipe). Missing work
-    is always done, even by a frugal run. When the subject already has a current
-    node, the new node revises it.
+    is always done, even by a frugal run, with one exception: a unit whose
+    subject holds a node of a newer analyzer version is not computed, because a
+    downgrade never replaces a newer conclusion (see **Supersession**). When the
+    subject already has a current node, the new node revises it.
   - **stale** — a node exists for this unit's source set but under a different
     recipe than the current one. Staleness carries its *reasons*: **major** or **minor** (the
     analyzer's version moved — graded by the author) and/or **config** (the

@@ -266,6 +266,12 @@ export class AnalyzerFramework {
 		// analyzer in this run. Scoped here (not on the instance) so concurrent runs
 		// over other sessions — the CLI drives one framework across a whole corpus —
 		// can never cross-contaminate each other's cached input.
+		// Repair every registered analyzer before any analyzer reads the session,
+		// dependencies outside this run's selection included: a repair appends
+		// revises edges, and a session's current nodes are cached on first read,
+		// so a repair after that read would leave a superseded generation in the
+		// cache for the consumers that follow. Each repair runs once per framework.
+		await this.repairLineage();
 		const cache = newSessionInputCache();
 		for (const analyzerId of order) {
 			const result = await this.runAnalyzer(analyzerId, sessionId, requested, reviseWhere, opts.modelSpec, summary, cache);
@@ -284,7 +290,6 @@ export class AnalyzerFramework {
 		summary: RunSummary,
 		cache: SessionInputCache,
 	): Promise<AnalyzerRunResult> {
-		await this.ensureRepaired(analyzerId);
 		const resolved = await this.resolve(analyzerId);
 		const { analyzer, config, promptBundleHash } = resolved;
 
