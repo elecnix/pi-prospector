@@ -120,6 +120,30 @@ describe("lineage by subject", () => {
 		}
 	});
 
+	it("a fill run at a newer analyzer version on a grown session leaves only the new version current", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const v1 = frameworkFor(db);
+			await v1.register(wholeSession);
+			await v1.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			const v2 = frameworkFor(db);
+			await v2.register({ ...wholeSession, version: { ...wholeSession.version, major: 2 } });
+			const fill = await v2.run("s1", {});
+
+			assert.equal(fill.nodesProduced, 1, "a plain fill computes the grown session");
+			assert.equal(await count(db, "current_nodes", "whole-session", "s1"), 1, "one current node per subject");
+			const versions = (await db
+				.prepare("SELECT COUNT(DISTINCT analyzer_version_id) AS n FROM current_nodes WHERE analyzer_id = 'whole-session' AND session_id = 's1'")
+				.get()) as { n: number };
+			assert.equal(versions.n, 1, "the older version's node is no longer current");
+		} finally {
+			await close();
+		}
+	});
+
 	it("a named subject revises only its own predecessor", async () => {
 		const { db, close } = await tempDb();
 		try {
