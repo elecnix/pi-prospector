@@ -68,6 +68,8 @@ async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string
 		outputKey: `ok-${n}`,
 		createdAt: at,
 	});
+	// These graphs are written under lineage by subject, as a repaired graph is.
+	await db.prepare("INSERT OR IGNORE INTO lineage_repairs (analyzer_id, repaired_at, edges) VALUES (?, ?, 0)").run(analyzerId, at);
 	return `node-${n}`;
 }
 
@@ -313,6 +315,49 @@ describe("frustration from a turn-frustration version that did not label origins
 		// An old session re-run at 1.11 is measured from then on.
 		await seedRun(u.db, "old-6", "turn-frustration", "1.11", "2026-05-02T00:00:00.000Z");
 		assert.equal(inferred(await buildFingerprint(u.db, asOf, contributors), "frustration")["sessionsMeasured"], 6);
+	});
+});
+
+describe("a graph whose lineage was never repaired", () => {
+	const asOf = parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF));
+
+	it("refuses to build, naming the analyzer and the command that repairs it", async () => {
+		const u = await tempDb();
+		try {
+			await seedSession(u.db, "s-1", "pi", "2026-03-01T10:00:00.000Z", { prompts: 2, toolCalls: 0, minutes: 5 });
+			await seedNode(u.db, "s-1", "time-economy", { active_seconds: 60 });
+			await u.db.prepare("DELETE FROM lineage_repairs").run();
+			await assert.rejects(buildFingerprint(u.db, asOf, contributors), /time-economy[\s\S]*prospect analyze/);
+
+			await u.db.prepare("INSERT INTO lineage_repairs (analyzer_id, repaired_at, edges) VALUES ('time-economy', ?, 0)").run(ASOF);
+			await buildFingerprint(u.db, asOf, contributors);
+		} finally {
+			await u.close();
+		}
+	});
+
+	it("refuses rather than count a session twice when it has two current time-economy nodes", async () => {
+		const u = await tempDb();
+		try {
+			for (let i = 1; i <= 6; i++) {
+				await seedSession(u.db, `s-${i}`, "pi", `2026-03-0${i}T10:00:00.000Z`, { prompts: 2, toolCalls: 0, minutes: 5 });
+				await seedNode(u.db, `s-${i}`, "time-economy", { active_seconds: 60 * i });
+			}
+			await seedNode(u.db, "s-1", "time-economy", { active_seconds: 600 });
+			await assert.rejects(buildFingerprint(u.db, asOf, contributors), /more than one row per session/);
+		} finally {
+			await u.close();
+		}
+	});
+
+	it("does not ask to repair an analyzer that has no nodes", async () => {
+		const u = await tempDb();
+		try {
+			await seedSession(u.db, "s-1", "pi", "2026-03-01T10:00:00.000Z", { prompts: 2, toolCalls: 0, minutes: 5 });
+			await buildFingerprint(u.db, asOf, contributors);
+		} finally {
+			await u.close();
+		}
 	});
 });
 

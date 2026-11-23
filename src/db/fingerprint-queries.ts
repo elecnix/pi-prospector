@@ -235,3 +235,17 @@ function scalar(row: Record<string, unknown>, alias: string): NodeScalar {
 	const value = row[alias];
 	return typeof value === "number" || typeof value === "string" ? value : null;
 }
+
+/**
+ * Whether the analyzer has live nodes but no record that its lineage was
+ * repaired (`lineage_repairs`). Its current nodes may then hold two generations
+ * of one subject. An index the read-only fingerprint opens before any migration
+ * added the table has had no repair either.
+ */
+export async function lineageUnrepaired(db: AsyncDatabase, analyzerId: string): Promise<boolean> {
+	const hasNodes = await prep(db, "SELECT 1 FROM live_nodes WHERE analyzer_id = ? LIMIT 1").get(analyzerId);
+	if (hasNodes === undefined) return false;
+	const table = await prep(db, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lineage_repairs'").get();
+	if (table === undefined) return true;
+	return (await prep(db, "SELECT 1 FROM lineage_repairs WHERE analyzer_id = ?").get(analyzerId)) === undefined;
+}
