@@ -113,6 +113,12 @@ function prFingerprint(messages: readonly MessageRow[]): string {
 }
 
 export const prOpenedAnalyzer: Analyzer = {
+	subjectOfNode: (content) => {
+		const pr = content["pull_request"];
+		if (pr === null || typeof pr !== "object") return undefined;
+		const url = (pr as Record<string, unknown>)["url"];
+		return typeof url === "string" ? url : undefined;
+	},
 	def: PR_OPENED_DEF,
 	version: PR_OPENED_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
@@ -149,6 +155,8 @@ export const prOpenedAnalyzer: Analyzer = {
 				),
 				anchorKind: "session" as const,
 				anchorRef: ctx.sessionId,
+				// One node per pull request: its url is the subject.
+				subject: entry.pull_request.url,
 				meta: { url: entry.pull_request.url, evidence_hash: entry.evidence_hash } as unknown as Record<string, unknown>,
 			};
 		});

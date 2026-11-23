@@ -2,7 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { Check } from "typebox/value";
 import { tempDb, insertMessages, type TempDb } from "./helpers.js";
-import { createRun, insertNode } from "../../src/db/analysis-queries.js";
+import { createRun, insertEdge, insertNode } from "../../src/db/analysis-queries.js";
 import { currentNodeItems, currentNodeRows } from "../../src/db/fingerprint-queries.js";
 import { buildFingerprint, parseFingerprintArgs } from "../../src/fingerprint/build.js";
 import { fingerprintSchema, MIN_GROUP_SIZE, type Fingerprint } from "../../src/fingerprint/schema.js";
@@ -52,7 +52,7 @@ async function seedSession(db: AsyncDatabase, id: string, source: string, starte
 	await insertMessages(db, id, messages);
 }
 
-async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string, content: unknown, at = "2026-05-01T00:00:00.000Z", version = "1"): Promise<void> {
+async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string, content: unknown, at = "2026-05-01T00:00:00.000Z", version = "1"): Promise<string> {
 	n++;
 	await insertNode(db, {
 		id: `node-${n}`,
@@ -68,6 +68,7 @@ async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string
 		outputKey: `ok-${n}`,
 		createdAt: at,
 	});
+	return `node-${n}`;
 }
 
 async function seedRun(db: AsyncDatabase, sessionId: string, analyzerId: string, version = "1", at = "2026-05-01T00:00:00.000Z"): Promise<void> {
@@ -110,10 +111,16 @@ describe("buildFingerprint", () => {
 		await seedSession(db, "child-1", "pi", "2026-03-01T10:05:00.000Z", { parent: "pi-session-1", prompts: 1, toolCalls: 1, minutes: 1 });
 		// A sub-agent is only counted under `subAgents`, and a custom analyzer is not a figure at all.
 		await seedNode(db, "pi-session-1", "my-private-analyzer", { score: 9 });
-		// A session that grew between runs: time-economy wrote a node per run under different output keys,
-		// so all three are current. Inserted out of creation order; the newest (2026-05-02) is the whole session.
-		await seedNode(db, "pi-session-8", "time-economy", { active_seconds: 4620 }, "2026-05-02T00:00:00.000Z");
+		// A session that grew between runs: time-economy wrote a node per run, and each newer node revises the
+		// older ones, so only the newest (2026-05-02), which covers the whole session, is current.
+		const newest = await seedNode(db, "pi-session-8", "time-economy", { active_seconds: 4620 }, "2026-05-02T00:00:00.000Z");
 		await seedNode(db, "pi-session-8", "time-economy", { active_seconds: 300 }, "2026-04-30T00:00:00.000Z");
+		const older = (await db
+			.prepare("SELECT output_key FROM analysis_nodes WHERE session_id = 'pi-session-8' AND analyzer_id = 'time-economy' AND id != ?")
+			.all(newest)) as Array<{ output_key: string }>;
+		for (const { output_key } of older) {
+			await insertEdge(db, { fromNodeId: newest, toRefKind: "analysis_node", toRefId: output_key, edgeKind: "revises", ordinal: 0 });
+		}
 		// Written after the as-of date, so the as-of fingerprint must not see it.
 		await seedNode(db, "pi-session-2", "failure-modes", { turn_failure_count: 99, tool_failure_count: 99, groups: [{ axis: "tool", class_id: "path-not-found", tool: "bash", count: 99 }] }, "2026-09-01T00:00:00.000Z");
 	});
@@ -196,7 +203,7 @@ describe("buildFingerprint", () => {
 		const fp = await build(t.db, at("--source pi"));
 		const active = objective(fp, "activeTime");
 		assert.equal(active["sessionsMeasured"], 8);
-		// 7 sessions at 600..960 s, 60 s apart (5460 s), and pi-session-8 at its newest node, 4620 s: 10080 s.
+		// 7 sessions at 600..960 s, 60 s apart (5460 s), and pi-session-8 at its current node, 4620 s: 10080 s.
 		assert.equal(active["totalHours"], 2.8);
 		assert.equal((active["perSession"] as { sessions: number }).sessions, 8);
 		assert.equal(objective(await build(t.db, at("--source claude")), "activeTime").status, "ok");

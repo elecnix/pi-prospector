@@ -582,6 +582,24 @@ async function readUserVersion(db: AsyncDatabase): Promise<number> {
 	return first.user_version;
 }
 
+/**
+ * The `user_version` that records the lineage repair: the revises edges that
+ * link the generations written before lineage followed the subject (see
+ * `AnalyzerFramework.repairLineage`). The repair needs the registered analyzers,
+ * so `prospect analyze` runs it, not `migrate()`.
+ */
+export const LINEAGE_REPAIRED_USER_VERSION = 2;
+
+/** Whether this database still needs the lineage repair. */
+export async function needsLineageRepair(db: AsyncDatabase): Promise<boolean> {
+	return (await readUserVersion(db)) < LINEAGE_REPAIRED_USER_VERSION;
+}
+
+/** Record that the lineage repair ran. Never lowers the version. */
+export async function markLineageRepaired(db: AsyncDatabase): Promise<void> {
+	if (await needsLineageRepair(db)) await db.exec(`PRAGMA user_version = ${LINEAGE_REPAIRED_USER_VERSION}`);
+}
+
 export async function lowerOldLineCursors(db: AsyncDatabase, hooks: { afterUpdate?: () => Promise<void> } = {}): Promise<void> {
 	if ((await readUserVersion(db)) >= 1) return;
 	// The cursor change and the version that records it are one transaction: a crash

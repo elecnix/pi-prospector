@@ -25,7 +25,8 @@ import type {
 import { computeConfigHash, uuidv7 } from "../analyze/input-hash.js";
 import { versionIdOf } from "../analyze/version.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
-import { NOT_REVISED_AS_OF, NOT_MUTED_AS_OF, NOT_MUTED_LIVE } from "./current-generation.js";
+import { NOT_REVISED_AS_OF, NOT_MUTED_AS_OF, NOT_MUTED_LIVE, NOT_REVISED_LIVE } from "./current-generation.js";
+import type { LineageHead } from "../analyze/lineage.js";
 
 // ───────────────────────── analyzer registry ─────────────────────────
 
@@ -355,6 +356,42 @@ export async function findLatestNodeBySourceSet(
 			"SELECT * FROM live_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND node_kind != 'error' ORDER BY created_at DESC, id DESC LIMIT 1",
 		)
 		.get(analyzerId, sourceSetHash)) as AnalysisNodeRow | undefined;
+}
+
+/**
+ * The heads of one analyzer's lineages: its live, successful nodes that no live
+ * node revises, each with the anchor of its unit (its lowest-ordinal `anchors`
+ * edge). Scoped to one session, or to the whole graph when `sessionId` is null.
+ * `withContent` reads the content too, for an analyzer that names its subjects.
+ */
+export async function getLineageHeads(
+	db: AsyncDatabase,
+	analyzerId: string,
+	sessionId: string | null,
+	withContent: boolean,
+): Promise<LineageHead[]> {
+	const content = withContent ? "n.content_json" : "NULL";
+	const scope = sessionId === null ? "" : "AND n.session_id = ?";
+	const sql = `SELECT n.id, n.session_id, n.output_key, n.run_id, n.created_at, ${content} AS content_json,
+			(SELECT a.to_ref_id FROM analysis_edges a
+			 WHERE a.from_node_id = n.id AND a.edge_kind = '${EDGE_KINDS.ANCHORS}'
+			 ORDER BY a.ordinal ASC, a.rowid ASC LIMIT 1) AS anchor_ref
+		FROM live_nodes n
+		WHERE n.analyzer_id = ? ${scope} AND n.node_kind != 'error' AND ${NOT_REVISED_LIVE}`;
+	const params = sessionId === null ? [analyzerId] : [analyzerId, sessionId];
+	return (await prep(db, sql).all(...params)) as LineageHead[];
+}
+
+/** Ids of the session's live nodes that a live node revises: the superseded generations. */
+export async function getSupersededNodeIds(db: AsyncDatabase, sessionId: string): Promise<string[]> {
+	const rows = (await prep(db, `SELECT n.id FROM live_nodes n WHERE n.session_id = ? AND NOT (${NOT_REVISED_LIVE})`).all(sessionId)) as Array<{ id: string }>;
+	return rows.map((r) => r.id);
+}
+
+/** Every analyzer id that has a live node, registered or not. */
+export async function getAnalyzerIdsWithLiveNodes(db: AsyncDatabase): Promise<string[]> {
+	const rows = (await prep(db, "SELECT DISTINCT analyzer_id FROM live_nodes ORDER BY analyzer_id").all()) as Array<{ analyzer_id: string }>;
+	return rows.map((r) => r.analyzer_id);
 }
 
 export async function getSessionNodes(db: AsyncDatabase, sessionId: string, asOf?: string): Promise<AnalysisNodeRow[]> {

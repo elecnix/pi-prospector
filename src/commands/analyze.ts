@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "../pi-stubs.js";
 import { openAsyncDatabase, type AsyncDatabase } from "../db/async-db.js";
-import { migrate } from "../db/schema.js";
+import { markLineageRepaired, migrate, needsLineageRepair } from "../db/schema.js";
 import { getAllSessions, getRecentSessions, getSessionMessageCount, getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
 import {
 	getAnalyzerConfigOverrides,
@@ -138,6 +138,17 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			out(ctx, `Loaded ${customRegistered.length} custom analyzer(s): ${customRegistered.join(", ")}`, "info");
 		}
 		for (const e of loadErrors) out(ctx, `Skipped analyzer ${e.path}: ${e.message}`, "warning");
+		// Once per database: link the generations written before lineage followed
+		// the subject, so each subject has one current node before this run reads
+		// or extends the graph. It only appends revises edges.
+		if (await needsLineageRepair(db)) {
+			const repaired = await framework.repairLineage();
+			await markLineageRepaired(db);
+			const edges = repaired.reduce((sum, r) => sum + r.edges, 0);
+			if (edges > 0) {
+				out(ctx, `Lineage repair: ${edges} older generation(s) marked as revised across ${repaired.length} analyzer(s).`, "info");
+			}
+		}
 		// Without --analyzer, a run selects the configured default set (#291).
 		// --analyzer is the ad hoc opt-in: it runs any registered analyzer.
 		const defaults = resolveDefaultAnalyzers(

@@ -1,0 +1,280 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { tempDb, insertSession, insertMessages } from "./helpers.js";
+import { AnalyzerFramework } from "../../src/analyze/framework.js";
+import { createThrowingLLM } from "../../src/analyze/mock-llm.js";
+import { DEFAULT_MODEL_TIERS } from "../../src/analyze/model-tiers.js";
+import { computeConfigHash, computeSourceSetHash } from "../../src/analyze/input-hash.js";
+import type { AsyncDatabase } from "../../src/db/async-db.js";
+import type { Analyzer, AnalysisUnit, AnalyzerPlanContext, SourceRef } from "../../src/analyze/types.js";
+
+/**
+ * Lineage follows the subject of a unit, not its source set (DESIGN.md,
+ * "Subject"). A session-level unit that reads every message gets a new source
+ * set when the session grows; its new node must revise the node drawn from the
+ * shorter session, so the current generation holds one node per subject.
+ */
+
+function frameworkFor(db: AsyncDatabase): AnalyzerFramework {
+	return new AnalyzerFramework({ db, llm: createThrowingLLM(), modelTiers: DEFAULT_MODEL_TIERS });
+}
+
+function syntheticAnalyzer(
+	id: string,
+	plan: (ctx: AnalyzerPlanContext) => AnalysisUnit[],
+	subjectOfNode?: Analyzer["subjectOfNode"],
+): Analyzer {
+	const configJson = {};
+	return {
+		def: { id, label: id, description: "test analyzer", anchorSpan: "session", dependencies: [] },
+		version: { analyzerId: id, major: 1, minor: 0, implementationKind: "deterministic", codeRef: "test" },
+		prompts: {},
+		defaultConfig: { id: `${id}-cfg`, analyzerId: id, configHash: computeConfigHash(configJson), configJson, label: "default" },
+		plan,
+		analyze: (unit) => ({
+			nodeKind: "metric",
+			contentJson: { messages: unit.sources.length, finding: unit.meta?.["finding"] ?? null },
+			anchorKind: unit.anchorKind,
+			anchorRef: unit.anchorRef,
+			edges: [{ toRefKind: unit.anchorKind, toRefId: unit.anchorRef, edgeKind: "anchors" }],
+		}),
+		...(subjectOfNode ? { subjectOfNode } : {}),
+	};
+}
+
+/** One unit per session whose source set is every message: it changes as the session grows. */
+const wholeSession = syntheticAnalyzer("whole-session", (ctx) => {
+	const sources: SourceRef[] = ctx.messages.map((m) => ({ kind: "message", id: m.id }));
+	return [{ sources, sourceSetHash: computeSourceSetHash(sources), anchorKind: "session", anchorRef: ctx.sessionId }];
+});
+
+/** Two findings on the session anchor, each named as its subject, each reading every message. */
+function findingsAnalyzer(id: string, named: boolean): Analyzer {
+	return syntheticAnalyzer(
+		id,
+		(ctx) =>
+			["alpha", "beta"].map((finding) => {
+				const sources: SourceRef[] = [
+					{ kind: "term", id: finding },
+					...ctx.messages.map((m) => ({ kind: "message" as const, id: m.id })),
+				];
+				return {
+					sources,
+					sourceSetHash: computeSourceSetHash(sources),
+					anchorKind: "session" as const,
+					anchorRef: ctx.sessionId,
+					meta: { finding },
+					...(named ? { subject: finding } : {}),
+				};
+			}),
+		named ? (content) => (typeof content["finding"] === "string" ? content["finding"] : undefined) : undefined,
+	);
+}
+
+async function seed(db: AsyncDatabase, id: string): Promise<void> {
+	await insertSession(db, id);
+	await insertMessages(db, id, [
+		{ role: "user", text: "fix the login bug" },
+		{ role: "assistant", text: "looking" },
+	]);
+}
+
+async function grow(db: AsyncDatabase, id: string): Promise<void> {
+	await insertMessages(db, id, [
+		{ role: "user", text: "also add a test" },
+		{ role: "assistant", text: "added" },
+	]);
+}
+
+async function count(db: AsyncDatabase, view: "live_nodes" | "current_nodes", analyzerId: string, sessionId: string): Promise<number> {
+	const row = (await db
+		.prepare(`SELECT COUNT(*) AS n FROM ${view} WHERE analyzer_id = ? AND session_id = ? AND node_kind != 'error'`)
+		.get(analyzerId, sessionId)) as { n: number };
+	return row.n;
+}
+
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5));
+
+describe("lineage by subject", () => {
+	it("a grown session's new node revises the node drawn from the shorter session", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const fw = frameworkFor(db);
+			await fw.register(wholeSession);
+			await fw.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			const second = await fw.run("s1", {});
+
+			assert.equal(second.nodesProduced, 1, "a plain fill computes the grown session");
+			assert.equal(second.nodesRevised, 1, "and records the new node as a revision");
+			assert.equal(await count(db, "live_nodes", "whole-session", "s1"), 2, "the old node stays: the graph is append-only");
+			assert.equal(await count(db, "current_nodes", "whole-session", "s1"), 1, "one current node per subject");
+			const head = (await db
+				.prepare("SELECT content_json FROM current_nodes WHERE analyzer_id = 'whole-session' AND session_id = 's1'")
+				.get()) as { content_json: string };
+			assert.equal((JSON.parse(head.content_json) as { messages: number }).messages, 4, "the current node covers the whole session");
+		} finally {
+			await close();
+		}
+	});
+
+	it("a named subject revises only its own predecessor", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const fw = frameworkFor(db);
+			await fw.register(findingsAnalyzer("findings", true));
+			await fw.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			await fw.run("s1", {});
+
+			assert.equal(await count(db, "current_nodes", "findings", "s1"), 2, "one current node per finding");
+			const edges = (await db
+				.prepare(
+					`SELECT json_extract(f.content_json, '$.finding') AS from_finding, json_extract(t.content_json, '$.finding') AS to_finding
+					 FROM analysis_edges e JOIN analysis_nodes f ON f.id = e.from_node_id JOIN analysis_nodes t ON t.output_key = e.to_ref_id
+					 WHERE e.edge_kind = 'revises' ORDER BY from_finding`,
+				)
+				.all()) as Array<{ from_finding: string; to_finding: string }>;
+			assert.deepEqual(edges, [
+				{ from_finding: "alpha", to_finding: "alpha" },
+				{ from_finding: "beta", to_finding: "beta" },
+			]);
+		} finally {
+			await close();
+		}
+	});
+
+	it("units that share an anchor without a subject keep the lineage of their source set", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const fw = frameworkFor(db);
+			await fw.register(findingsAnalyzer("unnamed", false));
+			await fw.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			const second = await fw.run("s1", {});
+
+			assert.equal(second.nodesRevised, 0, "nothing says which old node a new one replaces");
+			assert.equal(await count(db, "current_nodes", "unnamed", "s1"), 4);
+		} finally {
+			await close();
+		}
+	});
+
+	it("leaves other sessions' lineages alone", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			await seed(db, "s2");
+			const fw = frameworkFor(db);
+			await fw.register(wholeSession);
+			await fw.run("s1", {});
+			await fw.run("s2", {});
+			await grow(db, "s1");
+			await tick();
+			await fw.run("s1", {});
+
+			assert.equal(await count(db, "current_nodes", "whole-session", "s1"), 1);
+			assert.equal(await count(db, "current_nodes", "whole-session", "s2"), 1);
+		} finally {
+			await close();
+		}
+	});
+});
+
+describe("dependency reads", () => {
+	it("a consumer reads its dependency's current generation only", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const seen: number[] = [];
+			const consumer: Analyzer = {
+				...syntheticAnalyzer("consumer", (ctx) => {
+					const upstream = ctx.dependencyNodes["whole-session"] ?? [];
+					seen.push(upstream.length);
+					const sources: SourceRef[] = upstream.map((n) => ({ kind: "analysis_node", id: n.output_key }));
+					return [{ sources, sourceSetHash: computeSourceSetHash(sources), anchorKind: "session", anchorRef: ctx.sessionId }];
+				}),
+				def: { id: "consumer", label: "consumer", description: "test consumer", anchorSpan: "session", dependencies: ["whole-session"] },
+			};
+			const fw = frameworkFor(db);
+			await fw.register(wholeSession);
+			await fw.register(consumer);
+			await fw.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			await fw.run("s1", {});
+
+			assert.deepEqual(seen, [1, 1], "the superseded generation is not read as a second conclusion");
+			assert.equal(await count(db, "current_nodes", "consumer", "s1"), 1);
+		} finally {
+			await close();
+		}
+	});
+});
+
+describe("lineage repair", () => {
+	/** Remove every revises edge, as a graph written before lineage followed the subject has none. */
+	async function forgetLineage(db: AsyncDatabase): Promise<void> {
+		await db.prepare("DELETE FROM analysis_edges WHERE edge_kind = 'revises'").run();
+	}
+
+	it("links each older current node of a subject to the newest, and is idempotent", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const fw = frameworkFor(db);
+			await fw.register(wholeSession);
+			await fw.register(findingsAnalyzer("findings", true));
+			await fw.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			await fw.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			await fw.run("s1", {});
+			await forgetLineage(db);
+			assert.equal(await count(db, "current_nodes", "whole-session", "s1"), 3, "legacy graph: every generation current");
+
+			const repaired = await fw.repairLineage();
+			assert.deepEqual(repaired, [
+				{ analyzerId: "findings", edges: 4 },
+				{ analyzerId: "whole-session", edges: 2 },
+			]);
+			assert.equal(await count(db, "current_nodes", "whole-session", "s1"), 1);
+			assert.equal(await count(db, "current_nodes", "findings", "s1"), 2);
+			const head = (await db
+				.prepare("SELECT content_json FROM current_nodes WHERE analyzer_id = 'whole-session' AND session_id = 's1'")
+				.get()) as { content_json: string };
+			assert.equal((JSON.parse(head.content_json) as { messages: number }).messages, 6, "the newest generation stays current");
+
+			assert.deepEqual(await fw.repairLineage(), [], "a second repair appends nothing");
+		} finally {
+			await close();
+		}
+	});
+
+	it("leaves a subject alone when one run wrote two of its nodes", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const fw = frameworkFor(db);
+			await fw.register(findingsAnalyzer("unnamed", false));
+			await fw.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			await fw.run("s1", {});
+			await forgetLineage(db);
+
+			assert.deepEqual(await fw.repairLineage(), []);
+			assert.equal(await count(db, "current_nodes", "unnamed", "s1"), 4);
+		} finally {
+			await close();
+		}
+	});
+});

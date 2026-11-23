@@ -129,6 +129,7 @@ interface TermMeta {
 }
 
 export const frustrationLexiconAnalyzer: Analyzer = {
+	subjectOfNode: (content) => (typeof content["term"] === "string" ? content["term"] : undefined),
 	def: FRUSTRATION_LEXICON_DEF,
 	version: FRUSTRATION_LEXICON_VERSION,
 	prompts: PROMPTS,
@@ -209,6 +210,8 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "session",
 				anchorRef: ctx.sessionId,
+				// One verdict per term: the term is the subject.
+				subject: term,
 				meta: { term } satisfies TermMeta as unknown as Record<string, unknown>,
 			};
 		});

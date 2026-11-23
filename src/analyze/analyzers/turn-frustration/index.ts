@@ -271,6 +271,11 @@ function usableLexicon(
 }
 
 export const turnFrustrationAnalyzer: Analyzer = {
+	subjectOfNode: (content) => {
+		const signal = content["signal"];
+		if (typeof signal !== "string") return undefined;
+		return content["signal_source"] === "lexicon" ? signal : paralinguisticSourceId(signal);
+	},
 	fingerprint: [turnFrustrationFingerprint],
 	def: TURN_FRUSTRATION_DEF,
 	version: TURN_FRUSTRATION_VERSION,
@@ -474,18 +479,18 @@ export const turnFrustrationAnalyzer: Analyzer = {
  * source kind as any word.
  */
 function hitUnit(pairIndex: number, userMessageId: string, meta: HitMeta): AnalysisUnit {
+	const signalId = meta.signal_source === "lexicon" ? meta.signal : paralinguisticSourceId(meta.signal);
 	const sources: SourceRef[] = [
 		{ kind: "message", id: userMessageId },
-		{
-			kind: "term",
-			id: meta.signal_source === "lexicon" ? meta.signal : paralinguisticSourceId(meta.signal),
-		},
+		{ kind: "term", id: signalId },
 	];
 	return {
 		sources,
 		sourceSetHash: computeSourceSetHash(sources),
 		anchorKind: "message",
 		anchorRef: userMessageId,
+		// A turn carries one hit per signal, so the signal names the hit's subject.
+		subject: signalId,
 		meta: { ...meta, pair_index: pairIndex } as unknown as Record<string, unknown>,
 	};
 }

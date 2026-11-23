@@ -11,11 +11,17 @@
  * `scan()` classifies every planned unit against the current graph state:
  *   - current  — a node already exists for this exact recipe (analyzer version +
  *                config fingerprint + source set). Nothing to do.
- *   - stale    — a node exists for this logical unit but under a different recipe.
+ *   - stale    — a node exists for this source set but under a different recipe.
  *                Staleness carries its *reasons*: `major`/`minor` (the analyzer
  *                version moved, graded by the author) and/or `config` (the user's
  *                setup changed, ungraded).
- *   - missing  — no node exists for this logical unit at all.
+ *   - missing  — no node exists for this source set at all.
+ *
+ * Lineage follows the unit's *subject* (its anchor, plus the subject an analyzer
+ * names when it plans several units on one anchor; see lineage.ts): every node a
+ * run writes revises the current nodes of its subject, so a session that grew,
+ * whose session-level unit is `missing` under its new source set, still ends with
+ * one current node.
  *
  * Revise reasons (a run's reach)
  *   - no reasons (default): only `missing` units are analysed; existing nodes are
@@ -83,11 +89,14 @@ import {
 	findLatestNodeBySourceSet,
 	findNodeByInputKey,
 	getLatestNodesByAnalyzerAcrossSessions,
+	getAnalyzerIdsWithLiveNodes,
 	getAnchoredMessageIds,
+	getLineageHeads,
 	getMessage,
 	getNode,
 	getNodeVersions,
 	getSessionNodes,
+	getSupersededNodeIds,
 	insertEdge,
 	insertNode,
 	registerPrompt,
@@ -99,6 +108,7 @@ import { prep } from "../db/prepared.js";
 import { getSubagentRunsForSession, getBackgroundTasksForSession } from "../db/queries.js";
 import { materializeProposalsFromNode, applyValidationFromNode, applyRestatementFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { groupBySubject, repairEdges, scopedSubjectKey, sharedSubjectKeys, unitSubjectKey } from "./lineage.js";
 import type { DecisionCaller } from "./decision-model.js";
 import { buildTurnPairs, type TurnPair } from "./analyzers/turn-pair-core/build.js";
 import { scanCwdSmoothness, type CwdSmoothnessCache } from "./analyzers/session-overview/cross-session.js";
@@ -147,11 +157,13 @@ interface ResolvedAnalyzer {
 interface SessionInputCache {
 	messages: Map<string, MessageRow[]>;
 	sessionNodes: Map<string, AnalysisNodeRow[]>;
+	/** The session's dependency view: its live nodes minus those a live node revises. */
+	currentNodes: Map<string, AnalysisNodeRow[]>;
 	turnPairs: Map<string, TurnPair[]>;
 }
 
 function newSessionInputCache(): SessionInputCache {
-	return { messages: new Map(), sessionNodes: new Map(), turnPairs: new Map() };
+	return { messages: new Map(), sessionNodes: new Map(), currentNodes: new Map(), turnPairs: new Map() };
 }
 
 export class AnalyzerFramework {
@@ -299,6 +311,7 @@ export class AnalyzerFramework {
 			seenInputKeys.add(c.inputKey);
 			todo.push(c);
 		}
+		await this.attachSupersedes(resolved, sessionId, units, todo);
 
 		const runId = uuidv7();
 		createRun(this.deps.db, {
@@ -375,7 +388,7 @@ export class AnalyzerFramework {
 					return;
 				}
 				result.nodesProduced++;
-				if (item.status === "stale" && item.priorNodeId) result.nodesRevised++;
+				if (created.revised) result.nodesRevised++;
 				summary.proposalsCreated += created.proposalsCreated;
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -473,6 +486,78 @@ export class AnalyzerFramework {
 		return reasons;
 	}
 
+	/**
+	 * Give each unit about to be computed the current nodes of its subject, which
+	 * its new node will revise.
+	 *
+	 * A unit whose source set changed — a session-level unit after the session
+	 * grew, a consumer after an upstream conclusion moved — classifies `missing`,
+	 * because no node exists for its source set. Its subject still has a node:
+	 * the one drawn from the shorter session. Without this the new node would sit
+	 * beside it, and both would be current.
+	 *
+	 * Units that share a subject key in one plan keep the lineage of their source
+	 * set only, as does a subject whose current nodes include two from one run:
+	 * either way, nothing says which old node a new one replaces.
+	 */
+	private async attachSupersedes(
+		resolved: ResolvedAnalyzer,
+		sessionId: string,
+		planned: readonly AnalysisUnit[],
+		todo: ClassifiedUnit[],
+	): Promise<void> {
+		if (todo.length === 0) return;
+		const { analyzer } = resolved;
+		const heads = await getLineageHeads(this.deps.db, analyzer.def.id, sessionId, analyzer.subjectOfNode !== undefined);
+		if (heads.length === 0) return;
+		const groups = groupBySubject(heads, analyzer.subjectOfNode);
+		const shared = sharedSubjectKeys(planned);
+		for (const item of todo) {
+			if (shared.has(unitSubjectKey(item.unit))) continue;
+			const group = groups.get(scopedSubjectKey(sessionId, item.unit));
+			if (group) item.supersedes = group.map((h) => h.output_key);
+		}
+	}
+
+	/**
+	 * Link the generations written before lineage followed the subject.
+	 *
+	 * For every analyzer with live nodes, the current nodes are grouped by
+	 * subject, as a run groups them, and in each group of two or more the newest
+	 * node revises the others. Only edges are appended; no node changes. Running
+	 * it again finds one current node per subject and appends nothing. A group
+	 * with two nodes from one run is left alone, as a run leaves it.
+	 *
+	 * An analyzer that is not registered here has no declared subject, so its
+	 * nodes group by anchor alone.
+	 */
+	async repairLineage(): Promise<{ analyzerId: string; edges: number }[]> {
+		const out: { analyzerId: string; edges: number }[] = [];
+		for (const analyzerId of await getAnalyzerIdsWithLiveNodes(this.deps.db)) {
+			const subjectOfNode = this.analyzers.get(analyzerId)?.subjectOfNode;
+			// The heads are read inside the transaction that writes the edges, so a
+			// run writing this analyzer's nodes cannot land between the two.
+			const edges = await this.deps.db.transaction(async () => {
+				const heads = await getLineageHeads(this.deps.db, analyzerId, null, subjectOfNode !== undefined);
+				const found = repairEdges(heads, subjectOfNode);
+				for (const edge of found) {
+					await insertEdge(this.deps.db, {
+						fromNodeId: edge.fromNodeId,
+						toRefKind: REF_KINDS.ANALYSIS_NODE,
+						toRefId: edge.toOutputKey,
+						edgeKind: EDGE_KINDS.REVISES,
+						ordinal: 0,
+					});
+				}
+				return found;
+			})();
+			if (edges.length === 0) continue;
+			this.globalNodeCache.delete(analyzerId);
+			out.push({ analyzerId, edges: edges.length });
+		}
+		return out;
+	}
+
 	// ───────────────────────── persistence ─────────────────────────
 
 	/**
@@ -487,7 +572,7 @@ export class AnalyzerFramework {
 		item: ClassifiedUnit,
 		analysis: AnalysisResult,
 		cache: SessionInputCache,
-	): Promise<{ nodeId: string; proposalsCreated: number } | null> {
+	): Promise<{ nodeId: string; proposalsCreated: number; revised: boolean } | null> {
 		const { analyzer, config } = resolved;
 		const nodeId = uuidv7();
 		const now = new Date().toISOString();
@@ -496,6 +581,15 @@ export class AnalyzerFramework {
 		// key in its source set, so a changed output propagates into the consumer's
 		// input_key. Reproducible from (input_key, content) on any machine.
 		const outputKey = computeOutputKey(item.inputKey, analysis.contentJson);
+		// Version lineage: the new node revises its stale predecessor (same source
+		// set, older recipe) and every current node of its subject. Edges reference
+		// the predecessors' content-addressed output_key (not their uuid), so
+		// lineage edges reproduce across a wipe/rebuild like every other identity.
+		// A target the analyzer's own edges already revise is not linked twice.
+		const ownRevises = new Set(analysis.edges.filter((e) => e.edgeKind === EDGE_KINDS.REVISES).map((e) => e.toRefId));
+		const revisesTargets = [
+			...new Set([...(item.status === "stale" && item.priorOutputKey ? [item.priorOutputKey] : []), ...(item.supersedes ?? [])]),
+		].filter((key) => !ownRevises.has(key));
 
 		// The node and every edge it declares go in as one transaction.
 		//
@@ -529,6 +623,15 @@ export class AnalyzerFramework {
 				createdAt: now,
 			});
 			await this.persistEdges(nodeId, config, analysis);
+			for (const target of revisesTargets) {
+				await insertEdge(this.deps.db, {
+					fromNodeId: nodeId,
+					toRefKind: REF_KINDS.ANALYSIS_NODE,
+					toRefId: target,
+					edgeKind: EDGE_KINDS.REVISES,
+					ordinal: 0,
+				});
+			}
 		});
 
 		try {
@@ -538,24 +641,12 @@ export class AnalyzerFramework {
 			throw err;
 		}
 
-		// Version lineage: a re-analysed stale unit revises its predecessor. The edge
-		// references the predecessor's content-addressed output_key (not its uuid), so
-		// lineage edges reproduce across a wipe/rebuild like every other identity.
-		if (item.status === "stale" && item.priorOutputKey) {
-			await insertEdge(this.deps.db, {
-				fromNodeId: nodeId,
-				toRefKind: REF_KINDS.ANALYSIS_NODE,
-				toRefId: item.priorOutputKey,
-				edgeKind: EDGE_KINDS.REVISES,
-				ordinal: 0,
-			});
-		}
-
 		// This analyzer's corpus-wide view just changed, so any cached copy is stale.
 		this.globalNodeCache.delete(analyzer.def.id);
 		// …and this session's node set is stale too: a later analyzer in the same run
 		// must see this freshly written node as a dependency.
 		cache.sessionNodes.delete(sessionId);
+		cache.currentNodes.delete(sessionId);
 
 		let proposalsCreated = 0;
 		if (analysis.nodeKind === "summary" || analysis.nodeKind === "proposal") {
@@ -585,7 +676,7 @@ export class AnalyzerFramework {
 			});
 		}
 
-		return { nodeId, proposalsCreated };
+		return { nodeId, proposalsCreated, revised: revisesTargets.length > 0 };
 	}
 
 	private async persistEdges(nodeId: string, config: AnalyzerConfig, analysis: AnalysisResult): Promise<void> {
@@ -652,6 +743,7 @@ export class AnalyzerFramework {
 			// An error node is still a node: a downstream dependency read must see it,
 			// so drop this session's cached node set on write.
 			cache.sessionNodes.delete(sessionId);
+			cache.currentNodes.delete(sessionId);
 		} catch {
 			// Defensive: never let error-node persistence abort the run.
 		}
@@ -668,9 +760,10 @@ export class AnalyzerFramework {
 		const messages = await this.loadMessagesCached(cache, sessionId);
 		const allNodes = await this.loadSessionNodesCached(cache, sessionId);
 		const ownNodes = allNodes.filter((n) => n.analyzer_id === analyzer.def.id);
+		const current = await this.loadCurrentNodesCached(cache, sessionId);
 		const dependencyNodes: Record<string, AnalysisNodeRow[]> = {};
 		for (const depId of analyzer.def.dependencies) {
-			dependencyNodes[depId] = allNodes.filter((n) => n.analyzer_id === depId);
+			dependencyNodes[depId] = current.filter((n) => n.analyzer_id === depId);
 		}
 		return {
 			sessionId,
@@ -747,7 +840,7 @@ export class AnalyzerFramework {
 						`Add '${depId}' to def.dependencies.`,
 					);
 				}
-				return this.loadSessionNodesCached(cache, sessionId).then((rows) =>
+				return this.loadCurrentNodesCached(cache, sessionId).then((rows) =>
 					rows.filter((n) => n.analyzer_id === depId),
 				);
 			},
@@ -769,6 +862,22 @@ export class AnalyzerFramework {
 		if (!rows) {
 			rows = await db_loadMessages(this.deps.db, sessionId);
 			cache.messages.set(sessionId, rows);
+		}
+		return rows;
+	}
+
+	/**
+	 * A dependency read sees the dependency's current generation: what it
+	 * concludes now. A node that a newer generation revises — drawn from a
+	 * shorter session, or by an older version — is lineage, not a conclusion the
+	 * graph still holds, and a consumer that read it would count it twice.
+	 */
+	private async loadCurrentNodesCached(cache: SessionInputCache, sessionId: string): Promise<AnalysisNodeRow[]> {
+		let rows = cache.currentNodes.get(sessionId);
+		if (!rows) {
+			const superseded = new Set(await getSupersededNodeIds(this.deps.db, sessionId));
+			rows = (await this.loadSessionNodesCached(cache, sessionId)).filter((n) => !superseded.has(n.id));
+			cache.currentNodes.set(sessionId, rows);
 		}
 		return rows;
 	}

@@ -143,6 +143,13 @@ export const AnalysisUnit = Type.Object({
 	sourceSetHash: Type.String(),
 	anchorKind: Type.Union([Type.Literal("session"), Type.Literal("message")]),
 	anchorRef: Type.String(),
+	/**
+	 * What the unit is about within its anchor, when an analyzer plans several
+	 * units on one anchor: a term, a pull request, a proposal. Stable as the
+	 * session grows. Leave it unset when the analyzer plans at most one unit per
+	 * anchor: the anchor alone is then the subject. See {@link Analyzer.subjectOfNode}.
+	 */
+	subject: Type.Optional(Type.String()),
 	meta: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 export type AnalysisUnit = Static<typeof AnalysisUnit>;
@@ -588,6 +595,14 @@ export interface Analyzer {
 	/** Absolute path a disk-loaded analyzer was loaded from (diagnostics only). */
 	sourcePath?: string;
 	/**
+	 * The subject of a node this analyzer wrote, read back from its content: the
+	 * value its plan puts in {@link AnalysisUnit.subject}. An analyzer that sets a
+	 * unit's subject sets this too, so the framework can find the node a new
+	 * generation replaces, nodes written before subjects existed included.
+	 * Returns undefined for content it cannot read.
+	 */
+	subjectOfNode?: (content: Record<string, unknown>) => string | undefined;
+	/**
 	 * The subject kinds whose ACTIVE assertions fold into this analyzer's config
 	 * fingerprint, so muting one of them marks this analyzer's nodes stale for the
 	 * `config` reason (a plain fill leaves them alone, `--revise config` recomputes
@@ -741,6 +756,12 @@ export interface ClassifiedUnit {
 	priorContentJson?: string;
 	/** For `stale` units: why it is out of date (any of major/minor/config). Empty otherwise. */
 	reasons: ReviseReason[];
+	/**
+	 * Output keys of the current generation of this unit's subject: the nodes a
+	 * new node for this unit revises. Set by a run for a unit it computes; empty
+	 * when the subject has no node yet, or when the plan leaves it ambiguous.
+	 */
+	supersedes?: string[];
 }
 
 export interface RunSummary {
