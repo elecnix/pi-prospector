@@ -1238,8 +1238,10 @@ definitions.
   are genuinely inputs, editing/adding/removing a smooth session in a repo changes
   the `sourceSetHash` of every friction session's overview in that same `cwd` — so
   those overviews re-identify as `missing` (a fresh recipe over a new source set),
-  not as `stale`/`revises` of the old one, and are recomputed with an LLM call on
-  the next run. Selection is capped at `maxContrastSiblings` (default 3) ranked by
+  not as `stale`, and are recomputed with an LLM call on the next run. Their
+  subject is still the session, so each new overview revises the session's
+  previous one (see **Supersession**), and the session keeps one current
+  overview. Selection is capped at `maxContrastSiblings` (default 3) ranked by
   pair count, so a new, more substantial smooth sibling can also *swap* which three
   are chosen, reshuffling identities across the repo. This is correct — the nodes'
   inputs really did change — but it is churny when `crossSessionContrast` is on by
