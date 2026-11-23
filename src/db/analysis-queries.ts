@@ -381,7 +381,7 @@ export function lineageHeadsSql(sessionScoped: boolean, withContent: boolean): s
 	const scope = sessionScoped ? "AND n.session_id = ?" : "";
 	// The unary + keeps edge_kind off the index choice: without statistics the
 	// planner prefers idx_edges_kind, which reads every anchors edge per head.
-	return `SELECT n.id, n.session_id, n.output_key, n.run_id, n.created_at, ${content} AS content_json,
+	return `SELECT n.id, n.session_id, n.output_key, n.run_id, n.created_at, n.analyzer_version_id, ${content} AS content_json,
 			(SELECT a.to_ref_id FROM analysis_edges a
 			 WHERE a.from_node_id = n.id AND +a.edge_kind = '${EDGE_KINDS.ANCHORS}'
 			 ORDER BY a.ordinal ASC, a.rowid ASC LIMIT 1) AS anchor_ref
@@ -395,10 +395,15 @@ export async function getSupersededNodeIds(db: AsyncDatabase, sessionId: string)
 	return rows.map((r) => r.id);
 }
 
-/** Every analyzer id that has a live node, registered or not. */
-export async function getAnalyzerIdsWithLiveNodes(db: AsyncDatabase): Promise<string[]> {
-	const rows = (await prep(db, "SELECT DISTINCT analyzer_id FROM live_nodes ORDER BY analyzer_id").all()) as Array<{ analyzer_id: string }>;
-	return rows.map((r) => r.analyzer_id);
+/** The analyzers whose lineage has been repaired (`lineage_repairs`). */
+export async function getRepairedAnalyzerIds(db: AsyncDatabase): Promise<Set<string>> {
+	const rows = (await prep(db, "SELECT analyzer_id FROM lineage_repairs").all()) as Array<{ analyzer_id: string }>;
+	return new Set(rows.map((r) => r.analyzer_id));
+}
+
+/** Record that an analyzer's lineage was repaired, with the edges the repair appended. */
+export async function recordLineageRepair(db: AsyncDatabase, analyzerId: string, edges: number): Promise<void> {
+	await prep(db, "INSERT INTO lineage_repairs (analyzer_id, repaired_at, edges) VALUES (?, ?, ?)").run(analyzerId, new Date().toISOString(), edges);
 }
 
 export async function getSessionNodes(db: AsyncDatabase, sessionId: string, asOf?: string): Promise<AnalysisNodeRow[]> {

@@ -89,7 +89,8 @@ import {
 	findLatestNodeBySourceSet,
 	findNodeByInputKey,
 	getLatestNodesByAnalyzerAcrossSessions,
-	getAnalyzerIdsWithLiveNodes,
+	getRepairedAnalyzerIds,
+	recordLineageRepair,
 	getAnchoredMessageIds,
 	getLineageHeads,
 	getMessage,
@@ -108,7 +109,7 @@ import { prep } from "../db/prepared.js";
 import { getSubagentRunsForSession, getBackgroundTasksForSession } from "../db/queries.js";
 import { materializeProposalsFromNode, applyValidationFromNode, applyRestatementFromNode } from "./proposal-materializer.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { groupBySubject, repairEdges, scopedSubjectKey, sharedSubjectKeys, unitSubjectKey } from "./lineage.js";
+import { groupBySubject, isNewerVersion, repairEdges, scopedSubjectKey, sharedSubjectKeys, unitSubjectKey } from "./lineage.js";
 import type { DecisionCaller } from "./decision-model.js";
 import { buildTurnPairs, type TurnPair } from "./analyzers/turn-pair-core/build.js";
 import { scanCwdSmoothness, type CwdSmoothnessCache } from "./analyzers/session-overview/cross-session.js";
@@ -311,7 +312,7 @@ export class AnalyzerFramework {
 			seenInputKeys.add(c.inputKey);
 			todo.push(c);
 		}
-		await this.attachSupersedes(resolved, sessionId, units, todo);
+		const toCompute = await this.attachSupersedes(resolved, sessionId, units, todo);
 
 		const runId = uuidv7();
 		createRun(this.deps.db, {
@@ -329,7 +330,7 @@ export class AnalyzerFramework {
 			analyzerId: analyzer.def.id,
 			runId,
 			nodesProduced: 0,
-			nodesSkipped: classified.length - todo.length,
+			nodesSkipped: classified.length - toCompute.length,
 			nodesRevised: 0,
 			costUsd: 0,
 			tokensUsed: 0,
@@ -355,7 +356,7 @@ export class AnalyzerFramework {
 		let stopDispatching = false;
 		let abandoned = 0;
 		const unitFailures: UnitFailure[] = [];
-		await mapWithConcurrency(todo, this.deps.unitConcurrency ?? 1, async (item) => {
+		await mapWithConcurrency(toCompute, this.deps.unitConcurrency ?? 1, async (item) => {
 			// A configuration fault has already been seen: every remaining unit would
 			// fail the same way, so skip without calling the analyzer. Units already
 			// in flight still finish, which bounds the damage at the concurrency width
@@ -420,7 +421,7 @@ export class AnalyzerFramework {
 			nodesSkipped: result.nodesSkipped,
 			costUsd: result.costUsd,
 			tokensUsed: result.tokensUsed,
-			errorMessage: result.status === "partial" ? describeUnitFailures(unitFailures, todo.length) : null,
+			errorMessage: result.status === "partial" ? describeUnitFailures(unitFailures, toCompute.length) : null,
 		});
 
 		summary.nodesProduced += result.nodesProduced;
@@ -499,42 +500,52 @@ export class AnalyzerFramework {
 	 * Units that share a subject key in one plan keep the lineage of their source
 	 * set only, as does a subject whose current nodes include two from one run:
 	 * either way, nothing says which old node a new one replaces.
+	 *
+	 * Returns the units to compute. A unit whose subject holds a node of a newer
+	 * analyzer version is left out: a downgrade never replaces a newer conclusion,
+	 * as `gradeStale` grades it, and computing it would leave two current nodes.
 	 */
 	private async attachSupersedes(
 		resolved: ResolvedAnalyzer,
 		sessionId: string,
 		planned: readonly AnalysisUnit[],
 		todo: ClassifiedUnit[],
-	): Promise<void> {
-		if (todo.length === 0) return;
+	): Promise<ClassifiedUnit[]> {
+		if (todo.length === 0) return todo;
 		const { analyzer } = resolved;
 		const heads = await getLineageHeads(this.deps.db, analyzer.def.id, sessionId, analyzer.subjectOfNode !== undefined);
-		if (heads.length === 0) return;
+		if (heads.length === 0) return todo;
 		const groups = groupBySubject(heads, analyzer.subjectOfNode);
 		const shared = sharedSubjectKeys(planned);
+		const version = versionIdOf(analyzer.version);
+		const kept: ClassifiedUnit[] = [];
 		for (const item of todo) {
-			if (shared.has(unitSubjectKey(item.unit))) continue;
-			const group = groups.get(scopedSubjectKey(sessionId, item.unit));
+			const group = shared.has(unitSubjectKey(item.unit)) ? undefined : groups.get(scopedSubjectKey(sessionId, item.unit));
+			if (group?.some((h) => isNewerVersion(h, version))) continue;
 			if (group) item.supersedes = group.map((h) => h.output_key);
+			kept.push(item);
 		}
+		return kept;
 	}
 
 	/**
 	 * Link the generations written before lineage followed the subject.
 	 *
-	 * For every analyzer with live nodes, the current nodes are grouped by
-	 * subject, as a run groups them, and in each group of two or more the newest
-	 * node revises the others. Only edges are appended; no node changes. Running
-	 * it again finds one current node per subject and appends nothing. A group
-	 * with two nodes from one run is left alone, as a run leaves it.
+	 * For every registered analyzer whose repair is not yet recorded, the current
+	 * nodes are grouped by subject, as a run groups them, and in each group of two
+	 * or more the node the framework would have left current revises the others.
+	 * Only edges are appended; no node changes. The edges and the record of the
+	 * repair are one transaction, so an analyzer is repaired once.
 	 *
-	 * An analyzer that is not registered here has no declared subject, so its
-	 * nodes group by anchor alone.
+	 * An analyzer that is not registered here is left for a run that registers it:
+	 * without its declared subjects, its nodes could be grouped wrongly.
 	 */
 	async repairLineage(): Promise<{ analyzerId: string; edges: number }[]> {
 		const out: { analyzerId: string; edges: number }[] = [];
-		for (const analyzerId of await getAnalyzerIdsWithLiveNodes(this.deps.db)) {
-			const subjectOfNode = this.analyzers.get(analyzerId)?.subjectOfNode;
+		const repaired = await getRepairedAnalyzerIds(this.deps.db);
+		for (const [analyzerId, analyzer] of this.analyzers) {
+			if (repaired.has(analyzerId)) continue;
+			const subjectOfNode = analyzer.subjectOfNode;
 			// The heads are read inside the transaction that writes the edges, so a
 			// run writing this analyzer's nodes cannot land between the two.
 			const edges = await this.deps.db.transaction(async () => {
@@ -549,6 +560,7 @@ export class AnalyzerFramework {
 						ordinal: 0,
 					});
 				}
+				await recordLineageRepair(this.deps.db, analyzerId, found.length);
 				return found;
 			})();
 			if (edges.length === 0) continue;

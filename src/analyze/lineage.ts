@@ -17,6 +17,7 @@
 
 import { Type, type Static } from "typebox";
 import type { AnalysisUnit } from "./types.js";
+import { gradeVersionMove, parseVersionId } from "./version.js";
 
 /** A current node of one analyzer, as lineage reads it. */
 export const LineageHead = Type.Object({
@@ -25,6 +26,7 @@ export const LineageHead = Type.Object({
 	output_key: Type.String(),
 	run_id: Type.Union([Type.String(), Type.Null()]),
 	created_at: Type.String(),
+	analyzer_version_id: Type.String(),
 	/** The node's first `anchors` target (lowest ordinal): the anchor of its unit. Null when it has none. */
 	anchor_ref: Type.Union([Type.String(), Type.Null()]),
 	/** Null when the analyzer declares no subject, so the content is not read. */
@@ -107,25 +109,38 @@ export function sharedSubjectKeys(units: readonly AnalysisUnit[]): Set<string> {
 	return shared;
 }
 
-/** Whether `a` was written after `b`, the id breaking a tie. */
-function isNewer(a: LineageHead, b: LineageHead): boolean {
+/** Whether `a` was written by a newer analyzer version than `version`. */
+export function isNewerVersion(a: LineageHead, version: string): boolean {
+	return gradeVersionMove(parseVersionId(version), parseVersionId(a.analyzer_version_id)) !== null;
+}
+
+/**
+ * Whether `a` is the node the framework leaves current over `b`. A run never
+ * replaces a node of a newer analyzer version (a downgrade yields no reason to,
+ * as `gradeStale` grades it), and otherwise the later write revises the earlier
+ * one. So the newer version wins, then the later write, the id breaking a tie.
+ */
+function survives(a: LineageHead, b: LineageHead): boolean {
+	if (isNewerVersion(a, b.analyzer_version_id)) return true;
+	if (isNewerVersion(b, a.analyzer_version_id)) return false;
 	if (a.created_at !== b.created_at) return a.created_at > b.created_at;
 	return a.id > b.id;
 }
 
 /**
  * The edges that leave one current node per subject: in every group with more
- * than one node, the newest revises each of the others. Running it again on the
- * graph it repaired finds one node per group and returns nothing.
+ * than one node, the node the framework would have left current revises each of
+ * the others. Running it again on the graph it repaired finds one node per group
+ * and returns nothing.
  */
 export function repairEdges(heads: readonly LineageHead[], subjectOfNode: SubjectOfNode | undefined): LineageEdge[] {
 	const edges: LineageEdge[] = [];
 	for (const group of groupBySubject(heads, subjectOfNode).values()) {
 		if (group.length < 2) continue;
-		let newest = group[0]!;
-		for (const head of group) if (isNewer(head, newest)) newest = head;
+		let survivor = group[0]!;
+		for (const head of group) if (survives(head, survivor)) survivor = head;
 		for (const head of group) {
-			if (head !== newest) edges.push({ fromNodeId: newest.id, toOutputKey: head.output_key });
+			if (head !== survivor) edges.push({ fromNodeId: survivor.id, toOutputKey: head.output_key });
 		}
 	}
 	return edges;

@@ -372,6 +372,19 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			finished_at TEXT
 		);
 
+		-- One row per analyzer whose lineage has been repaired: the revises edges
+		-- that link the generations written before lineage followed the subject
+		-- (AnalyzerFramework.repairLineage). The repair reads an analyzer's subjects,
+		-- so it covers only the analyzers a run registers, and each is recorded on
+		-- its own. Append-only provenance of a one-time graph repair, never a cursor
+		-- over analysis work. A reader of current nodes refuses an analyzer with
+		-- nodes and no row here, because its counts may still hold both generations.
+		CREATE TABLE IF NOT EXISTS lineage_repairs (
+			analyzer_id TEXT PRIMARY KEY,
+			repaired_at TEXT NOT NULL,
+			edges INTEGER NOT NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS analysis_nodes (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
@@ -580,24 +593,6 @@ async function readUserVersion(db: AsyncDatabase): Promise<number> {
 	// Any other shape stops the migration: guessing "0" would lower every cursor again on each start.
 	if (typeof first?.user_version !== "number") throw new Error(`unexpected PRAGMA user_version result: ${JSON.stringify(rows)}`);
 	return first.user_version;
-}
-
-/**
- * The `user_version` that records the lineage repair: the revises edges that
- * link the generations written before lineage followed the subject (see
- * `AnalyzerFramework.repairLineage`). The repair needs the registered analyzers,
- * so `prospect analyze` runs it, not `migrate()`.
- */
-export const LINEAGE_REPAIRED_USER_VERSION = 2;
-
-/** Whether this database still needs the lineage repair. */
-export async function needsLineageRepair(db: AsyncDatabase): Promise<boolean> {
-	return (await readUserVersion(db)) < LINEAGE_REPAIRED_USER_VERSION;
-}
-
-/** Record that the lineage repair ran. Never lowers the version. */
-export async function markLineageRepaired(db: AsyncDatabase): Promise<void> {
-	if (await needsLineageRepair(db)) await db.exec(`PRAGMA user_version = ${LINEAGE_REPAIRED_USER_VERSION}`);
 }
 
 export async function lowerOldLineCursors(db: AsyncDatabase, hooks: { afterUpdate?: () => Promise<void> } = {}): Promise<void> {

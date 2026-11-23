@@ -379,7 +379,9 @@ path could reach would vanish the moment a run chose the other.
   from a revise or from a session that grew. A plan that leaves a subject
   ambiguous (units sharing an anchor without naming a subject, or a subject
   whose current nodes include two from one run) gets no such edge, because
-  nothing says which old node a new one replaces.
+  nothing says which old node a new one replaces. A run never replaces a node
+  of a newer analyzer version: a unit whose subject holds one is not computed,
+  just as a downgrade grades no stale reason.
 - **Selection versus recompute** — the reasons decide *which* out-of-date units a
   run touches; they never decide *what to recompute toward*. A selected unit is
   always recomputed to the **current recipe in full** — latest version, latest
@@ -420,11 +422,19 @@ path could reach would vanish the moment a run chose the other.
   was retracted is still current. Not to be confused with the **current** unit
   status, which is about a unit's recipe, not a node's place in its lineage.
 - **Lineage repair** — the one-time pass that appends the *revises* edges a
-  graph written before supersession lacks. In each subject with more than one
-  current node, the newest node revises the others. `prospect analyze` runs it
-  once per database, before it analyses anything, and records that it ran in
-  the database's `user_version`. It appends edges and changes no node. A second
-  pass finds one current node per subject and appends nothing.
+  graph written before supersession lacks. It writes the edges supersession
+  would have written: in each subject with more than one current node, the node
+  of the newest analyzer version revises the others, and among nodes of one
+  version the last written does. This reconstructs the write order once, from
+  `created_at`; afterwards supersession is read from the edges, as everywhere
+  else. The pass needs an analyzer's declared subjects, so it covers the
+  analyzers a run registers. `prospect analyze` runs it before it analyses
+  anything, for each registered analyzer not yet repaired, and records each
+  one in `lineage_repairs` in the same transaction as its edges. An analyzer
+  not loaded on that run is repaired by the first run that loads it. The pass
+  appends edges and changes no node. The fingerprint refuses to read an
+  analyzer with nodes and no repair record, because its counts could still
+  hold two generations of one session.
 
 ### Trajectory analysis (deterministic, session-level)
 

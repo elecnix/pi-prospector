@@ -144,6 +144,29 @@ describe("lineage by subject", () => {
 		}
 	});
 
+	it("an older analyzer version leaves a subject held by a newer version alone", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const v2 = frameworkFor(db);
+			await v2.register({ ...wholeSession, version: { ...wholeSession.version, major: 2 } });
+			await v2.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			const v1 = frameworkFor(db);
+			await v1.register(wholeSession);
+			const downgraded = await v1.run("s1", {});
+
+			assert.equal(downgraded.nodesProduced, 0, "a downgrade never replaces a newer conclusion, as gradeStale grades it");
+			const heads = (await db
+				.prepare("SELECT analyzer_version_id AS v FROM current_nodes WHERE analyzer_id = 'whole-session' AND session_id = 's1'")
+				.all()) as Array<{ v: string }>;
+			assert.deepEqual(heads.map((h) => h.v), ["2.0"]);
+		} finally {
+			await close();
+		}
+	});
+
 	it("a named subject revises only its own predecessor", async () => {
 		const { db, close } = await tempDb();
 		try {
@@ -267,8 +290,8 @@ describe("lineage repair", () => {
 
 			const repaired = await fw.repairLineage();
 			assert.deepEqual(repaired, [
-				{ analyzerId: "findings", edges: 4 },
 				{ analyzerId: "whole-session", edges: 2 },
+				{ analyzerId: "findings", edges: 4 },
 			]);
 			assert.equal(await count(db, "current_nodes", "whole-session", "s1"), 1);
 			assert.equal(await count(db, "current_nodes", "findings", "s1"), 2);
@@ -278,6 +301,36 @@ describe("lineage repair", () => {
 			assert.equal((JSON.parse(head.content_json) as { messages: number }).messages, 6, "the newest generation stays current");
 
 			assert.deepEqual(await fw.repairLineage(), [], "a second repair appends nothing");
+		} finally {
+			await close();
+		}
+	});
+
+	it("repairs each analyzer once, including one registered only on a later run", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			const both = frameworkFor(db);
+			const findings = findingsAnalyzer("findings", true);
+			await both.register(wholeSession);
+			await both.register(findings);
+			await both.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			await both.run("s1", {});
+			await forgetLineage(db);
+
+			const onlyWhole = frameworkFor(db);
+			await onlyWhole.register(wholeSession);
+			assert.deepEqual(await onlyWhole.repairLineage(), [{ analyzerId: "whole-session", edges: 1 }]);
+			assert.equal(await count(db, "current_nodes", "findings", "s1"), 4, "an analyzer this run did not load keeps its nodes until it is repaired");
+
+			const later = frameworkFor(db);
+			await later.register(wholeSession);
+			await later.register(findings);
+			assert.deepEqual(await later.repairLineage(), [{ analyzerId: "findings", edges: 2 }], "the later run repairs the analyzer it now loads, and only that one");
+			assert.equal(await count(db, "current_nodes", "findings", "s1"), 2);
+			assert.deepEqual(await later.repairLineage(), [], "and a repaired analyzer is not repaired again");
 		} finally {
 			await close();
 		}
