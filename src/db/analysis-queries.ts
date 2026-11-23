@@ -370,16 +370,23 @@ export async function getLineageHeads(
 	sessionId: string | null,
 	withContent: boolean,
 ): Promise<LineageHead[]> {
+	const sql = lineageHeadsSql(sessionId !== null, withContent);
+	const params = sessionId === null ? [analyzerId] : [analyzerId, sessionId];
+	return (await prep(db, sql).all(...params)) as LineageHead[];
+}
+
+/** The query behind {@link getLineageHeads}: its parameters are the analyzer id, then the session id when `sessionScoped`. */
+export function lineageHeadsSql(sessionScoped: boolean, withContent: boolean): string {
 	const content = withContent ? "n.content_json" : "NULL";
-	const scope = sessionId === null ? "" : "AND n.session_id = ?";
-	const sql = `SELECT n.id, n.session_id, n.output_key, n.run_id, n.created_at, ${content} AS content_json,
+	const scope = sessionScoped ? "AND n.session_id = ?" : "";
+	// The unary + keeps edge_kind off the index choice: without statistics the
+	// planner prefers idx_edges_kind, which reads every anchors edge per head.
+	return `SELECT n.id, n.session_id, n.output_key, n.run_id, n.created_at, ${content} AS content_json,
 			(SELECT a.to_ref_id FROM analysis_edges a
-			 WHERE a.from_node_id = n.id AND a.edge_kind = '${EDGE_KINDS.ANCHORS}'
+			 WHERE a.from_node_id = n.id AND +a.edge_kind = '${EDGE_KINDS.ANCHORS}'
 			 ORDER BY a.ordinal ASC, a.rowid ASC LIMIT 1) AS anchor_ref
 		FROM live_nodes n
 		WHERE n.analyzer_id = ? ${scope} AND n.node_kind != 'error' AND ${NOT_REVISED_LIVE}`;
-	const params = sessionId === null ? [analyzerId] : [analyzerId, sessionId];
-	return (await prep(db, sql).all(...params)) as LineageHead[];
 }
 
 /** Ids of the session's live nodes that a live node revises: the superseded generations. */
