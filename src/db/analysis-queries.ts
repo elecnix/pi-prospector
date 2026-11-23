@@ -395,10 +395,9 @@ export async function getSupersededNodeIds(db: AsyncDatabase, sessionId: string)
 	return rows.map((r) => r.id);
 }
 
-/** The analyzers whose lineage has been repaired (`lineage_repairs`). */
-export async function getRepairedAnalyzerIds(db: AsyncDatabase): Promise<Set<string>> {
-	const rows = (await prep(db, "SELECT analyzer_id FROM lineage_repairs").all()) as Array<{ analyzer_id: string }>;
-	return new Set(rows.map((r) => r.analyzer_id));
+/** Whether the analyzer's lineage repair is recorded (`lineage_repairs`). */
+export async function isLineageRepaired(db: AsyncDatabase, analyzerId: string): Promise<boolean> {
+	return (await prep(db, "SELECT 1 FROM lineage_repairs WHERE analyzer_id = ?").get(analyzerId)) !== undefined;
 }
 
 /** Record that an analyzer's lineage was repaired, with the edges the repair appended. */

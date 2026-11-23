@@ -428,10 +428,12 @@ path could reach would vanish the moment a run chose the other.
   version the last written does. This reconstructs the write order once, from
   `created_at`; afterwards supersession is read from the edges, as everywhere
   else. The pass needs an analyzer's declared subjects, so it covers the
-  analyzers a run registers. `prospect analyze` runs it before it analyses
-  anything, for each registered analyzer not yet repaired, and records each
-  one in `lineage_repairs` in the same transaction as its edges. An analyzer
-  not loaded on that run is repaired by the first run that loads it. The pass
+  analyzers a run registers. A run repairs an analyzer before it writes that
+  analyzer's nodes, whichever command started it, and `prospect analyze`
+  repairs every registered analyzer before it analyses anything. Each repair is
+  recorded in `lineage_repairs` in the same transaction as its edges. An
+  analyzer not loaded on a run is repaired by the first run that loads it, so
+  an analyzer added later gets its record before its first node. The pass
   appends edges and changes no node. The fingerprint refuses to read an
   analyzer with nodes and no repair record, because its counts could still
   hold two generations of one session.

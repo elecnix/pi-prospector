@@ -167,6 +167,37 @@ describe("lineage by subject", () => {
 		}
 	});
 
+	it("a corpus-wide term re-judged in another session revises the first verdict", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			await seed(db, "s2");
+			const termAnalyzer = (major: number): Analyzer => {
+				const base = syntheticAnalyzer(
+					"term-verdict",
+					(ctx) => {
+						const sources: SourceRef[] = [{ kind: "term", id: "ugh" }];
+						return [{ sources, sourceSetHash: computeSourceSetHash(sources), anchorKind: "session", anchorRef: ctx.sessionId, subject: "ugh" }];
+					},
+					() => "ugh",
+				);
+				return { ...base, version: { ...base.version, major } };
+			};
+			const v1 = frameworkFor(db);
+			await v1.register(termAnalyzer(1));
+			await v1.run("s1", {});
+			const v2 = frameworkFor(db);
+			await v2.register(termAnalyzer(2));
+			await v2.run("s2", { revise: ["major"] });
+			await v2.run("s1", { revise: ["major"] });
+
+			const current = (await db.prepare("SELECT COUNT(*) AS n FROM current_nodes WHERE analyzer_id = 'term-verdict'").get()) as { n: number };
+			assert.equal(current.n, 1, "the verdict is about the term, wherever it was judged");
+		} finally {
+			await close();
+		}
+	});
+
 	it("a named subject revises only its own predecessor", async () => {
 		const { db, close } = await tempDb();
 		try {
@@ -266,9 +297,17 @@ describe("dependency reads", () => {
 });
 
 describe("lineage repair", () => {
-	/** Remove every revises edge, as a graph written before lineage followed the subject has none. */
+	/** Remove every revises edge and repair record, as a graph written before lineage followed the subject has none. */
 	async function forgetLineage(db: AsyncDatabase): Promise<void> {
 		await db.prepare("DELETE FROM analysis_edges WHERE edge_kind = 'revises'").run();
+		await db.prepare("DELETE FROM lineage_repairs").run();
+	}
+
+	/** A framework started after the upgrade: it has repaired nothing yet. */
+	async function upgraded(db: AsyncDatabase, ...analyzers: Analyzer[]): Promise<AnalyzerFramework> {
+		const fw = frameworkFor(db);
+		for (const a of analyzers) await fw.register(a);
+		return fw;
 	}
 
 	it("links each older current node of a subject to the newest, and is idempotent", async () => {
@@ -288,7 +327,7 @@ describe("lineage repair", () => {
 			await forgetLineage(db);
 			assert.equal(await count(db, "current_nodes", "whole-session", "s1"), 3, "legacy graph: every generation current");
 
-			const repaired = await fw.repairLineage();
+			const repaired = await (await upgraded(db, wholeSession, findingsAnalyzer("findings", true))).repairLineage();
 			assert.deepEqual(repaired, [
 				{ analyzerId: "whole-session", edges: 2 },
 				{ analyzerId: "findings", edges: 4 },
@@ -300,7 +339,7 @@ describe("lineage repair", () => {
 				.get()) as { content_json: string };
 			assert.equal((JSON.parse(head.content_json) as { messages: number }).messages, 6, "the newest generation stays current");
 
-			assert.deepEqual(await fw.repairLineage(), [], "a second repair appends nothing");
+			assert.deepEqual(await (await upgraded(db, wholeSession, findingsAnalyzer("findings", true))).repairLineage(), [], "a second repair appends nothing");
 		} finally {
 			await close();
 		}
@@ -336,6 +375,30 @@ describe("lineage repair", () => {
 		}
 	});
 
+	it("repairs an analyzer before a run writes its nodes, whichever command runs it", async () => {
+		const { db, close } = await tempDb();
+		try {
+			await seed(db, "s1");
+			await seed(db, "s2");
+			const fw = frameworkFor(db);
+			await fw.register(wholeSession);
+			await fw.run("s1", {});
+			await grow(db, "s1");
+			await tick();
+			await fw.run("s1", {});
+			await forgetLineage(db);
+
+			const later = frameworkFor(db);
+			await later.register(wholeSession);
+			await later.run("s2", {});
+			assert.equal(await count(db, "current_nodes", "whole-session", "s1"), 1, "the legacy duplicates are linked");
+			const rows = (await db.prepare("SELECT analyzer_id FROM lineage_repairs").all()) as Array<{ analyzer_id: string }>;
+			assert.deepEqual(rows.map((r) => r.analyzer_id), ["whole-session"]);
+		} finally {
+			await close();
+		}
+	});
+
 	it("leaves a subject alone when one run wrote two of its nodes", async () => {
 		const { db, close } = await tempDb();
 		try {
@@ -348,7 +411,7 @@ describe("lineage repair", () => {
 			await fw.run("s1", {});
 			await forgetLineage(db);
 
-			assert.deepEqual(await fw.repairLineage(), []);
+			assert.deepEqual(await (await upgraded(db, findingsAnalyzer("unnamed", false))).repairLineage(), []);
 			assert.equal(await count(db, "current_nodes", "unnamed", "s1"), 4);
 		} finally {
 			await close();

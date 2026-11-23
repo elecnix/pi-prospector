@@ -89,7 +89,7 @@ import {
 	findLatestNodeBySourceSet,
 	findNodeByInputKey,
 	getLatestNodesByAnalyzerAcrossSessions,
-	getRepairedAnalyzerIds,
+	isLineageRepaired,
 	recordLineageRepair,
 	getAnchoredMessageIds,
 	getLineageHeads,
@@ -169,6 +169,8 @@ function newSessionInputCache(): SessionInputCache {
 
 export class AnalyzerFramework {
 	private readonly analyzers = new Map<string, Analyzer>();
+	/** The lineage repair of each analyzer this framework ran or repaired (see `repairLineage`). */
+	private readonly repairs = new Map<string, Promise<number>>();
 
 	/**
 	 * Corpus-wide dependency reads, cached for this framework's lifetime.
@@ -282,6 +284,7 @@ export class AnalyzerFramework {
 		summary: RunSummary,
 		cache: SessionInputCache,
 	): Promise<AnalyzerRunResult> {
+		await this.ensureRepaired(analyzerId);
 		const resolved = await this.resolve(analyzerId);
 		const { analyzer, config, promptBundleHash } = resolved;
 
@@ -534,40 +537,58 @@ export class AnalyzerFramework {
 	 * For every registered analyzer whose repair is not yet recorded, the current
 	 * nodes are grouped by subject, as a run groups them, and in each group of two
 	 * or more the node the framework would have left current revises the others.
-	 * Only edges are appended; no node changes. The edges and the record of the
-	 * repair are one transaction, so an analyzer is repaired once.
+	 * Only edges are appended; no node changes. A run also repairs an analyzer
+	 * before it writes that analyzer's nodes, so every writer, not only
+	 * `prospect analyze`, leaves a record for each analyzer it wrote.
 	 *
 	 * An analyzer that is not registered here is left for a run that registers it:
 	 * without its declared subjects, its nodes could be grouped wrongly.
 	 */
 	async repairLineage(): Promise<{ analyzerId: string; edges: number }[]> {
 		const out: { analyzerId: string; edges: number }[] = [];
-		const repaired = await getRepairedAnalyzerIds(this.deps.db);
-		for (const [analyzerId, analyzer] of this.analyzers) {
-			if (repaired.has(analyzerId)) continue;
-			const subjectOfNode = analyzer.subjectOfNode;
-			// The heads are read inside the transaction that writes the edges, so a
-			// run writing this analyzer's nodes cannot land between the two.
-			const edges = await this.deps.db.transaction(async () => {
-				const heads = await getLineageHeads(this.deps.db, analyzerId, null, subjectOfNode !== undefined);
-				const found = repairEdges(heads, subjectOfNode);
-				for (const edge of found) {
-					await insertEdge(this.deps.db, {
-						fromNodeId: edge.fromNodeId,
-						toRefKind: REF_KINDS.ANALYSIS_NODE,
-						toRefId: edge.toOutputKey,
-						edgeKind: EDGE_KINDS.REVISES,
-						ordinal: 0,
-					});
-				}
-				await recordLineageRepair(this.deps.db, analyzerId, found.length);
-				return found;
-			})();
-			if (edges.length === 0) continue;
-			this.globalNodeCache.delete(analyzerId);
-			out.push({ analyzerId, edges: edges.length });
+		for (const analyzerId of this.analyzers.keys()) {
+			const edges = await this.ensureRepaired(analyzerId);
+			if (edges > 0) out.push({ analyzerId, edges });
 		}
 		return out;
+	}
+
+	/**
+	 * Repair one analyzer's lineage once per framework. Resolves to the edges this
+	 * call appended: the first call reports them, a later one waits for the same
+	 * repair and reports none.
+	 */
+	private ensureRepaired(analyzerId: string): Promise<number> {
+		const pending = this.repairs.get(analyzerId);
+		if (pending) return pending.then(() => 0);
+		const repair = this.repairAnalyzer(analyzerId);
+		this.repairs.set(analyzerId, repair);
+		return repair;
+	}
+
+	private async repairAnalyzer(analyzerId: string): Promise<number> {
+		const subjectOfNode = this.analyzers.get(analyzerId)?.subjectOfNode;
+		// The record is checked, the heads read and the edges written in one
+		// transaction, so a run writing this analyzer's nodes, or another process
+		// repairing it, cannot land between them.
+		const edges = await this.deps.db.transaction(async () => {
+			if (await isLineageRepaired(this.deps.db, analyzerId)) return 0;
+			const heads = await getLineageHeads(this.deps.db, analyzerId, null, subjectOfNode !== undefined);
+			const found = repairEdges(heads, subjectOfNode);
+			for (const edge of found) {
+				await insertEdge(this.deps.db, {
+					fromNodeId: edge.fromNodeId,
+					toRefKind: REF_KINDS.ANALYSIS_NODE,
+					toRefId: edge.toOutputKey,
+					edgeKind: EDGE_KINDS.REVISES,
+					ordinal: 0,
+				});
+			}
+			await recordLineageRepair(this.deps.db, analyzerId, found.length);
+			return found.length;
+		})();
+		if (edges > 0) this.globalNodeCache.delete(analyzerId);
+		return edges;
 	}
 
 	// ───────────────────────── persistence ─────────────────────────
