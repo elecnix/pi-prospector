@@ -1,9 +1,8 @@
-import { Check, Errors } from "typebox/value";
 import { createRun, insertNode } from "../../src/db/analysis-queries.js";
 import { buildFingerprint, parseFingerprintArgs } from "../../src/fingerprint/build.js";
 import { collectContributors } from "../../src/fingerprint/registry.js";
 import { BUILTIN_ANALYZERS } from "../../src/analyze/defaults.js";
-import { fingerprintSchema, type Fingerprint } from "../../src/fingerprint/schema.js";
+import type { Fingerprint } from "../../src/fingerprint/schema.js";
 import type { AsyncDatabase } from "../../src/db/async-db.js";
 
 /**
@@ -14,7 +13,9 @@ import type { AsyncDatabase } from "../../src/db/async-db.js";
  */
 
 export const ASOF = "2026-06-30T12:00:00.000Z";
+const AT = "2026-05-01T00:00:00.000Z";
 export const SENTINELS = ["SECRET-PROJECT", "/home/secret/path", "Secret title", "hunter2", "github.com", "secret-owner"];
+export const contributors = collectContributors(BUILTIN_ANALYZERS);
 
 let n = 0;
 
@@ -26,13 +27,14 @@ export async function seedSession(db: AsyncDatabase, id: string, startedAt = "20
 		.run(id, `/home/secret/path/${id}.jsonl`, startedAt);
 }
 
-export async function seedRun(db: AsyncDatabase, sessionId: string, analyzerId: string, version: string, at = "2026-05-01T00:00:00.000Z"): Promise<void> {
+export async function seedRun(db: AsyncDatabase, sessionId: string, analyzerId: string, version = "1.0"): Promise<void> {
 	n++;
 	await createRun(db, { id: `run-${n}`, analyzerId, analyzerVersionId: version, configId: "c", sessionId, mode: "fill", promptBundleHash: "" });
-	await db.prepare("UPDATE analysis_runs SET started_at = ? WHERE id = ?").run(at, `run-${n}`);
+	await db.prepare("UPDATE analysis_runs SET started_at = ? WHERE id = ?").run(AT, `run-${n}`);
 }
 
-export async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string, version: string, content: unknown, at = "2026-05-01T00:00:00.000Z"): Promise<void> {
+/** One current node. The analyzer is recorded as repaired: these graphs are written under lineage by subject. */
+export async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string, content: unknown, version = "1.0", at = AT): Promise<void> {
 	n++;
 	await insertNode(db, {
 		id: `node-${n}`,
@@ -48,27 +50,20 @@ export async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId:
 		outputKey: `ok-${n}`,
 		createdAt: at,
 	});
+	await db.prepare("INSERT OR IGNORE INTO lineage_repairs (analyzer_id, repaired_at, edges) VALUES (?, ?, 0)").run(analyzerId, at);
 }
 
-/** The fingerprint of the built-in contributors as of `ASOF`, checked against the schema they compose, as the command checks it. */
-export async function fingerprintOf(db: AsyncDatabase): Promise<Fingerprint> {
-	const contributors = collectContributors(BUILTIN_ANALYZERS);
-	const fp = await buildFingerprint(db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), contributors);
-	const schema = fingerprintSchema(contributors);
-	if (!Check(schema, fp)) {
-		const first = [...Errors(schema, fp)][0];
-		throw new Error(`fingerprint does not match its schema${first ? ` at ${first.instancePath}: ${first.message}` : ""}`);
-	}
-	return fp;
+/** The fingerprint of the built-in contributors as of `ASOF`. The builder checks it against the schema they compose. */
+export function fingerprintOf(db: AsyncDatabase): Promise<Fingerprint> {
+	return buildFingerprint(db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), contributors);
 }
 
-export type Section = Record<string, unknown> & { status: string };
+export type Section = Record<string, unknown> & { status: string; sessionsMeasured?: number };
 
-/** A section by id, objective or inferred. */
-export function sectionOf(fp: Fingerprint, id: string): Section {
-	const section = (fp.objective[id] ?? fp.inferred[id]) as Section | undefined;
-	if (section === undefined) throw new Error(`no section '${id}'`);
-	return section;
+export function sectionOf(fp: Fingerprint, kind: "objective" | "inferred", id: string): Section {
+	const section = fp[kind][id];
+	if (section === undefined) throw new Error(`no ${kind} section '${id}'`);
+	return section as Section;
 }
 
 /** The identifying sentinels the fingerprint text carries. */

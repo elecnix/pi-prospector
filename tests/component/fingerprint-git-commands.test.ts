@@ -21,7 +21,7 @@ describe("fingerprint section: git commands", () => {
 			await seedSession(t.db, id);
 			await seedRun(t.db, id, "git-commands", "1.0");
 			// s6 ran no git command; it is measured with zero.
-			await seedNode(t.db, id, "git-commands", "1.0", i <= 5 ? node([2, 2], [1, 1], [i === 1 ? 1 : 0, i === 1 ? 1 : 0]) : node([0, 0], [0, 0], [0, 0]));
+			await seedNode(t.db, id, "git-commands", i <= 5 ? node([2, 2], [1, 1], [i === 1 ? 1 : 0, i === 1 ? 1 : 0]) : node([0, 0], [0, 0], [0, 0]), "1.0");
 		}
 		// s7 never ran the analyzer, so its node-less state is not a zero.
 		await seedSession(t.db, "s7");
@@ -30,7 +30,7 @@ describe("fingerprint section: git commands", () => {
 
 	it("counts the commands that worked in the measured sessions", async () => {
 		const fp = await fingerprintOf(t.db);
-		const s = sectionOf(fp, "gitCommands");
+		const s = sectionOf(fp, "objective", "gitCommands");
 		assert.equal(s.status, "ok");
 		assert.equal(s["sessionsMeasured"], 6);
 		assert.equal(s["commits"], 10);

@@ -32,14 +32,14 @@ describe("fingerprint section: stale verification", () => {
 			// s6 verified and changed nothing after.
 			// A run's seconds come from timestamps and need not be whole, as s3's are.
 			const agent = i === 3 ? 720.4 : 720;
-			await seedNode(t.db, id, "stale-verification", "1.0", i <= 5 ? node(3600, { agent, user: i === 1 ? 60 : 0, subagent: 0 }, 1) : node(3600, { agent: 0, user: 0, subagent: 0 }, 0));
+			await seedNode(t.db, id, "stale-verification", i <= 5 ? node(3600, { agent, user: i === 1 ? 60 : 0, subagent: 0 }, 1) : node(3600, { agent: 0, user: 0, subagent: 0 }, 0), "1.0");
 		}
 	});
 	after(() => t.close());
 
 	it("measures verification time a later edit threw away, by who made the edit", async () => {
 		const fp = await fingerprintOf(t.db);
-		const s = sectionOf(fp, "staleVerification");
+		const s = sectionOf(fp, "objective", "staleVerification");
 		assert.equal(s.status, "ok");
 		assert.equal(s["sessionsMeasured"], 6);
 		assert.equal(s["passingHours"], 6);

@@ -27,14 +27,14 @@ describe("fingerprint section: delegation", () => {
 			await seedSession(t.db, id);
 			await seedRun(t.db, id, "delegation-outcomes", "1.0");
 			// s6 delegated nothing.
-			await seedNode(t.db, id, "delegation-outcomes", "1.0", i <= 5 ? node({ completed: 2, failed: i === 1 ? 1 : 0 }, 1, 30) : node({}, 0, 0));
+			await seedNode(t.db, id, "delegation-outcomes", i <= 5 ? node({ completed: 2, failed: i === 1 ? 1 : 0 }, 1, 30) : node({}, 0, 0), "1.0");
 		}
 	});
 	after(() => t.close());
 
 	it("counts delegation calls by outcome and the work moved to children", async () => {
 		const fp = await fingerprintOf(t.db);
-		const s = sectionOf(fp, "delegation");
+		const s = sectionOf(fp, "objective", "delegation");
 		assert.equal(s.status, "ok");
 		assert.equal(s["sessionsMeasured"], 6);
 		assert.equal(s["calls"], 11);

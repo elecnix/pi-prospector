@@ -51,11 +51,19 @@ const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
 const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of sessions";
 /** regression-prevention groups the verdicts into one corpus-wide node; the regressions section counts the same classes per session. */
 const REGRESSION_PREVENTION = "corpus aggregate of regression-verdict: measured through it";
+/** An analyzer whose output only feeds another one, whose section measures it. */
+const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
 /** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
-const VERIFICATION_VERDICTS = "input to stale-verification: measured through it";
+const INPUT_TO_STALE_VERIFICATION = inputTo("stale-verification");
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
-export const EXCLUSION_REASONS: readonly string[] = [NOT_YET_DECIDED, SECRET_SCANNER, REGRESSION_ATTRIBUTION, REGRESSION_PREVENTION, VERIFICATION_VERDICTS];
+export const EXCLUSION_REASONS: readonly string[] = [
+	NOT_YET_DECIDED,
+	SECRET_SCANNER,
+	REGRESSION_ATTRIBUTION,
+	REGRESSION_PREVENTION,
+	INPUT_TO_STALE_VERIFICATION,
+];
 
 /**
  * The built-in analyzers that contribute no fingerprint section, each with the
@@ -89,7 +97,7 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"session-ending": NOT_YET_DECIDED,
 	"skill-use": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
-	"verification-commands": VERIFICATION_VERDICTS,
+	"verification-commands": INPUT_TO_STALE_VERIFICATION,
 	"files-in-play": NOT_YET_DECIDED,
 	"navigation-efficiency": NOT_YET_DECIDED,
 	"similarity-cluster": NOT_YET_DECIDED,

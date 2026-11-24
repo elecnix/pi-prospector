@@ -31,21 +31,20 @@ describe("fingerprint section: regression verdicts", () => {
 			await seedSession(t.db, id);
 			await seedRun(t.db, id, "regression-verdict", "1.1");
 		}
-		for (let i = 1; i <= 5; i++) await seedNode(t.db, `s${i}`, "regression-verdict", "1.1", verdict(true));
+		for (let i = 1; i <= 5; i++) await seedNode(t.db, `s${i}`, "regression-verdict", verdict(true), "1.1");
 		// s6 repaired a defect that never worked; s7 and s8 were not admitted by the gate and have no verdict.
-		await seedNode(t.db, "s6", "regression-verdict", "1.1", verdict(false));
+		await seedNode(t.db, "s6", "regression-verdict", verdict(false), "1.1");
 		// s9 was last judged under the 1.0 taxonomy, whose classes do not compare: it is not measured.
 		await seedSession(t.db, "s9");
 		await seedRun(t.db, "s9", "regression-verdict", "1.0");
-		await seedNode(t.db, "s9", "regression-verdict", "1.0", verdict(true, "assumption_about_input"));
+		await seedNode(t.db, "s9", "regression-verdict", verdict(true, "assumption_about_input"), "1.0");
 	});
 	after(() => t.close());
 
 	it("counts the judged sessions, the regressions among them, and their classes", async () => {
 		const fp = await fingerprintOf(t.db);
-		const s = sectionOf(fp, "regressions");
+		const s = sectionOf(fp, "inferred", "regressions");
 		assert.equal(s.status, "ok");
-		assert.ok(fp.inferred["regressions"], "a model judged the verdicts, so the section is inferred");
 		assert.equal(s["sessionsMeasured"], 8);
 		assert.equal(s["judged"], 6);
 		assert.equal(s["defectFixes"], 6);

@@ -27,20 +27,20 @@ describe("fingerprint section: pull requests opened", () => {
 			await seedSession(t.db, id);
 			// s7 ran pr-opened, opened nothing, and is measured as a session without one.
 			await seedRun(t.db, id, "pr-opened", "1.1");
-			if (i <= 5) await seedNode(t.db, id, "pr-opened", "1.1", pr(i));
+			if (i <= 5) await seedNode(t.db, id, "pr-opened", pr(i), "1.1");
 		}
 		// s1 opened a second pull request, with a stacked-PR command.
-		await seedNode(t.db, "s1", "pr-opened", "1.1", pr(100, "stacked"), "2026-05-02T00:00:00.000Z");
+		await seedNode(t.db, "s1", "pr-opened", pr(100, "stacked"), "1.1", "2026-05-02T00:00:00.000Z");
 		// s8 was last run by 1.0, which did not read stacked pull requests: it is not measured.
 		await seedSession(t.db, "s8");
 		await seedRun(t.db, "s8", "pr-opened", "1.0");
-		await seedNode(t.db, "s8", "pr-opened", "1.0", pr(8));
+		await seedNode(t.db, "s8", "pr-opened", pr(8), "1.0");
 	});
 	after(() => t.close());
 
 	it("counts the pull requests from sessions a reading version measured", async () => {
 		const fp = await fingerprintOf(t.db);
-		const s = sectionOf(fp, "pullRequests");
+		const s = sectionOf(fp, "objective", "pullRequests");
 		assert.equal(s.status, "ok");
 		assert.equal(s["sessionsMeasured"], 7);
 		assert.equal(s["opened"], 6);
