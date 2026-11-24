@@ -212,6 +212,7 @@ export function nominateCommands(messages: readonly MessageRow[], config: Verifi
 }
 
 export const verificationCommandsAnalyzer: Analyzer = {
+	subjectOfNode: (content) => (typeof content["command"] === "string" ? content["command"] : undefined),
 	def: VERIFICATION_COMMANDS_DEF,
 	version: VERIFICATION_COMMANDS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
@@ -259,6 +260,8 @@ export const verificationCommandsAnalyzer: Analyzer = {
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "session",
 				anchorRef: ctx.sessionId,
+				// One verdict per command: the command is the subject, in the redacted form the node holds.
+				subject: redactCommandLine(candidate.command),
 				meta: { command: candidate.command } as unknown as Record<string, unknown>,
 			};
 		});
