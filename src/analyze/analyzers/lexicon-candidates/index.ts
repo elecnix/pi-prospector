@@ -29,6 +29,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { rankTerms, tokenize, TermCount } from "./tokenize.js";
 import { rankPhrases } from "./phrases.js";
 import { DEFAULT_LEXICON_CANDIDATES_CONFIG, type LexiconCandidatesConfig } from "./config.js";
+import { lexiconCandidatesFingerprint } from "./fingerprint.js";
 import { Type, type Static } from "typebox";
 
 export const LexiconCandidatesProperties = Type.Object({
@@ -92,6 +93,7 @@ export const lexiconCandidatesAnalyzer: Analyzer = {
 	def: LEXICON_CANDIDATES_DEF,
 	version: LEXICON_CANDIDATES_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [lexiconCandidatesFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: LEXICON_CANDIDATES_DEF.id,

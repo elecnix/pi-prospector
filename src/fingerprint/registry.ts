@@ -55,7 +55,6 @@ const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of ses
 const REGRESSION_PREVENTION = "corpus aggregate of regression-verdict: measured through it";
 /** An analyzer whose output only feeds another one, whose section measures it. */
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
-const INPUT_TO_FRUSTRATION_LEXICON = inputTo("frustration-lexicon");
 const INPUT_TO_TURN_FRUSTRATION = inputTo("turn-frustration");
 /** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
 const INPUT_TO_STALE_VERIFICATION = inputTo("stale-verification");
@@ -70,7 +69,6 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	REGRESSION_PREVENTION,
 	INPUT_TO_STALE_VERIFICATION,
 	MODEL_NAMED_CLASSES,
-	INPUT_TO_FRUSTRATION_LEXICON,
 	INPUT_TO_TURN_FRUSTRATION,
 	PROPOSAL_QUEUE,
 	POOLED_CLUSTERS,
@@ -88,8 +86,6 @@ export const EXCLUSION_REASONS: readonly string[] = [
  */
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"decode-collapse": SELF_CALIBRATED,
-	// It nominates the person's own words for the lexicon to judge; the words never leave the machine.
-	"lexicon-candidates": INPUT_TO_FRUSTRATION_LEXICON,
 	// It learns a per-person word list. turn-frustration publishes the categories of the hits, never the words.
 	"frustration-lexicon": INPUT_TO_TURN_FRUSTRATION,
 	// A session's node clusters the items of its repository's sibling sessions too, so the same cluster repeats
