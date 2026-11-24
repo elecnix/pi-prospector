@@ -52,6 +52,23 @@ describe("attention-gaps fingerprint", () => {
 		assert.deepEqual(countsOf(section["byWait"], ["wait"]), { "0-10s": 5, "10s-1m": 5 });
 	});
 
+	it("publishes other for sessions measured with other bounds, as the schema allows", async () => {
+		const u = await tempDb();
+		try {
+			for (const id of ids("custom", 5)) {
+				await seedSession(u.db, id);
+				await seedRun(u.db, id, "attention-gaps", "1.0");
+				const custom = { ...node([1, 1, 0, 0, 0, 0]), buckets: [{ le_seconds: 5, count: 1 }, { le_seconds: null, count: 1 }] };
+				await seedNode(u.db, id, "attention-gaps", custom, "1.0");
+			}
+			// fingerprintOf checks the result against the composed schema.
+			const section = sectionOf(await fingerprintOf(u.db), "objective", "attention");
+			assert.deepEqual(countsOf(section["byWait"], ["wait"]), { other: 10 });
+		} finally {
+			await u.close();
+		}
+	});
+
 	it("carries no message id", async () => {
 		assert.ok(!JSON.stringify(await fingerprintOf(t.db)).includes("hunter2"));
 	});

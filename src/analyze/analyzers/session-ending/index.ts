@@ -48,6 +48,7 @@ import {
 	DEFAULT_SESSION_ENDING_CONFIG,
 	type SessionEndingConfig,
 } from "./config.js";
+import { sessionEndingFingerprint } from "./fingerprint.js";
 import {
 	classifyEnding,
 	EndingEvidenceSchema,
@@ -115,6 +116,7 @@ export const sessionEndingAnalyzer: Analyzer = {
 	def: SESSION_ENDING_DEF,
 	version: SESSION_ENDING_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [sessionEndingFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: SESSION_ENDING_DEF.id,

@@ -48,6 +48,7 @@ import { PHASE_TRAJECTORY_DEF } from "../phase-trajectory/index.js";
 import { PLAN_PHASES, type PhaseName, type PlanPhase } from "../phase-trajectory/config.js";
 import { DEFAULT_PLAN_COMPLIANCE_CONFIG, type PlanComplianceConfig } from "./config.js";
 import { computePlanCompliance, formatComplianceDigestLine } from "./compliance.js";
+import { planComplianceFingerprint } from "./fingerprint.js";
 
 export const PhaseNameForSchema = Type.Union([
 	Type.Literal("navigate"),
@@ -165,6 +166,7 @@ export const planComplianceAnalyzer: Analyzer = {
 	def: PLAN_COMPLIANCE_DEF,
 	version: PLAN_COMPLIANCE_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [planComplianceFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: PLAN_COMPLIANCE_DEF.id,

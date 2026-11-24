@@ -57,6 +57,7 @@ import {
 	scanConsistencySignals,
 	type ConsistencySignal,
 } from "./detect.js";
+import { groundedClaimsFingerprint } from "./fingerprint.js";
 
 export const GROUNDED_CLAIMS_PROPERTIES = Type.Object({
 	user_message_id: Type.String(),
@@ -120,6 +121,7 @@ export const groundedClaimsAnalyzer: Analyzer = {
 	def: GROUNDED_CLAIMS_DEF,
 	version: GROUNDED_CLAIMS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [groundedClaimsFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: GROUNDED_CLAIMS_DEF.id,

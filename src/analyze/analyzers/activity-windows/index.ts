@@ -37,6 +37,8 @@ import { scanActivity } from "./detect.js";
 import { foldConcurrency, type Bucket } from "./concurrency.js";
 
 /** The properties an activity-windows node carries in its `contentJson`. */
+import { activityWindowsFingerprint } from "./fingerprint.js";
+
 export const ACTIVITY_WINDOWS_PROPERTIES = Type.Object({
 	session_id: Type.String(),
 	windows: Type.Array(Type.Object({ start: Type.String(), end: Type.String() })),
@@ -130,6 +132,7 @@ export const activityWindowsAnalyzer: Analyzer = {
 		label: "default",
 	},
 	outputs: [concurrencyOutput],
+	fingerprint: [activityWindowsFingerprint],
 
 	plan(ctx: AnalyzerPlanContext): AnalysisUnit[] {
 		if (ctx.messages.length === 0) return [];

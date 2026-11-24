@@ -268,14 +268,26 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 		}
 		return check;
 	};
+	// Read once per analyzer: the version floor and the version mix both need it.
+	const versionReads = new Map<string, ReturnType<VersionReader>>();
+	const versions: VersionReader = (analyzerId) => {
+		let read = versionReads.get(analyzerId);
+		if (!read) {
+			read = repaired(analyzerId).then(() => currentNodeVersions(db, scope, analyzerId));
+			versionReads.set(analyzerId, read);
+		}
+		return read;
+	};
 	const ctx: FingerprintReadContext = {
 		scope,
 		sessions,
 		runs: async (analyzerId, since) => {
 			if (since === undefined) return [...(await sessionsWithRun(db, scope, analyzerId))];
 			const floor = parseVersionId(since);
-			// At `since` or later: the move from the run's version up to `since` is no upgrade.
-			return [...(await latestRunVersions(db, scope, analyzerId))].filter(([, version]) => gradeVersionMove(parseVersionId(version), floor) === null).map(([id]) => id);
+			// At `since` or later: the move from the version up to `since` is no upgrade.
+			const reaches = (version: string) => gradeVersionMove(parseVersionId(version), floor) === null;
+			const carriesOlder = new Set((await versions(analyzerId)).filter((r) => !reaches(r.version)).map((r) => r.session));
+			return [...(await latestRunVersions(db, scope, analyzerId))].filter(([id, version]) => reaches(version) && !carriesOlder.has(id)).map(([id]) => id);
 		},
 		nodes: async (analyzerId, fields) => {
 			await repaired(analyzerId);
@@ -289,10 +301,7 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 	const section = async (kind: "objective" | "inferred") =>
 		Object.fromEntries(
 			await Promise.all(
-				contributors.filter((c) => c.def.kind === kind).map(async (c) => [c.def.id, await buildSection(c, ctx, async (id) => {
-						await repaired(id);
-						return currentNodeVersions(db, scope, id);
-					}, inScope, min)] as const),
+				contributors.filter((c) => c.def.kind === kind).map(async (c) => [c.def.id, await buildSection(c, ctx, versions, inScope, min)] as const),
 			),
 		);
 	const fingerprint = {

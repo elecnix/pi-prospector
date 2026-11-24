@@ -38,6 +38,10 @@ describe("fingerprint section: regression verdicts", () => {
 		await seedSession(t.db, "s9");
 		await seedRun(t.db, "s9", "regression-verdict", "1.0");
 		await seedNode(t.db, "s9", "regression-verdict", verdict(true, "assumption_about_input"), "1.0");
+		// s10 was last run at 1.1 in fill mode, which left its 1.0 verdict current: it is not measured.
+		await seedSession(t.db, "s10");
+		await seedRun(t.db, "s10", "regression-verdict", "1.1");
+		await seedNode(t.db, "s10", "regression-verdict", verdict(true), "1.0");
 	});
 	after(() => t.close());
 

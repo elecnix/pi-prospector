@@ -33,4 +33,24 @@ export const metrics: MetricDefinition[] = [
 			LIMIT_PARALLEL,
 		],
 	},
+	{
+		id: "activity-windows.part-of-day",
+		name: "Active time by part of day",
+		definition: "A session's active minutes, split where its windows cross a boundary between the four six-hour parts of the local day.",
+		measurement: "counted",
+		unit: "minutes per part of the day",
+		denominator: "none",
+		values: [
+			{ value: "night", meaning: "From midnight to 06:00 local time." },
+			{ value: "morning", meaning: "From 06:00 to noon local time." },
+			{ value: "afternoon", meaning: "From noon to 18:00 local time." },
+			{ value: "evening", meaning: "From 18:00 to midnight local time." },
+		],
+		limitations: [
+			"Local time is the clock of the machine that reads the windows, not of the one that ran the session, so the minutes of a session run in another time zone land in the wrong part.",
+			"The minutes are agent time and not the person's, so they exceed it whenever sessions overlap.",
+			"The parts are six hours wide on purpose: a finer split published in a fingerprint would reveal the person's time zone and schedule.",
+			LIMIT_PARALLEL,
+		],
+	},
 ];

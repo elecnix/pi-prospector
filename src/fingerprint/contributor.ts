@@ -132,8 +132,10 @@ export interface FingerprintReadContext {
 	/**
 	 * Sessions in scope with a successful run of the analyzer by the as-of
 	 * instant. With `since` (`major.minor`), only the sessions whose latest such
-	 * run is at that version or later: a contributor that reads a field an older
-	 * version did not write cannot count those sessions as measured.
+	 * run is at that version or later and whose current nodes all are: a fill run
+	 * at a later version leaves a node whose inputs did not change current, and
+	 * that node does not mean what the section reads. A session with one is not
+	 * measured, so no figure mixes the two meanings.
 	 */
 	runs(analyzerId: string, since?: string): Promise<string[]>;
 	/**

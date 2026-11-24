@@ -7,7 +7,8 @@ import { countsOf, fingerprintOf, ids, sectionOf, seedNode, seedRun, seedSession
  * The corrections section, from turn-pair-core: how often the person corrected
  * or disputed the agent. Six sessions ran a version that reads message origin;
  * two ran an older one and are not measured, because their corrections include
- * words an agent or the harness wrote. A seventh ran 1.3 last and is measured.
+ * words an agent or the harness wrote. A ninth ran 1.3 last
+ * but still carries a turn from 1.2, and is not measured either.
  */
 
 let t: TempDb;
@@ -52,8 +53,8 @@ describe("turn-pair-core fingerprint", () => {
 			await seedRun(t.db, id, "turn-pair-core", "1.2");
 			await seedNode(t.db, id, "turn-pair-core", pair({ correction: "explicit" }), "1.2");
 		}
-		// Last run at 1.3 in fill mode, which left the 1.2 node of an older turn current. The floor reads
-		// the run, so the session is measured and its nodes are read as they are.
+		// Last run at 1.3 in fill mode, which left the 1.2 node of an older turn current. Its corrections
+		// mix both meanings, so it is not measured.
 		await seedSession(t.db, "filled");
 		await seedRun(t.db, "filled", "turn-pair-core", "1.3");
 		await seedNode(t.db, "filled", "turn-pair-core", pair({ correction: "explicit" }), "1.2");
@@ -64,10 +65,10 @@ describe("turn-pair-core fingerprint", () => {
 	it("counts turns, corrections by type, rebuttal candidates and high-signal turns", async () => {
 		const section = sectionOf(await fingerprintOf(t.db), "objective", "corrections");
 		assert.equal(section.status, "ok");
-		assert.equal(section.sessionsMeasured, 7);
-		assert.equal(section["turns"], 20);
-		assert.equal(section["corrections"], 13);
-		assert.deepEqual(countsOf(section["byCorrectionType"], ["correctionType"]), { explicit: 7, repetition: 6 });
+		assert.equal(section.sessionsMeasured, 6);
+		assert.equal(section["turns"], 18);
+		assert.equal(section["corrections"], 12);
+		assert.deepEqual(countsOf(section["byCorrectionType"], ["correctionType"]), { explicit: 6, repetition: 6 });
 		assert.equal(section["rebuttalCandidates"], 6);
 		assert.equal(section["highSignalTurns"], 6);
 	});
