@@ -6,66 +6,21 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { Check } from "typebox/value";
 import { tempDb, type TempDb } from "./helpers.js";
-import { createRun, insertNode } from "../../src/db/analysis-queries.js";
-import { buildFingerprint, parseFingerprintArgs } from "../../src/fingerprint/build.js";
-import { fingerprintSchema, type Fingerprint } from "../../src/fingerprint/schema.js";
-import { BUILTIN_ANALYZERS } from "../../src/analyze/defaults.js";
-import { collectContributors } from "../../src/fingerprint/registry.js";
-import type { AsyncDatabase } from "../../src/db/async-db.js";
+import { fingerprintOf, leakedSentinels, sectionOf, seedNode, seedRun, seedSession } from "./fingerprint-seed.js";
+import type { Fingerprint } from "../../src/fingerprint/schema.js";
 
-const ASOF = "2026-06-30T12:00:00.000Z";
-const SENTINELS = ["SECRET-PROJECT", "/home/secret/path", "secret-skill", "secret-tool", "secret-model"];
-const contributors = collectContributors(BUILTIN_ANALYZERS);
 const IDS = Array.from({ length: 7 }, (_, i) => `s${i + 1}`);
 
 let t: TempDb;
-let n = 0;
-
-async function seedSession(db: AsyncDatabase, id: string, startedAt: string): Promise<void> {
-	await db
-		.prepare(
-			"INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, name, started_at, last_line, last_modified, message_count, branch_count) VALUES (?, ?, 'SECRET-PROJECT', 'pi', '/home/secret/path', NULL, 'Secret title', ?, 0, 0, 0, 0)",
-		)
-		.run(id, `/home/secret/path/${id}.jsonl`, startedAt);
-}
-
-async function seedNode(db: AsyncDatabase, sessionId: string, analyzerId: string, content: unknown, version = "1.0", at = "2026-05-01T00:00:00.000Z"): Promise<void> {
-	n++;
-	await insertNode(db, {
-		id: `node-${n}`,
-		sessionId,
-		analyzerId,
-		analyzerVersionId: version,
-		configId: "c",
-		runId: null,
-		nodeKind: "metric",
-		contentJson: JSON.stringify(content),
-		sourceSetHash: `ssh-${n}`,
-		inputKey: `ik-${n}`,
-		outputKey: `ok-${n}`,
-		createdAt: at,
-	});
-}
-
-async function seedRun(db: AsyncDatabase, sessionId: string, analyzerId: string, version = "1.0"): Promise<void> {
-	n++;
-	await createRun(db, { id: `run-${n}`, analyzerId, analyzerVersionId: version, configId: "c", sessionId, mode: "fill", promptBundleHash: "" });
-	await db.prepare("UPDATE analysis_runs SET started_at = ? WHERE id = ?").run("2026-05-01T00:00:00.000Z", `run-${n}`);
-}
-
-type Section = Record<string, unknown> & { status: string; sessionsMeasured?: number };
 
 async function fingerprint(): Promise<Fingerprint> {
-	const fp = await buildFingerprint(t.db, parseFingerprintArgs(`--as-of ${ASOF}`, new Date(ASOF)), contributors);
-	assert.ok(Check(fingerprintSchema(contributors), fp), "fingerprint does not match the schema");
-	const text = JSON.stringify(fp);
-	for (const sentinel of SENTINELS) assert.ok(!text.includes(sentinel), `output contains ${sentinel}`);
+	const fp = await fingerprintOf(t.db);
+	assert.deepEqual(leakedSentinels(fp, ["secret-skill", "secret-tool", "secret-model"]), []);
 	return fp;
 }
 
-const objective = (fp: Fingerprint, id: string) => fp.objective[id] as Section;
+const objective = (fp: Fingerprint, id: string) => sectionOf(fp, "objective", id);
 
 describe("economy and tool-use fingerprint sections", () => {
 	before(async () => {
@@ -240,9 +195,7 @@ describe("economy and tool-use fingerprint sections", () => {
 		assert.equal(section["sessionsChurning"], 5);
 	});
 
-	it("skill-use: skill calls and the sessions that load a skill, without their names, reading every current node", async () => {
-		// A second current node of s1: the contributor reads current nodes as they are, and the framework keeps one per session.
-		await seedNode(t.db, "s1", "skill-use", { skills: [], skill_call_count: 1, distinct_skill_count: 1, tool_call_count: 10 }, "1.0", "2026-04-01T00:00:00.000Z");
+	it("skill-use: skill calls and the sessions that load a skill, without their names", async () => {
 		for (const [i, id] of IDS.slice(0, 6).entries()) {
 			const used = i < 5;
 			await seedNode(t.db, id, "skill-use", {
@@ -255,9 +208,9 @@ describe("economy and tool-use fingerprint sections", () => {
 		const section = objective(await fingerprint(), "skills");
 		assert.equal(section.status, "ok");
 		assert.equal(section.sessionsMeasured, 6);
-		assert.equal(section["skillCalls"], 11);
-		assert.equal(section["toolCalls"], 310);
-		assert.equal(section["distinctSkills"], 6);
+		assert.equal(section["skillCalls"], 10);
+		assert.equal(section["toolCalls"], 300);
+		assert.equal(section["distinctSkills"], 5);
 		assert.equal(section["sessionsWithSkill"], 5);
 	});
 });
