@@ -26,6 +26,7 @@ import {
 } from "./aggregate.js";
 import { contentOf } from "../regression-attribution/node-content.js";
 import { DEFAULT_REGRESSION_PREVENTION_CONFIG, type RegressionPreventionConfig } from "./config.js";
+import { regressionPreventionFingerprint } from "./fingerprint.js";
 
 export const ANALYZER_ID = "regression-prevention";
 
@@ -126,6 +127,7 @@ export const regressionPreventionAnalyzer: Analyzer = {
 		codeRef: "src/analyze/analyzers/regression-prevention/index.ts",
 	},
 	prompts: {},
+	fingerprint: [regressionPreventionFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: ANALYZER_ID,

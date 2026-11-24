@@ -51,8 +51,6 @@ const SELF_CALIBRATED = "calibrated on the person's own corpus: its counts do no
 const MODEL_NAMED_CLASSES = "free text: the model names its own request classes, so no fixed list can hold them";
 /** regression-attribution resolves a blame only to a pull request a local session opened, which few blames are. */
 const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of sessions";
-/** regression-prevention groups the verdicts into one corpus-wide node; the regressions section counts the same classes per session. */
-const REGRESSION_PREVENTION = "corpus aggregate of regression-verdict: measured through it";
 /** An analyzer whose output only feeds another one, whose section measures it. */
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
 const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
@@ -63,7 +61,6 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	NOT_YET_DECIDED,
 	SECRET_SCANNER,
 	REGRESSION_ATTRIBUTION,
-	REGRESSION_PREVENTION,
 	MODEL_NAMED_CLASSES,
 	PROPOSAL_QUEUE,
 	POOLED_CLUSTERS,
@@ -98,5 +95,4 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"piicatcher": SECRET_SCANNER,
 	"dataprofiler": SECRET_SCANNER,
 	"regression-attribution": REGRESSION_ATTRIBUTION,
-	"regression-prevention": REGRESSION_PREVENTION,
 };
