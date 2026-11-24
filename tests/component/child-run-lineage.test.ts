@@ -19,7 +19,7 @@ import { messageOriginAnalyzer, MESSAGE_ORIGIN_DEF, type MessageOriginProperties
 import { lexiconCandidatesAnalyzer } from "../../src/analyze/analyzers/lexicon-candidates/index.js";
 import { frustrationLexiconAnalyzer } from "../../src/analyze/analyzers/frustration-lexicon/index.js";
 import { turnFrustrationAnalyzer, TURN_FRUSTRATION_DEF, type TurnFrustrationProperties } from "../../src/analyze/analyzers/turn-frustration/index.js";
-import { getNodesByAnalyzer } from "../../src/db/analysis-queries.js";
+import { getNodesByAnalyzer, isLineageRepaired } from "../../src/db/analysis-queries.js";
 import { getChildSessionStats, getUnanalyzedSessions, markAnalyzed } from "../../src/db/queries.js";
 import { migrate } from "../../src/db/schema.js";
 import { delegationOutcomesAnalyzer, DELEGATION_OUTCOMES_DEF, type DelegationOutcomesProperties } from "../../src/analyze/analyzers/delegation-outcomes/index.js";
@@ -109,6 +109,50 @@ describe("child run lineage (#416)", () => {
 			const facts = await sessionFacts(db, { sources: null, from: null, toExclusive: null, asOf: "2027-01-01T00:00:00.000Z" });
 			assert.equal(facts.find((f) => f.id === PARENT_ID)?.subAgentSessions, 1);
 		}));
+
+	/** Current nodes per anchor and signal: one key per subject, so every count must be 1. */
+	async function currentPerSubject(db: AsyncDatabase, analyzerId: string, sessionId: string): Promise<number[]> {
+		const rows = (await db
+			.prepare("SELECT content_json FROM current_nodes WHERE analyzer_id = ? AND session_id = ? AND node_kind != 'error'")
+			.all(analyzerId, sessionId)) as Array<{ content_json: string }>;
+		const counts = new Map<string, number>();
+		for (const row of rows) {
+			const c = JSON.parse(row.content_json) as Record<string, unknown>;
+			const key = `${String(c["user_message_id"])}|${String(c["signal"])}`;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
+		return [...counts.values()];
+	}
+
+	for (const repaired of [true, false]) {
+		it(`redraws a run on a database migrated before parent_kind existed, lineage ${repaired ? "repaired" : "not yet repaired"}: one current node per subject`, () =>
+			withTree(async (db) => {
+				// The run as the older schema holds it: no parent, no kind column, no triggers.
+				await db.prepare("UPDATE sessions SET parent_session = NULL, parent_kind = NULL WHERE id = ?").run(CHILD_ID);
+				await analyse(db, CHILD_ID);
+				await analyse(db, PARENT_ID);
+				for (const id of [CHILD_ID, PARENT_ID]) await markAnalyzed(db, id);
+				await db.exec("DROP TRIGGER sessions_parent_link_ai; DROP TRIGGER sessions_parent_link_au; ALTER TABLE sessions DROP COLUMN parent_kind;");
+				if (!repaired) await db.exec("DELETE FROM lineage_repairs");
+				assert.equal(await isLineageRepaired(db, MESSAGE_ORIGIN_DEF.id), repaired);
+
+				await migrate(db);
+				const pending = new Set((await getUnanalyzedSessions(db)).map((x) => x.id));
+				assert.ok(pending.has(CHILD_ID) && pending.has(PARENT_ID));
+				const kinds = (await db.prepare("SELECT id, parent_kind FROM sessions ORDER BY id").all()) as Array<Record<string, unknown>>;
+				assert.deepEqual(kinds, [{ id: PARENT_ID, parent_kind: null }, { id: FORK_ID, parent_kind: "fork" }, { id: CHILD_ID, parent_kind: "child" }]);
+
+				await analyse(db, CHILD_ID);
+				await analyse(db, PARENT_ID);
+				for (const id of [MESSAGE_ORIGIN_DEF.id, TURN_FRUSTRATION_DEF.id, DELEGATION_OUTCOMES_DEF.id]) assert.ok(await isLineageRepaired(db, id));
+				assert.deepEqual(await currentPerSubject(db, MESSAGE_ORIGIN_DEF.id, CHILD_ID), [1]);
+				assert.deepEqual(await currentPerSubject(db, TURN_FRUSTRATION_DEF.id, CHILD_ID), [1]);
+				assert.deepEqual(await currentPerSubject(db, DELEGATION_OUTCOMES_DEF.id, PARENT_ID), [1]);
+				const [current] = (await db.prepare("SELECT content_json FROM current_nodes WHERE analyzer_id = ? AND session_id = ?").all(MESSAGE_ORIGIN_DEF.id, CHILD_ID)) as Array<{ content_json: string }>;
+				assert.equal((JSON.parse(current!.content_json) as MessageOriginProperties).origin, "agent");
+				assert.equal((await getNodesByAnalyzer(db, MESSAGE_ORIGIN_DEF.id, CHILD_ID)).length, 2, "the replaced node stays in the graph");
+			}));
+	}
 
 	it("a link recorded after analysis queues the run and its parent, and their units take the new lineage", () =>
 		withTree(async (db) => {
