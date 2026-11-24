@@ -54,8 +54,13 @@ const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of ses
 const REGRESSION_PREVENTION = "corpus aggregate of regression-verdict: measured through it";
 /** An analyzer whose output only feeds another one, whose section measures it. */
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
+const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
+const INPUT_TO_FRUSTRATION_LEXICON = inputTo("frustration-lexicon");
+const INPUT_TO_TURN_FRUSTRATION = inputTo("turn-frustration");
 /** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
 const INPUT_TO_STALE_VERIFICATION = inputTo("stale-verification");
+const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
+const POOLED_CLUSTERS = "pools a repository's sessions: a node's clusters are not its own session's, so no per-session figure";
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
 export const EXCLUSION_REASONS: readonly string[] = [
@@ -65,6 +70,11 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	REGRESSION_PREVENTION,
 	INPUT_TO_STALE_VERIFICATION,
 	MODEL_NAMED_CLASSES,
+	INPUT_TO_PROMPT_FORM,
+	INPUT_TO_FRUSTRATION_LEXICON,
+	INPUT_TO_TURN_FRUSTRATION,
+	PROPOSAL_QUEUE,
+	POOLED_CLUSTERS,
 ];
 
 /**
@@ -77,31 +87,31 @@ export const EXCLUSION_REASONS: readonly string[] = [
  * contributor in the same pull request.
  */
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
-	"message-origin": NOT_YET_DECIDED,
-	"turn-pair-core": NOT_YET_DECIDED,
-	"lexicon-candidates": NOT_YET_DECIDED,
-	"frustration-lexicon": NOT_YET_DECIDED,
-	"attention-gaps": NOT_YET_DECIDED,
-	"message-answers": NOT_YET_DECIDED,
-	"prompt-form": NOT_YET_DECIDED,
-	"assistant-cognition": NOT_YET_DECIDED,
+	// It nominates the person's own words for the lexicon to judge; the words never leave the machine.
+	"lexicon-candidates": INPUT_TO_FRUSTRATION_LEXICON,
+	// It learns a per-person word list. turn-frustration publishes the categories of the hits, never the words.
+	"frustration-lexicon": INPUT_TO_TURN_FRUSTRATION,
+	// Its answers reach the fingerprint as prompt-form's `promptKind` section.
+	"message-answers": INPUT_TO_PROMPT_FORM,
 	"phase-trajectory": NOT_YET_DECIDED,
 	"plan-compliance": NOT_YET_DECIDED,
 	"grounded-claims": NOT_YET_DECIDED,
 	"revive-chains": NOT_YET_DECIDED,
 	"uncompleted-leads": NOT_YET_DECIDED,
 	"compression-checklist": NOT_YET_DECIDED,
-	"language-mismatch": NOT_YET_DECIDED,
 	"decode-collapse": NOT_YET_DECIDED,
 	"repetition-collapse": NOT_YET_DECIDED,
 	"session-ending": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
+	// A session's node clusters the items of its repository's sibling sessions too, so the same cluster repeats
+	// in every sibling's node and a session can carry a cluster none of its own messages belong to.
+	"similarity-cluster": POOLED_CLUSTERS,
 	"verification-commands": INPUT_TO_STALE_VERIFICATION,
-	"similarity-cluster": NOT_YET_DECIDED,
 	"friction-accumulation": NOT_YET_DECIDED,
+	// It reads only rule-shaped proposals still open, so accepting or rejecting proposals changes its counts.
+	// Its other fields are instruction-file paths and quotes.
+	"rule-restatement": PROPOSAL_QUEUE,
 	"request-classes": MODEL_NAMED_CLASSES,
-	"session-overview": NOT_YET_DECIDED,
-	"rule-restatement": NOT_YET_DECIDED,
 	"secret-leak": SECRET_SCANNER,
 	"gitleaks": SECRET_SCANNER,
 	"nosey-parker": SECRET_SCANNER,

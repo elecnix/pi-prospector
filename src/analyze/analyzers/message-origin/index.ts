@@ -45,6 +45,7 @@ import {
 	parseOriginDecision,
 } from "./decision.js";
 import { Type, type Static } from "typebox";
+import { messageOriginFingerprint } from "./fingerprint.js";
 
 export const MessageOriginProperties = Type.Object({
 	user_message_id: Type.String(),
@@ -109,6 +110,7 @@ type UnitMeta = Static<typeof UnitMeta>;
 export const messageOriginAnalyzer: Analyzer = {
 	def: MESSAGE_ORIGIN_DEF,
 	version: MESSAGE_ORIGIN_VERSION,
+	fingerprint: [messageOriginFingerprint],
 	prompts: {} as Record<string, PromptVersion>,
 	defaultConfig: {
 		id: "",
