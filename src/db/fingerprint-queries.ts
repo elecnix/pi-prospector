@@ -137,13 +137,18 @@ export async function currentNodeVersions(db: AsyncDatabase, scope: FingerprintS
 	}>;
 }
 
-/** A JSON path into node content: `$` followed by `.name` steps. */
-const JSON_PATH = /^\$(\.[A-Za-z_][A-Za-z0-9_]*)+$/;
+/**
+ * One step of a JSON path: `.name`, or `."name-with-dashes"` for a key that is
+ * not an identifier (an analyzer's class ids, such as `cold-ttl`, key its counts).
+ */
+const STEP = String.raw`\.(?:[A-Za-z_][A-Za-z0-9_]*|"[A-Za-z0-9_-]+")`;
+/** A JSON path into node content: `$` followed by steps. */
+const JSON_PATH = new RegExp(`^\\$(?:${STEP})+$`);
 /** A path relative to an array item, which may be the item itself. */
-const ITEM_PATH = /^\$(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+const ITEM_PATH = new RegExp(`^\\$(?:${STEP})*$`);
 
 function checkPaths(paths: readonly string[], pattern: RegExp): void {
-	for (const path of paths) if (!pattern.test(path)) throw new Error(`'${path}' is not a JSON path of the form $.a.b`);
+	for (const path of paths) if (!pattern.test(path)) throw new Error(`'${path}' is not a JSON path of the form $.a.b or $.a."b-c"`);
 }
 
 /** A scalar read out of node content. */

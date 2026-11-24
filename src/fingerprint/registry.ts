@@ -47,6 +47,7 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 
 const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
+const MODEL_NAMED_CLASSES = "free text: the model names its own request classes, so no fixed list can hold them";
 /** regression-attribution resolves a blame only to a pull request a local session opened, which few blames are. */
 const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of sessions";
 /** regression-prevention groups the verdicts into one corpus-wide node; the regressions section counts the same classes per session. */
@@ -63,6 +64,7 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	REGRESSION_ATTRIBUTION,
 	REGRESSION_PREVENTION,
 	INPUT_TO_STALE_VERIFICATION,
+	MODEL_NAMED_CLASSES,
 ];
 
 /**
@@ -83,10 +85,8 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"message-answers": NOT_YET_DECIDED,
 	"prompt-form": NOT_YET_DECIDED,
 	"assistant-cognition": NOT_YET_DECIDED,
-	"tool-trajectory": NOT_YET_DECIDED,
 	"phase-trajectory": NOT_YET_DECIDED,
 	"plan-compliance": NOT_YET_DECIDED,
-	"task-tool-mismatch": NOT_YET_DECIDED,
 	"grounded-claims": NOT_YET_DECIDED,
 	"revive-chains": NOT_YET_DECIDED,
 	"uncompleted-leads": NOT_YET_DECIDED,
@@ -95,19 +95,11 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	"decode-collapse": NOT_YET_DECIDED,
 	"repetition-collapse": NOT_YET_DECIDED,
 	"session-ending": NOT_YET_DECIDED,
-	"skill-use": NOT_YET_DECIDED,
 	"activity-windows": NOT_YET_DECIDED,
 	"verification-commands": INPUT_TO_STALE_VERIFICATION,
-	"files-in-play": NOT_YET_DECIDED,
-	"navigation-efficiency": NOT_YET_DECIDED,
 	"similarity-cluster": NOT_YET_DECIDED,
 	"friction-accumulation": NOT_YET_DECIDED,
-	"tool-inventory-tax": NOT_YET_DECIDED,
-	"context-economy": NOT_YET_DECIDED,
-	"cache-economy": NOT_YET_DECIDED,
-	"routing-opportunity": NOT_YET_DECIDED,
-	"token-units": NOT_YET_DECIDED,
-	"request-classes": NOT_YET_DECIDED,
+	"request-classes": MODEL_NAMED_CLASSES,
 	"session-overview": NOT_YET_DECIDED,
 	"rule-restatement": NOT_YET_DECIDED,
 	"secret-leak": SECRET_SCANNER,

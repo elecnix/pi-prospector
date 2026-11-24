@@ -50,6 +50,7 @@ import {
 } from "./config.js";
 import { buildToolStream } from "../../tool-stream.js";
 import { detectTaskToolMismatch, MentionVerdictSchema, type DetectionResult } from "./detect.js";
+import { taskToolMismatchFingerprint } from "./fingerprint.js";
 
 /** A proposal this analyzer embeds in its node; materialised by the framework. */
 export const TaskToolMismatchRawProposal = Type.Object({
@@ -142,6 +143,7 @@ export const taskToolMismatchAnalyzer: Analyzer = {
 	def: TASK_TOOL_MISMATCH_DEF,
 	version: TASK_TOOL_MISMATCH_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [taskToolMismatchFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: TASK_TOOL_MISMATCH_DEF.id,

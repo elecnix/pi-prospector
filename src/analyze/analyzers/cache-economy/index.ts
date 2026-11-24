@@ -47,6 +47,7 @@ import type {
 } from "../../types.js";
 import { computeConfigHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
+import { cacheEconomyFingerprint } from "./fingerprint.js";
 
 export const CacheClassification = Type.Union([
 	Type.Literal("hit"),
@@ -333,6 +334,7 @@ export const cacheEconomyAnalyzer: Analyzer = {
 	def: CACHE_ECONOMY_DEF,
 	version: CACHE_ECONOMY_VERSION,
 	prompts: {},
+	fingerprint: [cacheEconomyFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: CACHE_ECONOMY_DEF.id,

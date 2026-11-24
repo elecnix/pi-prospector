@@ -138,6 +138,14 @@ describe("buildFingerprint", () => {
 		assert.ok(!text.includes("codex"), "a source under the minimum is named");
 	});
 
+	it("reads a fingerprint written before sections published their analyzer versions", async () => {
+		const fp = structuredClone(await build(t.db, at()));
+		for (const kind of ["objective", "inferred"] as const) {
+			for (const section of Object.values(fp[kind]) as Section[]) delete section["versions"];
+		}
+		assert.ok(Check(fingerprintSchema(contributors), fp), "a fingerprint without versions does not match the schema");
+	});
+
 	it("states the period as the first and last month holding at least the minimum of sessions", async () => {
 		assert.deepEqual((await build(t.db, at())).period, { from: "2026-03", to: "2026-04" });
 		assert.deepEqual((await build(t.db, at("--source claude"))).period, { from: "2026-04", to: "2026-04" });

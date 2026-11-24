@@ -43,7 +43,7 @@ export const SOURCE_GROUPS = [...HARNESS_SOURCES, "unknown"] as const;
 export type SourceGroup = (typeof SOURCE_GROUPS)[number];
 
 /** The units a distribution may state. A contributor needing another unit adds it here. */
-export const DISTRIBUTION_UNITS = ["minutes", "prompts", "tool-calls"] as const;
+export const DISTRIBUTION_UNITS = ["minutes", "prompts", "tool-calls", "mite", "percent", "ratio", "files"] as const;
 export type DistributionUnit = (typeof DISTRIBUTION_UNITS)[number];
 
 /** The two kinds of section. */
@@ -146,7 +146,9 @@ export function sectionSchema(contributor: FingerprintContributor): TSchema {
 	}
 	const measures = Object.fromEntries(contributor.def.measures.map((m) => [m.id, measureSchema(m)]));
 	const analyzers = contributor.def.analyzers;
-	const versions: Record<string, TSchema> = analyzers === undefined ? {} : { versions: versionsSchema(analyzers) };
+	// The builder always sets `versions` when the section reads analyzers. It is optional, like the
+	// header's `period`, so that a fingerprint from before it still reads; `compare` notes the gap.
+	const versions: Record<string, TSchema> = analyzers === undefined ? {} : { versions: Type.Optional(versionsSchema(analyzers)) };
 	return Type.Union([
 		Type.Object({ status: Type.Literal("ok"), sessionsMeasured: Count, ...versions, ...measures }, { additionalProperties: false }),
 		Withheld,

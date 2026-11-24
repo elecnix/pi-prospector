@@ -58,6 +58,7 @@ import {
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
 import type { CostInfo } from "../../../types.js";
+import { toolInventoryTaxFingerprint } from "./fingerprint.js";
 
 // ── emitted-node schema ──
 
@@ -343,6 +344,7 @@ export const toolInventoryTaxAnalyzer: Analyzer = {
 	def: TOOL_INVENTORY_TAX_DEF,
 	version: TOOL_INVENTORY_TAX_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [toolInventoryTaxFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: TOOL_INVENTORY_TAX_DEF.id,
