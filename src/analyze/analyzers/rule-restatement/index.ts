@@ -43,6 +43,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { SESSION_OVERVIEW_DEF } from "../session-overview/index.js";
 import { getSessionScope, listOpenProposalsForSession } from "../../../db/queries.js";
 import { DEFAULT_RULE_RESTATEMENT_CONFIG, type RuleRestatementConfig } from "./config.js";
+import { ruleRestatementFingerprint } from "./fingerprint.js";
 import {
 	InstructionFile,
 	InstructionScope,
@@ -145,6 +146,7 @@ export const ruleRestatementAnalyzer: Analyzer = {
 	def: RULE_RESTATEMENT_DEF,
 	version: RULE_RESTATEMENT_VERSION,
 	prompts: PROMPTS,
+	fingerprint: [ruleRestatementFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: RULE_RESTATEMENT_DEF.id,

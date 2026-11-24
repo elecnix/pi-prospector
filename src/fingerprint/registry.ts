@@ -53,7 +53,6 @@ const MODEL_NAMED_CLASSES = "free text: the model names its own request classes,
 const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of sessions";
 /** An analyzer whose output only feeds another one, whose section measures it. */
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
-const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
 const POOLED_CLUSTERS = "pools a repository's sessions: a node's clusters are not its own session's, so no per-session figure";
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
@@ -62,7 +61,6 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	SECRET_SCANNER,
 	REGRESSION_ATTRIBUTION,
 	MODEL_NAMED_CLASSES,
-	PROPOSAL_QUEUE,
 	POOLED_CLUSTERS,
 	SELF_CALIBRATED,
 ];
@@ -81,9 +79,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	// A session's node clusters the items of its repository's sibling sessions too, so the same cluster repeats
 	// in every sibling's node and a session can carry a cluster none of its own messages belong to.
 	"similarity-cluster": POOLED_CLUSTERS,
-	// It reads only rule-shaped proposals still open, so accepting or rejecting proposals changes its counts.
-	// Its other fields are instruction-file paths and quotes.
-	"rule-restatement": PROPOSAL_QUEUE,
 	"request-classes": MODEL_NAMED_CLASSES,
 	"secret-leak": SECRET_SCANNER,
 	"gitleaks": SECRET_SCANNER,
