@@ -188,7 +188,8 @@ describe("re-reading one line that is already stored", () => {
 						const a = await dump(fresh.db);
 						const b = await dump(reread.db);
 						// The analysis tables name the run (ids, creation times); their content is compared through derived().
-						for (const t of Object.keys(a)) if (t.startsWith("analy") || t === "prompt_registry") { delete a[t]; delete b[t]; }
+						// lineage_repairs records when the run repaired its analyzer, so it names the run too.
+						for (const t of Object.keys(a)) if (t.startsWith("analy") || t === "prompt_registry" || t === "lineage_repairs") { delete a[t]; delete b[t]; }
 						assert.deepEqual(b, a);
 						assert.ok((a["messages"] as unknown[]).length >= 3, "the fixture holds messages");
 					}

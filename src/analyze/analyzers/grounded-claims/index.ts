@@ -112,6 +112,11 @@ function signalSourceId(sig: ConsistencySignal): string {
 }
 
 export const groundedClaimsAnalyzer: Analyzer = {
+	subjectOfNode: (content) => {
+		const { signal, claim_kind: claimKind, claim } = content;
+		if (typeof signal !== "string" || typeof claimKind !== "string" || typeof claim !== "string") return undefined;
+		return `${signal}:${claimKind}:${shortHash(claim)}`;
+	},
 	def: GROUNDED_CLAIMS_DEF,
 	version: GROUNDED_CLAIMS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
@@ -142,6 +147,8 @@ export const groundedClaimsAnalyzer: Analyzer = {
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "message",
 				anchorRef: sig.userMessageId,
+				// A turn can carry several claims; each is its own subject.
+				subject: signalSourceId(sig),
 				meta: sig as unknown as Record<string, unknown>,
 			};
 		});

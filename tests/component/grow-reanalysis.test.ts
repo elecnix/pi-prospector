@@ -68,6 +68,15 @@ async function runsForSession(): Promise<number> {
 	});
 }
 
+async function currentNodes(): Promise<number> {
+	return withDb(async (db) => {
+		const row = (await db
+			.prepare("SELECT COUNT(*) AS n FROM current_nodes WHERE analyzer_id = 'token-units' AND session_id = ?")
+			.get(SESSION_ID)) as { n: number };
+		return row.n;
+	});
+}
+
 async function liveNodes(): Promise<number> {
 	return withDb(async (db) => {
 		const row = (await db
@@ -134,6 +143,23 @@ describe("a plain fill re-analyses a session that gained messages", () => {
 
 		assert.equal(await runsForSession(), 2, "the grown session is analysed again");
 		assert.equal(await liveNodes(), 2, "its new turn earns its own node");
+		assert.equal(await currentNodes(), 1, "and that node revises the one drawn from the shorter session");
+	});
+
+	it("repairs the lineage of a graph written before lineage followed the subject, once per analyzer", async () => {
+		// Such a graph has no revises edge between the generations and no record of
+		// a repair. The migration that analyze runs first must not count as one.
+		await withDb(async (db) => {
+			await db.prepare("DELETE FROM analysis_edges WHERE edge_kind = 'revises'").run();
+			await db.prepare("DELETE FROM lineage_repairs").run();
+		});
+		assert.equal(await currentNodes(), 2);
+		const out = await run(prospectAnalyze);
+		assert.match(out, /Lineage repair: 1 older generation/);
+		assert.equal(await currentNodes(), 1);
+		const repaired = await withDb(async (db) => (await db.prepare("SELECT analyzer_id FROM lineage_repairs WHERE analyzer_id = 'token-units'").all()) as unknown[]);
+		assert.equal(repaired.length, 1, "the repair is recorded for the analyzer it covered");
+		assert.doesNotMatch(await run(prospectAnalyze), /Lineage repair/, "it runs once");
 	});
 
 	it("re-scans a session analysed before the covered count was recorded", async () => {

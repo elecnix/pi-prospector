@@ -141,6 +141,7 @@ function configOf(raw: unknown): RuleRestatementConfig {
 }
 
 export const ruleRestatementAnalyzer: Analyzer = {
+	subjectOfNode: (content) => (typeof content["proposal_input_key"] === "string" ? content["proposal_input_key"] : undefined),
 	def: RULE_RESTATEMENT_DEF,
 	version: RULE_RESTATEMENT_VERSION,
 	prompts: PROMPTS,
@@ -196,6 +197,8 @@ export const ruleRestatementAnalyzer: Analyzer = {
 				sourceSetHash: shortHash(`rule-restatement(${p.input_key}|${computeSourceSetHash(corpusSources)})`),
 				anchorKind: "session" as const,
 				anchorRef: ctx.sessionId,
+				// One check per proposal: the proposal is the subject.
+				subject: p.input_key,
 				meta: meta as unknown as Record<string, unknown>,
 			};
 		});

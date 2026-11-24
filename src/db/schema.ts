@@ -372,6 +372,19 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			finished_at TEXT
 		);
 
+		-- One row per analyzer whose lineage has been repaired: the revises edges
+		-- that link the generations written before lineage followed the subject
+		-- (AnalyzerFramework.repairLineage). The repair reads an analyzer's subjects,
+		-- so it covers only the analyzers a run registers, and each is recorded on
+		-- its own. Append-only provenance of a one-time graph repair, never a cursor
+		-- over analysis work. A reader of current nodes refuses an analyzer with
+		-- nodes and no row here, because its counts may still hold both generations.
+		CREATE TABLE IF NOT EXISTS lineage_repairs (
+			analyzer_id TEXT PRIMARY KEY,
+			repaired_at TEXT NOT NULL,
+			edges INTEGER NOT NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS analysis_nodes (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,

@@ -25,7 +25,8 @@ import type {
 import { computeConfigHash, uuidv7 } from "../analyze/input-hash.js";
 import { versionIdOf } from "../analyze/version.js";
 import { EDGE_KINDS, REF_KINDS } from "../analyze/edge-kinds.js";
-import { NOT_REVISED_AS_OF, NOT_MUTED_AS_OF, NOT_MUTED_LIVE } from "./current-generation.js";
+import { NOT_REVISED_AS_OF, NOT_MUTED_AS_OF, NOT_MUTED_LIVE, NOT_REVISED_LIVE } from "./current-generation.js";
+import type { LineageHead } from "../analyze/lineage.js";
 
 // ───────────────────────── analyzer registry ─────────────────────────
 
@@ -355,6 +356,53 @@ export async function findLatestNodeBySourceSet(
 			"SELECT * FROM live_nodes WHERE analyzer_id = ? AND source_set_hash = ? AND node_kind != 'error' ORDER BY created_at DESC, id DESC LIMIT 1",
 		)
 		.get(analyzerId, sourceSetHash)) as AnalysisNodeRow | undefined;
+}
+
+/**
+ * The heads of one analyzer's lineages: its live, successful nodes that no live
+ * node revises, each with the anchor of its unit (its lowest-ordinal `anchors`
+ * edge). Scoped to one session, or to the whole graph when `sessionId` is null.
+ * `withContent` reads the content too, for an analyzer that names its subjects.
+ */
+export async function getLineageHeads(
+	db: AsyncDatabase,
+	analyzerId: string,
+	sessionId: string | null,
+	withContent: boolean,
+): Promise<LineageHead[]> {
+	const sql = lineageHeadsSql(sessionId !== null, withContent);
+	const params = sessionId === null ? [analyzerId] : [analyzerId, sessionId];
+	return (await prep(db, sql).all(...params)) as LineageHead[];
+}
+
+/** The query behind {@link getLineageHeads}: its parameters are the analyzer id, then the session id when `sessionScoped`. */
+export function lineageHeadsSql(sessionScoped: boolean, withContent: boolean): string {
+	const content = withContent ? "n.content_json" : "NULL";
+	const scope = sessionScoped ? "AND n.session_id = ?" : "";
+	// The unary + keeps edge_kind off the index choice: without statistics the
+	// planner prefers idx_edges_kind, which reads every anchors edge per head.
+	return `SELECT n.id, n.session_id, n.output_key, n.run_id, n.created_at, n.analyzer_version_id, ${content} AS content_json,
+			(SELECT a.to_ref_id FROM analysis_edges a
+			 WHERE a.from_node_id = n.id AND +a.edge_kind = '${EDGE_KINDS.ANCHORS}'
+			 ORDER BY a.ordinal ASC, a.rowid ASC LIMIT 1) AS anchor_ref
+		FROM live_nodes n
+		WHERE n.analyzer_id = ? ${scope} AND n.node_kind != 'error' AND ${NOT_REVISED_LIVE}`;
+}
+
+/** Ids of the session's live nodes that a live node revises: the superseded generations. */
+export async function getSupersededNodeIds(db: AsyncDatabase, sessionId: string): Promise<string[]> {
+	const rows = (await prep(db, `SELECT n.id FROM live_nodes n WHERE n.session_id = ? AND NOT (${NOT_REVISED_LIVE})`).all(sessionId)) as Array<{ id: string }>;
+	return rows.map((r) => r.id);
+}
+
+/** Whether the analyzer's lineage repair is recorded (`lineage_repairs`). */
+export async function isLineageRepaired(db: AsyncDatabase, analyzerId: string): Promise<boolean> {
+	return (await prep(db, "SELECT 1 FROM lineage_repairs WHERE analyzer_id = ?").get(analyzerId)) !== undefined;
+}
+
+/** Record that an analyzer's lineage was repaired, with the edges the repair appended. */
+export async function recordLineageRepair(db: AsyncDatabase, analyzerId: string, edges: number): Promise<void> {
+	await prep(db, "INSERT INTO lineage_repairs (analyzer_id, repaired_at, edges) VALUES (?, ?, ?)").run(analyzerId, new Date().toISOString(), edges);
 }
 
 export async function getSessionNodes(db: AsyncDatabase, sessionId: string, asOf?: string): Promise<AnalysisNodeRow[]> {

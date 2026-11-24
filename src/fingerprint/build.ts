@@ -1,6 +1,6 @@
 import { Check, Errors } from "typebox/value";
 import type { AsyncDatabase } from "../db/async-db.js";
-import { currentNodeItems, currentNodeRows, currentNodeVersions, latestRunVersions, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
+import { currentNodeItems, currentNodeRows, currentNodeVersions, latestRunVersions, lineageUnrepaired, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
 import { gradeVersionMove, parseVersionId } from "../analyze/version.js";
 import { HARNESS_SOURCES, isHarnessSource, type HarnessSource } from "../harness.js";
 import { parseTimestamp } from "../timepoint.js";
@@ -250,6 +250,24 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 	const min = MIN_GROUP_SIZE;
 	const sessions = await sessionFacts(db, scope);
 	const inScope = new Set(sessions.map((s) => s.id));
+	// A graph written before lineage followed the subject can hold two current
+	// nodes of one session, and a section would count that session twice. Every
+	// read of an analyzer's nodes waits on the check, so no such figure is built.
+	const checked = new Map<string, Promise<void>>();
+	const repaired = (analyzerId: string): Promise<void> => {
+		let check = checked.get(analyzerId);
+		if (!check) {
+			check = lineageUnrepaired(db, analyzerId).then((unrepaired) => {
+				if (unrepaired) {
+					throw new Error(
+						`the nodes of '${analyzerId}' were written before lineage followed the subject, so a session can count twice. Run \`prospect analyze\` once to link their generations, then build the fingerprint again.`,
+					);
+				}
+			});
+			checked.set(analyzerId, check);
+		}
+		return check;
+	};
 	const ctx: FingerprintReadContext = {
 		scope,
 		sessions,
@@ -259,13 +277,22 @@ export async function buildFingerprint(db: AsyncDatabase, request: FingerprintRe
 			// At `since` or later: the move from the run's version up to `since` is no upgrade.
 			return [...(await latestRunVersions(db, scope, analyzerId))].filter(([, version]) => gradeVersionMove(parseVersionId(version), floor) === null).map(([id]) => id);
 		},
-		nodes: (analyzerId, fields) => currentNodeRows(db, scope, analyzerId, fields),
-		items: (analyzerId, arrayPath, itemFields, nodeFields) => currentNodeItems(db, scope, analyzerId, arrayPath, itemFields, nodeFields),
+		nodes: async (analyzerId, fields) => {
+			await repaired(analyzerId);
+			return currentNodeRows(db, scope, analyzerId, fields);
+		},
+		items: async (analyzerId, arrayPath, itemFields, nodeFields) => {
+			await repaired(analyzerId);
+			return currentNodeItems(db, scope, analyzerId, arrayPath, itemFields, nodeFields);
+		},
 	};
 	const section = async (kind: "objective" | "inferred") =>
 		Object.fromEntries(
 			await Promise.all(
-				contributors.filter((c) => c.def.kind === kind).map(async (c) => [c.def.id, await buildSection(c, ctx, (id) => currentNodeVersions(db, scope, id), inScope, min)] as const),
+				contributors.filter((c) => c.def.kind === kind).map(async (c) => [c.def.id, await buildSection(c, ctx, async (id) => {
+						await repaired(id);
+						return currentNodeVersions(db, scope, id);
+					}, inScope, min)] as const),
 			),
 		);
 	const fingerprint = {

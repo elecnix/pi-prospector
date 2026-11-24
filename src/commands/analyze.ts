@@ -138,6 +138,15 @@ export async function prospectAnalyze(rawArgs: string, ctx: ExtensionCommandCont
 			out(ctx, `Loaded ${customRegistered.length} custom analyzer(s): ${customRegistered.join(", ")}`, "info");
 		}
 		for (const e of loadErrors) out(ctx, `Skipped analyzer ${e.path}: ${e.message}`, "warning");
+		// Once per analyzer: link the generations written before lineage followed
+		// the subject, so each subject has one current node before this run reads
+		// or extends the graph. It only appends revises edges, and it covers the
+		// analyzers registered here; one loaded on a later run is repaired then.
+		const repaired = await framework.repairLineage();
+		const edges = repaired.reduce((sum, r) => sum + r.edges, 0);
+		if (edges > 0) {
+			out(ctx, `Lineage repair: ${edges} older generation(s) marked as revised across ${repaired.length} analyzer(s).`, "info");
+		}
 		// Without --analyzer, a run selects the configured default set (#291).
 		// --analyzer is the ad hoc opt-in: it runs any registered analyzer.
 		const defaults = resolveDefaultAnalyzers(

@@ -138,8 +138,9 @@ export interface FingerprintReadContext {
 	runs(analyzerId: string, since?: string): Promise<string[]>;
 	/**
 	 * One row per current node of the analyzer: `session` plus each field read
-	 * from the node content by JSON path (`$.a.b`). Rows come oldest node first,
-	 * so a contributor that needs one node per session can keep the newest.
+	 * from the node content by JSON path (`$.a.b`). Rows come oldest node first.
+	 * The current generation holds one node per subject, so a session-level
+	 * analyzer gives one row per session however often the session grew.
 	 */
 	nodes(analyzerId: string, fields: Readonly<Record<string, string>>): Promise<FingerprintRow[]>;
 	/** One row per element of an array in the current nodes; `itemFields` read the element (`$.name`), `nodeFields` the node. */

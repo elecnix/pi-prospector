@@ -318,17 +318,30 @@ path could reach would vanish the moment a run chose the other.
 - **Unit** — one planned piece of work: a source set plus where its result would
   anchor. A unit is the thing that does or does not yet have a corresponding
   node.
+- **Subject** — what a unit is about, which stays the same while its inputs
+  change: the unit's anchor, plus a subject the analyzer names when it plans
+  several units on one anchor (a term, a pull request, a proposal). The source
+  set is not the subject. A session-level unit that reads every message gets a
+  new source set each time the session grows, yet it is still about the same
+  session. An analyzer that names subjects on its units also reads the subject
+  back from a node's content, so nodes written before subjects existed group
+  the same way. Units of one plan that share an anchor and name no subject have
+  no subject to tell them apart, and they keep the lineage of their source set.
 - **Scan** — the act of comparing every planned unit against the existing graph
   and classifying it. Scanning is cheap (fingerprint lookups, no model calls)
   and is how the system decides what, if anything, needs doing. This replaces
   any notion of progress cursors or crash bookkeeping.
 - **Unit status** — the result of classifying a unit during a scan:
-  - **missing** — no *successful* node exists for this unit's recipe. Either it
-    has never been attempted, or prior attempts only produced error nodes (which
-    carry a decoupled identity and never satisfy a recipe). Missing work is always
-    done, even by a frugal run.
-  - **stale** — a node exists for this subject but under a different recipe than
-    the current one. Staleness carries its *reasons*: **major** or **minor** (the
+  - **missing** — no *successful* node exists for this unit's source set. Either
+    it has never been attempted, its inputs changed (the session grew, or an
+    upstream conclusion moved), or prior attempts only produced error nodes
+    (which carry a decoupled identity and never satisfy a recipe). Missing work
+    is always done, even by a frugal run, with one exception: a unit whose
+    subject holds a node of a newer analyzer version is not computed, because a
+    downgrade never replaces a newer conclusion (see **Supersession**). When the
+    subject already has a current node, the new node revises it.
+  - **stale** — a node exists for this unit's source set but under a different
+    recipe than the current one. Staleness carries its *reasons*: **major** or **minor** (the
     analyzer's version moved — graded by the author) and/or **config** (the
     user's setup changed — ungraded). A unit can be stale for several reasons at
     once.
@@ -362,6 +375,15 @@ path could reach would vanish the moment a run chose the other.
   major/minor grade, so you choose any combination (major-plus-config, or
   everything). Recomputing records each result as a new version linked by a
   *revises* edge.
+- **Supersession** — every node a run writes revises the current nodes of its
+  subject: the stale predecessor with its source set, and any node drawn from
+  older inputs. So a subject has one current node, whether its newest node came
+  from a revise or from a session that grew. A plan that leaves a subject
+  ambiguous (units sharing an anchor without naming a subject, or a subject
+  whose current nodes include two from one run) gets no such edge, because
+  nothing says which old node a new one replaces. A run never replaces a node
+  of a newer analyzer version: a unit whose subject holds one is not computed,
+  just as a downgrade grades no stale reason.
 - **Selection versus recompute** — the reasons decide *which* out-of-date units a
   run touches; they never decide *what to recompute toward*. A selected unit is
   always recomputed to the **current recipe in full** — latest version, latest
@@ -386,7 +408,7 @@ path could reach would vanish the moment a run chose the other.
   so the run pays for those and nothing else. The filter is run input, not
   config: it never enters a recipe, and the run records it beside its reasons.
 - **Lineage** — the chain of versioned alternatives for one subject, connected by
-  *revises* edges. Because analysis is append-only, recomputing does not replace
+  *revises* edges. A generation drawn from a shorter session is part of it. Because analysis is append-only, recomputing does not replace
   the old conclusion; it adds a newer one beside it, and both remain navigable
   “at the same level.” This is what lets you compare how analysis changed as the
   logic improved.
@@ -401,6 +423,22 @@ path could reach would vanish the moment a run chose the other.
   nothing, so its predecessor is current again; a live head whose predecessor
   was retracted is still current. Not to be confused with the **current** unit
   status, which is about a unit's recipe, not a node's place in its lineage.
+- **Lineage repair** — the one-time pass that appends the *revises* edges a
+  graph written before supersession lacks. It writes the edges supersession
+  would have written: in each subject with more than one current node, the node
+  of the newest analyzer version revises the others, and among nodes of one
+  version the last written does. This reconstructs the write order once, from
+  `created_at`; afterwards supersession is read from the edges, as everywhere
+  else. The pass needs an analyzer's declared subjects, so it covers the
+  analyzers a run registers. A run repairs an analyzer before it writes that
+  analyzer's nodes, whichever command started it, and `prospect analyze`
+  repairs every registered analyzer before it analyses anything. Each repair is
+  recorded in `lineage_repairs` in the same transaction as its edges. An
+  analyzer not loaded on a run is repaired by the first run that loads it, so
+  an analyzer added later gets its record before its first node. The pass
+  appends edges and changes no node. The fingerprint refuses to read an
+  analyzer with nodes and no repair record, because its counts could still
+  hold two generations of one session.
 
 ### Trajectory analysis (deterministic, session-level)
 
@@ -1200,8 +1238,10 @@ definitions.
   are genuinely inputs, editing/adding/removing a smooth session in a repo changes
   the `sourceSetHash` of every friction session's overview in that same `cwd` — so
   those overviews re-identify as `missing` (a fresh recipe over a new source set),
-  not as `stale`/`revises` of the old one, and are recomputed with an LLM call on
-  the next run. Selection is capped at `maxContrastSiblings` (default 3) ranked by
+  not as `stale`, and are recomputed with an LLM call on the next run. Their
+  subject is still the session, so each new overview revises the session's
+  previous one (see **Supersession**), and the session keeps one current
+  overview. Selection is capped at `maxContrastSiblings` (default 3) ranked by
   pair count, so a new, more substantial smooth sibling can also *swap* which three
   are chosen, reshuffling identities across the repo. This is correct — the nodes'
   inputs really did change — but it is churny when `crossSessionContrast` is on by
@@ -1388,10 +1428,21 @@ conclusions coexist as navigable alternatives, giving you both economy (don't
 redo good work) and the ability to audit how conclusions evolved — without ever
 losing the earlier ones.
 
+Lineage follows the subject, not the source set. A session keeps growing after
+its first analysis, and a session-level unit that reads every message gets a new
+source set with each new message. Keyed on the source set, the node drawn from
+the whole session had no predecessor, so the node drawn from the shorter session
+stayed current beside it, and every aggregate counted that session once per run
+that saw it grow. Keyed on the subject, the new node revises the old one, and the
+current generation holds one node per subject.
+
 ### Dependency-scoped visibility
 
 An analyzer can read the conversation and its own past output, plus the output of
-the analyzers it explicitly declares as dependencies — and nothing else.
+the analyzers it explicitly declares as dependencies — and nothing else. A
+dependency read returns that dependency's current generation: a node that a live
+node revises is lineage, and a consumer that read it would count one conclusion
+twice.
 Attempting to read undeclared analysis is treated as an error, not quietly
 allowed. The reason is to keep the analysis pipeline a clear, declared dependency
 graph: composition stays predictable, ordering can be derived, and no analyzer
@@ -1649,6 +1700,8 @@ wrong.
   new nodes.
 - Improving an analyzer means a new version and new nodes; existing nodes for the
   old version remain and stay reachable through lineage.
+- A node a run writes revises the current nodes of its subject, so each subject
+  has at most one current node, unless its plan leaves the subject ambiguous.
 - An analyzer reads only the conversation, its own nodes, and the nodes of its
   declared dependencies. A corpus-scoped analyzer may read those dependency nodes
   across every session, but never a dependency it did not declare.

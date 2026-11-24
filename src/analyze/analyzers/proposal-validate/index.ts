@@ -112,6 +112,7 @@ function parseMessageIds(json: string | null): string[] {
 }
 
 export const proposalValidateAnalyzer: Analyzer = {
+	subjectOfNode: (content) => (typeof content["proposal_input_key"] === "string" ? content["proposal_input_key"] : undefined),
 	def: PROPOSAL_VALIDATE_DEF,
 	version: PROPOSAL_VALIDATE_VERSION,
 	prompts: PROMPTS,
@@ -177,6 +178,8 @@ export const proposalValidateAnalyzer: Analyzer = {
 				sourceSetHash,
 				anchorKind: "session",
 				anchorRef: ctx.sessionId,
+				// One replay per proposal: the proposal is the subject.
+				subject: p.input_key,
 				meta: meta as unknown as Record<string, unknown>,
 			});
 		}
