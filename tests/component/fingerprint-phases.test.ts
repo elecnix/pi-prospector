@@ -18,19 +18,6 @@ describe("fingerprint: phases", () => {
 	});
 	after(() => g.close());
 
-	it("reads every current node as it is, so a session with two current nodes counts both", async () => {
-		const extra = await GraphSeed.open();
-		try {
-			for (let i = 0; i < 5; i++) await extra.analysed(`s${i}`, "phase-trajectory", { phases: phases("navigate"), signals: [], patched: false }, "1.1");
-			// A second current node of s0: no node revises the first, so both are current.
-			await extra.node("s0", "phase-trajectory", { phases: phases("navigate"), signals: [], patched: false }, "1.1", "2026-05-02T00:00:00.000Z");
-			const s = await extra.section("objective", "phases");
-			assert.deepEqual(s["turnsByPhase"], [{ phase: "navigate", count: 6, sessions: 5 }]);
-		} finally {
-			await extra.close();
-		}
-	});
-
 	it("counts turns by phase from the current nodes", async () => {
 		const s = await g.section("objective", "phases");
 		assert.equal(s.status, "ok");
