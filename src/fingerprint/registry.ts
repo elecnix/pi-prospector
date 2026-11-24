@@ -55,8 +55,6 @@ const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of ses
 const REGRESSION_PREVENTION = "corpus aggregate of regression-verdict: measured through it";
 /** An analyzer whose output only feeds another one, whose section measures it. */
 const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
-/** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
-const INPUT_TO_STALE_VERIFICATION = inputTo("stale-verification");
 const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
 const POOLED_CLUSTERS = "pools a repository's sessions: a node's clusters are not its own session's, so no per-session figure";
 
@@ -66,7 +64,6 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	SECRET_SCANNER,
 	REGRESSION_ATTRIBUTION,
 	REGRESSION_PREVENTION,
-	INPUT_TO_STALE_VERIFICATION,
 	MODEL_NAMED_CLASSES,
 	PROPOSAL_QUEUE,
 	POOLED_CLUSTERS,
@@ -87,7 +84,6 @@ export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
 	// A session's node clusters the items of its repository's sibling sessions too, so the same cluster repeats
 	// in every sibling's node and a session can carry a cluster none of its own messages belong to.
 	"similarity-cluster": POOLED_CLUSTERS,
-	"verification-commands": INPUT_TO_STALE_VERIFICATION,
 	// It reads only rule-shaped proposals still open, so accepting or rejecting proposals changes its counts.
 	// Its other fields are instruction-file paths and quotes.
 	"rule-restatement": PROPOSAL_QUEUE,
