@@ -16,6 +16,9 @@ describe("fingerprint: uncompleted leads", () => {
 	before(async () => {
 		g = await GraphSeed.open();
 		for (let i = 0; i < 6; i++) await g.analysed(`s${i}`, "uncompleted-leads", node(2, i < 5 ? 1 : 0), "1.1");
+		// Last run at 1.1 in fill mode, which left its 1.0 node current: not measured.
+		await g.analysed("filled", "uncompleted-leads", null, "1.1");
+		await g.node("filled", "uncompleted-leads", node(5, 5), "1.0");
 	});
 	after(() => g.close());
 

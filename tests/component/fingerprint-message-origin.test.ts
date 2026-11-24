@@ -10,7 +10,9 @@ import { countsOf, fingerprintOf, ids, sectionOf, seedNode, seedRun, seedSession
  */
 
 let t: TempDb;
-const origin = (o: string, rule: string, decided = true) => ({ user_message_id: "msg-hunter2", pair_index: 0, origin: o, rule, decided, suspicions: [] });
+// Each call is a message of its own: a message has one current node.
+let m = 0;
+const origin = (o: string, rule: string, decided = true) => ({ user_message_id: `msg-hunter2-${++m}`, pair_index: m, origin: o, rule, decided, suspicions: [] });
 
 describe("message-origin fingerprint", () => {
 	before(async () => {

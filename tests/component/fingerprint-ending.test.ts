@@ -12,6 +12,9 @@ describe("fingerprint: session ending", () => {
 		for (let i = 0; i < 5; i++) await g.analysed(`cut${i}`, "session-ending", ending("abandoned", "cut_off_mid_work"), "1.1");
 		// 1.0 read every session indexed before call ids as abandoned: not measured.
 		for (let i = 0; i < 5; i++) await g.analysed(`old${i}`, "session-ending", ending("abandoned", "no_recorded_results"), "1.0");
+		// Last run at 1.1 in fill mode, which left its 1.0 node current: not measured.
+		await g.analysed("filled", "session-ending", null, "1.1");
+		await g.node("filled", "session-ending", ending("abandoned", "no_recorded_results"), "1.0");
 	});
 	after(() => g.close());
 

@@ -2,7 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { GraphSeed } from "./fingerprint-graph.js";
 
-/** The grounded-claims section: hits by check and claim kind, and unacted requests by type. */
+/** The grounded-claims section: ungrounded claims by kind, and unacted requests by type. */
 describe("fingerprint: grounded claims", () => {
 	let g: GraphSeed;
 	const claim = (kind: string) => ({ user_message_id: "hunter2", pair_index: 0, signal: "ungrounded-claim", claim_kind: kind, claim: "hunter2", request_type: null, detail: "hunter2" });
@@ -19,16 +19,15 @@ describe("fingerprint: grounded claims", () => {
 	});
 	after(() => g.close());
 
-	it("counts hits by check and kind, and unacted requests by type", async () => {
+	it("counts ungrounded claims by kind, and unacted requests by type", async () => {
 		const s = await g.section("objective", "groundedClaims");
 		assert.equal(s.status, "ok");
 		assert.equal(s.sessionsMeasured, 7);
 		assert.equal(s["ungroundedClaims"], 12);
 		assert.equal(s["unactedRequests"], 6);
 		assert.deepEqual(s["byKind"], [
-			{ check: "unacted-request", claimKind: "request", count: 6, sessions: 6 },
-			{ check: "ungrounded-claim", claimKind: "count", count: 6, sessions: 6 },
-			{ check: "ungrounded-claim", claimKind: "path", count: 6, sessions: 6 },
+			{ claimKind: "count", count: 6, sessions: 6 },
+			{ claimKind: "path", count: 6, sessions: 6 },
 		]);
 		assert.deepEqual(s["unactedByRequest"], [{ requestType: "test-run", count: 6, sessions: 6 }]);
 		assert.ok(!JSON.stringify(s).includes("hunter2"));

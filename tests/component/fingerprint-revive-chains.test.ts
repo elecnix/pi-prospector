@@ -13,6 +13,9 @@ describe("fingerprint: revive chains", () => {
 		for (let i = 0; i < 3; i++) await g.analysed(`quiet${i}`, "revive-chains", null, "1.1");
 		// Ran only at 1.0, which missed the results of sessions indexed before call ids: not measured.
 		await g.analysed("old", "revive-chains", node(0, 0), "1.0");
+		// Last run at 1.1 in fill mode, which left its 1.0 node current: not measured.
+		await g.analysed("filled", "revive-chains", null, "1.1");
+		await g.node("filled", "revive-chains", node(7, 7), "1.0");
 	});
 	after(() => g.close());
 

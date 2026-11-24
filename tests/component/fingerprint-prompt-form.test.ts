@@ -20,7 +20,7 @@ function node(over: { typed?: number; buckets?: Array<number | null>; counts?: n
 		typed_message_count: over.typed ?? 4,
 		no_own_words_count: 0,
 		undecided_message_count: 1,
-		kinds: { question: over.question ?? 1, instruction: 2, correction: 1, other: 0, unknown: over.unknown ?? 1 },
+		kinds: { question: over.question ?? 1, instruction: 1, correction: 1, other: 0, unknown: over.unknown ?? 1 },
 		sum_chars: 400,
 		median_chars: 50,
 		p90_chars: 300,
@@ -60,9 +60,25 @@ describe("prompt-form fingerprint", () => {
 		assert.deepEqual(countsOf(section["byLength"], ["length"]), { "0-20": 5, "20-80": 10, "over-1000": 5 });
 	});
 
+	it("publishes other for sessions measured with other bounds, as the schema allows", async () => {
+		const u = await tempDb();
+		try {
+			for (const id of ids("custom", 5)) {
+				await seedSession(u.db, id);
+				await seedRun(u.db, id, "prompt-form", "1.0");
+				await seedNode(u.db, id, "prompt-form", node({ buckets: [50, null], counts: [3, 1] }), "1.0");
+			}
+			// fingerprintOf checks the result against the composed schema.
+			const section = sectionOf(await fingerprintOf(u.db), "objective", "promptForm");
+			assert.deepEqual(countsOf(section["byLength"], ["length"]), { other: 20 });
+		} finally {
+			await u.close();
+		}
+	});
+
 	it("counts the kind of each typed prompt, unknown apart", async () => {
 		const section = sectionOf(await fingerprintOf(t.db), "inferred", "promptKind");
 		assert.equal(section.status, "ok");
-		assert.deepEqual(countsOf(section["byKind"], ["kind"]), { question: 6, instruction: 12, correction: 6, unknown: 6 });
+		assert.deepEqual(countsOf(section["byKind"], ["kind"]), { question: 6, instruction: 6, correction: 6, unknown: 6 });
 	});
 });

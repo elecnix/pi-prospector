@@ -3,11 +3,11 @@ import { metricValues } from "../../metrics/values.js";
 import { REQUEST_TYPES, UNACTED_REQUEST, UNGROUNDED_CLAIM } from "./detect.js";
 import { metrics } from "./metrics.js";
 
-const CLAIM_KINDS = [...metricValues(metrics, "grounded-claims.ungrounded-claim"), ...metricValues(metrics, "grounded-claims.unacted-request")];
+const CLAIM_KINDS = metricValues(metrics, "grounded-claims.ungrounded-claim");
 
 /**
  * What the agent claimed without grounds, and what the person asked for that no
- * tool call did. Deterministic, so the figures are objective.. One node per hit.
+ * tool call did. Deterministic, so the figures are objective. One node per hit.
  */
 export const groundedClaimsFingerprint: FingerprintContributor = {
 	def: {
@@ -20,7 +20,7 @@ export const groundedClaimsFingerprint: FingerprintContributor = {
 		measures: [
 			{ kind: "total", id: "ungroundedClaims", metric: "grounded-claims.ungrounded-claim", field: "ungrounded" },
 			{ kind: "total", id: "unactedRequests", metric: "grounded-claims.unacted-request", field: "unacted" },
-			{ kind: "groups", id: "byKind", metric: "grounded-claims.ungrounded-claim", dimensions: { check: [UNGROUNDED_CLAIM, UNACTED_REQUEST], claimKind: CLAIM_KINDS } },
+			{ kind: "groups", id: "byKind", metric: "grounded-claims.ungrounded-claim", dimensions: { claimKind: CLAIM_KINDS } },
 			{ kind: "groups", id: "unactedByRequest", metric: "grounded-claims.unacted-request", dimensions: { requestType: [...REQUEST_TYPES] } },
 		],
 	},
@@ -30,7 +30,10 @@ export const groundedClaimsFingerprint: FingerprintContributor = {
 		return {
 			measured,
 			rows: hits.map((h) => ({
-				...h,
+				session: h["session"]!,
+				// Every unacted request has the one kind `request`; its type is what tells them apart.
+				claimKind: h["check"] === UNGROUNDED_CLAIM ? h["claimKind"]! : null,
+				requestType: h["requestType"]!,
 				ungrounded: h["check"] === UNGROUNDED_CLAIM ? 1 : 0,
 				unacted: h["check"] === UNACTED_REQUEST ? 1 : 0,
 			})),
