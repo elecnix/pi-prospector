@@ -47,12 +47,9 @@ export function collectContributors(analyzers: readonly Analyzer[], core: readon
 
 const NOT_YET_DECIDED = "not yet decided";
 const SECRET_SCANNER = "secret scanner: findings must never leave the machine";
-const SELF_CALIBRATED = "calibrated on the person's own corpus: its counts do not compare across corpora";
 const MODEL_NAMED_CLASSES = "free text: the model names its own request classes, so no fixed list can hold them";
 /** regression-attribution resolves a blame only to a pull request a local session opened, which few blames are. */
 const REGRESSION_ATTRIBUTION = "regression attribution: nodes on under 1% of sessions";
-/** An analyzer whose output only feeds another one, whose section measures it. */
-const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured through it`;
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
 export const EXCLUSION_REASONS: readonly string[] = [
@@ -60,7 +57,6 @@ export const EXCLUSION_REASONS: readonly string[] = [
 	SECRET_SCANNER,
 	REGRESSION_ATTRIBUTION,
 	MODEL_NAMED_CLASSES,
-	SELF_CALIBRATED,
 ];
 
 /**
@@ -73,7 +69,6 @@ export const EXCLUSION_REASONS: readonly string[] = [
  * contributor in the same pull request.
  */
 export const FINGERPRINT_EXCLUDED: Readonly<Record<string, string>> = {
-	"decode-collapse": SELF_CALIBRATED,
 	"request-classes": MODEL_NAMED_CLASSES,
 	"secret-leak": SECRET_SCANNER,
 	"gitleaks": SECRET_SCANNER,
