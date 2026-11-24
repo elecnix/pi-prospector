@@ -57,10 +57,10 @@ const inputTo = (analyzerId: string) => `input to ${analyzerId}: measured throug
 const INPUT_TO_PROMPT_FORM = inputTo("prompt-form");
 const INPUT_TO_FRUSTRATION_LEXICON = inputTo("frustration-lexicon");
 const INPUT_TO_TURN_FRUSTRATION = inputTo("turn-frustration");
-const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
-const POOLED_CLUSTERS = "pools a repository's sessions: a node's clusters are not its own session's, so no per-session figure";
 /** verification-commands judges distinct command lines, not sessions; stale-verification reads its verdicts. */
 const INPUT_TO_STALE_VERIFICATION = inputTo("stale-verification");
+const PROPOSAL_QUEUE = "judges the open proposals, not the sessions: its counts follow proposal review";
+const POOLED_CLUSTERS = "pools a repository's sessions: a node's clusters are not its own session's, so no per-session figure";
 
 /** The reasons a built-in analyzer may be left out of the fingerprint. */
 export const EXCLUSION_REASONS: readonly string[] = [

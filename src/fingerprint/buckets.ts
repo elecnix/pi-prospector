@@ -16,9 +16,7 @@ export function bucketLabels(bounds: readonly number[], format: (bound: number) 
  * One row per bucket item, labelled through `labels`. A session whose bucket
  * bounds are not exactly the labelled ones (its config set other bounds) counts
  * every bucket under `other`, never under a label that means something else.
- * Each item row carries `le`, the bucket's upper bound, and `count`. A session
- * with several current nodes has each bound once per node, so the check
- * compares the set of bounds.
+ * Each item row carries `le`, the bucket's upper bound, and `count`.
  */
 export function labelBuckets(items: readonly FingerprintRow[], labels: ReadonlyMap<number | null, string>, dimension: string): FingerprintRow[] {
 	const bySession = new Map<string, FingerprintRow[]>();

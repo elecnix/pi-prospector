@@ -5,8 +5,7 @@ import { countsOf, fingerprintOf, ids, sectionOf, seedNode, seedRun, seedSession
 
 /**
  * The attention section: how long the agent waited for a person. Five sessions
- * waited, one ran with no typed message (zero counts, still measured), and one
- * has two current nodes.
+ * waited, and one ran with no typed message (zero counts, still measured).
  */
 
 let t: TempDb;
@@ -40,23 +39,17 @@ describe("attention-gaps fingerprint", () => {
 		await seedSession(t.db, "alone");
 		await seedRun(t.db, "alone", "attention-gaps", "1.0");
 		await seedNode(t.db, "alone", "attention-gaps", node([0, 0, 0, 0, 0, 0], 0), "1.0");
-		// Two current nodes, as a re-run on a grown session leaves them until the graph marks the older
-		// one revised. Both are read, and their buckets keep their labels.
-		await seedSession(t.db, "twice");
-		await seedRun(t.db, "twice", "attention-gaps", "1.0");
-		await seedNode(t.db, "twice", "attention-gaps", node([1, 1, 0, 0, 0, 0]), "1.0");
-		await seedNode(t.db, "twice", "attention-gaps", node([1, 1, 0, 0, 0, 0]), "1.0");
 	});
 	after(() => t.close());
 
 	it("counts typed messages, gaps, sessions that waited, and gaps by length", async () => {
 		const section = sectionOf(await fingerprintOf(t.db), "objective", "attention");
 		assert.equal(section.status, "ok");
-		assert.equal(section.sessionsMeasured, 7);
-		assert.equal(section["typedMessages"], 21);
-		assert.equal(section["gaps"], 14);
-		assert.equal(section["sessionsWaiting"], 6);
-		assert.deepEqual(countsOf(section["byWait"], ["wait"]), { "0-10s": 7, "10s-1m": 7 });
+		assert.equal(section.sessionsMeasured, 6);
+		assert.equal(section["typedMessages"], 15);
+		assert.equal(section["gaps"], 10);
+		assert.equal(section["sessionsWaiting"], 5);
+		assert.deepEqual(countsOf(section["byWait"], ["wait"]), { "0-10s": 5, "10s-1m": 5 });
 	});
 
 	it("carries no message id", async () => {

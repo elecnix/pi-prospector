@@ -71,3 +71,14 @@ export function leakedSentinels(fp: Fingerprint, extra: readonly string[] = []):
 	const text = JSON.stringify(fp);
 	return [...SENTINELS, ...extra].filter((s) => text.includes(s));
 }
+
+/** A breakdown measure without its per-group session counts, keyed by its dimension values. */
+export function countsOf(measure: unknown, dimensions: readonly string[]): Record<string, number> {
+	if (!Array.isArray(measure)) throw new Error(`not a breakdown: ${JSON.stringify(measure)}`);
+	return Object.fromEntries((measure as Array<Record<string, unknown>>).map((g) => [dimensions.map((d) => String(g[d])).join("/"), Number(g["count"])]));
+}
+
+/** Session ids `<prefix>-1` to `<prefix>-<count>`. */
+export function ids(prefix: string, count: number): string[] {
+	return Array.from({ length: count }, (_, i) => `${prefix}-${i + 1}`);
+}

@@ -31,9 +31,9 @@ describe("session-overview fingerprint", () => {
 		await seedSession(t.db, "clean");
 		await seedRun(t.db, "clean", "session-overview", "1.13");
 		await seedNode(t.db, "clean", "session-overview", review([], ["task-completed-without-correction"]), "1.13");
-		await seedSession(t.db, "grew");
-		await seedRun(t.db, "grew", "session-overview", "1.13");
-		await seedNode(t.db, "grew", "session-overview", review(["medium"], ["low-tool-failure-density"]), "1.13");
+		await seedSession(t.db, "one-point");
+		await seedRun(t.db, "one-point", "session-overview", "1.13");
+		await seedNode(t.db, "one-point", "session-overview", review(["medium"], ["low-tool-failure-density"]), "1.13");
 	});
 	after(() => t.close());
 
