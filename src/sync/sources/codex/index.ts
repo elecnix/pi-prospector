@@ -29,6 +29,8 @@ import {
 import { classifyToolError } from "../../tool-errors.js";
 import { projectFromCwd } from "../../project.js";
 import { getCodexSessionsDir } from "../../../config.js";
+import { repairCodexParents } from "./parent-link.js";
+import type { AsyncDatabase } from "../../../db/async-db.js";
 
 /**
  * The name Codex gives a rollout file: `rollout-<timestamp>-<uuid>.jsonl`.
@@ -176,6 +178,18 @@ export class CodexFileSource implements SessionSourceAdapter {
 
   constructor(private codexSessionsDir: string = getCodexSessionsDir()) {}
 
+  /**
+   * Resolve the child runs this sync indexed against their parents' rollout files.
+   *
+   * A child's header names its parent as a bare `parent_thread_id`, and no row
+   * carries that id (see `codexSessionRowId`), so the link is only resolvable once
+   * every parent file of the run is indexed. The rule is in `./parent-link.ts`, and
+   * the migration runs the same repair for the rows indexed before it existed.
+   */
+  async linkParents(db: AsyncDatabase): Promise<void> {
+    await repairCodexParents(db);
+  }
+
   async discover(): Promise<DiscoveredSession[]> {
     const results: DiscoveredSession[] = [];
 
@@ -269,7 +283,10 @@ export class CodexFileSource implements SessionSourceAdapter {
       project: codexProjectFromCwd(cwd),
       source: disc.source,
       cwd,
-      // A delegated agent's session names the session it was spawned from.
+      // A delegated agent's session names the session it was spawned from. The host
+      // writes the parent's bare thread id; the row of the parent's rollout file is
+      // what a link must carry, and only the index can say which file that is, so it
+      // is written as the host recorded it and resolved after the run (`linkParents`).
       parent_session: metaString(meta, "parent_thread_id"),
       parent_kind: metaString(meta, "parent_thread_id") ? "child" : null,
       started_at: startedAt,
