@@ -578,8 +578,12 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	await migrateDecisionsToAssertions(db);
 
 	await lowerOldLineCursors(db);
-	await repairCodexParents(db);
 	await recordParentLinks(db);
+	// After recordParentLinks, which creates the triggers that queue a session whose
+	// link moved: a repair that resolves a codex child's link queues the child and the
+	// parent it now names through them, including on the first migration of a database
+	// written before the triggers existed.
+	await repairCodexParents(db);
 }
 
 /**

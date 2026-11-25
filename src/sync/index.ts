@@ -206,9 +206,16 @@ export async function runSync(
 
 	// Parent links a source can only resolve against the whole index, after every
 	// file of the run is in it. Run inside the sync so the run leaves no link a
-	// later command has to repair.
+	// later command has to repair. A repair that fails is recorded like the other
+	// errors of the run rather than thrown: its files are already committed, so the
+	// ingest succeeded, and the next command's migration runs the repair again.
 	for (const adapter of active) {
-		if (adapter.linkParents) await adapter.linkParents(db);
+		if (!adapter.linkParents) continue;
+		try {
+			await adapter.linkParents(db);
+		} catch (err) {
+			result.errors.push(`${adapter.source}: parent link repair failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
 	}
 
 	// Child-run artifact metadata, beside the sessions it belongs to. Ingested in

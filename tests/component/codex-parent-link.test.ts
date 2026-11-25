@@ -22,6 +22,7 @@ import { runSync } from "../../src/sync/index.js";
 import { CodexFileSource, codexSessionRowId } from "../../src/sync/sources/codex/index.js";
 import { pickCodexParentFile, type ParentFileCandidate } from "../../src/sync/sources/codex/parent-link.js";
 import { migrate } from "../../src/db/schema.js";
+import { getUnanalyzedSessions, markAnalyzed } from "../../src/db/queries.js";
 import { insertSession, tempDb } from "./helpers.js";
 import { codexMetaLine, codexMessageLine, codexRolloutFileName, codexSessionId } from "../fixtures/codex-rollout.js";
 
@@ -188,6 +189,59 @@ describe("codex parent link", () => {
 				late.cleanup();
 			}
 			assert.deepEqual(await parentOf(db, rowIdOf(child)), { parent_session: rowIdOf(parent), parent_kind: "child" });
+		} finally {
+			cleanup();
+			await close();
+		}
+	});
+
+	it("queues a repaired codex child and its parent on a database from before the parent-link triggers", async () => {
+		const { db, close } = await tempDb();
+		try {
+			// A database last migrated before #418: no parent-link triggers, so an
+			// UPDATE of parent_session queues nothing by itself.
+			await db.exec("DROP TRIGGER sessions_parent_link_ai; DROP TRIGGER sessions_parent_link_au;");
+			const parentRow = `${codexSessionId(PARENT)}#${codexRolloutFileName(PARENT, FIRST)}`;
+			const childRow = `${codexSessionId(CHILD)}#${codexRolloutFileName(CHILD, CHILD_START)}`;
+			await insertSession(db, parentRow, `/codex/${codexRolloutFileName(PARENT, FIRST)}`, "", "codex");
+			await insertSession(db, childRow, `/codex/${codexRolloutFileName(CHILD, CHILD_START)}`, "", "codex");
+			await db.prepare("UPDATE sessions SET started_at = ? WHERE id = ?").run("2026-03-04T09:15:00.000Z", parentRow);
+			await db.prepare("UPDATE sessions SET started_at = ?, parent_session = ?, parent_kind = 'child' WHERE id = ?").run("2026-03-05T08:00:00.000Z", codexSessionId(PARENT), childRow);
+			for (const id of [parentRow, childRow]) await markAnalyzed(db, id);
+
+			await migrate(db);
+			assert.equal((await parentOf(db, childRow))?.parent_session, parentRow);
+			// The repair's write goes through the triggers recordParentLinks creates, so
+			// the child and the parent it now names are back on the plain-fill queue.
+			assert.deepEqual(new Set((await getUnanalyzedSessions(db)).map((s) => s.id)), new Set([childRow, parentRow]));
+
+			// With the link repaired, a later migration has nothing to repair and queues nothing.
+			for (const id of [parentRow, childRow]) await markAnalyzed(db, id);
+			await migrate(db);
+			assert.deepEqual(await getUnanalyzedSessions(db), []);
+		} finally {
+			await close();
+		}
+	});
+
+	it("records a failed parent-link repair in the sync result instead of throwing", async () => {
+		const { db, close } = await tempDb();
+		const parent: Rollout = { label: PARENT, timestamp: FIRST };
+		const child: Rollout = { label: CHILD, timestamp: CHILD_START, parentThreadId: codexSessionId(PARENT) };
+		const { root, cleanup } = codexRoot([parent, child]);
+		// The files are all committed before the repair runs, so a repair that fails is
+		// a cleanup failure: the ingest it followed still succeeded and still reports.
+		class FailingRepairSource extends CodexFileSource {
+			override async linkParents(): Promise<void> {
+				throw new Error("link repair exploded");
+			}
+		}
+		try {
+			const result = await runSync(db, [new FailingRepairSource(root)]);
+			assert.equal(result.sessionsProcessed, 2, "both files were ingested");
+			assert.deepEqual(result.errors, ["codex: parent link repair failed: link repair exploded"]);
+			// The link the failed repair would have resolved is still stored as recorded.
+			assert.equal((await parentOf(db, rowIdOf(child)))?.parent_session, codexSessionId(PARENT));
 		} finally {
 			cleanup();
 			await close();
