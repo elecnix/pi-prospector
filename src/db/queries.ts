@@ -1,6 +1,7 @@
 	import { type AsyncDatabase } from "./async-db.js";
 import { prep } from "./prepared.js";
 import { Type, type Static } from "typebox";
+import { parentKindOf } from "../sync/pi-naming.js";
 import {
 	ASSERTION_SUBJECT_KINDS,
 	REMEDIATION_VERDICT,
@@ -27,6 +28,16 @@ import type { TokenStats, SourceTokenStats } from "../types.js";
 
 // ── Sessions ──
 
+/**
+ * What a session's parent link records. `fork`: a pi session forked from its
+ * parent, copying the parent's history, and the person kept typing in it.
+ * `child`: a child agent's session, spawned by the parent's agent, whose prompts
+ * the parent agent wrote (a pi child run, a Claude Code subagent, a Codex,
+ * OpenCode or Cline child). Null when the session has no parent.
+ */
+export const ParentKind = Type.Union([Type.Literal("fork"), Type.Literal("child")]);
+export type ParentKind = Static<typeof ParentKind>;
+
 export interface SessionInsert {
 	id: string;
 	file_path: string;
@@ -34,6 +45,8 @@ export interface SessionInsert {
 	source: string;
 	cwd: string;
 	parent_session: string | null;
+	/** What the parent link records; null exactly when `parent_session` is. */
+	parent_kind: ParentKind | null;
 	started_at: string;
 	last_line: number;
 	last_modified: number;
@@ -60,14 +73,15 @@ export interface SessionInsert {
  */
 export async function upsertSession(db: AsyncDatabase, s: SessionInsert): Promise<void> {
 	await prep(db, `
-		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, started_at, last_line, last_modified, analyzed_at, message_count, branch_count, name, tool_inventory, host)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sessions (id, file_path, project, source, cwd, parent_session, parent_kind, started_at, last_line, last_modified, analyzed_at, message_count, branch_count, name, tool_inventory, host)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			file_path=excluded.file_path,
 			project=CASE WHEN TRIM(excluded.project) <> '' THEN excluded.project ELSE sessions.project END,
 			source=excluded.source,
 			cwd=CASE WHEN TRIM(excluded.cwd) <> '' THEN excluded.cwd ELSE sessions.cwd END,
 			parent_session=CASE WHEN TRIM(excluded.parent_session) <> '' THEN excluded.parent_session ELSE sessions.parent_session END,
+			parent_kind=CASE WHEN TRIM(excluded.parent_session) <> '' THEN excluded.parent_kind ELSE sessions.parent_kind END,
 			started_at=CASE WHEN TRIM(excluded.started_at) <> '' THEN excluded.started_at ELSE sessions.started_at END,
 			last_line=excluded.last_line,
 			last_modified=excluded.last_modified, message_count=excluded.message_count,
@@ -75,7 +89,7 @@ export async function upsertSession(db: AsyncDatabase, s: SessionInsert): Promis
 			name=CASE WHEN TRIM(excluded.name) <> '' THEN excluded.name ELSE sessions.name END,
 			tool_inventory=CASE WHEN TRIM(excluded.tool_inventory) <> '' THEN excluded.tool_inventory ELSE sessions.tool_inventory END,
 			host=CASE WHEN TRIM(excluded.host) <> '' THEN excluded.host ELSE sessions.host END
-	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count, s.name, s.tool_inventory, s.host ?? '');
+	`).run(s.id, s.file_path, s.project, s.source, s.cwd, s.parent_session, s.parent_session?.trim() ? (s.parent_kind ?? parentKindOf(s.source, s.file_path)) : null, s.started_at, s.last_line, s.last_modified, s.analyzed_at, s.message_count, s.branch_count, s.name, s.tool_inventory, s.host ?? '');
 }
 
 /** The stored sessions row, or undefined. */
@@ -193,13 +207,15 @@ export const SessionLineage = Type.Object({
 	source: Type.String(),
 	/** The session this one forked from (pi) or was spawned by (a child agent), or null. */
 	parent_session: Type.Union([Type.String(), Type.Null()]),
+	/** Whether the parent link records a fork or a child agent's session; null with no parent. */
+	parent_kind: Type.Union([ParentKind, Type.Null()]),
 	started_at: Type.Union([Type.String(), Type.Null()]),
 });
 export type SessionLineage = Static<typeof SessionLineage>;
 
 /** Where a session came from: its harness, its parent link, and when it started. */
 export async function getSessionLineage(db: AsyncDatabase, sessionId: string): Promise<SessionLineage | undefined> {
-	return (await prep(db, "SELECT source, parent_session, started_at FROM sessions WHERE id = ?").get(sessionId)) as SessionLineage | undefined;
+	return (await prep(db, "SELECT source, parent_session, parent_kind, started_at FROM sessions WHERE id = ?").get(sessionId)) as SessionLineage | undefined;
 }
 
 // ── Subagent runs ──
@@ -263,15 +279,14 @@ export interface ChildSessionStats {
 
 /**
  * The child agents spawned by a session, and how many messages they contain.
- * `parent_session` also links a Pi fork to the session it forked from, and a
- * fork copies the parent's history, so a Pi session is a fork and not a child.
- * Only other harnesses' sessions count, the rule `turn-frustration` uses for a
- * child agent. A parent's own `message_count` is read from its row, so a caller
- * can state the share of the work that went to children.
+ * `parent_session` also links a pi fork to the session it forked from, and a
+ * fork copies the parent's history, so only a link whose `parent_kind` is
+ * `child` counts. A parent's own `message_count` is read from its row, so a
+ * caller can state the share of the work that went to children.
  */
 export async function getChildSessionStats(db: AsyncDatabase, sessionId: string): Promise<ChildSessionStats & { own_message_count: number }> {
 	const children = (await prep(db,
-		"SELECT COUNT(*) AS child_session_count, COALESCE(SUM(message_count), 0) AS child_message_count FROM sessions WHERE parent_session = ? AND source <> 'pi'",
+		"SELECT COUNT(*) AS child_session_count, COALESCE(SUM(message_count), 0) AS child_message_count FROM sessions WHERE parent_session = ? AND parent_kind = 'child'",
 	).get(sessionId)) as ChildSessionStats;
 	const own = (await prep(db, "SELECT message_count FROM sessions WHERE id = ?").get(sessionId)) as { message_count?: number } | undefined;
 	return { ...children, own_message_count: own?.message_count ?? 0 };

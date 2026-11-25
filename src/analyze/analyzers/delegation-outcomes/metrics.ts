@@ -35,10 +35,9 @@ export const metrics: MetricDefinition[] = [
 		unit: "child sessions and child messages per parent session",
 		denominator: "the parent's own message count, for a share",
 		limitations: [
-			"Only sessions from other harnesses count as children. A Pi session's parent link marks a fork, which copies the parent's history, so Pi sessions are never counted as children.",
-			"Pi's own subagent runs record no link to a parent session (the host joins them by project only), so a Pi parent reports zero child sessions while its delegation calls and their outcomes still count.",
+			"A fork is not a child: a pi session forked from the parent copies its history and is never counted. A pi child run counts, from its parent link (#416).",
+			"A child linked after its parent was analysed puts the parent back on the plain-fill queue, so the next plain run redraws the parent's node.",
 			"It measures volume and not value. A child that read a file counts as much as a child that wrote a feature.",
-			"The totals are read when the node is computed. A child session synced later changes the unit and the next plain run adds a node.",
 			LIMIT_HARNESS,
 		],
 	},

@@ -2,6 +2,7 @@ import * as os from "node:os";
 import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
 import { NOT_REVISED_LIVE, NOT_MUTED_LIVE } from "./current-generation.js";
+import { isChildRunSessionPath, parentKindOf, parentSessionFromRunPath } from "../sync/pi-naming.js";
 
 /**
  * Schema for pi-prospector.
@@ -45,6 +46,9 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 			host TEXT NOT NULL DEFAULT '',
 			cwd TEXT NOT NULL DEFAULT '',
 			parent_session TEXT,
+			-- What the parent link records: 'fork' (a pi fork, which copies the parent's
+			-- history) or 'child' (a child agent's session). NULL with no parent.
+			parent_kind TEXT CHECK (parent_kind IN ('fork', 'child')),
 			-- The human-readable session name from the host's session_info record
 			-- (Pi) or AI title (Claude), for display in reports. NULL when the
 			-- transcript recorded none — never an empty string.
@@ -573,7 +577,85 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	await migrateDecisionsToAssertions(db);
 
 	await lowerOldLineCursors(db);
+	await recordParentLinks(db);
 }
+
+/**
+ * Record the parent link of every session indexed before sync recorded it (#416).
+ *
+ * A pi child run's header names no parent; pi records it in the run's path, which
+ * the pi sources read through {@link parentSessionFromRunPath}. Rows indexed before
+ * the always-on `pi` source read the path have a NULL parent, and sync never
+ * re-reads a file whose mtime has not changed, so the link is written here. Only an
+ * empty parent is filled, and only with a session that is indexed: a run whose
+ * parent has no row keeps NULL, and a later migration links it once the parent is.
+ *
+ * Every linked row also gets its `parent_kind`, by the rule sync uses
+ * ({@link parentKindOf}). A row that has one keeps it.
+ *
+ * A link is an input of the analyzers that read it, so a session whose link this
+ * writes, and the parent it names, go back on the plain-fill queue. So does a pi
+ * child run that was linked before the kind existed: it was read as a fork.
+ * Afterwards the triggers {@link PARENT_LINK_TRIGGERS} queue the sessions of every
+ * link that sync or a later migration writes.
+ *
+ * Runs on every migration. A database with nothing to record reads the candidate
+ * rows and writes nothing.
+ */
+export async function recordParentLinks(db: AsyncDatabase): Promise<void> {
+	const candidates = (await db
+		.prepare(
+			`SELECT id, source, file_path, parent_session FROM sessions
+			  WHERE (TRIM(COALESCE(parent_session, '')) <> '' AND parent_kind IS NULL)
+			     OR (TRIM(COALESCE(parent_session, '')) = '' AND file_path LIKE '%run-%session.jsonl')`,
+		)
+		.all()) as Array<{ id: string; source: string; file_path: string; parent_session: string | null }>;
+	const writes = candidates.flatMap((row) => {
+		const kind = parentKindOf(row.source, row.file_path);
+		if (row.parent_session?.trim()) return [{ id: row.id, source: row.source, parent: row.parent_session, kind, linkOnlyIfIndexed: false }];
+		const parent = isChildRunSessionPath(row.file_path) ? parentSessionFromRunPath(row.file_path) : null;
+		return parent && parent !== row.id ? [{ id: row.id, source: row.source, parent, kind, linkOnlyIfIndexed: true }] : [];
+	});
+	if (writes.length === 0) {
+		await db.exec(PARENT_LINK_TRIGGERS);
+		return;
+	}
+	const setKind = db.prepare("UPDATE sessions SET parent_kind = ? WHERE id = ? AND parent_kind IS NULL");
+	const requeue = db.prepare("UPDATE sessions SET analyzed_message_count = NULL WHERE id IN (?, ?)");
+	const link = db.prepare(
+		"UPDATE sessions SET parent_session = ?, parent_kind = ? WHERE id = ? AND TRIM(COALESCE(parent_session, '')) = '' AND EXISTS (SELECT 1 FROM sessions WHERE id = ?)",
+	);
+	await db.transaction(async () => {
+		for (const w of writes) {
+			const changed = w.linkOnlyIfIndexed ? await link.run(w.parent, w.kind, w.id, w.parent) : await setKind.run(w.kind, w.id);
+			const readAsFork = !w.linkOnlyIfIndexed && w.kind === "child" && w.source === "pi";
+			if (changed.changes > 0 && (w.linkOnlyIfIndexed || readAsFork)) await requeue.run(w.id, w.parent);
+		}
+	})();
+	await db.exec(PARENT_LINK_TRIGGERS);
+}
+
+/**
+ * Put a session back on the plain-fill queue when its parent link changes, and the
+ * parents on both ends of the change with it: the link is an input of the units of
+ * the session (message-origin, turn-frustration) and of its parent's work moved to
+ * children (delegation-outcomes). A plain fill only scans sessions on the queue, so
+ * without this a link recorded after the analysis would leave the old units in
+ * place until the session grew.
+ *
+ * Created after {@link recordParentLinks} fills the kinds of rows indexed before
+ * the column existed, so that fill queues only the sessions whose reading moved.
+ */
+const PARENT_LINK_TRIGGERS = `
+	CREATE TRIGGER IF NOT EXISTS sessions_parent_link_ai AFTER INSERT ON sessions
+	WHEN TRIM(COALESCE(NEW.parent_session, '')) <> '' BEGIN
+		UPDATE sessions SET analyzed_message_count = NULL WHERE id = NEW.parent_session;
+	END;
+	CREATE TRIGGER IF NOT EXISTS sessions_parent_link_au AFTER UPDATE OF parent_session, parent_kind ON sessions
+	WHEN OLD.parent_session IS NOT NEW.parent_session OR OLD.parent_kind IS NOT NEW.parent_kind BEGIN
+		UPDATE sessions SET analyzed_message_count = NULL WHERE id IN (NEW.id, OLD.parent_session, NEW.parent_session);
+	END;
+`;
 
 /**
  * Lower, once, the line cursor of every session whose adapter counted the empty
@@ -671,6 +753,12 @@ async function addMissingColumns(db: AsyncDatabase): Promise<void> {
 		// the only place sync read them. Naming the local host costs one UPDATE, where a re-import
 		// would cost a model run per session to attribute rows that are already here.
 		await db.prepare("UPDATE sessions SET host = ? WHERE host = ''").run(os.hostname());
+	}
+
+	// sessions: what a parent link records (#416). `recordParentLinks`, at the end of
+	// the migration, fills it on every linked row, so no re-read is needed.
+	if (!(await hasColumn("sessions", "parent_kind"))) {
+		await db.exec("ALTER TABLE sessions ADD COLUMN parent_kind TEXT CHECK (parent_kind IN ('fork', 'child'))");
 	}
 
 	// messages: add source column if missing

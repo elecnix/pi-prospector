@@ -57,7 +57,7 @@ async function* singleBatch(read: Promise<ParsedSession>): AsyncGenerator<Parsed
 }
 
 /** The session columns a read may change, not counting the cursor and the counts that every read moves. */
-const SESSION_FIELDS = ["file_path", "project", "source", "cwd", "parent_session", "started_at", "name", "tool_inventory", "host"] as const;
+const SESSION_FIELDS = ["file_path", "project", "source", "cwd", "parent_session", "parent_kind", "started_at", "name", "tool_inventory", "host"] as const;
 
 export async function runSync(
 	db: AsyncDatabase,
