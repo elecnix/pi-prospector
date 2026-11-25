@@ -170,7 +170,8 @@ const UPSTREAM_PATTERNS = [
 	/\bupstream\b/i,
 	/\bregression in (?:the )?(?:vendor|provider|sdk|cli|runtime|node|go)\b/i,
 	/\breleased? (?:version|in)\b/i,
-	/\b(?:issue|bug) \d{4,}\b/i,
+	// A tracker reference ("tracked in bug 5678") names where the work is filed, not who owns
+	// the defect; treating it as upstream discarded claims that cited our own pull request.
 	/\bfixed in (?:v?\d+\.\d+|the next release)\b/i,
 ];
 
@@ -479,7 +480,10 @@ export function findRegressionEvidence(messages: readonly MessageRow[], config: 
 			);
 			if (claimSentences.length > 0) {
 				for (const sent of claimSentences) {
-					if (anyMatch(UPSTREAM_PATTERNS, sent)) upstreamClaim = true;
+					// A sentence that also names a change by number is still our claim: "caused by
+					// #1234 — tracked in upstream" names its cause, and the upstream word is an
+					// aside about where it was reported.
+					if (anyMatch(UPSTREAM_PATTERNS, sent) && !/\b(?:#\d+|PR\s*#?\d+|pull request\s*#?\d+)\b/i.test(sent)) upstreamClaim = true;
 					else ownClaim = true;
 				}
 				signals.causal_claim = true;
@@ -558,9 +562,9 @@ export function findRegressionEvidence(messages: readonly MessageRow[], config: 
 				// read as a second cause.
 				if (NAMES_THE_FIX.test(prefixBefore(text, cite.index))) continue;
 				if (cite.end !== undefined && NAMES_THE_FIX_AFTER.test(text.slice(cite.end, cite.end + 32))) continue;
-				// Scoped to this sentence: a regression the sentence calls upstream is not ours, and
-				// one it calls never-worked is a new defect.
-				if (anyMatch(UPSTREAM_PATTERNS, sentence)) {
+				// Scoped to the words that name the cause, not the whole sentence: a trailer like
+				// "— tracked in bug 5678" must not discard the citation it follows.
+				if (anyMatch(UPSTREAM_PATTERNS, prefixBefore(text, cite.index))) {
 					blamesUpstream = true;
 					continue;
 				}

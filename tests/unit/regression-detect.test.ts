@@ -513,3 +513,28 @@ describe("a denial aimed at one change does not discard another", () => {
 		assert.equal(out.never_worked, false);
 	});
 });
+
+describe("an upstream aside does not discard our own citation", () => {
+	it("keeps the claim and the citation when the trailer mentions a tracker", () => {
+		const out = findRegressionEvidence(
+			[
+				...bash("git commit -m fix", "[main abc1234] fix"),
+				row("assistant", "The deploy broke, caused by #1234 — tracked in bug 5678."),
+			],
+			DEFAULT_CONFIG,
+		);
+		assert.equal(out.claims_regression, true, "the sentence names our own change");
+		assert.ok(out.cited_pull_requests.some((p) => p.number === 1234), "#1234 is cited");
+	});
+
+	it("still treats a cause named as upstream as not ours", () => {
+		const out = findRegressionEvidence(
+			[
+				...bash("git commit -m fix", "[main abc1234] fix"),
+				row("assistant", "The crash was caused by the upstream runtime, not our change."),
+			],
+			DEFAULT_CONFIG,
+		);
+		assert.equal(out.claims_regression, false);
+	});
+});
