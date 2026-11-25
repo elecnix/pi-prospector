@@ -170,7 +170,8 @@ const UPSTREAM_PATTERNS = [
 	/\bupstream\b/i,
 	/\bregression in (?:the )?(?:vendor|provider|sdk|cli|runtime|node|go)\b/i,
 	/\breleased? (?:version|in)\b/i,
-	/\b(?:issue|bug) \d{4,}\b/i,
+	// A tracker reference ("tracked in bug 5678") names where the work is filed, not who owns
+	// the defect; treating it as upstream discarded claims that cited our own pull request.
 	/\bfixed in (?:v?\d+\.\d+|the next release)\b/i,
 ];
 
@@ -287,6 +288,23 @@ function shasIn(text: string): string[] {
 
 function prefixBefore(text: string, index: number): string {
 	return text.slice(Math.max(0, index - 60), index).replace(/\s+$/, "");
+}
+
+/**
+ * A bare "#1234" is the commonest way a session names its own change, so the pattern
+ * matches the "#" at any word start. `\b` before "#" never does: "#" is not a word
+ * character, so no boundary exists between a space and it — an exemption written that
+ * way is dead code that still passes a test whose other clause already settles it.
+ */
+const NAMES_A_CHANGE_BY_NUMBER = /(?:#\d+|\b(?:PR|pull request)\s*#?\d+)/i;
+
+/**
+ * True when a sentence attributes the defect to upstream: it carries an upstream word,
+ * and names no change by number. The number is the evidence of ownership, so a sentence
+ * that has one is ours however it mentions upstream.
+ */
+function sentenceBlamesUpstream(sentence: string): boolean {
+	return anyMatch(UPSTREAM_PATTERNS, sentence) && !NAMES_A_CHANGE_BY_NUMBER.test(sentence);
 }
 
 /** Strip the false friends, so a test name is never read as a defect. */
@@ -479,12 +497,15 @@ export function findRegressionEvidence(messages: readonly MessageRow[], config: 
 			);
 			if (claimSentences.length > 0) {
 				for (const sent of claimSentences) {
-					if (anyMatch(UPSTREAM_PATTERNS, sent)) upstreamClaim = true;
+					// A sentence that names a change by number is our claim even when it also says
+					// upstream: "caused by #1234 — tracked upstream" names its cause, and the
+					// upstream word is an aside about where it was reported.
+					if (sentenceBlamesUpstream(sent)) upstreamClaim = true;
 					else ownClaim = true;
 				}
 				signals.causal_claim = true;
 				evidence.add(m.id);
-				const firstOwn = claimSentences.find((sent) => !anyMatch(UPSTREAM_PATTERNS, sent)) ?? claimSentences[0]!;
+				const firstOwn = claimSentences.find((sent) => !sentenceBlamesUpstream(sent)) ?? claimSentences[0]!;
 				claimSentenceText = claimSentenceText ?? firstOwn;
 			}
 			// A revert states the causality by itself: the session is undoing a change
@@ -558,9 +579,10 @@ export function findRegressionEvidence(messages: readonly MessageRow[], config: 
 				// read as a second cause.
 				if (NAMES_THE_FIX.test(prefixBefore(text, cite.index))) continue;
 				if (cite.end !== undefined && NAMES_THE_FIX_AFTER.test(text.slice(cite.end, cite.end + 32))) continue;
-				// Scoped to this sentence: a regression the sentence calls upstream is not ours, and
-				// one it calls never-worked is a new defect.
-				if (anyMatch(UPSTREAM_PATTERNS, sentence)) {
+				// The same predicate the claim rule uses, scoped to the same sentence. Reading the
+				// prefix here instead let an upstream word in an earlier sentence drop a citation
+				// that named our own change, and skipped the number exemption entirely.
+				if (sentenceBlamesUpstream(sentence)) {
 					blamesUpstream = true;
 					continue;
 				}

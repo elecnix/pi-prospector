@@ -513,3 +513,63 @@ describe("a denial aimed at one change does not discard another", () => {
 		assert.equal(out.never_worked, false);
 	});
 });
+
+describe("an upstream aside does not discard our own citation", () => {
+	it("keeps the claim and the citation when the trailer mentions a tracker", () => {
+		const out = findRegressionEvidence(
+			[
+				...bash("git commit -m fix", "[main abc1234] fix"),
+				row("assistant", "The deploy broke, caused by #1234 — tracked in bug 5678."),
+			],
+			DEFAULT_CONFIG,
+		);
+		assert.equal(out.claims_regression, true, "the sentence names our own change");
+		assert.ok(out.cited_pull_requests.some((p) => p.number === 1234), "#1234 is cited");
+	});
+
+	it("still treats a cause named as upstream as not ours", () => {
+		const out = findRegressionEvidence(
+			[
+				...bash("git commit -m fix", "[main abc1234] fix"),
+				row("assistant", "The crash was caused by the upstream runtime, not our change."),
+			],
+			DEFAULT_CONFIG,
+		);
+		assert.equal(out.claims_regression, false);
+	});
+});
+
+describe("a change named by number outranks an upstream aside", () => {
+	it("counts a bare #1234 as our change even when the sentence says upstream", () => {
+		const out = findRegressionEvidence(
+			[
+				...bash("git commit -m fix", "[main abc1234] fix"),
+				row("assistant", "The deploy broke, caused by #1234 in the upstream runtime."),
+			],
+			DEFAULT_CONFIG,
+		);
+		// The exemption itself must fire here: an upstream word matches, and the number is
+		// the only evidence of ownership. A number pattern that cannot match a bare "#1234"
+		// leaves this false, whatever else the sentence says.
+		assert.equal(out.claims_regression, true);
+		assert.ok(out.cited_pull_requests.some((p) => p.number === 1234));
+	});
+
+	it("keeps a citation when an earlier sentence is the one blaming upstream", () => {
+		const out = findRegressionEvidence(
+			[
+				...bash("git commit -m fix", "[main abc1234] fix"),
+				row(
+					"assistant",
+					"The crash was in the upstream runtime. The deploy broke, caused by #1234.",
+				),
+			],
+			DEFAULT_CONFIG,
+		);
+		assert.equal(out.claims_regression, true);
+		assert.ok(
+			out.cited_pull_requests.some((p) => p.number === 1234),
+			"the citation sits in a sentence of its own",
+		);
+	});
+});
