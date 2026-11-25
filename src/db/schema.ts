@@ -3,6 +3,7 @@ import { type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
 import { NOT_REVISED_LIVE, NOT_MUTED_LIVE } from "./current-generation.js";
 import { isChildRunSessionPath, parentKindOf, parentSessionFromRunPath } from "../sync/pi-naming.js";
+import { repairCodexParents } from "../sync/sources/codex/parent-link.js";
 
 /**
  * Schema for pi-prospector.
@@ -577,6 +578,7 @@ export async function migrate(db: AsyncDatabase): Promise<void> {
 	await migrateDecisionsToAssertions(db);
 
 	await lowerOldLineCursors(db);
+	await repairCodexParents(db);
 	await recordParentLinks(db);
 }
 

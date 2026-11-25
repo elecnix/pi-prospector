@@ -5,6 +5,7 @@
  * session into DB-ready rows. The sync loop handles cursor checks, transaction
  * wrapping, and cursor updates — the adapter owns only source-specific logic.
  */
+import type { AsyncDatabase } from "../db/async-db.js";
 import type { DiscoveredSession } from "../types.js";
 import type { SessionInsert, MessageInsert, BackgroundTaskInsert } from "../db/queries.js";
 import type { MessageExtrasInsert, SessionEventInsert } from "../db/extras-queries.js";
@@ -104,6 +105,19 @@ export interface SessionSourceAdapter {
 	 * by `read()`, and a file too large for that is skipped with a classified error.
 	 */
 	readBatches?(disc: DiscoveredSession, resumeLine: number): AsyncGenerator<ParsedSession>;
+
+	/**
+	 * Resolve the parent links of the sessions this source wrote, once the run has
+	 * read every file.
+	 *
+	 * A source whose host records a parent as an id its own rows do not carry needs
+	 * the index to turn it into one — Codex records a bare thread id where a row is
+	 * keyed by that id and a file name. The sync loop calls this after the last
+	 * file, inside the run, so the run leaves no link it could have resolved and a
+	 * reader never waits for the next command. A source whose links are already row
+	 * ids, or that has no rows to repair, declares none.
+	 */
+	linkParents?(db: AsyncDatabase): Promise<void>;
 }
 
 /** Priority of an adapter that declares none: after every built-in. */
