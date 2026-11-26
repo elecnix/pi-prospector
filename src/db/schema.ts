@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import { type AsyncDatabase } from "./async-db.js";
+import { BUSY_TIMEOUT_MS, type AsyncDatabase } from "./async-db.js";
 import { migrateDecisionsToAssertions } from "./assertions.js";
 import { NOT_REVISED_LIVE, NOT_MUTED_LIVE } from "./current-generation.js";
 import { isChildRunSessionPath, parentKindOf, parentSessionFromRunPath } from "../sync/pi-naming.js";
@@ -28,9 +28,59 @@ import { repairCodexParents } from "../sync/sources/codex/parent-link.js";
  *   analysis_edges                     — the typed relationship graph
  */
 export async function migrate(db: AsyncDatabase): Promise<void> {
-	await db.pragma("journal_mode = WAL");
-	await db.pragma("foreign_keys = ON");
+	await enableWal(db);
+	// Foreign keys are switched off for the migration's length. It rebuilds tables
+	// (`analysis_nodes`, `proposals`) by copying rows into a new table and dropping
+	// the old one, and `analysis_edges` may reference node ids that an earlier
+	// rebuild left behind; with the checks on, the DROP fails. SQLite documents this
+	// switch as a no-op inside a transaction, so it sits outside the one below.
+	await db.pragma("foreign_keys = OFF");
+	try {
+		await db.transaction(() => migrateSchema(db), { immediate: true })();
+	} finally {
+		await db.pragma("foreign_keys = ON");
+	}
+}
 
+/**
+ * Switch the database to WAL, waiting out a connection that is converting it at
+ * the same moment.
+ *
+ * A journal-mode change takes the database's exclusive lock, and SQLite answers
+ * `SQLITE_BUSY` instead of invoking the busy timeout for it: a second process
+ * that opens a brand-new file while the first holds its migration's lock is
+ * refused at once, not after `BUSY_TIMEOUT_MS`. The conversion is written into
+ * the file, so only the first opens of a database ever retry; afterwards
+ * `PRAGMA journal_mode = WAL` reads the stored mode and returns it.
+ */
+async function enableWal(db: AsyncDatabase): Promise<void> {
+	const deadline = Date.now() + BUSY_TIMEOUT_MS;
+	for (;;) {
+		try {
+			await db.pragma("journal_mode = WAL");
+			return;
+		} catch (err) {
+			if ((err as { code?: string }).code !== "SQLITE_BUSY" || Date.now() >= deadline) throw err;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+	}
+}
+
+/**
+ * The migration proper, run inside one `BEGIN IMMEDIATE` transaction: every object
+ * creation is after its `DROP ... IF EXISTS`, and the write lock makes the run
+ * atomic against another connection opening the same database.
+ *
+ * `CREATE VIEW` and `CREATE TRIGGER` have no `IF NOT EXISTS` form, so the drop and
+ * create of `live_nodes`, `current_nodes` and the FTS triggers cannot be made
+ * idempotent on their own. Run statement by statement, two processes that open the
+ * database at the same moment interleave them — one drops, the other creates, the
+ * first creates and fails with "view live_nodes already exists". Taking the write
+ * lock before the first statement means the second process waits on the busy
+ * timeout and then replays the whole, already-applied migration, which is harmless
+ * because every step is idempotent or guarded by the data it reads.
+ */
+async function migrateSchema(db: AsyncDatabase): Promise<void> {
 	// Create tables in dependency order (messages depends on sessions, etc.)
 	// Use IF NOT EXISTS for idempotency. Schema evolution handled below.
 	await db.exec(`
@@ -974,7 +1024,9 @@ async function migrateAnalysisNodesRecipeUniqueness(db: AsyncDatabase): Promise<
 	// `analysis_nodes`, and SQLite refuses to rename a table a view reads.
 	await db.exec("DROP VIEW IF EXISTS live_nodes");
 	await db.exec("DROP VIEW IF EXISTS current_nodes");
-	await db.exec("PRAGMA foreign_keys = OFF");
+	// Foreign keys are already off for the whole migration (see `migrate`), which is
+	// what lets the rebuilt table be dropped while `analysis_edges` may still name
+	// node ids the old one held.
 	await db.exec(`
 		CREATE TABLE analysis_nodes_new (
 			id TEXT PRIMARY KEY,
@@ -1014,7 +1066,6 @@ async function migrateAnalysisNodesRecipeUniqueness(db: AsyncDatabase): Promise<
 		FROM analysis_nodes`);
 	await db.exec("DROP TABLE analysis_nodes");
 	await db.exec("ALTER TABLE analysis_nodes_new RENAME TO analysis_nodes");
-	await db.exec("PRAGMA foreign_keys = ON");
 }
 
 /**
