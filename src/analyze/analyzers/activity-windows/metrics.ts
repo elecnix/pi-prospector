@@ -50,6 +50,7 @@ export const metrics: MetricDefinition[] = [
 			"Local time is the clock of the machine that reads the windows, not of the one that ran the session, so the minutes of a session run in another time zone land in the wrong part.",
 			"The minutes are agent time and not the person's, so they exceed it whenever sessions overlap.",
 			"The parts are six hours wide on purpose: a finer split published in a fingerprint would reveal the person's time zone and schedule.",
+			"Not published in the corpus fingerprint: the parts of the day sketch the daily schedule, and the choice on 2026-11-25 was to publish only the concurrency of a session, not its time of day.",
 			LIMIT_PARALLEL,
 		],
 	},

@@ -176,14 +176,20 @@ export type Cluster = {
 	example_sessions: string[];
 };
 
+/**
+ * Whether a verdict counts toward the retrospective: a defect that an earlier
+ * change introduced, judged with enough confidence. A vendor break or a new
+ * feature's never-worked path is not a codebase gap.
+ */
+export function countsAsRegression(v: VerdictRow, config: Config = DEFAULT_CONFIG): boolean {
+	return v.fixes_defect && v.is_regression && v.confidence >= config.minConfidence;
+}
+
 /** Group verdicts into cause classes. Pure, so the arithmetic is testable without a database. */
 export function clusterVerdicts(verdicts: readonly VerdictRow[], config: Config = DEFAULT_CONFIG): Cluster[] {
 	const byClass = new Map<CauseClass, VerdictRow[]>();
 	for (const v of verdicts) {
-		// Only a defect that an earlier change introduced counts toward the retrospective.
-		// A vendor break or a new feature's never-worked path is not a codebase gap.
-		if (!v.fixes_defect || !v.is_regression) continue;
-		if (v.confidence < config.minConfidence) continue;
+		if (!countsAsRegression(v, config)) continue;
 		const list = byClass.get(v.cause_class) ?? [];
 		list.push(v);
 		byClass.set(v.cause_class, list);

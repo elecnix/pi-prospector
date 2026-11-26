@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
 import { Check, Errors } from "typebox/value";
 import type { FingerprintScope, NodeScalar, SessionFacts } from "../db/fingerprint-queries.js";
-import { DISTRIBUTION_UNITS, ID_PATTERN, SECTION_KINDS, oneOf } from "./schema.js";
+import { CORPUS_UNITS, DISTRIBUTION_UNITS, ID_PATTERN, SECTION_KINDS, oneOf } from "./schema.js";
 
 /**
  * A fingerprint contributor: one section of the corpus fingerprint, declared
@@ -57,6 +57,8 @@ export const SessionsMeasure = Type.Object({ kind: Type.Literal("sessions"), id:
 /** How many distinct values a string field takes (the days sessions started on, say). */
 export const DistinctMeasure = Type.Object({ kind: Type.Literal("distinct"), id: Id, metric: MetricRef, field: Field });
 
+const Dimensions = Type.Record(Field, Type.Array(Type.String({ pattern: "^[a-z0-9][a-z0-9_:.-]*$" }), { minItems: 1 }), { minProperties: 1 });
+
 /**
  * Rows counted under dimensions. Each dimension is a field of the rows and a
  * fixed list of the values it may take; any other value counts as `other`.
@@ -66,11 +68,43 @@ export const GroupsMeasure = Type.Object({
 	kind: Type.Literal("groups"),
 	id: Id,
 	metric: MetricRef,
-	dimensions: Type.Record(Field, Type.Array(Type.String({ pattern: "^[a-z0-9][a-z0-9_:.-]*$" }), { minItems: 1 }), { minProperties: 1 }),
+	dimensions: Dimensions,
 	countField: Type.Optional(Field),
 });
 
-export const MeasureSpec = Type.Union([DistributionMeasure, TotalMeasure, SessionsMeasure, DistinctMeasure, GroupsMeasure]);
+/**
+ * A count of things that belong to the corpus and not to one session: terms
+ * judged once for every session, or clusters several sessions report. It sums
+ * `field`, or with `key` counts the distinct values of that field over the rows
+ * whose `field` is above zero. The key is counted and never printed. `of` names
+ * what is counted. The comparison shows the count as it is, because dividing it
+ * by the sessions would state a per-session figure that does not exist.
+ */
+export const CorpusCountMeasure = Type.Object({
+	kind: Type.Literal("corpusCount"),
+	id: Id,
+	metric: MetricRef,
+	field: Field,
+	key: Type.Optional(Field),
+	of: oneOf(CORPUS_UNITS),
+});
+
+/**
+ * A corpus count broken down by fixed dimensions, each row counting one, or each
+ * distinct value of `key` counting once per group. `total` is the id of the
+ * section's corpus count these are shares of, and it counts the same thing.
+ */
+export const CorpusGroupsMeasure = Type.Object({
+	kind: Type.Literal("corpusGroups"),
+	id: Id,
+	metric: MetricRef,
+	dimensions: Dimensions,
+	key: Type.Optional(Field),
+	total: Id,
+	of: oneOf(CORPUS_UNITS),
+});
+
+export const MeasureSpec = Type.Union([DistributionMeasure, TotalMeasure, SessionsMeasure, DistinctMeasure, GroupsMeasure, CorpusCountMeasure, CorpusGroupsMeasure]);
 export type MeasureSpec = Static<typeof MeasureSpec>;
 
 /** What a contributor declares about itself. */
@@ -100,9 +134,16 @@ export type FingerprintContributorDef = Static<typeof FingerprintContributorDef>
  */
 export function checkContributorDef(def: FingerprintContributorDef): void {
 	const id = def.id;
-	if (Check(FingerprintContributorDef, def)) return;
-	const first = [...Errors(FingerprintContributorDef, def)][0];
-	throw new Error(`fingerprint contributor '${id}' is not a valid definition${first ? `: ${first.instancePath || "/"} ${first.message}` : ""}`);
+	if (!Check(FingerprintContributorDef, def)) {
+		const first = [...Errors(FingerprintContributorDef, def)][0];
+		throw new Error(`fingerprint contributor '${id}' is not a valid definition${first ? `: ${first.instancePath || "/"} ${first.message}` : ""}`);
+	}
+	for (const m of def.measures) {
+		if (m.kind !== "corpusGroups") continue;
+		if (!def.measures.some((t) => t.kind === "corpusCount" && t.id === m.total && t.of === m.of)) {
+			throw new Error(`fingerprint contributor '${id}' measure '${m.id}' has total '${m.total}', which is not a corpus count of ${m.of} in the section`);
+		}
+	}
 }
 
 /**
@@ -145,7 +186,11 @@ export interface FingerprintReadContext {
 	 * analyzer gives one row per session however often the session grew.
 	 */
 	nodes(analyzerId: string, fields: Readonly<Record<string, string>>): Promise<FingerprintRow[]>;
-	/** One row per element of an array in the current nodes; `itemFields` read the element (`$.name`), `nodeFields` the node. */
+	/**
+	 * One row per element of an array, or per member of an object, in the current
+	 * nodes. `itemFields` read the element (`$.name`, `$.list[0].name`, or `#key`
+	 * for the member's name), `nodeFields` the node.
+	 */
 	items(analyzerId: string, arrayPath: string, itemFields: Readonly<Record<string, string>>, nodeFields?: Readonly<Record<string, string>>): Promise<FingerprintRow[]>;
 }
 

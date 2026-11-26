@@ -38,6 +38,7 @@ import type {
 import { computeConfigHash, computeSourceSetHash } from "../../input-hash.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { DEFAULT_DECODE_COLLAPSE_CONFIG, type DecodeCollapseConfig } from "./config.js";
+import { decodeCollapseFingerprint } from "./fingerprint.js";
 import { DocumentField, documentsFingerprint, extractDocuments } from "./documents.js";
 import { median } from "./ngram.js";
 import { Calibration, ReferenceCorpus, ReferenceCoverage, getReference, round } from "./reference.js";
@@ -146,6 +147,7 @@ export const decodeCollapseAnalyzer: Analyzer = {
 	def: DECODE_COLLAPSE_DEF,
 	version: DECODE_COLLAPSE_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [decodeCollapseFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: DECODE_COLLAPSE_DEF.id,

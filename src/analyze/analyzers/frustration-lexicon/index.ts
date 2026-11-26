@@ -44,6 +44,7 @@ import {
 import { TERM_DECISION_QUESTIONS, TERM_DECISION_QUESTIONS_HASH, parseTermDecision } from "./decision.js";
 import { decisionIdentity } from "../../decision-model.js";
 import { DEFAULT_FRUSTRATION_LEXICON_CONFIG, DEFAULT_FRUSTRATION_LEXICON_MAX_TOKENS, type FrustrationLexiconConfig } from "./config.js";
+import { frustrationLexiconFingerprint } from "./fingerprint.js";
 import { Type, type Static } from "typebox";
 
 /** The stored verdict for one term. */
@@ -133,6 +134,7 @@ export const frustrationLexiconAnalyzer: Analyzer = {
 	def: FRUSTRATION_LEXICON_DEF,
 	version: FRUSTRATION_LEXICON_VERSION,
 	prompts: PROMPTS,
+	fingerprint: [frustrationLexiconFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: FRUSTRATION_LEXICON_DEF.id,

@@ -53,6 +53,7 @@ import { decisionIdentity } from "../../decision-model.js";
 import { DEFAULT_STALE_VERIFICATION_CONFIG } from "../stale-verification/config.js";
 import { commandSegments, editCallTimes, normaliseCommand, shellCalls } from "../stale-verification/command-vocabulary.js";
 import { DEFAULT_VERIFICATION_COMMANDS_CONFIG, type VerificationCommandsConfig } from "./config.js";
+import { verificationCommandsFingerprint } from "./fingerprint.js";
 import { redactCommandLine } from "./redact.js";
 import {
 	VERIFICATION_DECISION_QUESTIONS,
@@ -212,9 +213,11 @@ export function nominateCommands(messages: readonly MessageRow[], config: Verifi
 }
 
 export const verificationCommandsAnalyzer: Analyzer = {
+	subjectOfNode: (content) => (typeof content["command"] === "string" ? content["command"] : undefined),
 	def: VERIFICATION_COMMANDS_DEF,
 	version: VERIFICATION_COMMANDS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [verificationCommandsFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: VERIFICATION_COMMANDS_DEF.id,
@@ -259,6 +262,8 @@ export const verificationCommandsAnalyzer: Analyzer = {
 				sourceSetHash: computeSourceSetHash(sources),
 				anchorKind: "session",
 				anchorRef: ctx.sessionId,
+				// One verdict per command: the command is the subject, in the redacted form the node holds.
+				subject: redactCommandLine(candidate.command),
 				meta: { command: candidate.command } as unknown as Record<string, unknown>,
 			};
 		});

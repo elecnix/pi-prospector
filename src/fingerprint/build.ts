@@ -1,3 +1,4 @@
+import { Type, type Static } from "typebox";
 import { Check, Errors } from "typebox/value";
 import type { AsyncDatabase } from "../db/async-db.js";
 import { currentNodeItems, currentNodeRows, currentNodeVersions, latestRunVersions, lineageUnrepaired, sessionFacts, sessionsWithRun, type FingerprintScope } from "../db/fingerprint-queries.js";
@@ -110,6 +111,53 @@ function byCountThenKey<T extends { key: string; count: number }>(groups: T[]): 
 	return [...groups].sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
+/**
+ * Rows counted under dimensions, folded and guarded. A value outside a
+ * dimension's list is `other`. `add` says what a row adds to its group.
+ */
+function groupRows(dimensions: Readonly<Record<string, readonly string[]>>, rows: readonly FingerprintRow[], min: number, add: (row: FingerprintRow) => RowCount | null) {
+	const names = Object.keys(dimensions);
+	const groups = new Map<string, { count: number; keys: Set<string>; ids: Set<string> }>();
+	for (const row of rows) {
+		const values: string[] = [];
+		for (const name of names) {
+			const value = row[name];
+			if (typeof value !== "string") break;
+			values.push(dimensions[name]!.includes(value) ? value : "other");
+		}
+		if (values.length !== names.length) continue;
+		const added = add(row);
+		if (added === null || added.count <= 0) continue;
+		const group = values.join(SEP);
+		const entry = groups.get(group) ?? { count: 0, keys: new Set<string>(), ids: new Set<string>() };
+		if (added.key === undefined) entry.count += added.count;
+		else if (!entry.keys.has(added.key)) {
+			entry.keys.add(added.key);
+			entry.count++;
+		}
+		entry.ids.add(String(row["session"]));
+		groups.set(group, entry);
+	}
+	const raw: Array<RawGroup<string>> = [...groups].map(([key, g]) => ({ key, count: g.count, sessionIds: g.ids }));
+	const otherKey = names.map(() => "other").join(SEP);
+	return byCountThenKey(guardGroups(raw, min, otherKey)).map((g) => ({
+		...Object.fromEntries(g.key.split(SEP).map((value, i) => [names[i]!, value])),
+		count: g.count,
+		sessions: g.sessions,
+	}));
+}
+
+/** What a row adds to a count: a number, or one per distinct key. */
+const RowCount = Type.Object({ count: Type.Number(), key: Type.Optional(Type.String()) });
+type RowCount = Static<typeof RowCount>;
+
+/** What a row adds to a corpus count: one, or its key. A row without a declared key adds nothing. */
+function keyed(row: FingerprintRow, key: string | undefined): RowCount | null {
+	if (key === undefined) return { count: 1 };
+	const value = row[key];
+	return typeof value === "string" ? { count: 1, key: value } : null;
+}
+
 /** One measure's value over a section's rows. The minimum group size is applied here, for every contributor. */
 function applyMeasure(measure: MeasureSpec, rows: readonly FingerprintRow[], min: number): unknown {
 	switch (measure.kind) {
@@ -155,33 +203,25 @@ function applyMeasure(measure: MeasureSpec, rows: readonly FingerprintRow[], min
 			}
 			return contributing.size > 0 && contributing.size < min ? WITHHELD : values.size;
 		}
-		case "groups": {
-			const names = Object.keys(measure.dimensions);
-			const groups = new Map<string, { count: number; ids: Set<string> }>();
+		case "groups":
+			return groupRows(measure.dimensions, rows, min, (row) => ({ count: measure.countField === undefined ? 1 : (numberOf(row, measure.countField) ?? 0) }));
+		case "corpusCount": {
+			const contributing = new Set<string>();
+			const keys = new Set<string>();
+			let sum = 0;
 			for (const row of rows) {
-				const values: string[] = [];
-				for (const name of names) {
-					const value = row[name];
-					if (typeof value !== "string") break;
-					values.push(measure.dimensions[name]!.includes(value) ? value : "other");
-				}
-				if (values.length !== names.length) continue;
-				const count = measure.countField === undefined ? 1 : (numberOf(row, measure.countField) ?? 0);
-				if (count <= 0) continue;
-				const key = values.join(SEP);
-				const entry = groups.get(key) ?? { count: 0, ids: new Set<string>() };
-				entry.count += count;
-				entry.ids.add(String(row["session"]));
-				groups.set(key, entry);
+				const value = numberOf(row, measure.field);
+				const added = value === null || value <= 0 ? null : keyed(row, measure.key);
+				if (value === null || added === null) continue;
+				if (added.key === undefined) sum += value;
+				else keys.add(added.key);
+				contributing.add(String(row["session"]));
 			}
-			const raw: Array<RawGroup<string>> = [...groups].map(([key, g]) => ({ key, count: g.count, sessionIds: g.ids }));
-			const otherKey = names.map(() => "other").join(SEP);
-			return byCountThenKey(guardGroups(raw, min, otherKey)).map((g) => ({
-				...Object.fromEntries(g.key.split(SEP).map((value, i) => [names[i]!, value])),
-				count: g.count,
-				sessions: g.sessions,
-			}));
+			if (contributing.size > 0 && contributing.size < min) return WITHHELD;
+			return measure.key === undefined ? sum : keys.size;
 		}
+		case "corpusGroups":
+			return groupRows(measure.dimensions, rows, min, (row) => keyed(row, measure.key));
 	}
 }
 

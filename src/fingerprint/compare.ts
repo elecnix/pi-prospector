@@ -10,7 +10,8 @@ import { FINGERPRINT_SCHEMA_VERSION, Fingerprint, oneOf, SECTION_KINDS, type Buc
  * rate per measured session, a session count becomes a share of the measured
  * sessions, a group becomes the share of sessions it touches, and a
  * distribution is read by its quantiles and the share of sessions in each
- * declared bucket.
+ * declared bucket. A corpus count is the exception: it belongs to no session, so
+ * it is shown as it is, and its groups as shares of it.
  *
  * Groups are matched by their values, never by their position in the list,
  * and every cell says when it rests on few sessions or when one side withheld
@@ -205,6 +206,7 @@ const UNIT_NAMES: Record<DistributionUnit, string> = {
 	percent: "%",
 	ratio: "ratio",
 	files: "files",
+	words: "words",
 };
 
 /**
@@ -214,6 +216,13 @@ const UNIT_NAMES: Record<DistributionUnit, string> = {
 function measureName(measure: MeasureSpec, sectionLabel: string): string {
 	const name = humanize(measure.id);
 	return name.startsWith("per ") ? `${sectionLabel.toLowerCase()} ${name}` : name;
+}
+
+/** The label of the one row of a total or a corpus count; null for a measure whose rows depend on its values. */
+function soleRow(measure: MeasureSpec, name: string): string | null {
+	if (measure.kind === "total") return `${name} per session`;
+	if (measure.kind === "corpusCount") return `${name} (${measure.of} in the corpus)`;
+	return null;
 }
 
 /** The rows of one measure on one side of the comparison. */
@@ -226,7 +235,7 @@ function measureCells(measure: MeasureSpec, name: string, section: unknown): Mea
 	switch (measure.kind) {
 		case "total": {
 			const n = value as number;
-			return { keys: [`${name} per session`], cell: () => cell(fixed(n / Math.max(measured, 1)), n / Math.max(measured, 1), lowFlag(measured)) };
+			return { keys: [soleRow(measure, name) ?? name], cell: () => cell(fixed(n / Math.max(measured, 1)), n / Math.max(measured, 1), lowFlag(measured)) };
 		}
 		case "sessions": {
 			const p = pct(value as number, measured);
@@ -234,6 +243,14 @@ function measureCells(measure: MeasureSpec, name: string, section: unknown): Mea
 		}
 		case "distinct":
 			return { keys: [name], cell: () => cell(String(value), value as number, lowFlag(measured)) };
+		case "corpusCount":
+			return { keys: [soleRow(measure, name) ?? name], cell: () => cell(String(value), value as number, lowFlag(measured)) };
+		case "corpusGroups": {
+			const whole = section[measure.total];
+			if (isWithheld(whole)) return "withheld";
+			if (typeof whole !== "number") return "missing";
+			return groupCells(measure.dimensions, value, (g) => `${name}: ${g} (share of ${humanize(measure.total)})`, (g) => pct(g.count, whole));
+		}
 		case "distribution": {
 			const d = value as { sessions: number; p50: number; p90: number; buckets: Bucket[] };
 			const declared = measure.edges.map((from, i) => ({ from, to: measure.edges[i + 1] ?? null }));
@@ -255,29 +272,36 @@ function measureCells(measure: MeasureSpec, name: string, section: unknown): Mea
 			}
 			return { keys: [...cells.keys()], cell: (key) => cells.get(key) ?? ABSENT_CELL };
 		}
-		case "groups": {
-			const names = Object.keys(measure.dimensions);
-			const groups = value as Array<Record<string, string | number>>;
-			const cells = new Map<string, Cell>();
-			for (const g of groups) {
-				const key = `${name}: ${names.map((n) => String(g[n])).join(" / ")}`;
-				const sessions = Number(g["sessions"]);
-				const p = pct(sessions, measured);
-				cells.set(key, cell(pctText(p), p, lowFlag(sessions)));
-			}
-			return { keys: [...cells.keys()], cell: (key) => cells.get(key) ?? ABSENT_CELL };
-		}
+		case "groups":
+			return groupCells(measure.dimensions, value, (g) => `${name}: ${g}`, (g) => pct(g.sessions, measured));
 	}
+}
+
+const PublishedGroup = Type.Object({ count: Type.Number(), sessions: Type.Number() });
+type PublishedGroup = Static<typeof PublishedGroup>;
+
+/** One cell per published group: its label from its dimension values, and its share. */
+function groupCells(dimensions: Readonly<Record<string, readonly string[]>>, value: unknown, label: (group: string) => string, share: (group: PublishedGroup) => number): MeasureCells {
+	const names = Object.keys(dimensions);
+	const cells = new Map<string, Cell>();
+	for (const g of value as Array<Record<string, string | number>>) {
+		const sessions = Number(g["sessions"]);
+		const p = share({ count: Number(g["count"]), sessions });
+		cells.set(label(names.map((n) => String(g[n])).join(" / ")), cell(pctText(p), p, lowFlag(sessions)));
+	}
+	return { keys: [...cells.keys()], cell: (key) => cells.get(key) ?? ABSENT_CELL };
 }
 
 function diffKind(measure: MeasureSpec, key: string): (typeof DIFF_KINDS)[number] {
 	switch (measure.kind) {
 		case "total":
+		case "corpusCount":
 			return "ratio";
 		case "distinct":
 			return "none";
 		case "sessions":
 		case "groups":
+		case "corpusGroups":
 			return "points";
 		case "distribution":
 			return / p\d+( \(.*\))?$/.test(key) ? "ratio" : "points";
@@ -360,7 +384,7 @@ function compareSection(contributor: FingerprintContributor, a: unknown, b: unkn
 		const sb = measureCells(measure, name, b);
 		const keys = [...new Set([...(typeof sa === "object" ? sa.keys : []), ...(typeof sb === "object" ? sb.keys : [])])];
 		if (keys.length === 0) {
-			const label = measure.kind === "total" ? `${name} per session` : name;
+			const label = soleRow(measure, name) ?? name;
 			const left = sideCell(sa, label);
 			const right = sideCell(sb, label);
 			rows.push({ label, a: left, b: right, diff: "" });
@@ -371,7 +395,7 @@ function compareSection(contributor: FingerprintContributor, a: unknown, b: unkn
 			const right = sideCell(sb, key);
 			return { label: key, a: left, b: right, diff: diffOf(diffKind(measure, key), left, right) };
 		});
-		if (measure.kind === "groups") measureRows.sort((x, y) => weight(y) - weight(x));
+		if (measure.kind === "groups" || measure.kind === "corpusGroups") measureRows.sort((x, y) => weight(y) - weight(x));
 		rows.push(...measureRows);
 	}
 	return { id: def.id, label: def.label, description: def.description, kind: def.kind, notes, rows };
@@ -476,6 +500,7 @@ export interface CompareRenderer {
 
 const LEGEND = [
 	"Totals are per measured session; session counts and groups are shares of the measured sessions.",
+	"A row marked 'in the corpus' is a count over the whole corpus, not divided by sessions. A '(share of ...)' row is a share of that count.",
 	"Distributions: p50/p90 in the declared unit, then the share of sessions in each declared bucket.",
 	`* rests on fewer than ${LOW_COUNT} sessions.  – absent: zero, or folded into 'other' under the minimum group size.`,
 	"(a–b) a bucket the guard merged with its neighbour; ↑ the share is in the merged bucket above.",

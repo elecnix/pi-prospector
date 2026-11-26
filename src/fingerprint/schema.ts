@@ -43,8 +43,11 @@ export const SOURCE_GROUPS = [...HARNESS_SOURCES, "unknown"] as const;
 export type SourceGroup = (typeof SOURCE_GROUPS)[number];
 
 /** The units a distribution may state. A contributor needing another unit adds it here. */
-export const DISTRIBUTION_UNITS = ["minutes", "prompts", "tool-calls", "mite", "percent", "ratio", "files"] as const;
+export const DISTRIBUTION_UNITS = ["minutes", "prompts", "tool-calls", "mite", "percent", "ratio", "files", "words"] as const;
 export type DistributionUnit = (typeof DISTRIBUTION_UNITS)[number];
+
+/** What a corpus count counts. A contributor needing another one adds it here. */
+export const CORPUS_UNITS = ["terms", "commands", "proposals", "regressions", "cause classes", "clusters"] as const;
 
 /** The two kinds of section. */
 export const SECTION_KINDS = ["objective", "inferred"] as const;
@@ -109,8 +112,10 @@ export function measureSchema(measure: MeasureSpec): TSchema {
 		case "sessions":
 			return Type.Union([Count, Withheld]);
 		case "distinct":
+		case "corpusCount":
 			return Type.Union([Count, Withheld]);
-		case "groups": {
+		case "groups":
+		case "corpusGroups": {
 			const dimensions = Object.fromEntries(Object.entries(measure.dimensions).map(([name, values]) => [name, oneOf([...values, "other"])]));
 			return Type.Array(Type.Object({ ...dimensions, count: Count, sessions: Count }, { additionalProperties: false }));
 		}

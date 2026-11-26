@@ -49,6 +49,7 @@ import {
 	type MessageQuestion,
 } from "../../message-questions.js";
 import { DEFAULT_MESSAGE_ANSWERS_CONFIG, type MessageAnswersConfig } from "./config.js";
+import { messageAnswersFingerprint } from "./fingerprint.js";
 import { Type, type Static } from "typebox";
 
 /** Questions one request may carry (System One accepts up to 64). */
@@ -124,6 +125,7 @@ export const messageAnswersAnalyzer: Analyzer = {
 	def: MESSAGE_ANSWERS_DEF,
 	version: MESSAGE_ANSWERS_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [messageAnswersFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: MESSAGE_ANSWERS_DEF.id,

@@ -1,17 +1,8 @@
 import type { FingerprintContributor } from "../../../fingerprint/contributor.js";
-import { metricValues } from "../../metrics/values.js";
 import { mergeIntervals, type Interval } from "./detect.js";
-import { metrics } from "./metrics.js";
 
 /** The fixed buckets of a session's peak concurrency. */
 export const CONCURRENCY_BUCKETS = ["1", "2", "3-4", "5-9", "10-19", "20-49", "50-or-more"] as const;
-
-/** The four six-hour parts of the local day, from midnight. */
-export const PARTS_OF_DAY = metricValues(metrics, "activity-windows.part-of-day");
-
-const MINUTE = 60_000;
-const PART = 6 * 60 * MINUTE;
-const DAY = 24 * 60 * MINUTE;
 
 /**
  * For each session, the most sessions active at the same moment while it was
@@ -48,46 +39,23 @@ export function concurrencyBucket(peak: number): (typeof CONCURRENCY_BUCKETS)[nu
 }
 
 /**
- * Active minutes in each part of the local day. `offsetMinutes` gives the
- * local clock's offset from UTC at an instant (east positive), so the split
- * follows a daylight-saving change.
- */
-export function minutesByPartOfDay(windows: readonly Interval[], offsetMinutes: (at: number) => number): Record<string, number> {
-	const ms = new Map<string, number>();
-	for (const [start, end] of windows) {
-		let at = start;
-		while (at < end) {
-			const offset = offsetMinutes(at) * MINUTE;
-			const local = at + offset;
-			const part = PARTS_OF_DAY[Math.floor((((local % DAY) + DAY) % DAY) / PART)]!;
-			const next = Math.min(end, Math.floor(local / PART) * PART + PART - offset);
-			ms.set(part, (ms.get(part) ?? 0) + (next - at));
-			at = next;
-		}
-	}
-	return Object.fromEntries([...ms].map(([part, n]) => [part, Math.round(n / MINUTE)]));
-}
-
-/** The offset of the clock this process runs on. */
-const localOffset = (at: number): number => -new Date(at).getTimezoneOffset();
-
-/**
- * When and how parallel a person works, from each session's activity windows.
- * Counted from the host's timestamps, so the figures are objective. Concurrency
- * is read across the sessions in the fingerprint's scope, at read time, as the
- * `concurrency` output reads it.
+ * How parallel a person works, from each session's activity windows. Counted
+ * from the host's timestamps, so the figures are objective. Concurrency is read
+ * across the sessions in the fingerprint's scope, at read time, as the
+ * `concurrency` output reads it. The parts of the day stay out of the shared
+ * fingerprint: they sketch the person's daily schedule, and the researcher who
+ * shares a fingerprint chose not to publish them (2026-11-25).
  */
 export const activityWindowsFingerprint: FingerprintContributor = {
 	def: {
 		id: "activityWindows",
 		label: "Activity windows",
 		description:
-			"Sessions by the most sessions active at the same moment while they were, which shows how many agents a person runs in parallel, and active minutes by part of the day: night (0 to 6), morning (6 to 12), afternoon (12 to 18) and evening (18 to 24), on the clock of the machine that built the fingerprint. The parts are six hours wide so they do not reveal a time zone. From timestamps, not from language.",
+			"Sessions by the most sessions active at the same moment while they were, which shows how many agents a person runs in parallel. From timestamps, not from language. Published without the parts of the day, which would sketch a daily schedule.",
 		kind: "objective",
 		analyzers: ["activity-windows"],
 		measures: [
 			{ kind: "groups", id: "byPeakConcurrency", metric: "activity-windows.concurrency", dimensions: { concurrent: [...CONCURRENCY_BUCKETS] } },
-			{ kind: "groups", id: "minutesByPartOfDay", metric: "activity-windows.part-of-day", dimensions: { partOfDay: PARTS_OF_DAY }, countField: "minutes" },
 		],
 	},
 	async read(ctx) {
@@ -104,10 +72,7 @@ export const activityWindowsFingerprint: FingerprintContributor = {
 		}
 		const sessions = [...raw].map(([id, windows]) => ({ id, windows: mergeIntervals(windows) }));
 		const peaks = peakConcurrency(sessions);
-		const rows = sessions.flatMap(({ id, windows }) => [
-			{ session: id, concurrent: concurrencyBucket(peaks.get(id) ?? 1) },
-			...Object.entries(minutesByPartOfDay(windows, localOffset)).map(([partOfDay, minutes]) => ({ session: id, partOfDay, minutes })),
-		]);
+		const rows = sessions.map(({ id }) => ({ session: id, concurrent: concurrencyBucket(peaks.get(id) ?? 1) }));
 		return { measured, rows };
 	},
 };

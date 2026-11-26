@@ -144,8 +144,10 @@ export async function currentNodeVersions(db: AsyncDatabase, scope: FingerprintS
 const STEP = String.raw`\.(?:[A-Za-z_][A-Za-z0-9_]*|"[A-Za-z0-9_-]+")`;
 /** A JSON path into node content: `$` followed by steps. */
 const JSON_PATH = new RegExp(`^\\$(?:${STEP})+$`);
-/** A path relative to an array item, which may be the item itself. */
-const ITEM_PATH = new RegExp(`^\\$(?:${STEP})*$`);
+/** A path relative to an array item, which may be the item itself, or step into a list it holds (`$.members[0].hash`). */
+const ITEM_PATH = new RegExp(String.raw`^\$(?:${STEP}(?:\[[0-9]{1,3}\])?)*$`);
+/** Reads an item's key (the member's name in an object, the position in an array) instead of a path into it. */
+const ITEM_KEY = "#key";
 
 function checkPaths(paths: readonly string[], pattern: RegExp): void {
 	for (const path of paths) if (!pattern.test(path)) throw new Error(`'${path}' is not a JSON path of the form $.a.b or $.a."b-c"`);
@@ -178,9 +180,10 @@ export async function currentNodeRows(
 }
 
 /**
- * One row per element of an array in each current node's content. `itemFields`
- * are read from the element (`$.name`, or `$` for the element itself) and
- * `nodeFields` from the node, so a row can carry both.
+ * One row per element of an array, or per member of an object, in each current
+ * node's content. `itemFields` are read from the element (`$.name`, `$` for the
+ * element itself, or `#key` for its key) and `nodeFields` from the node, so a
+ * row can carry both.
  */
 export async function currentNodeItems(
 	db: AsyncDatabase,
@@ -190,8 +193,9 @@ export async function currentNodeItems(
 	itemFields: Readonly<Record<string, string>>,
 	nodeFields: Readonly<Record<string, string>> = {},
 ): Promise<Array<Record<string, NodeScalar>>> {
-	const itemNames = Object.keys(itemFields);
+	const itemNames = Object.keys(itemFields).filter((name) => itemFields[name] !== ITEM_KEY);
 	const nodeNames = Object.keys(nodeFields);
+	const keyNames = Object.keys(itemFields).filter((name) => itemFields[name] === ITEM_KEY);
 	const itemPaths = itemNames.map((name) => itemFields[name]!);
 	const nodePaths = nodeNames.map((name) => nodeFields[name]!);
 	checkPaths([arrayPath, ...nodePaths], JSON_PATH);
@@ -202,6 +206,7 @@ export async function currentNodeItems(
 	const select = [
 		...itemNames.map((_, i) => extracted("n.content_json", `i${i}`, "g.fullkey || substr(?, 2)")),
 		...nodeNames.map((_, i) => extracted("n.content_json", `n${i}`)),
+		...keyNames.map((_, i) => `CAST(g.key AS TEXT) AS k${i}`),
 	];
 	const rows = (await prep(db, `SELECT n.session_id AS session${select.length > 0 ? ", " + select.join(", ") : ""} FROM ${from}`).all(
 		...twice(itemPaths),
@@ -215,6 +220,7 @@ export async function currentNodeItems(
 			["session", row["session"] as string],
 			...itemNames.map((name, i) => [name, scalar(row, `i${i}`)]),
 			...nodeNames.map((name, i) => [name, scalar(row, `n${i}`)]),
+			...keyNames.map((name, i) => [name, row[`k${i}`] ?? null]),
 		]),
 	);
 }

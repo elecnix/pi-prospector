@@ -42,6 +42,7 @@ import {
 	SimilarityClusterConfig,
 	type SimilarityClusterConfig as ResolvedConfig,
 } from "./config.js";
+import { similarityClusterFingerprint } from "./fingerprint.js";
 import { extractItems, sessionItemsFingerprint, selfSourceRef, siblingSourceRef, type SessionItems } from "./extract.js";
 import {
 	clusterItems,
@@ -312,6 +313,7 @@ export const similarityClusterAnalyzer: Analyzer = {
 	def: SIMILARITY_CLUSTER_DEF,
 	version: SIMILARITY_CLUSTER_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [similarityClusterFingerprint],
 	defaultConfig: {
 		id: "",
 		analyzerId: SIMILARITY_CLUSTER_DEF.id,

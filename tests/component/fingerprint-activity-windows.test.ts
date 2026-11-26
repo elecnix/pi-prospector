@@ -5,7 +5,7 @@ import { GraphSeed } from "./fingerprint-graph.js";
 // The part of the day is read on the clock of the process that builds the fingerprint.
 process.env["TZ"] = "UTC";
 
-/** The activity-windows section: peak concurrency per session, and active minutes by part of the day. */
+/** The activity-windows section: peak concurrency per session. The parts of the day are not published. */
 describe("fingerprint: activity windows", () => {
 	let g: GraphSeed;
 	const at = (h: number) => new Date(Date.parse("2026-03-02T00:00:00.000Z") + h * 3_600_000).toISOString();
@@ -17,7 +17,7 @@ describe("fingerprint: activity windows", () => {
 	});
 	after(() => g.close());
 
-	it("buckets sessions by peak concurrency and splits active minutes by part of the day", async () => {
+	it("buckets sessions by peak concurrency and publishes no part of the day", async () => {
 		const s = await g.section("objective", "activityWindows");
 		assert.equal(s.status, "ok");
 		assert.equal(s.sessionsMeasured, 10);
@@ -25,9 +25,6 @@ describe("fingerprint: activity windows", () => {
 			{ concurrent: "1", count: 5, sessions: 5 },
 			{ concurrent: "5-9", count: 5, sessions: 5 },
 		]);
-		assert.deepEqual(s["minutesByPartOfDay"], [
-			{ partOfDay: "evening", count: 300, sessions: 5 },
-			{ partOfDay: "morning", count: 300, sessions: 5 },
-		]);
+		assert.equal(s["minutesByPartOfDay"], undefined);
 	});
 });
