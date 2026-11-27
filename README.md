@@ -10,50 +10,36 @@ pi-prospector is a Pi **extension**: it adds slash commands and a `prospect` too
 
 ## How it works
 
-```
-Pi sessions (~/.pi/agent/sessions/)
-Claude sessions (~/.claude/projects/)
-Codex rollouts (~/.codex/sessions/YYYY/MM/DD/)
-OpenCode sessions (~/.local/share/opencode/opencode.db)
-Cline sessions (~/.cline/data/sessions/)
-        │
-        ▼
-┌──────────────────────┐
-│  /prospect-sync      │  ← Incremental, no LLM. Only new lines are parsed.
-│  (fast, cheap)       │    Detects forks; shared message trees stored once.
-└────────┬─────────────┘
-         │
-         ▼
-┌──────────────────────┐
-│  prospector.db       │  ← Sessions, messages (+FTS), the analysis graph,
-│  (SQLite + FTS5)     │    and proposals.
-└────────┬─────────────┘
-         │
-         ▼
-┌──────────────────────┐
-│  /prospect-analyze   │  ← Builds the analysis graph incrementally:
-│                      │
-│  turn-pair-core      │    1. Score every turn pair — deterministic.
-│     │     │          │
-│     ▼     ▼          │    2. turn-pair-llm classifies high-signal turns
-│ turn-pair-  tool-    │       (cheap LLM); tool-trajectory finds tool-call
-│   llm    trajectory  │       loops & oscillation (deterministic).
-│     │     │          │
-│     ▼     ▼          │
-│  session-overview    │    3. Synthesise → materialise ranked proposals.
-└────────┬─────────────┘
-         │
-         ▼
-┌──────────────────────┐
-│  proposals table     │  ← status: open / applied / rejected / duplicate.
-│  in prospector.db    │    Each links back to the node that justifies it.
-└────────┬─────────────┘
-         │
-         ▼
-┌──────────────────────┐
-│  Pi tool: prospect   │  ← Your agent lists proposals, accepts or rejects
-│  /prospect-* commands│    them, requests syncs, checks stats.
-└──────────────────────┘
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
+flowchart TD
+  SRC["Transcripts on disk<br/>Pi sessions ~/.pi/agent/sessions/<br/>Claude sessions ~/.claude/projects/<br/>Codex rollouts ~/.codex/sessions/YYYY/MM/DD/<br/>OpenCode sessions ~/.local/share/opencode/opencode.db<br/>Cline sessions ~/.cline/data/sessions/"]
+
+  SYNC["/prospect-sync<br/>incremental, fast and cheap, no LLM<br/>only new lines are parsed<br/>detects forks; shared message trees stored once"]
+
+  DB[("prospector.db<br/>SQLite + FTS5<br/>sessions, messages (+FTS), the analysis graph, and proposals")]
+
+  subgraph analyze ["/prospect-analyze — builds the analysis graph incrementally"]
+    direction TB
+    TPC["1. turn-pair-core<br/>scores every turn pair — deterministic"]
+    TPL["2. turn-pair-llm<br/>classifies high-signal turns — cheap LLM"]
+    TT["2. tool-trajectory<br/>finds tool-call loops and oscillation — deterministic"]
+    SO["3. session-overview<br/>synthesises, then materialises ranked proposals"]
+    TPC --> TPL
+    TPC --> TT
+    TPL --> SO
+    TT --> SO
+  end
+
+  PROPS[("proposals table in prospector.db<br/>status: open / applied / rejected / duplicate<br/>each links back to the node that justifies it")]
+
+  TOOL["Pi tool: prospect<br/>/prospect-* commands<br/>lists proposals, accepts or rejects them, requests syncs, checks stats"]
+
+  SRC --> SYNC
+  SYNC --> DB
+  DB --> analyze
+  analyze --> PROPS
+  PROPS --> TOOL
 ```
 
 The analysis graph is **append-only and incremental**. Each node records the exact *recipe* that produced it (which analyzer, at which version, under which config, over which inputs), so re-running analysis recomputes only what is genuinely out of date and never repeats expensive LLM work that is still current. See [`DESIGN.md`](./DESIGN.md) for the full model.
