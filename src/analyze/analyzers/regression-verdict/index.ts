@@ -25,6 +25,7 @@ import type { MessageRow } from "../regression-signal/detect.js";
 import { shortHash } from "../../input-hash.js";
 import type { Analyzer, AnalysisUnit, AnalyzerPlanContext, AnalyzerRunContext } from "../../types.js";
 import { DEFAULT_REGRESSION_VERDICT_CONFIG, type RegressionVerdictConfig } from "./config.js";
+import { regressionVerdictFingerprintContributor } from "./fingerprint.js";
 
 export const ANALYZER_ID = "regression-verdict";
 
@@ -113,6 +114,7 @@ export const regressionVerdictAnalyzer: Analyzer = {
 		implementationKind: "in_process_llm" as const,
 		codeRef: "src/analyze/analyzers/regression-verdict/index.ts",
 	},
+	fingerprint: [regressionVerdictFingerprintContributor],
 	prompts: {
 		// The hash covers the whole question — system, user template and tool schema — so
 		// editing either half re-identifies the node and the corpus re-judges the evidence.

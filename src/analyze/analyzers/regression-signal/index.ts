@@ -35,6 +35,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { Type, type Static } from "typebox";
 import { DEFAULT_REGRESSION_SIGNAL_CONFIG, RegressionSignalConfig } from "./config.js";
 import { findRegressionEvidence, type Scan } from "./detect.js";
+import { regressionSignalFingerprintContributor } from "./fingerprint.js";
 
 export * from "./config.js";
 export * from "./detect.js";
@@ -115,6 +116,7 @@ export const regressionSignalAnalyzer: Analyzer = {
 	def: REGRESSION_SIGNAL_DEF,
 	version: REGRESSION_SIGNAL_VERSION,
 	prompts: {} as Record<string, PromptVersion>,
+	fingerprint: [regressionSignalFingerprintContributor],
 	defaultConfig: {
 		id: "",
 		analyzerId: REGRESSION_SIGNAL_DEF.id,
