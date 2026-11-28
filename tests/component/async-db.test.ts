@@ -168,4 +168,38 @@ describe("AsyncDatabase worker bridge", () => {
 			await writer.close();
 		}
 	});
+
+	it("an immediate transaction takes the write lock before its body runs", async () => {
+		const dbPath = tempDbPath();
+		const first = new AsyncDatabase(dbPath);
+		const second = new AsyncDatabase(dbPath);
+		try {
+			await first.pragma("journal_mode = WAL");
+			await first.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+			let release!: () => void;
+			const held = new Promise<void>((r) => (release = r));
+			const firstTx = first.transaction(async () => {
+				await first.prepare("INSERT INTO t (id) VALUES (1)").run();
+				await held;
+			})();
+			await new Promise<void>((r) => setTimeout(r, 20));
+			let bodyRan = false;
+			const secondTx = second.transaction(async () => {
+				bodyRan = true;
+				await second.prepare("INSERT INTO t (id) VALUES (2)").run();
+			}, { immediate: true })();
+			// A deferred BEGIN succeeds at once while another connection writes, and
+			// the body would already have run; BEGIN IMMEDIATE waits on the lock.
+			await new Promise<void>((r) => setTimeout(r, 100));
+			assert.equal(bodyRan, false);
+			release();
+			await firstTx;
+			await secondTx;
+			assert.equal(bodyRan, true);
+			assert.deepEqual(await first.prepare("SELECT id FROM t ORDER BY id").all(), [{ id: 1 }, { id: 2 }]);
+		} finally {
+			await second.close();
+			await first.close();
+		}
+	});
 });

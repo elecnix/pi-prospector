@@ -121,7 +121,8 @@ function run(msg: WorkerMsg): unknown {
 		case "pragma":
 			return mono(db.pragma(msg.sql!));
 		case "begin":
-			db.exec("BEGIN");
+			// The caller's sql carries the mode: "IMMEDIATE" takes the write lock now.
+			db.exec(msg.sql === "IMMEDIATE" ? "BEGIN IMMEDIATE" : "BEGIN");
 			return undefined;
 		case "commit":
 			db.exec("COMMIT");

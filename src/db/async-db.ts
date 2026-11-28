@@ -48,6 +48,13 @@ export const BUSY_TIMEOUT_MS = 30_000;
 export const OpenOptions = Type.Object({ readonly: Type.Optional(Type.Boolean()) });
 export type OpenOptions = Static<typeof OpenOptions>;
 
+/**
+ * How to start a transaction. `immediate` starts it with `BEGIN IMMEDIATE`, which
+ * takes the write lock now rather than at the first write; see {@link AsyncDatabase.transaction}.
+ */
+export const TransactionOptions = Type.Object({ immediate: Type.Optional(Type.Boolean()) });
+export type TransactionOptions = Static<typeof TransactionOptions>;
+
 interface WorkerMsg {
 	id: number;
 	op: string;
@@ -161,8 +168,17 @@ export class AsyncDatabase {
 	 * better-sqlite3's `db.transaction(fn)()` shape), but async. The transaction
 	 * holds the exclusive mutex for the whole body, so no concurrent statement
 	 * can enter the open transaction; on throw it rolls back.
+	 *
+	 * `options.immediate` starts it with `BEGIN IMMEDIATE`, which takes the write
+	 * lock now rather than at the first write. A deferred transaction that reads
+	 * first can find, at its first write, that another connection committed since
+	 * its snapshot started; SQLite then fails it with SQLITE_BUSY_SNAPSHOT instead
+	 * of invoking the busy handler, so it does not wait. A caller whose body must
+	 * not lose that race — the migration — takes the lock up front and waits on
+	 * the busy timeout like any other writer. A nested transaction ignores it: it
+	 * is a savepoint inside a transaction that already holds the lock.
 	 */
-	transaction<R>(fn: () => Promise<R>): () => Promise<R> {
+	transaction<R>(fn: () => Promise<R>, options: TransactionOptions = {}): () => Promise<R> {
 		return () => {
 			// Nested transaction: we are already inside an open transaction (the
 			// IN_TX context is set and the outer tx holds the mutex). better-sqlite3
@@ -195,7 +211,8 @@ export class AsyncDatabase {
 			// the tail again, or it would wait on its own completion.
 			return this.#exclusive(() =>
 				IN_TX.run(true, async () => {
-					await this.invoke("begin", undefined);
+					// The worker reads the sql of a `begin` as its mode: "IMMEDIATE" or nothing.
+					await this.invoke("begin", options.immediate ? "IMMEDIATE" : undefined);
 					let ok = false;
 					try {
 						const result = await fn();
